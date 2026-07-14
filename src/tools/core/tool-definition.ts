@@ -1,6 +1,7 @@
 import type { ProviderAdapter } from '../../providers/adapters/adapter-base.ts'
 import type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
 import { joinPromptSections } from '../../shared/prompt-sections.ts'
+import type { HookExecutionScope } from '../../hooks/hook-types.ts'
 
 const TOOL_METADATA_SYMBOL = Symbol('TOOL_METADATA')
 
@@ -43,12 +44,14 @@ type ToolProgressEvent =
 
 interface ToolExecutionOptions extends AbortOptions {
   onProgress?: (event: ToolProgressEvent) => void
+  executionScope?: HookExecutionScope
+  toolCallId?: string
 }
 
 interface ToolServices {
   spawnTask?: (
     input: { prompt: string; provider?: string },
-    options?: AbortOptions
+    options?: ToolExecutionOptions
   ) => Promise<string>
   loadSkill?: (name: string) => Promise<ToolOutput>
   mcpSearchTool?: (server: string, tool: string) => Promise<ToolOutput>

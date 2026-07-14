@@ -12,6 +12,7 @@ import type {
   SkillAddOptions,
 } from '../../skills/skill-installer.ts'
 import type { McpLibrary } from '../../mcp/mcp-library.ts'
+import type { HookCatalog } from '../../hooks/hook-catalog.ts'
 
 export interface ApiCommandController {
   start(): Promise<void>
@@ -30,6 +31,7 @@ export interface CliCommandContext {
   threadStore: ThreadStore
   skillLibrary: SkillLibrary
   mcpLibrary: McpLibrary
+  hookCatalog?: HookCatalog
   api?: ApiCommandController
   ui: TerminalController
   browserProfileDir: string

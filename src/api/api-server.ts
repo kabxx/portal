@@ -59,6 +59,7 @@ export interface ApiEvent {
     | 'message.failed'
     | 'message.cancelled'
     | 'thread.action'
+    | 'hook.execution'
   data: unknown
 }
 

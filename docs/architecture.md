@@ -12,19 +12,20 @@ Provider-specific website behavior stays behind adapters. The runtime understand
 
 ## Component map
 
-| Area              | Main files                              | Responsibility                                                                                  |
-| ----------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Process entry     | `src/index.ts`, `src/app.ts`            | Parse options, build services, run input dispatch, coordinate cancellation, and shut down       |
-| Browser platform  | `src/platform/`                         | Launch Chromium, connect over CDP, and manage Windows process lifetime                          |
-| Provider adapters | `src/providers/adapters/`               | Navigate pages, detect login/readiness, submit, stream, upload, select models, and stop output  |
-| History parsing   | `src/providers/conversation-history.ts` | Convert six provider history formats into visible user/assistant messages                       |
-| Runtime           | `src/runtime/`                          | Build setup prompts, initialize runtimes, execute tool loops, retry, recover, and cancel        |
-| Threads           | `src/threads/`                          | Track open threads and local turns in memory; persist URL history metadata in SQLite            |
-| Commands          | `src/cli-commands/`                     | Tokenize and dispatch slash commands                                                            |
-| Tools             | `src/tools/`                            | Define schemas, render the tool protocol, validate calls, execute tools, and report progress    |
-| Terminal UI       | `src/terminal-ui/`                      | Manage home/thread timelines, live assistant/command bubbles, input history, wrapping, and keys |
-| Skills            | `src/skills/`                           | Validate manifests, install sources, maintain the registry, snapshot catalogs, and load content |
-| MCP               | `src/mcp/`                              | Parse config, connect per-thread clients, cache tools, call tools, and render attachments       |
+| Area              | Main files                              | Responsibility                                                                                      |
+| ----------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Process entry     | `src/index.ts`, `src/app.ts`            | Parse options, build services, run input dispatch, coordinate cancellation, and shut down           |
+| Browser platform  | `src/platform/`                         | Launch Chromium, connect over CDP, and manage Windows process lifetime                              |
+| Provider adapters | `src/providers/adapters/`               | Navigate pages, detect login/readiness, submit, stream, upload, select models, and stop output      |
+| History parsing   | `src/providers/conversation-history.ts` | Convert six provider history formats into visible user/assistant messages                           |
+| Runtime           | `src/runtime/`                          | Build setup prompts, initialize runtimes, execute tool loops, retry, recover, and cancel            |
+| Threads           | `src/threads/`                          | Track open threads and local turns in memory; persist URL history metadata in SQLite                |
+| Commands          | `src/cli-commands/`                     | Tokenize and dispatch slash commands                                                                |
+| Tools             | `src/tools/`                            | Define schemas, render the tool protocol, validate calls, execute tools, and report progress        |
+| Terminal UI       | `src/terminal-ui/`                      | Manage home/thread timelines, live assistant/command bubbles, input history, wrapping, and keys     |
+| Skills            | `src/skills/`                           | Validate manifests, install sources, maintain the registry, snapshot catalogs, and load content     |
+| MCP               | `src/mcp/`                              | Parse config, connect per-thread clients, cache tools, call tools, and render attachments           |
+| Hooks             | `src/hooks/`                            | Load immutable snapshots, run command/model handlers, gate Tool calls, and publish execution events |
 
 ## Startup lifecycle
 

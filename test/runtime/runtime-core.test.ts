@@ -22,6 +22,12 @@ import {
   PortalAbortError,
 } from '../../src/runtime/runtime-cancellation.ts'
 import { loadProjectInstructions } from '../../src/instructions/project-instructions.ts'
+import {
+  createHookSnapshot,
+  parseHooksConfig,
+} from '../../src/hooks/hook-config.ts'
+import { HookDispatcher } from '../../src/hooks/hook-dispatcher.ts'
+import type { HookExecutionScope } from '../../src/hooks/hook-types.ts'
 
 class FakeAdapter extends ProviderAdapter {
   public readonly attachedTexts: string[] = []
@@ -200,6 +206,126 @@ class InstructionRunCommandTool extends Tool<Record<string, unknown>, string> {
     return 'command completed'
   }
 }
+
+let hookTargetInputs: Array<Record<string, unknown> | string> = []
+
+@defineToolMetadata({
+  name: 'hook_target',
+  description: 'A Hook integration test tool.',
+})
+class HookTargetTool extends Tool<Record<string, unknown>, string> {
+  public async call(input: Record<string, unknown>): Promise<string> {
+    hookTargetInputs.push(input)
+    return 'hook target completed'
+  }
+}
+
+function createHookScope(handler: Record<string, unknown>): HookExecutionScope {
+  return {
+    snapshot: createHookSnapshot(
+      parseHooksConfig({ enabled: true, handlers: [handler] })
+    ),
+    cwd: process.cwd(),
+    source: 'tui',
+    spawnDepth: 0,
+    hookDepth: 0,
+    provider: 'chatgpt',
+    threadId: 'thread-hook-test',
+    turnId: 'turn-hook-test',
+  }
+}
+
+test('RuntimeCore blocks a tool through tool.before and feeds HOOK_BLOCKED back', async () => {
+  const adapter = new FakeAdapter([
+    '<tool>{"tool":"hook_target","params":{"value":"original"}}</tool>',
+    'Handled the blocked result.',
+  ])
+  const dispatcher = new HookDispatcher({
+    execute: async () =>
+      JSON.stringify({ action: 'deny', reason: 'policy denied' }),
+  })
+  const runtime = new RuntimeCore(
+    adapter,
+    new ToolRegistry(adapter, [HookTargetTool]),
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [],
+    dispatcher
+  )
+  const scope = createHookScope({
+    name: 'deny-tool',
+    type: 'prompt',
+    events: ['tool.before'],
+    prompt: 'Review the tool.',
+  })
+  hookTargetInputs = []
+  const metadata: unknown[] = []
+
+  await runtime.submitUserInput('Run it.', {
+    executionScope: scope,
+    onToolResult: async (result, _call, details) => {
+      metadata.push({ result, details })
+    },
+  })
+
+  assert.deepEqual(hookTargetInputs, [])
+  assert.equal(
+    (metadata[0] as { result: { result: { code: string } } }).result.result
+      .code,
+    'HOOK_BLOCKED'
+  )
+  assert.match(adapter.attachedTexts[1] ?? '', /"code": "HOOK_BLOCKED"/)
+})
+
+test('RuntimeCore executes revalidated rewritten params and records both inputs', async () => {
+  const adapter = new FakeAdapter([
+    '<tool>{"tool":"hook_target","params":{"value":"original"}}</tool>',
+    'Rewrite complete.',
+  ])
+  const dispatcher = new HookDispatcher({
+    execute: async () =>
+      JSON.stringify({ action: 'rewrite', params: { value: 'rewritten' } }),
+  })
+  const runtime = new RuntimeCore(
+    adapter,
+    new ToolRegistry(adapter, [HookTargetTool]),
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [],
+    dispatcher
+  )
+  const scope = createHookScope({
+    name: 'rewrite-tool',
+    type: 'prompt',
+    events: ['tool.before'],
+    prompt: 'Review the tool.',
+  })
+  hookTargetInputs = []
+  let details:
+    | import('../../src/runtime/runtime-core.ts').ToolCallMetadata
+    | undefined
+
+  await runtime.submitUserInput('Run it.', {
+    executionScope: scope,
+    onToolResult: async (_result, _call, value) => {
+      details = value
+    },
+  })
+
+  assert.deepEqual(hookTargetInputs, [{ value: 'rewritten' }])
+  assert.deepEqual(details?.originalInput, { value: 'original' })
+  assert.deepEqual(details?.effectiveInput, { value: 'rewritten' })
+  assert.deepEqual(details?.rewrittenBy, ['rewrite-tool'])
+  assert.equal(typeof details?.toolCallId, 'string')
+})
 
 test('RuntimeCore keeps assistant text around an inline tool call', async () => {
   const adapter = new FakeAdapter([
