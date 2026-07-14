@@ -239,6 +239,32 @@ test('PortalApiServer reports unsupported thread reload handlers', async () => {
   }
 })
 
+test('PortalApiServer rejects an empty MCP server request as invalid', async () => {
+  const calls: string[] = []
+  const server = new PortalApiServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: null,
+    handlers: createHandlers(calls),
+  })
+
+  await server.start()
+  try {
+    const address = server.address()
+    assert.notEqual(address, null)
+    const response = await fetch(`${address}/v1/mcp/servers`, {
+      method: 'POST',
+    })
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), {
+      error: { code: 'INVALID_REQUEST', message: 'name is required.' },
+    })
+    assert.deepEqual(calls, [])
+  } finally {
+    await server.stop()
+  }
+})
+
 test('PortalApiServer broadcasts one thread event to multiple SSE clients', async () => {
   const server = new PortalApiServer({
     host: '127.0.0.1',

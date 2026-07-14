@@ -463,7 +463,7 @@ export class PortalApiServer {
     fastify.post<{ Body: Record<string, unknown> }>(
       '/v1/mcp/servers',
       async (request, reply) => {
-        const name = request.body.name
+        const name = request.body?.name
         if (typeof name !== 'string' || name.trim() === '') {
           throw new ApiHttpError(400, 'INVALID_REQUEST', 'name is required.')
         }
