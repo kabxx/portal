@@ -111,6 +111,10 @@ export function isSubmitKey(key: KeyModifiers): boolean {
   return key.return && !key.shift && !key.ctrl
 }
 
+export function isDisabledEnterKey(input: string, key: KeyModifiers): boolean {
+  return (key.return && key.ctrl) || (input === '\n' && !key.return)
+}
+
 export function clearInput(): string {
   return ''
 }
@@ -825,7 +829,7 @@ export function TerminalScreen({
       return
     }
 
-    if (key.return && key.ctrl) {
+    if (isDisabledEnterKey(input, key)) {
       return
     }
 
