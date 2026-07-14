@@ -41,6 +41,16 @@ interface ClosingThreadOperation {
 
 const DEFAULT_CANCEL_SETTLE_TIMEOUT_MS = 3000
 
+export class ThreadCloseTimeoutError extends Error {
+  public constructor(
+    public readonly threadId: string,
+    public readonly timeoutMs: number
+  ) {
+    super(`Thread ${threadId} did not stop within ${timeoutMs} ms.`)
+    this.name = 'ThreadCloseTimeoutError'
+  }
+}
+
 export class ThreadOperationCoordinator {
   private readonly operations = new Map<string, MutableThreadOperation>()
   private readonly closingThreads = new Map<string, ClosingThreadOperation>()
@@ -57,8 +67,12 @@ export class ThreadOperationCoordinator {
     if (this.closingThreads.has(threadId)) {
       return { accepted: false, reason: 'closing' }
     }
-    if (this.operations.has(threadId)) {
-      return { accepted: false, reason: 'running' }
+    const existingOperation = this.operations.get(threadId)
+    if (existingOperation !== undefined) {
+      return {
+        accepted: false,
+        reason: existingOperation.phase === 'closing' ? 'closing' : 'running',
+      }
     }
 
     const token = Symbol(threadId)
@@ -88,7 +102,10 @@ export class ThreadOperationCoordinator {
           })
       )
       .finally(() => {
-        if (this.operations.get(threadId)?.token === token) {
+        if (
+          operation.cancellation === null &&
+          this.operations.get(threadId)?.token === token
+        ) {
           this.operations.delete(threadId)
         }
       })
@@ -137,7 +154,13 @@ export class ThreadOperationCoordinator {
     this.closingThreads.set(threadId, closing)
     closing.done = Promise.resolve()
       .then(async () => {
-        await this.cancelOperation(threadId, 'closing')
+        const settled = await this.cancelOperation(threadId, 'closing')
+        if (!settled) {
+          throw new ThreadCloseTimeoutError(
+            threadId,
+            this.cancelSettleTimeoutMs
+          )
+        }
         return await closeThread()
       })
       .finally(() => {
@@ -159,10 +182,10 @@ export class ThreadOperationCoordinator {
   private async cancelOperation(
     threadId: string,
     phase: Exclude<ThreadOperationPhase, 'running'>
-  ): Promise<void> {
+  ): Promise<boolean> {
     const operation = this.operations.get(threadId)
     if (operation === undefined) {
-      return
+      return true
     }
 
     operation.phase =
@@ -175,8 +198,15 @@ export class ThreadOperationCoordinator {
         async () => await operation.stopTarget?.stopGeneration()
       ),
       operation.done,
-    ]).then(() => undefined)
-    await waitForSettlement(operation.cancellation, this.cancelSettleTimeoutMs)
+    ]).then(() => {
+      if (this.operations.get(threadId)?.token === operation.token) {
+        this.operations.delete(threadId)
+      }
+    })
+    return await waitForSettlement(
+      operation.cancellation,
+      this.cancelSettleTimeoutMs
+    )
   }
 
   private toSnapshot(
@@ -200,13 +230,13 @@ export class ThreadOperationCoordinator {
 async function waitForSettlement(
   promise: Promise<void>,
   timeoutMs: number
-): Promise<void> {
+): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | null = null
   try {
-    await Promise.race([
-      promise,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, timeoutMs)
+    return await Promise.race([
+      promise.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs)
       }),
     ])
   } finally {
