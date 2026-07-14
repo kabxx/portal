@@ -136,15 +136,17 @@ Remote messages loaded by resume are display-only and do not increase the local 
 
 ## Commands
 
-| Command       | Purpose                                            |
-| ------------- | -------------------------------------------------- |
-| `/help`       | Show top-level command help                        |
-| `/providers`  | List supported provider ids                        |
-| `/thread ...` | Open, resume, switch, inspect, detach, and close   |
-| `/skill ...`  | Add, list, enable, disable, and remove Skills      |
-| `/mcp ...`    | Manage MCP servers and attach Resources or Prompts |
-| `/serve ...`  | Start and manage the local HTTP API                |
-| `/exit`       | Shut down portal                                   |
+| Command         | Purpose                                            |
+| --------------- | -------------------------------------------------- |
+| `/help`         | Show top-level command help                        |
+| `/providers`    | List supported provider ids                        |
+| `/thread ...`   | Open, resume, switch, inspect, detach, and close   |
+| `/skill ...`    | Add, list, enable, disable, and remove Skills      |
+| `/mcp ...`      | Manage MCP servers and attach Resources or Prompts |
+| `/serve ...`    | Start and manage the local HTTP API                |
+| `/job`          | List running `run_command` jobs                    |
+| `/job stop ...` | Stop one running `run_command` job                 |
+| `/exit`         | Shut down portal                                   |
 
 Top-level commands and first-level subcommands support unique-prefix completion with `Tab`.
 
@@ -176,7 +178,7 @@ Input can be edited while portal is busy, but it cannot be submitted until the o
 | `mcp_search_tool` | Load one exact MCP tool definition                                      |
 | `mcp_call_tool`   | Call one exact MCP tool on a connected server                           |
 
-`run_command` streams a small live stdout/stderr tail into a temporary terminal bubble, then replaces it with a compact completion summary. The complete bounded structured result is still returned to the web model.
+`run_command` streams a small live stdout/stderr tail into a temporary terminal bubble, then replaces it with a compact completion summary. The complete bounded structured result is still returned to the web model. Cancelling the current turn with `Ctrl+C` only detaches that turn's waiter; the command remains an active portal job. Use `/job` to inspect active jobs and `/job stop <job-id>` to stop one. Controlled portal shutdown (`/exit`, idle `Ctrl+D`, or process shutdown handling) stops all jobs. Jobs are not persisted across portal restarts, and forcibly killing portal can bypass cleanup guarantees.
 
 > [!WARNING]
 > portal is not a sandbox. `run_command`, `apply_patch`, MCP tools, Skills, and spawned workers can operate with the permissions of the user running portal. There is no human approval gate before a valid model-generated tool call executes. Read [Security](docs/security.md) before using portal with sensitive data.
