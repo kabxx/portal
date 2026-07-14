@@ -1188,6 +1188,7 @@ export async function run(argv = process.argv): Promise<void> {
       stdout,
       exitOnCtrlC: false,
       reserveTrailingLine: false,
+      windowsConsoleInput: { mode: 'enabled' },
     }
   )
 
