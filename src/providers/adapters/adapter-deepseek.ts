@@ -1,0 +1,889 @@
+import {
+  ProviderAdapter,
+  type AbortOptions,
+  awaitWithTimeout,
+  buildSubmitBlockedWarningMessage,
+  ProviderAdapterError,
+  ProviderAdapterUnsupportedError,
+  createDeferred,
+  delayAsync,
+} from './adapter-base.ts'
+import {
+  abortable,
+  isAbortError,
+  throwIfAborted,
+} from '../../runtime/runtime-cancellation.ts'
+import { retryAsync } from '../../shared/retry.ts'
+import { waitAsync } from '../../shared/wait.ts'
+import {
+  emptyHistoryResult,
+  parseDeepSeekHistory,
+} from '../conversation-history.ts'
+
+const DEEPSEEK_CHAT_URL = 'https://chat.deepseek.com'
+const DEEPSEEK_CHAT_COMPLETION_URL =
+  'https://chat.deepseek.com/api/v0/chat/completion'
+const DEEPSEEK_READY_BUTTON_SELECTOR = 'div[role="button"][class*="bd74640a"]'
+const DEEPSEEK_TOGGLE_BUTTON_SELECTOR = 'div.f79352dc'
+const DEEPSEEK_UPLOAD_BUTTON_SELECTOR = 'div[role="button"].f02f0e25'
+const DEEPSEEK_SEND_BUTTON_SELECTOR = 'div._52c986b'
+const DEEPSEEK_SEND_BUTTON_DISABLED_CLASS = 'ds-button--disabled'
+const DEEPSEEK_MODEL_BUTTON_SELECTOR =
+  'div.b0db7355 div[role="radio"][data-model-type]'
+const DEEPSEEK_STOP_ICON_PATH_PREFIX =
+  'M2 4.88C2 3.68009 2 3.08013 2.30557 2.65954C2.40426 2.52371 2.52371 2.40426 2.65954'
+const DEEPSEEK_SUBMIT_RESPONSE_TIMEOUT_MS = 300000
+
+export type DeepSeekToggleCapability = 'thinking' | 'search'
+export type DeepSeekToggleState = 'on' | 'off'
+
+type DeepSeekParsedResponse = {
+  messageId?: number
+  parentId?: number
+  text: string
+  isFinished: boolean
+}
+
+type DeepSeekResponseFragment = {
+  type: string | null
+  content: string
+}
+
+function readDeepSeekConversationIdFromUrl(
+  value: string | null | undefined
+): string | undefined {
+  if (!value) {
+    return undefined
+  }
+  try {
+    const url = new URL(value)
+    if (url.hostname !== 'chat.deepseek.com') {
+      return undefined
+    }
+    const match = url.pathname.match(/^\/a\/chat\/s\/([^/?#]+)/)
+    return match?.[1] ? decodeURIComponent(match[1]) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export class DeepSeekAdapter extends ProviderAdapter {
+  private conversationIdVal!: string | null
+
+  private getReadyButton() {
+    return this.page.locator(DEEPSEEK_READY_BUTTON_SELECTOR).first()
+  }
+
+  private getToggleButton(capability: DeepSeekToggleCapability) {
+    const index = capability === 'thinking' ? 0 : 1
+    return this.page.locator(DEEPSEEK_TOGGLE_BUTTON_SELECTOR).nth(index)
+  }
+
+  private getUploadButton() {
+    return this.page.locator(DEEPSEEK_UPLOAD_BUTTON_SELECTOR).first()
+  }
+
+  private getSendButton() {
+    return this.page.locator(DEEPSEEK_SEND_BUTTON_SELECTOR).first()
+  }
+
+  private async isSendButtonReady(): Promise<boolean> {
+    const sendButton = this.getSendButton()
+    const className = await sendButton.getAttribute('class').catch(() => null)
+    return (
+      (await sendButton.isEnabled().catch(() => false)) &&
+      (await sendButton.isVisible().catch(() => false)) &&
+      !className?.split(/\s+/).includes(DEEPSEEK_SEND_BUTTON_DISABLED_CLASS)
+    )
+  }
+
+  public async hasToggleCapability(
+    capability: DeepSeekToggleCapability
+  ): Promise<boolean> {
+    const requiredCount = capability === 'thinking' ? 1 : 2
+    const count = await this.wrapAdapterActionErrorAsync(
+      `${capability}Available`,
+      async () =>
+        await this.page.locator(DEEPSEEK_TOGGLE_BUTTON_SELECTOR).count()
+    )
+    return count >= requiredCount
+  }
+
+  public async getToggleState(
+    capability: DeepSeekToggleCapability
+  ): Promise<DeepSeekToggleState> {
+    if (!(await this.hasToggleCapability(capability))) {
+      throw new ProviderAdapterUnsupportedError(
+        `${capability}Status`,
+        `DeepSeek ${capability} capability is not available on this page.`
+      )
+    }
+
+    const value = await this.wrapAdapterActionErrorAsync(
+      `${capability}Status`,
+      async () =>
+        await this.getToggleButton(capability).getAttribute('aria-pressed')
+    )
+    return value === 'true' ? 'on' : 'off'
+  }
+
+  public async setToggleState(
+    capability: DeepSeekToggleCapability,
+    targetState: DeepSeekToggleState
+  ): Promise<DeepSeekToggleState> {
+    return await this.wrapAdapterActionErrorAsync(
+      `${capability}Set`,
+      async () => {
+        const button = this.getToggleButton(capability)
+        const currentState = await this.getToggleState(capability)
+        if (currentState !== targetState) {
+          await button.click()
+        }
+        return await this.getToggleState(capability)
+      }
+    )
+  }
+
+  private async waitForReadyButton(
+    action: 'restore' | 'submit',
+    timeoutMs: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const readyButton = this.getReadyButton()
+    await waitAsync(
+      async () => await readyButton.isVisible().catch(() => false),
+      {
+        timeoutMs,
+        signal,
+        onTimeout: async () => {
+          throw new ProviderAdapterError(
+            action,
+            action === 'restore'
+              ? 'DeepSeek did not become ready after loading.'
+              : 'DeepSeek finished responding, but the page did not become ready for the next message.',
+            {
+              kind: 'ui',
+              recovery: 'none',
+              retryable: false,
+              maxAttempts: 1,
+              detailCode: 'deepseek_ready_button_missing',
+            }
+          )
+        },
+      }
+    )
+  }
+
+  private isRetryableError(error: unknown): boolean {
+    if (error instanceof ProviderAdapterUnsupportedError) {
+      return false
+    }
+    if (error instanceof ProviderAdapterError) {
+      if (error.retryable) {
+        return true
+      }
+      return this.isRetryableError(error.cause)
+    }
+    if (!(error instanceof Error)) {
+      return false
+    }
+    const message = error.message.toLowerCase()
+    return (
+      message.includes('timed out') ||
+      message.includes('timeout') ||
+      message.includes('net::') ||
+      message.includes('network') ||
+      message.includes('socket') ||
+      message.includes('econnreset') ||
+      message.includes('econnrefused') ||
+      message.includes('connection closed') ||
+      message.includes('connection reset') ||
+      message.includes('target page, context or browser has been closed')
+    )
+  }
+
+  protected async init(options: AbortOptions = {}) {
+    await super.init(options)
+    const { signal } = options
+    this.conversationIdVal =
+      readDeepSeekConversationIdFromUrl(this.options.conversationUrl) ?? null
+    await this.restore({ signal })
+  }
+
+  public async restore(options: AbortOptions = {}): Promise<void> {
+    const { signal } = options
+    const isAvailable = async () => {
+      return this.page.url().startsWith(DEEPSEEK_CHAT_URL)
+    }
+    try {
+      await retryAsync(async () => {
+        await this.wrapAdapterActionErrorAsync('restore', async () => {
+          await abortable(
+            this.page.goto(this.conversationUrl, {
+              waitUntil: 'domcontentloaded',
+              timeout: 30000,
+            }),
+            signal
+          )
+          await waitAsync(async () => await isAvailable(), {
+            timeoutMs: 60000,
+            signal,
+          })
+        })
+      })
+      await waitAsync(async () => await isAvailable(), {
+        timeoutMs: 60000,
+        signal,
+      })
+      if (!(await this.isLoggedIn())) {
+        throw new ProviderAdapterError(
+          'restore',
+          'DeepSeek is not logged in for the current browser profile.',
+          {
+            kind: 'auth',
+            recovery: 'none',
+            retryable: false,
+            maxAttempts: 1,
+            detailCode: 'deepseek_signed_out',
+          }
+        )
+      }
+      await this.waitForReadyButton('restore', 60000, signal)
+    } catch (error) {
+      if (this.isRetryableError(error)) {
+        throw new ProviderAdapterError(
+          'restore',
+          'DeepSeek restore failed due to a temporary page or network issue.',
+          {
+            kind: 'transient',
+            recovery: 'restore',
+            retryable: true,
+            maxAttempts: 2,
+            detailCode: 'deepseek_restore_transient_failure',
+            cause: error,
+          }
+        )
+      }
+      throw error
+    }
+  }
+
+  public async loadHistory(options: AbortOptions = {}) {
+    throwIfAborted(options.signal)
+    const entry = (
+      await this.getCapturedHistoryEntries(
+        (candidate) =>
+          candidate.method === 'GET' &&
+          candidate.status === 200 &&
+          candidate.url.includes('/api/v0/chat/history_messages'),
+        options
+      )
+    ).find((candidate) => candidate.chunks.join('').trim())
+    if (entry === undefined) {
+      return emptyHistoryResult('DeepSeek history response was not captured.')
+    }
+    const result = parseDeepSeekHistory(entry.chunks.join(''))
+    if (result.complete) {
+      return result
+    }
+
+    const isHistoryResponse = (candidate: {
+      method: string
+      status: number | null
+      url: string
+    }) =>
+      candidate.method === 'GET' &&
+      candidate.status === 200 &&
+      candidate.url.includes('/api/v0/chat/history_messages')
+    const originalHeaders = await this.getCapturedHistoryRequestHeaders(
+      isHistoryResponse,
+      options
+    )
+    if (originalHeaders === null) {
+      return {
+        ...result,
+        complete: false,
+        warning:
+          'DeepSeek history is incomplete because Portal could not replay the authenticated full-history request.',
+      }
+    }
+    const replayHeaders = Object.fromEntries(
+      Object.entries(originalHeaders).filter(([name]) => {
+        const normalized = name.toLowerCase()
+        return normalized === 'authorization' || normalized.startsWith('x-')
+      })
+    )
+    const fullHistoryUrl = new URL(entry.url, DEEPSEEK_CHAT_URL)
+    fullHistoryUrl.searchParams.delete('cache_version')
+    fullHistoryUrl.searchParams.delete('cache_reset_at')
+
+    try {
+      const fullHistoryResponse = await abortable(
+        this.page.evaluate(
+          async ({ url, headers }) => {
+            const response = await fetch(url, {
+              credentials: 'include',
+              headers,
+            })
+            return {
+              body: await response.text(),
+              ok: response.ok,
+              status: response.status,
+            }
+          },
+          { url: fullHistoryUrl.toString(), headers: replayHeaders }
+        ),
+        options.signal
+      )
+      if (!fullHistoryResponse.ok) {
+        return {
+          ...result,
+          complete: false,
+          warning: `DeepSeek history is incomplete because the full-history request returned HTTP ${fullHistoryResponse.status}.`,
+        }
+      }
+      const fullResult = parseDeepSeekHistory(fullHistoryResponse.body)
+      if (fullResult.complete) {
+        return fullResult
+      }
+      return fullResult.messages.length > result.messages.length
+        ? fullResult
+        : result
+    } catch (error) {
+      if (isAbortError(error)) throw error
+      return {
+        ...result,
+        complete: false,
+        warning:
+          'DeepSeek history is incomplete because the full-history request failed.',
+      }
+    }
+  }
+
+  public async isLoggedIn(): Promise<boolean> {
+    return (
+      this.page.url().startsWith(DEEPSEEK_CHAT_URL) &&
+      !this.page.url().includes('/sign_in')
+    )
+  }
+
+  public async changeModel(model: string): Promise<void> {
+    const modelNumber = Number(model.trim())
+    if (!Number.isSafeInteger(modelNumber) || modelNumber < 1) {
+      throw new ProviderAdapterUnsupportedError(
+        'changeModel',
+        `DeepSeek does not support model "${model}".`
+      )
+    }
+
+    const modelIndex = modelNumber - 1
+    const modelButtons = this.page.locator(DEEPSEEK_MODEL_BUTTON_SELECTOR)
+    if ((await modelButtons.count()) <= modelIndex) {
+      throw new ProviderAdapterUnsupportedError(
+        'changeModel',
+        `DeepSeek does not have model ${modelNumber}.`
+      )
+    }
+    await modelButtons.nth(modelIndex).click()
+  }
+
+  public async attachText(text: string) {
+    await this.wrapAdapterActionErrorAsync('attachText', async () => {
+      await this.page.locator('textarea').click()
+      await this.page.keyboard.insertText(text)
+    })
+  }
+
+  public async attachFile(path: string | readonly string[]) {
+    await this.wrapAdapterActionErrorAsync('attachFile', async () => {
+      const uploadButtons = this.page.locator(DEEPSEEK_UPLOAD_BUTTON_SELECTOR)
+      if ((await uploadButtons.count()) === 0) {
+        throw new ProviderAdapterUnsupportedError(
+          'attachFile',
+          'DeepSeek file upload is not available in the current conversation.'
+        )
+      }
+
+      const uploadButton = this.getUploadButton()
+      const isAvailable =
+        (await uploadButton.isVisible().catch(() => false)) &&
+        (await uploadButton.isEnabled().catch(() => false))
+      if (!isAvailable) {
+        throw new ProviderAdapterUnsupportedError(
+          'attachFile',
+          'DeepSeek file upload is not available in the current conversation.'
+        )
+      }
+
+      const [fileChooser] = await Promise.all([
+        this.page.waitForEvent('filechooser'),
+        uploadButton.click(),
+      ])
+      await fileChooser.setFiles(path)
+    })
+  }
+
+  public async attachImage(path: string | readonly string[]) {
+    await this.attachFile(path)
+  }
+
+  public override async stopGeneration(): Promise<void> {
+    const stopButton = this.page.locator(
+      `div[role="button"]:has(svg[viewBox="0 0 16 16"] path[d^="${DEEPSEEK_STOP_ICON_PATH_PREFIX}"])`
+    )
+
+    await this.clickLocatorIfReady(stopButton)
+  }
+
+  private isTargetCompletionRequest(
+    request: import('playwright').Request
+  ): boolean {
+    return (
+      request.method() === 'POST' &&
+      request.url().startsWith(DEEPSEEK_CHAT_COMPLETION_URL)
+    )
+  }
+
+  protected getSubmitBlockedWarningMessage(): string {
+    return buildSubmitBlockedWarningMessage('DeepSeek')
+  }
+
+  protected getSubmitResponseTimeoutMs(): number {
+    return DEEPSEEK_SUBMIT_RESPONSE_TIMEOUT_MS
+  }
+
+  private async readCurrentStreamedResponseText(
+    fetchCaptureStartIndex: number
+  ): Promise<string | null> {
+    const parsedResponse = await this.readCurrentCapturedResponse(
+      fetchCaptureStartIndex
+    )
+    const text = parsedResponse?.text.trim() ?? ''
+    return text ? parsedResponse!.text : null
+  }
+
+  private async readCurrentCapturedResponse(
+    fetchCaptureStartIndex: number
+  ): Promise<DeepSeekParsedResponse | null> {
+    const raw = await this.readCurrentCapturedRawResponse(
+      fetchCaptureStartIndex
+    )
+    return raw === null ? null : this.parseResponse(raw)
+  }
+
+  private async readCurrentCapturedRawResponse(
+    fetchCaptureStartIndex: number
+  ): Promise<string | null> {
+    return await this.getLatestCapturedFetchBody(
+      fetchCaptureStartIndex,
+      (entry) =>
+        entry.method === 'POST' &&
+        (entry.url === '/api/v0/chat/completion' ||
+          entry.url.endsWith('/api/v0/chat/completion') ||
+          entry.url.startsWith(DEEPSEEK_CHAT_COMPLETION_URL))
+    )
+  }
+
+  private async waitForCapturedFinishedResponse(
+    fetchCaptureStartIndex: number,
+    signal?: AbortSignal
+  ): Promise<DeepSeekParsedResponse> {
+    let parsedResponse: DeepSeekParsedResponse | null = null
+
+    await waitAsync(
+      async () => {
+        const rawResponse = await abortable(
+          this.readCurrentCapturedRawResponse(fetchCaptureStartIndex),
+          signal
+        )
+        if (rawResponse === null) {
+          return false
+        }
+
+        parsedResponse = this.parseResponse(rawResponse)
+        return parsedResponse?.isFinished === true
+      },
+      {
+        timeoutMs: this.getSubmitResponseTimeoutMs(),
+        signal,
+        onTimeout: async () => {
+          throw new Error(
+            'Timed out waiting for DeepSeek response to reach finished state.'
+          )
+        },
+      }
+    )
+
+    if (parsedResponse === null) {
+      throw new ProviderAdapterError(
+        'submit',
+        'Failed to parse DeepSeek response.',
+        {
+          kind: 'protocol',
+          recovery: 'none',
+          retryable: false,
+          maxAttempts: 1,
+          detailCode: 'deepseek_response_parse_failed',
+        }
+      )
+    }
+    return parsedResponse
+  }
+
+  public async submit(options: AbortOptions = {}): Promise<string> {
+    try {
+      return await this.wrapAdapterActionErrorAsync('submit', async () => {
+        const { signal } = options
+        throwIfAborted(signal)
+        const sendButton = this.getSendButton()
+        await waitAsync(async () => await this.isSendButtonReady(), {
+          timeoutMs: this.getSubmitResponseTimeoutMs(),
+          signal,
+        })
+        throwIfAborted(signal)
+        const fetchCaptureStartIndex = await this.getCapturedFetchEntryCount()
+        const requestStarted = createDeferred<void>()
+        const targetResponse = createDeferred<import('playwright').Response>()
+        let requestObserved = false
+        let responseObserved = false
+        let terminalError: unknown = null
+        let warningTimer: NodeJS.Timeout | null = null
+        let settled = false
+
+        const stopWarningTimer = () => {
+          if (warningTimer !== null) {
+            clearInterval(warningTimer)
+            warningTimer = null
+          }
+        }
+
+        const resolveRequestStarted = () => {
+          if (requestObserved) {
+            return
+          }
+          requestObserved = true
+          stopWarningTimer()
+          requestStarted.resolve()
+        }
+
+        const settleTargetResponse = (
+          resolution:
+            | { kind: 'resolve'; response: import('playwright').Response }
+            | { kind: 'reject'; error: unknown }
+        ) => {
+          if (settled) {
+            return
+          }
+          settled = true
+          stopWarningTimer()
+          if (resolution.kind === 'resolve') {
+            responseObserved = true
+            targetResponse.resolve(resolution.response)
+            return
+          }
+          terminalError = resolution.error
+          targetResponse.reject(resolution.error)
+        }
+
+        const onRequest = (request: import('playwright').Request) => {
+          if (!this.isTargetCompletionRequest(request)) {
+            return
+          }
+          resolveRequestStarted()
+        }
+
+        const onRequestFailed = (request: import('playwright').Request) => {
+          if (!this.isTargetCompletionRequest(request)) {
+            return
+          }
+          resolveRequestStarted()
+          const failureText =
+            request.failure()?.errorText ?? 'unknown network failure'
+          settleTargetResponse({
+            kind: 'reject',
+            error: new ProviderAdapterError(
+              'submit',
+              `DeepSeek request failed before a response was received: ${failureText}`,
+              {
+                kind: 'transient',
+                recovery: 'restore',
+                retryable: true,
+                maxAttempts: 2,
+                detailCode: 'deepseek_submit_request_failed',
+              }
+            ),
+          })
+        }
+
+        const onResponse = (response: import('playwright').Response) => {
+          if (!this.isTargetCompletionRequest(response.request())) {
+            return
+          }
+          resolveRequestStarted()
+          settleTargetResponse({ kind: 'resolve', response })
+        }
+
+        const onClose = () => {
+          settleTargetResponse({
+            kind: 'reject',
+            error: new Error(
+              'Target page, context or browser has been closed.'
+            ),
+          })
+        }
+
+        this.page.on('request', onRequest)
+        this.page.on('requestfailed', onRequestFailed)
+        this.page.on('response', onResponse)
+        this.page.on('close', onClose)
+
+        let stopSubmitTextPolling = () => {}
+        try {
+          stopSubmitTextPolling = this.startSubmitTextPolling(
+            async () =>
+              await this.readCurrentStreamedResponseText(fetchCaptureStartIndex)
+          )
+          await sendButton.click()
+          throwIfAborted(signal)
+
+          await abortable(
+            Promise.race([
+              delayAsync(this.getSubmitRequestStartGraceMs(), signal),
+              requestStarted.promise,
+              targetResponse.promise,
+            ]).catch(() => {}),
+            signal
+          )
+
+          if (!requestObserved && !responseObserved && terminalError === null) {
+            const warningMessage = this.getSubmitBlockedWarningMessage()
+            await this.emitSubmitStatus(warningMessage)
+            warningTimer = setInterval(() => {
+              void this.emitSubmitStatusSafely(warningMessage)
+            }, this.getSubmitBlockedWarningIntervalMs())
+
+            await abortable(
+              Promise.race([requestStarted.promise, targetResponse.promise]),
+              signal
+            )
+          }
+
+          await awaitWithTimeout(
+            targetResponse.promise,
+            this.getSubmitResponseTimeoutMs(),
+            () =>
+              new Error(
+                'Timed out waiting for DeepSeek response after the request started.'
+              ),
+            { signal }
+          )
+          const parsedResponse = await this.waitForCapturedFinishedResponse(
+            fetchCaptureStartIndex,
+            signal
+          )
+          await this.waitForReadyButton(
+            'submit',
+            this.getSubmitResponseTimeoutMs(),
+            signal
+          )
+          this.conversationIdVal =
+            this.conversationIdVal ??
+            this.page.url().match(/\/a\/chat\/s\/([^/?#]+)/)?.[1] ??
+            null
+          await this.emitSubmitText(parsedResponse.text)
+          throwIfAborted(signal)
+          return parsedResponse.text
+        } finally {
+          stopSubmitTextPolling()
+          stopWarningTimer()
+          this.page.off('request', onRequest)
+          this.page.off('requestfailed', onRequestFailed)
+          this.page.off('response', onResponse)
+          this.page.off('close', onClose)
+        }
+      })
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error
+      }
+      if (this.isRetryableError(error)) {
+        throw new ProviderAdapterError(
+          'submit',
+          'DeepSeek submit failed due to a temporary page or network issue.',
+          {
+            kind: 'transient',
+            recovery: 'restore',
+            retryable: true,
+            maxAttempts: 2,
+            detailCode: 'deepseek_submit_transient_failure',
+            cause: error,
+          }
+        )
+      }
+      throw error
+    }
+  }
+
+  private parseResponse(raw: string): DeepSeekParsedResponse | null {
+    const lines = raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+    const fragments: DeepSeekResponseFragment[] = []
+    let messageId: number | undefined
+    let parentId: number | undefined
+    let isFinished = false
+
+    const appendTextToLastFragment = (value: unknown): void => {
+      if (typeof value === 'string') {
+        const lastFragment = fragments.at(-1)
+        if (lastFragment !== undefined) {
+          lastFragment.content += value
+          return
+        }
+        fragments.push({ type: 'RESPONSE', content: value })
+        return
+      }
+    }
+
+    const appendFragments = (value: unknown): void => {
+      if (!Array.isArray(value)) {
+        return
+      }
+      for (const fragment of value) {
+        if (
+          !fragment ||
+          typeof fragment !== 'object' ||
+          Array.isArray(fragment)
+        ) {
+          continue
+        }
+        const fragmentRecord = fragment as Record<string, unknown>
+        fragments.push({
+          type:
+            typeof fragmentRecord.type === 'string'
+              ? fragmentRecord.type
+              : null,
+          content:
+            typeof fragmentRecord.content === 'string'
+              ? fragmentRecord.content
+              : '',
+        })
+      }
+    }
+
+    const applyPatch = (patch: unknown): void => {
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+        return
+      }
+      const record = patch as Record<string, unknown>
+      const path = typeof record.p === 'string' ? record.p : ''
+      const op = typeof record.o === 'string' ? record.o : ''
+      const value = record.v
+
+      if (path === 'response/fragments/-1/content') {
+        appendTextToLastFragment(value)
+        return
+      }
+      if (path === 'response/fragments') {
+        appendFragments(value)
+        return
+      }
+      if (path === 'response/status' && op === 'SET' && value === 'FINISHED') {
+        isFinished = true
+        return
+      }
+      if (path === 'response' && op === 'BATCH' && Array.isArray(value)) {
+        for (const item of value) {
+          applyPatch(item)
+        }
+        return
+      }
+      if (path === 'accumulated_token_usage') {
+        return
+      }
+    }
+
+    for (const line of lines) {
+      if (line.startsWith('data:')) {
+        const payload = line.slice(5).trim()
+        if (!payload) {
+          continue
+        }
+
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(payload)
+        } catch {
+          continue
+        }
+
+        const record = parsed as Record<string, unknown>
+        if (
+          record.v &&
+          typeof record.v === 'object' &&
+          !Array.isArray(record.v)
+        ) {
+          const response = (record.v as Record<string, unknown>).response
+          if (
+            response &&
+            typeof response === 'object' &&
+            !Array.isArray(response)
+          ) {
+            const responseRecord = response as Record<string, unknown>
+            if (typeof responseRecord.message_id === 'number') {
+              messageId = responseRecord.message_id
+            }
+            if (typeof responseRecord.parent_id === 'number') {
+              parentId = responseRecord.parent_id
+            }
+            const fragmentsValue = responseRecord.fragments
+            if (Array.isArray(fragmentsValue)) {
+              appendFragments(fragmentsValue)
+            }
+          }
+          continue
+        }
+
+        if (record.p || record.o) {
+          applyPatch(record)
+          continue
+        }
+
+        if (typeof record.v === 'string') {
+          appendTextToLastFragment(record.v)
+        }
+      }
+    }
+
+    const text = fragments
+      .filter(
+        (fragment) => fragment.type === null || fragment.type === 'RESPONSE'
+      )
+      .map((fragment) => fragment.content)
+      .join('')
+      .trim()
+    if (!text) {
+      return null
+    }
+
+    return {
+      ...(messageId !== undefined ? { messageId } : {}),
+      ...(parentId !== undefined ? { parentId } : {}),
+      text,
+      isFinished,
+    }
+  }
+
+  public get conversationId(): string | null {
+    return this.conversationIdVal
+  }
+
+  public get conversationUrl(): string {
+    return new URL(
+      this.conversationId
+        ? `${DEEPSEEK_CHAT_URL}/a/chat/s/${this.conversationId}`
+        : DEEPSEEK_CHAT_URL
+    ).toString()
+  }
+}

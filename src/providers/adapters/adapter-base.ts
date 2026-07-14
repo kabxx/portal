@@ -1,0 +1,1070 @@
+import type { BrowserContext, CDPSession, Page, Response } from 'playwright'
+import {
+  abortable,
+  type AbortOptions,
+  isAbortError,
+} from '../../runtime/runtime-cancellation.ts'
+import { abortableSleep } from '../../shared/sleep.ts'
+import {
+  emptyHistoryResult,
+  type ConversationHistoryResult,
+} from '../conversation-history.ts'
+
+export type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
+
+export const DEFAULT_SUBMIT_REQUEST_START_GRACE_MS = 30000
+export const DEFAULT_SUBMIT_BLOCKED_WARNING_INTERVAL_MS = 30000
+const HISTORY_CAPTURE_WAIT_MS = 15000
+const HISTORY_CAPTURE_POLL_MS = 100
+
+export type ProviderAdapterErrorKind =
+  | 'unsupported'
+  | 'auth'
+  | 'transient'
+  | 'ui'
+  | 'protocol'
+  | 'rate_limit'
+  | 'unknown'
+
+export type ProviderAdapterRecoveryAction =
+  | 'none'
+  | 'retry'
+  | 'restore'
+  | 'reload'
+
+export interface ProviderAdapterErrorOptions {
+  adapter?: ProviderAdapter | null
+  kind?: ProviderAdapterErrorKind
+  recovery?: ProviderAdapterRecoveryAction
+  retryable?: boolean
+  maxAttempts?: number
+  detailCode?: string | null
+  cause?: unknown
+}
+
+export class ProviderAdapterError extends Error {
+  public kind: ProviderAdapterErrorKind
+  public recovery: ProviderAdapterRecoveryAction
+  public retryable: boolean
+  public maxAttempts: number
+  public detailCode: string | null
+  public adapter: ProviderAdapter | null
+  public readonly cause?: unknown
+
+  constructor(
+    public readonly action: string,
+    message: string,
+    {
+      adapter = null,
+      kind = 'unknown',
+      recovery = 'none',
+      retryable = false,
+      maxAttempts = 1,
+      detailCode = null,
+      cause,
+    }: ProviderAdapterErrorOptions = {}
+  ) {
+    super(message)
+    this.name = 'ProviderAdapterError'
+    this.kind = kind
+    this.recovery = recovery
+    this.retryable = retryable
+    this.maxAttempts = Math.max(1, Math.trunc(maxAttempts))
+    this.detailCode = detailCode
+    this.adapter = adapter
+    this.cause = cause
+  }
+}
+
+export class ProviderAdapterActionError extends ProviderAdapterError {
+  constructor(
+    public readonly action: string,
+    message: string,
+    public readonly cause?: unknown
+  ) {
+    super(action, message, {
+      kind: 'unknown',
+      recovery: 'none',
+      retryable: false,
+      maxAttempts: 1,
+      cause,
+    })
+    this.name = 'ProviderAdapterActionError'
+  }
+}
+
+export class ProviderAdapterRetryableError extends ProviderAdapterActionError {
+  constructor(
+    public readonly action: string,
+    message: string,
+    public readonly cause?: unknown
+  ) {
+    super(action, message, cause)
+    this.name = 'ProviderAdapterRetryableError'
+    this.retryable = true
+    this.recovery = 'restore'
+    this.maxAttempts = 2
+    this.kind = 'transient'
+  }
+}
+
+export class ProviderAdapterUnsupportedError extends ProviderAdapterError {
+  constructor(
+    public readonly action: string,
+    message: string
+  ) {
+    super(action, message, {
+      kind: 'unsupported',
+      recovery: 'none',
+      retryable: false,
+      maxAttempts: 1,
+      cause: null,
+    })
+    this.name = 'ProviderAdapterUnsupportedError'
+  }
+}
+
+export function isProviderAdapterError(
+  error: unknown
+): error is ProviderAdapterError {
+  return error instanceof ProviderAdapterError
+}
+
+export interface ProviderAdapterOptions {
+  model: string | null
+  skipSetup?: boolean
+  signal?: AbortSignal | undefined
+}
+
+export interface ProviderAdapterCreateOptions {
+  conversationUrl?: string | null
+  signal?: AbortSignal | undefined
+}
+
+export function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve
+    reject = innerReject
+  })
+  return { promise, resolve, reject }
+}
+
+export function delayAsync(
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<void> {
+  return abortableSleep(timeoutMs, signal)
+}
+
+export function awaitWithTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  onTimeout: () => Error,
+  options: AbortOptions = {}
+): Promise<T> {
+  return abortable(
+    new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(onTimeout())
+      }, timeoutMs)
+
+      void promise.then(
+        (value) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        (error) => {
+          clearTimeout(timer)
+          reject(error)
+        }
+      )
+    }),
+    options.signal
+  )
+}
+
+export function buildSubmitBlockedWarningMessage(providerName: string): string {
+  return [
+    `${providerName} submit has not started a provider request yet.`,
+    'Check the browser and complete any verification if needed.',
+    'Waiting for the page to resume or for a new request to start.',
+  ].join('\n')
+}
+
+export interface CapturedFetchEntry {
+  id: number
+  url: string
+  method: string
+  status: number | null
+  chunks: string[]
+  done: boolean
+  error: string | null
+}
+
+interface CapturedCdpResponse {
+  id: number
+  requestId: string
+  url: string
+  method: string
+  status: number | null
+  completed: ReturnType<typeof createDeferred<void>>
+  error: string | null
+}
+
+const FETCH_CAPTURE_INIT_SCRIPT = String.raw`
+(() => {
+  const install = () => {
+    const globalObject = globalThis;
+    if (globalObject.__portalFetchCaptureInstalled === true) {
+      return;
+    }
+    if (globalObject.__portalFetchCaptureInstalling === true) {
+      return;
+    }
+
+    try {
+    globalObject.__portalFetchCaptureInstalling = true;
+    globalObject.__portalFetchCaptureLastError = null;
+    globalObject.__portalFetchCaptureEntries ??= [];
+    globalObject.__portalFetchCaptureNextEntryId ??= 1;
+
+    const registerEntry = (entry) => {
+      globalObject.__portalFetchCaptureEntries?.push(entry);
+      return entry;
+    };
+
+    globalObject.__portalGetFetchCaptureEntries = (startIndex = 0) => {
+      const safeStartIndex = Number.isFinite(startIndex)
+        ? Math.max(0, Math.floor(startIndex))
+        : 0;
+      return (globalObject.__portalFetchCaptureEntries ?? [])
+        .slice(safeStartIndex)
+        .map((entry) => ({
+          ...entry,
+          chunks: [...entry.chunks],
+        }));
+    };
+
+    const scheduleRetry = () => {
+      globalObject.__portalFetchCaptureInstalling = false;
+      setTimeout(() => {
+        globalObject.__portalFetchCaptureInstalled = false;
+        globalObject.__portalFetchCaptureLastError = null;
+        install();
+      }, 0);
+    };
+
+    const fetchValue = globalObject.fetch;
+    if (typeof fetchValue !== 'function') {
+      scheduleRetry();
+      return;
+    }
+
+    const OriginalXMLHttpRequest = globalObject.XMLHttpRequest;
+    if (typeof OriginalXMLHttpRequest !== 'function') {
+      scheduleRetry();
+      return;
+    }
+
+    if (!globalObject.__portalOriginalFetch) {
+      globalObject.__portalOriginalFetch = fetchValue.bind(globalObject);
+    }
+    if (!globalObject.__portalOriginalXMLHttpRequest) {
+      globalObject.__portalOriginalXMLHttpRequest = OriginalXMLHttpRequest;
+    }
+
+    globalObject.fetch = async (...args) => {
+      const requestLike = args[0];
+      const init = args[1];
+      const url =
+        typeof requestLike === 'string'
+          ? requestLike
+          : requestLike instanceof Request
+            ? requestLike.url
+            : String(requestLike);
+      const method = (
+        init?.method ??
+        (requestLike instanceof Request ? requestLike.method : null) ??
+        'GET'
+      ).toUpperCase();
+
+      const response = await globalObject.__portalOriginalFetch(...args);
+      const entry = registerEntry({
+        id: globalObject.__portalFetchCaptureNextEntryId,
+        url,
+        method,
+        status: Number.isFinite(response.status) ? response.status : null,
+        chunks: [],
+        done: false,
+        error: null,
+      });
+      globalObject.__portalFetchCaptureNextEntryId += 1;
+
+      const clone = response.clone();
+      const reader = clone.body?.getReader() ?? null;
+      const decoder = new TextDecoder('utf-8');
+
+      const finalize = () => {
+        if (!entry.done) {
+          const remainder = decoder.decode();
+          if (remainder) {
+            entry.chunks.push(remainder);
+          }
+          entry.done = true;
+        }
+      };
+
+      if (reader === null) {
+        void clone
+          .text()
+          .then((text) => {
+            if (text) {
+              entry.chunks.push(text);
+            }
+            finalize();
+          })
+          .catch((error) => {
+            entry.error = String(error);
+            finalize();
+          });
+        return response;
+      }
+
+      void (async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              finalize();
+              break;
+            }
+            const chunk = decoder.decode(value, { stream: true });
+            if (chunk) {
+              entry.chunks.push(chunk);
+            }
+          }
+        } catch (error) {
+          entry.error = String(error);
+          finalize();
+        }
+      })();
+
+      return response;
+    };
+
+    const xhrPrototype = globalObject.__portalOriginalXMLHttpRequest.prototype;
+    if (!xhrPrototype.__portalOriginalOpen) {
+      xhrPrototype.__portalOriginalOpen = xhrPrototype.open;
+    }
+    if (!xhrPrototype.__portalOriginalSend) {
+      xhrPrototype.__portalOriginalSend = xhrPrototype.send;
+    }
+    if (!xhrPrototype.__portalPatched) {
+      xhrPrototype.open = function(method, url, async, username, password) {
+        this.__portalMethod = method.toUpperCase();
+        this.__portalUrl = String(url);
+        return xhrPrototype.__portalOriginalOpen.call(
+          this,
+          method,
+          url,
+          async ?? true,
+          username ?? undefined,
+          password ?? undefined
+        );
+      };
+
+      xhrPrototype.send = function(body) {
+        this.__portalEntry = registerEntry({
+          id: globalObject.__portalFetchCaptureNextEntryId,
+          url: this.__portalUrl ?? '',
+          method: this.__portalMethod ?? 'GET',
+          status: null,
+          chunks: [],
+          done: false,
+          error: null,
+        });
+        globalObject.__portalFetchCaptureNextEntryId += 1;
+        this.__portalLastResponseTextLength = 0;
+
+        const appendResponseDelta = () => {
+          if (this.__portalEntry === null || typeof this.responseText !== 'string') {
+            return;
+          }
+          const nextResponseText = this.responseText;
+          if (nextResponseText.length <= this.__portalLastResponseTextLength) {
+            return;
+          }
+          this.__portalEntry.chunks.push(
+            nextResponseText.slice(this.__portalLastResponseTextLength)
+          );
+          this.__portalLastResponseTextLength = nextResponseText.length;
+        };
+
+        this.addEventListener('progress', appendResponseDelta);
+        this.addEventListener('readystatechange', () => {
+          if (this.__portalEntry === null) {
+            return;
+          }
+          this.__portalEntry.status = Number.isFinite(this.status)
+            ? this.status
+            : null;
+          if (this.readyState === this.DONE) {
+            appendResponseDelta();
+            this.__portalEntry.done = true;
+          }
+        });
+        this.addEventListener('error', () => {
+          if (this.__portalEntry !== null) {
+            this.__portalEntry.error = 'XMLHttpRequest failed.';
+            this.__portalEntry.done = true;
+          }
+        });
+        this.addEventListener('abort', () => {
+          if (this.__portalEntry !== null) {
+            this.__portalEntry.error = 'XMLHttpRequest aborted.';
+            this.__portalEntry.done = true;
+          }
+        });
+        this.addEventListener('loadend', () => {
+          if (this.__portalEntry !== null) {
+            appendResponseDelta();
+            this.__portalEntry.status = Number.isFinite(this.status)
+              ? this.status
+              : null;
+            this.__portalEntry.done = true;
+          }
+        });
+
+        return xhrPrototype.__portalOriginalSend.call(this, body);
+      };
+
+      xhrPrototype.__portalPatched = true;
+    }
+    globalObject.__portalFetchCaptureInstalling = false;
+    globalObject.__portalFetchCaptureInstalled = true;
+    } catch (error) {
+      globalObject.__portalFetchCaptureLastError = String(error);
+      globalObject.__portalFetchCaptureInstalling = false;
+    }
+  };
+  install();
+})();
+`
+
+export abstract class ProviderAdapter {
+  protected context: BrowserContext
+  protected page!: Page
+  private submitStatusReporter:
+    | ((message: string) => void | Promise<void>)
+    | null = null
+  private submitTextReporter:
+    | ((message: string) => void | Promise<void>)
+    | null = null
+  private fetchCaptureInitialized = false
+  private readonly capturedPageResponses: Response[] = []
+  private readonly capturedPageResponseBodies = new WeakMap<
+    Response,
+    Promise<{ body: string; error: string | null }>
+  >()
+  private pageResponseListener: ((response: Response) => void) | null = null
+  private cdpSession: CDPSession | null = null
+  private cdpCacheDisabled = false
+  private nextCdpResponseId = 1
+  private readonly capturedCdpRequests = new Map<
+    string,
+    { url: string; method: string; headers: Record<string, string> }
+  >()
+  private readonly capturedCdpResponses = new Map<string, CapturedCdpResponse>()
+  private readonly capturedCdpResponseBodies = new Map<
+    string,
+    Promise<{ body: string; error: string | null }>
+  >()
+
+  public constructor(
+    context: BrowserContext,
+    protected readonly options: ProviderAdapterCreateOptions = {}
+  ) {
+    this.context = context
+  }
+
+  public static async create<T extends ProviderAdapter>(
+    this: new (
+      context: BrowserContext,
+      options?: ProviderAdapterCreateOptions
+    ) => T,
+    context: BrowserContext,
+    options: ProviderAdapterCreateOptions = {}
+  ): Promise<T> {
+    const instance = new this(context, options)
+    try {
+      await instance.init({ signal: options.signal })
+      return instance
+    } catch (error) {
+      if (error instanceof ProviderAdapterError && error.kind === 'auth') {
+        error.adapter = instance
+        throw error
+      }
+      await instance.close().catch(() => {})
+      throw error
+    }
+  }
+
+  protected async init(_options: AbortOptions = {}) {
+    this.page = await this.context.newPage()
+    if (this.options.conversationUrl && typeof this.page.on === 'function') {
+      this.pageResponseListener = (response) => {
+        this.capturedPageResponses.push(response)
+        if (this.capturedPageResponses.length > 500) {
+          this.capturedPageResponses.shift()
+        }
+      }
+      this.page.on('response', this.pageResponseListener)
+    }
+    if (this.options.conversationUrl) {
+      await this.startCdpHistoryCapture()
+    }
+    await this.ensureFetchCaptureInstalled()
+  }
+
+  public async close() {
+    if (!this.page) {
+      return
+    }
+    await this.finishHistoryCapture()
+    await this.page.close()
+  }
+
+  public async finishHistoryCapture(): Promise<void> {
+    await this.restoreCdpCache()
+    if (
+      this.pageResponseListener !== null &&
+      typeof this.page?.off === 'function'
+    ) {
+      this.page.off('response', this.pageResponseListener)
+    }
+    this.pageResponseListener = null
+    await this.cdpSession?.detach().catch(() => {})
+    this.cdpSession = null
+    this.capturedPageResponses.length = 0
+    this.capturedCdpRequests.clear()
+    this.capturedCdpResponses.clear()
+    this.capturedCdpResponseBodies.clear()
+  }
+
+  public abstract restore(options?: AbortOptions): Promise<void>
+  public abstract isLoggedIn(): Promise<boolean>
+  public abstract get conversationId(): string | null
+  public abstract get conversationUrl(): string
+
+  public async loadHistory(
+    _options: AbortOptions = {}
+  ): Promise<ConversationHistoryResult> {
+    return emptyHistoryResult(
+      'This provider does not expose a history parser yet.'
+    )
+  }
+
+  public async pause() {
+    await this.page.pause()
+  }
+
+  public async stopGeneration(): Promise<void> {
+    return undefined
+  }
+
+  protected async clickLocatorIfReady(locator: {
+    count: () => Promise<number>
+    first: () => {
+      isVisible: () => Promise<boolean>
+      isEnabled?: () => Promise<boolean>
+      click: (options?: { force?: boolean }) => Promise<void>
+    }
+  }): Promise<boolean> {
+    if ((await locator.count().catch(() => 0)) === 0) {
+      return false
+    }
+    const target = locator.first()
+    if (!(await target.isVisible().catch(() => false))) {
+      return false
+    }
+    try {
+      await target.click()
+      return true
+    } catch {
+      return await target
+        .click({ force: true })
+        .then(() => true)
+        .catch(() => false)
+    }
+  }
+
+  public setSubmitStatusReporter(
+    reporter: ((message: string) => void | Promise<void>) | null
+  ) {
+    this.submitStatusReporter = reporter
+  }
+
+  public setSubmitTextReporter(
+    reporter: ((message: string) => void | Promise<void>) | null
+  ) {
+    this.submitTextReporter = reporter
+  }
+
+  public abstract changeModel(model: string): Promise<void>
+  public abstract attachText(text: string): Promise<void>
+  public abstract attachFile(path: string | readonly string[]): Promise<void>
+  public abstract attachImage(path: string | readonly string[]): Promise<void>
+  public abstract submit(options?: AbortOptions): Promise<string>
+
+  protected async emitSubmitStatus(message: string): Promise<void> {
+    await this.submitStatusReporter?.(message)
+  }
+
+  protected async emitSubmitStatusSafely(message: string): Promise<void> {
+    await this.emitSubmitStatus(message).catch(() => {})
+  }
+
+  protected async emitSubmitText(message: string): Promise<void> {
+    await this.submitTextReporter?.(message)
+  }
+
+  protected getSubmitRequestStartGraceMs(): number {
+    return DEFAULT_SUBMIT_REQUEST_START_GRACE_MS
+  }
+
+  protected getSubmitBlockedWarningIntervalMs(): number {
+    return DEFAULT_SUBMIT_BLOCKED_WARNING_INTERVAL_MS
+  }
+
+  protected async ensureFetchCaptureInstalled(): Promise<void> {
+    if (this.fetchCaptureInitialized) {
+      return
+    }
+
+    if (typeof this.page.addInitScript === 'function') {
+      await this.page
+        .addInitScript({ content: FETCH_CAPTURE_INIT_SCRIPT })
+        .catch(() => {})
+    }
+    if (typeof this.page.evaluate === 'function') {
+      await this.page.evaluate(FETCH_CAPTURE_INIT_SCRIPT).catch(() => {})
+    }
+    this.fetchCaptureInitialized = true
+  }
+
+  protected async getCapturedFetchEntries(
+    startIndex = 0
+  ): Promise<CapturedFetchEntry[]> {
+    await this.ensureFetchCaptureInstalled()
+    if (typeof this.page.evaluate !== 'function') {
+      return []
+    }
+
+    const entries = await this.page
+      .evaluate((startIndex) => {
+        const globalObject = globalThis as typeof globalThis & {
+          __portalGetFetchCaptureEntries?: (startIndex?: number) => Array<{
+            id: number
+            url: string
+            method: string
+            status: number | null
+            chunks: string[]
+            done: boolean
+            error: string | null
+          }>
+        }
+        return globalObject.__portalGetFetchCaptureEntries?.(startIndex) ?? []
+      }, startIndex)
+      .catch(() => [])
+
+    return Array.isArray(entries) ? (entries as CapturedFetchEntry[]) : []
+  }
+
+  protected async getCapturedHistoryEntries(
+    predicate: (entry: CapturedFetchEntry) => boolean,
+    options: AbortOptions = {}
+  ): Promise<CapturedFetchEntry[]> {
+    try {
+      let injectedEntries: CapturedFetchEntry[] = []
+      const deadline = Date.now() + HISTORY_CAPTURE_WAIT_MS
+      while (true) {
+        injectedEntries = (await this.getCapturedFetchEntries()).filter(
+          predicate
+        )
+        const hasPageResponse = this.capturedPageResponses.some(
+          (response, index) =>
+            predicate({
+              id: -(index + 1),
+              url: response.url(),
+              method: response.request().method(),
+              status: response.status(),
+              chunks: [],
+              done: true,
+              error: null,
+            })
+        )
+        const hasCdpResponse = [...this.capturedCdpResponses.values()].some(
+          (response) =>
+            predicate({
+              id: response.id,
+              url: response.url,
+              method: response.method,
+              status: response.status,
+              chunks: [],
+              done: false,
+              error: response.error,
+            })
+        )
+        if (injectedEntries.length > 0 || hasPageResponse || hasCdpResponse) {
+          break
+        }
+        const remainingMs = deadline - Date.now()
+        if (remainingMs <= 0) {
+          break
+        }
+        await abortableSleep(
+          Math.min(HISTORY_CAPTURE_POLL_MS, remainingMs),
+          options.signal
+        )
+      }
+      const pageResponses = this.capturedPageResponses
+        .map((response, index) => ({
+          response,
+          entry: {
+            id: -(index + 1),
+            url: response.url(),
+            method: response.request().method(),
+            status: response.status(),
+            chunks: [],
+            done: true,
+            error: null,
+          } satisfies CapturedFetchEntry,
+        }))
+        .filter(({ entry }) => predicate(entry))
+
+      const pageEntries = await Promise.all(
+        pageResponses.map(async ({ response, entry }) => {
+          let bodyPromise = this.capturedPageResponseBodies.get(response)
+          if (bodyPromise === undefined) {
+            bodyPromise = response.text().then(
+              (body) => ({ body, error: null }),
+              (error) => ({ body: '', error: String(error) })
+            )
+            this.capturedPageResponseBodies.set(response, bodyPromise)
+          }
+          const captured = await abortable(bodyPromise, options.signal)
+          return {
+            ...entry,
+            chunks: captured.body ? [captured.body] : [],
+            error: captured.error,
+          }
+        })
+      )
+      const cdpEntries = await this.getCapturedCdpHistoryEntries(
+        predicate,
+        options
+      )
+
+      return [...cdpEntries, ...pageEntries, ...injectedEntries]
+    } finally {
+      await this.restoreCdpCache()
+    }
+  }
+
+  protected async getCapturedHistoryRequestHeaders(
+    predicate: (entry: CapturedFetchEntry) => boolean,
+    options: AbortOptions = {}
+  ): Promise<Record<string, string> | null> {
+    const pageResponse = this.capturedPageResponses.find((response, index) =>
+      predicate({
+        id: -(index + 1),
+        url: response.url(),
+        method: response.request().method(),
+        status: response.status(),
+        chunks: [],
+        done: true,
+        error: null,
+      })
+    )
+    if (pageResponse !== undefined) {
+      try {
+        return await abortable(
+          pageResponse.request().allHeaders(),
+          options.signal
+        )
+      } catch (error) {
+        if (isAbortError(error)) throw error
+        return null
+      }
+    }
+
+    for (const response of this.capturedCdpResponses.values()) {
+      if (
+        !predicate({
+          id: response.id,
+          url: response.url,
+          method: response.method,
+          status: response.status,
+          chunks: [],
+          done: false,
+          error: response.error,
+        })
+      ) {
+        continue
+      }
+      return this.capturedCdpRequests.get(response.requestId)?.headers ?? null
+    }
+    return null
+  }
+
+  private async startCdpHistoryCapture(): Promise<void> {
+    if (typeof this.context.newCDPSession !== 'function') {
+      return
+    }
+    try {
+      const session = await this.context.newCDPSession(this.page)
+      this.cdpSession = session
+      session.on('Network.requestWillBeSent', (event) => {
+        const request = event as {
+          requestId: string
+          request: {
+            url: string
+            method: string
+            headers: Record<string, string | number>
+          }
+        }
+        this.capturedCdpRequests.set(request.requestId, {
+          url: request.request.url,
+          method: request.request.method,
+          headers: Object.fromEntries(
+            Object.entries(request.request.headers).map(([name, value]) => [
+              name,
+              String(value),
+            ])
+          ),
+        })
+      })
+      session.on('Network.responseReceived', (event) => {
+        const received = event as {
+          requestId: string
+          response: { url: string; status: number }
+        }
+        const request = this.capturedCdpRequests.get(received.requestId)
+        const existing = this.capturedCdpResponses.get(received.requestId)
+        existing?.completed.resolve()
+        this.capturedCdpResponses.set(received.requestId, {
+          id: this.nextCdpResponseId++,
+          requestId: received.requestId,
+          url: received.response.url,
+          method: request?.method ?? 'GET',
+          status: received.response.status,
+          completed: createDeferred<void>(),
+          error: null,
+        })
+        this.trimCapturedCdpResponses()
+      })
+      session.on('Network.loadingFinished', (event) => {
+        const finished = event as { requestId: string }
+        this.capturedCdpResponses.get(finished.requestId)?.completed.resolve()
+      })
+      session.on('Network.loadingFailed', (event) => {
+        const failed = event as { requestId: string; errorText: string }
+        const response = this.capturedCdpResponses.get(failed.requestId)
+        if (response !== undefined) {
+          response.error = failed.errorText
+          response.completed.resolve()
+        }
+      })
+      await session.send('Network.enable', {
+        maxTotalBufferSize: 64 * 1024 * 1024,
+        maxResourceBufferSize: 16 * 1024 * 1024,
+      })
+      await session.send('Network.setCacheDisabled', { cacheDisabled: true })
+      this.cdpCacheDisabled = true
+    } catch {
+      await this.cdpSession?.detach().catch(() => {})
+      this.cdpSession = null
+      this.cdpCacheDisabled = false
+    }
+  }
+
+  private async getCapturedCdpHistoryEntries(
+    predicate: (entry: CapturedFetchEntry) => boolean,
+    options: AbortOptions
+  ): Promise<CapturedFetchEntry[]> {
+    const session = this.cdpSession
+    if (session === null) {
+      return []
+    }
+    const responses = [...this.capturedCdpResponses.values()].filter(
+      (response) =>
+        predicate({
+          id: response.id,
+          url: response.url,
+          method: response.method,
+          status: response.status,
+          chunks: [],
+          done: false,
+          error: response.error,
+        })
+    )
+
+    return await Promise.all(
+      responses.map(async (response) => {
+        await abortable(response.completed.promise, options.signal)
+        let bodyPromise = this.capturedCdpResponseBodies.get(response.requestId)
+        if (bodyPromise === undefined) {
+          bodyPromise = session
+            .send('Network.getResponseBody', { requestId: response.requestId })
+            .then(
+              (value) => {
+                const result = value as {
+                  body: string
+                  base64Encoded: boolean
+                }
+                return {
+                  body: result.base64Encoded
+                    ? Buffer.from(result.body, 'base64').toString('utf8')
+                    : result.body,
+                  error: null,
+                }
+              },
+              (error) => ({ body: '', error: String(error) })
+            )
+          this.capturedCdpResponseBodies.set(response.requestId, bodyPromise)
+        }
+        const captured = await abortable(bodyPromise, options.signal)
+        return {
+          id: response.id,
+          url: response.url,
+          method: response.method,
+          status: response.status,
+          chunks: captured.body ? [captured.body] : [],
+          done: true,
+          error: response.error ?? captured.error,
+        }
+      })
+    )
+  }
+
+  private trimCapturedCdpResponses(): void {
+    while (this.capturedCdpResponses.size > 500) {
+      const requestId = this.capturedCdpResponses.keys().next().value
+      if (typeof requestId !== 'string') return
+      this.capturedCdpResponses.get(requestId)?.completed.resolve()
+      this.capturedCdpResponses.delete(requestId)
+      this.capturedCdpRequests.delete(requestId)
+      this.capturedCdpResponseBodies.delete(requestId)
+    }
+  }
+
+  private async restoreCdpCache(): Promise<void> {
+    if (!this.cdpCacheDisabled || this.cdpSession === null) {
+      return
+    }
+    this.cdpCacheDisabled = false
+    await this.cdpSession
+      .send('Network.setCacheDisabled', { cacheDisabled: false })
+      .catch(() => {})
+  }
+
+  protected async getCapturedFetchEntryCount(): Promise<number> {
+    await this.ensureFetchCaptureInstalled()
+    if (typeof this.page.evaluate !== 'function') {
+      return 0
+    }
+
+    const count = await this.page
+      .evaluate(() => {
+        const globalObject = globalThis as typeof globalThis & {
+          __portalFetchCaptureEntries?: unknown[]
+        }
+        return globalObject.__portalFetchCaptureEntries?.length ?? 0
+      })
+      .catch(() => 0)
+
+    return typeof count === 'number' && Number.isFinite(count) ? count : 0
+  }
+
+  protected async getLatestCapturedFetchBody(
+    startIndex: number,
+    predicate: (entry: CapturedFetchEntry) => boolean
+  ): Promise<string | null> {
+    const entries = (await this.getCapturedFetchEntries(startIndex)).filter(
+      predicate
+    )
+    const latestEntry = entries.at(-1) ?? null
+    if (latestEntry === null) {
+      return null
+    }
+
+    const body = latestEntry.chunks.join('')
+    return body.trim() ? body : null
+  }
+
+  protected startSubmitTextPolling(
+    readCurrentText: () => Promise<string | null>,
+    intervalMs = 50
+  ): () => void {
+    let stopped = false
+    let lastEmittedText = ''
+    let pollInFlight = false
+
+    const tick = async () => {
+      if (stopped || pollInFlight) {
+        return
+      }
+      pollInFlight = true
+      try {
+        const currentText = await readCurrentText()
+        if (!currentText || currentText === lastEmittedText) {
+          return
+        }
+        lastEmittedText = currentText
+        await this.emitSubmitText(currentText)
+      } catch (error) {
+        if (!isAbortError(error)) {
+          throw error
+        }
+      } finally {
+        pollInFlight = false
+      }
+    }
+
+    const timer = setInterval(() => {
+      void tick().catch(() => {})
+    }, intervalMs)
+    void tick().catch(() => {})
+
+    return () => {
+      stopped = true
+      clearInterval(timer)
+    }
+  }
+
+  protected async wrapAdapterActionErrorAsync<T>(
+    action: string,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    try {
+      return await fn()
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error
+      }
+      if (error instanceof ProviderAdapterError) {
+        throw error
+      }
+      throw new ProviderAdapterError(action, `Action failed during ${action}`, {
+        kind: 'unknown',
+        recovery: 'none',
+        retryable: false,
+        maxAttempts: 1,
+        detailCode: `${action}_failed`,
+        cause: error,
+      })
+    }
+  }
+}

@@ -1,0 +1,115 @@
+# Contributing
+
+[Back to README](../README.md)
+
+Contributions are welcome. portal is still evolving quickly, so small, focused changes with clear verification are easier to review and maintain.
+
+## Development setup
+
+Requirements:
+
+- Node.js 22 or newer;
+- npm;
+- Git;
+- a Chromium-based browser for real provider checks;
+- provider accounts for the adapters you intend to verify.
+
+Install dependencies and run the development CLI:
+
+```bash
+npm install
+npm run dev
+```
+
+## Verification commands
+
+```bash
+npm test
+npm run test:type
+npm run test:unit
+npm run fmt:check
+```
+
+Use `npm run fmt` only when you intend to rewrite formatting. Before submitting a change, review the final diff and make sure unrelated files were not modified.
+
+## Repository layout
+
+```text
+src/
+├── cli-commands/   # slash command infrastructure and implementations
+├── mcp/            # configuration, transports, per-thread sessions, rendering
+├── platform/       # browser launch and OS process handling
+├── providers/      # provider adapters and URL utilities
+├── runtime/        # setup, tool loop, cancellation, and recovery
+├── shared/         # small shared helpers
+├── skills/         # skill registry, library, downloader, and validation
+├── terminal-ui/    # Ink UI state and rendering
+├── threads/        # in-memory thread state and SQLite history
+└── tools/          # tool protocol, registry, and built-in tools
+
+test/               # node:test unit tests and fakes
+temp/               # provider samples, probes, and debug material
+```
+
+## Change guidelines
+
+- Keep the change limited to the requested behavior or reported bug.
+- Add or update tests for observable behavior.
+- Preserve cancellation and cleanup behavior in long-running operations.
+- Do not introduce a provider model API dependency; portal's boundary is the real web product.
+- Do not include browser profiles, cookies, conversation URLs, or other local data.
+- Update README or `docs/` when commands, behavior, storage, or security boundaries change.
+- Keep English and Chinese README behavior, examples, and command tables synchronized.
+
+## Provider adapter rules
+
+Provider adapters are the highest-maintenance part of portal. When changing `src/providers/`:
+
+- do not use translated or natural-language UI labels as selectors;
+- prefer `data-testid`, `data-test-id`, stable attributes, roles, DOM structure, and protocol events;
+- keep login detection, ready detection, response completion, and response parsing separate;
+- keep remote-history capture and parsing separate from live submit capture;
+- preserve streaming updates and cancellation behavior;
+- treat model-menu positions and account-dependent capabilities as unstable;
+- add parser fixtures or focused fake-page tests for every reproduced failure;
+- verify the real provider page when possible, because unit tests cannot detect an upstream redesign.
+
+If a temporary implementation must depend on visible text, call it out as a known fragile point in both code review and documentation.
+
+## Tool changes
+
+A tool is part of portal's local security boundary. New or changed tools should:
+
+- use a narrow input schema;
+- validate all required values;
+- return errors as observations instead of crashing the runtime;
+- propagate cancellation;
+- keep terminal display summaries separate from full model-facing results when output is large;
+- document filesystem, network, process, and credential impact in [Security](security.md).
+
+## Skills changes
+
+Skills changes should keep downloads and registry writes atomic, reject path escapes and symbolic links, apply bounded resource limits, and never overwrite a malformed user-edited registry.
+
+Add tests for manifest parsing, source resolution, archive handling, state changes, runtime catalogs, and `load_skill` output. Update [Skills](skills.md) when the accepted format or lifecycle changes.
+
+## MCP changes
+
+MCP changes should preserve per-thread connection ownership, close transports with their runtime, isolate invalid or unavailable servers, redact resolved environment values from errors, and avoid automatically retrying calls whose outcome may be unknown.
+
+Add focused tests for configuration parsing, environment expansion, CLI mutations, Tool cache refresh, connection isolation, Resources, Prompts, output limits, cancellation, and close behavior. Update [MCP](mcp.md) and [Security](security.md) when configuration fields, content support, or failure semantics change.
+
+## Documentation changes
+
+Document only behavior supported by the current code. Provider selectors and private history endpoints should be described as implementation details rather than stable upstream contracts. Check every relative Markdown link and keep examples free of real profile paths, credentials, and conversation ids.
+
+## Pull request checklist
+
+- [ ] The change has one clear purpose.
+- [ ] Relevant type checks and unit tests pass.
+- [ ] New behavior has focused tests.
+- [ ] Real browser behavior was checked when provider UI code changed, or the limitation is stated.
+- [ ] Documentation reflects user-visible and security-relevant changes.
+- [ ] No private profile data, response captures, or unrelated formatting changes are included.
+
+By contributing, you agree that your contribution may be distributed under the repository's [MIT License](../LICENSE).

@@ -1,0 +1,49 @@
+event: delta_encoding
+data: "synthetic-value"
+
+data: {"type":"resume_conversation_token","kind":"topic","token":"synthetic-resume-token","conversation_id":"conversation-fixture"}
+
+event: delta
+data: {"p":"","o":"add","v":{"message":{"id":"message-fixture","author":{"role":"system","name":null,"metadata":{}},"create_time":null,"update_time":null,"content":{"content_type":"text","parts":[""]},"status":"finished_successfully","end_turn":true,"weight":1,"metadata":{"model_switcher_deny":[],"is_visually_hidden_from_conversation":true},"recipient":"all","channel":null},"conversation_id":"conversation-fixture","error":null,"error_code":null},"c":0}
+
+event: delta
+data: {"v":{"message":{"id":"message-fixture","author":{"role":"system","name":null,"metadata":{}},"create_time":null,"update_time":null,"content":{"content_type":"text","parts":[""]},"status":"finished_successfully","end_turn":true,"weight":1,"metadata":{"rebase_developer_message":true,"model_switcher_deny":[],"is_visually_hidden_from_conversation":true},"recipient":"all","channel":null},"conversation_id":"conversation-fixture","error":null,"error_code":null},"c":0}
+
+event: delta
+data: {"v":{"message":{"id":"message-fixture","author":{"role":"system","name":null,"metadata":{}},"create_time":null,"update_time":null,"content":{"content_type":"text","parts":[""]},"status":"finished_successfully","end_turn":false,"weight":1,"metadata":{"model_switcher_deny":[],"is_visually_hidden_from_conversation":true},"recipient":"all","channel":null},"conversation_id":"conversation-fixture","error":null,"error_code":null},"c":0}
+
+event: delta
+data: {"v":{"message":{"id":"message-fixture","author":{"role":"system","name":null,"metadata":{}},"create_time":0,"update_time":null,"content":{"content_type":"text","parts":[""]},"status":"finished_successfully","end_turn":null,"weight":1,"metadata":{"request_id":"synthetic-id","message_source":null,"turn_exchange_id":"synthetic-id","working_turn_id":"synthetic-id","model_switcher_deny":[],"is_visually_hidden_from_conversation":true},"recipient":"all","channel":null},"conversation_id":"conversation-fixture","error":null,"error_code":null},"c":0}
+
+event: delta
+data: {"v":{"message":{"id":"message-fixture","author":{"role":"user","name":null,"metadata":{}},"create_time":0,"update_time":null,"content":{"content_type":"text","parts":["Synthetic fixture content"]},"status":"finished_successfully","end_turn":null,"weight":1,"metadata":{"serialization_metadata":{"custom_symbol_offsets":[]},"request_id":"synthetic-id","message_source":null,"turn_exchange_id":"synthetic-id","working_turn_id":"synthetic-id","resolved_model_slug":"synthetic-model","model_switcher_deny":[]},"recipient":"all","channel":null},"conversation_id":"conversation-fixture","error":null,"error_code":null},"c":0}
+
+data: {"type":"input_message","input_message":{"id":"message-fixture","author":{"role":"developer","name":null,"metadata":{"real_author":"synthetic-value"}},"create_time":0,"update_time":null,"content":{"content_type":"developer_content","instructions":["Synthetic fixture content"],"settings":null,"function_namespaces":null,"response_formats":null},"status":"finished_successfully","end_turn":null,"weight":1,"metadata":{"requires_genui":true,"exclude_from_autoswitcher_classification":true,"genui_prefetch":{"tool_names":["synthetic-value"],"always_trigger_tool_names":["synthetic-value"],"prefetch_groups":[]},"request_id":"synthetic-id","message_source":null,"turn_exchange_id":"synthetic-id","working_turn_id":"synthetic-id","turn_trace_id":"synthetic-id","parent_id":"message-fixture"},"recipient":"all","channel":null},"conversation_id":"conversation-fixture"}
+
+data: {"type":"input_message","input_message":{"id":"message-fixture","author":{"role":"user","name":null,"metadata":{}},"create_time":0,"update_time":null,"content":{"content_type":"text","parts":["Synthetic fixture content"]},"status":"finished_successfully","end_turn":null,"weight":1,"metadata":{"serialization_metadata":{"custom_symbol_offsets":[]},"request_id":"synthetic-id","otrace_id":"synthetic-id","message_source":null,"turn_exchange_id":"synthetic-id","working_turn_id":"synthetic-id","turn_trace_id":"synthetic-id","useragent":{"client_type":"synthetic-value","is_mobile":false,"is_mobile_app":false,"is_desktop_app":false,"is_native_app":false,"is_native_app_apple":false,"is_mobile_app_ios":false,"is_desktop_app_macos":false,"is_aura_app_macos":false,"is_aura_web":false,"is_sora_ios":false,"is_agora_ios":false,"is_agora_android":false,"is_desktop_app_windows":false,"is_electron_app":false,"is_mobile_app_android":false,"is_mobile_web":false,"is_mobile_web_ios":false,"is_mobile_web_android":false,"is_ios":false,"is_android":false,"is_macos":false,"is_windows":false,"is_linux":false,"is_chatgpt_client":false,"is_moshi_client":false,"is_sora_client":false,"is_agora_client":false,"is_browserbased_app":true,"is_chatgpt_api":false,"is_slack":false,"is_chatkit_web":false,"is_chatkit_synthetic":true,"is_kakao_talk":false,"is_codex_desktop":false,"is_offline_caching":false,"app_version":null,"build_number":null,"user_agent":"synthetic-value","app_environment":null,"os_version":null,"device_model":null,"user_client_type":"synthetic-value"},"paragen_stream_type":"synthetic-value","resolved_model_slug":"synthetic-model","parent_id":"message-fixture"},"recipient":"all","channel":null},"conversation_id":"conversation-fixture"}
+
+event: delta
+data: {"v":{"message":{"id":"message-fixture","author":{"role":"assistant","name":null,"metadata":{}},"create_time":0,"update_time":null,"content":{"content_type":"text","parts":[""]},"status":"in_progress","end_turn":null,"weight":1,"metadata":{"citations":[],"content_references":[],"story_events":[],"resolved_model_slug":"synthetic-model","request_id":"synthetic-id","message_type":"synthetic-value","turn_exchange_id":"synthetic-id","working_turn_id":"synthetic-id","model_slug":"synthetic-model","default_model_slug":"synthetic-model","parent_id":"message-fixture","model_switcher_deny":[]},"recipient":"all","channel":"final"},"conversation_id":"conversation-fixture","error":null,"error_code":null},"c":0}
+
+data: {"type":"message_marker","conversation_id":"conversation-fixture","message_id":"message-fixture","marker":"user_visible_token","event":"first"}
+
+data: {"type":"message_marker","conversation_id":"conversation-fixture","message_id":"message-fixture","marker":"final_channel_token","event":"first"}
+
+event: delta
+data: {"p":"/message/content/parts/0","o":"append","v":"READY"}
+
+event: delta
+data: {"p":"","o":"patch","v":[{"p":"/message/status","o":"replace","v":"finished_successfully"},{"p":"/message/end_turn","o":"replace","v":true},{"p":"/message/metadata","o":"append","v":{"can_save":true,"search_result_groups":[],"finish_details":{"type":"stop","stop_tokens":[0]},"is_complete":true}}]}
+
+data: {"type":"message_marker","conversation_id":"conversation-fixture","message_id":"message-fixture","marker":"last_token","event":"last"}
+
+data: {"type":"title_generation","title":"Synthetic conversation","conversation_id":"conversation-fixture"}
+
+data: {"type":"server_ste_metadata","metadata":{"server_ttfvt_ms":0,"conduit_prewarmed":false,"plan_type":"synthetic-plan","plan_type_bucket":"synthetic-plan","harness":"synthetic-value","user_agent":"synthetic-value","service":null,"tool_name":null,"tool_invoked":false,"fast_convo":false,"warmup_state":"synthetic-value","is_first_turn":true,"cluster_region":"synthetic-value","model_slug":"synthetic-model","region":null,"is_multimodal":null,"did_auto_switch_to_reasoning":false,"auto_switcher_race_winner":null,"is_autoswitcher_enabled":false,"is_search":null,"did_prompt_contain_image":false,"search_tool_call_count":null,"search_tool_query_types":null,"message_id":"message-fixture","request_id":"synthetic-id","turn_exchange_id":"synthetic-id","turn_trace_id":"synthetic-id","resume_with_websockets":false,"low_turn_topic_ttl":false,"streaming_async_status":false,"replace_stream_status":false,"temporal_conversation_turn":false,"pro_mode_turn_topic_streaming":false,"turn_use_case":"synthetic-value","turn_mode":"synthetic-value"},"conversation_id":"conversation-fixture"}
+
+data: {"type":"message_stream_complete","conversation_id":"conversation-fixture"}
+
+data: {"type":"conversation_detail_metadata","banner_info":null,"blocked_features":[],"model_limits":[],"limits_progress":[{"feature_name":"synthetic-feature","remaining":0,"reset_after":"0s"}],"default_model_slug":"synthetic-model","atlas_mode_enabled":null,"conversation_id":"conversation-fixture"}
+
+data: [DONE]
+
