@@ -13,6 +13,9 @@ import {
   type TurnItem,
   type TurnRecord,
 } from './thread-registry.ts'
+import type { HookCatalog } from '../hooks/hook-catalog.ts'
+import type { HookDispatcher } from '../hooks/hook-dispatcher.ts'
+import type { HookExecutionScope } from '../hooks/hook-types.ts'
 
 export interface ThreadHandle {
   id: string
@@ -29,6 +32,7 @@ interface CreateThreadInput {
   provider: ProviderId
   runtime: RuntimeCore
   createdAt: number
+  origin?: 'new' | 'resumed'
 }
 
 export interface ThreadInputHandlers {
@@ -48,6 +52,7 @@ export interface ThreadInputHandlers {
     turn: TurnRecord
   ) => void
   signal?: AbortSignal
+  source?: HookExecutionScope['source']
 }
 
 export interface ThreadInputResult {
@@ -65,6 +70,13 @@ export class ThreadAlreadyRunningError extends Error {
 export class ThreadManager {
   private readonly threads = new ThreadRegistry()
   private readonly runningThreadIds = new Set<string>()
+  private readonly ready = new Map<string, Promise<void>>()
+
+  public constructor(
+    private readonly hookCatalog: HookCatalog | null = null,
+    private readonly hookDispatcher: HookDispatcher | null = null,
+    private readonly cwd: string = process.cwd()
+  ) {}
 
   public createThreadId(): string {
     return this.threads.createThreadId()
@@ -77,7 +89,26 @@ export class ThreadManager {
       runtime: thread.runtime,
       createdAt: thread.createdAt,
     })
-    return this.toThreadHandle(thread.id)
+    const handle = this.toThreadHandle(thread.id)
+    if (this.hookCatalog !== null && this.hookDispatcher !== null) {
+      const scope = this.createHookScope(
+        handle,
+        this.hookCatalog.snapshot(),
+        'system'
+      )
+      this.ready.set(
+        thread.id,
+        this.hookDispatcher
+          .dispatch(
+            this.hookDispatcher.createEvent('thread.ready', scope, {
+              origin: thread.origin ?? 'new',
+            }),
+            scope
+          )
+          .then(() => {})
+      )
+    }
+    return handle
   }
 
   public listThreads(): ThreadHandle[] {
@@ -123,8 +154,21 @@ export class ThreadManager {
       return false
     }
 
+    await this.ready.get(id)
     await thread.runtime.close()
     this.threads.removeThread(id)
+    this.ready.delete(id)
+    if (this.hookCatalog !== null && this.hookDispatcher !== null) {
+      const scope = this.createHookScope(
+        thread,
+        this.hookCatalog.snapshot(),
+        'system'
+      )
+      await this.hookDispatcher.dispatch(
+        this.hookDispatcher.createEvent('thread.closed', scope),
+        scope
+      )
+    }
     return true
   }
 
@@ -172,11 +216,20 @@ export class ThreadManager {
     handlers: ThreadInputHandlers
   ): Promise<ThreadInputResult> {
     throwIfAborted(handlers.signal)
+    await this.ready.get(thread.id)
     const turn = this.threads.beginTurn(thread.id, input)
     if (turn === null) {
       throw new Error(`Unknown thread: ${thread.id}`)
     }
-
+    const hookScope =
+      this.hookCatalog === null
+        ? undefined
+        : this.createHookScope(
+            thread,
+            this.hookCatalog.snapshot(),
+            handlers.source ?? 'tui',
+            turn.id
+          )
     const emitTurnItem = async (item: TurnItem) => {
       throwIfAborted(handlers.signal)
       this.threads.appendTurnItem(thread.id, turn.id, item)
@@ -184,6 +237,13 @@ export class ThreadManager {
     }
 
     try {
+      if (hookScope !== undefined && this.hookDispatcher !== null) {
+        await this.hookDispatcher.dispatch(
+          this.hookDispatcher.createEvent('turn.started', hookScope, { input }),
+          hookScope,
+          handlers.signal
+        )
+      }
       const assistant = await thread.runtime.submitUserInput(input, {
         onAssistantStream: async (message) => {
           throwIfAborted(handlers.signal)
@@ -211,15 +271,21 @@ export class ThreadManager {
             createdAt: Date.now(),
           })
         },
-        onToolCall: async (toolCall: ToolCall | null, rawPayload) => {
+        onToolCall: async (toolCall: ToolCall | null, rawPayload, metadata) => {
           await emitTurnItem({
             kind: 'tool_call',
             toolName: toolCall?.tool ?? 'unknown',
             rawPayload,
+            ...(metadata === undefined
+              ? {}
+              : {
+                  toolCallId: metadata.toolCallId,
+                  originalInput: metadata.originalInput,
+                }),
             createdAt: Date.now(),
           })
         },
-        onToolResult: async (toolResult, toolCall) => {
+        onToolResult: async (toolResult, toolCall, metadata) => {
           await emitTurnItem({
             kind: 'tool_result',
             toolName: toolCall?.tool ?? 'unknown',
@@ -228,6 +294,13 @@ export class ThreadManager {
             ...(toolResult.displayText !== undefined
               ? { displayText: toolResult.displayText }
               : {}),
+            ...(metadata === undefined
+              ? {}
+              : {
+                  toolCallId: metadata.toolCallId,
+                  effectiveInput: metadata.effectiveInput,
+                  rewrittenBy: metadata.rewrittenBy,
+                }),
             createdAt: Date.now(),
           })
         },
@@ -237,13 +310,30 @@ export class ThreadManager {
           }
         },
         ...(handlers.signal !== undefined ? { signal: handlers.signal } : {}),
+        ...(hookScope === undefined ? {} : { executionScope: hookScope }),
       })
       throwIfAborted(handlers.signal)
       this.threads.completeTurn(thread.id, turn.id, 'completed')
+      if (hookScope !== undefined && this.hookDispatcher !== null) {
+        await this.hookDispatcher.dispatch(
+          this.hookDispatcher.createEvent('turn.completed', hookScope, {
+            assistant,
+          }),
+          hookScope
+        )
+      }
       return { assistant, turn }
     } catch (error) {
       if (isAbortError(error)) {
         this.threads.completeTurn(thread.id, turn.id, 'canceled')
+        if (hookScope !== undefined && this.hookDispatcher !== null) {
+          await this.hookDispatcher.dispatch(
+            this.hookDispatcher.createEvent('turn.cancelled', hookScope, {
+              message: error instanceof Error ? error.message : String(error),
+            }),
+            hookScope
+          )
+        }
         throw error
       }
       await emitTurnItem({
@@ -252,9 +342,35 @@ export class ThreadManager {
         createdAt: Date.now(),
       })
       this.threads.completeTurn(thread.id, turn.id, 'failed')
+      if (hookScope !== undefined && this.hookDispatcher !== null) {
+        await this.hookDispatcher.dispatch(
+          this.hookDispatcher.createEvent('turn.failed', hookScope, {
+            message: error instanceof Error ? error.message : String(error),
+          }),
+          hookScope
+        )
+      }
       throw error
     } finally {
       this.threads.syncConversation(thread.id)
+    }
+  }
+
+  private createHookScope(
+    thread: Pick<ThreadHandle, 'id' | 'provider'>,
+    snapshot: ReturnType<HookCatalog['snapshot']>,
+    source: HookExecutionScope['source'],
+    turnId?: string
+  ): HookExecutionScope {
+    return {
+      snapshot,
+      cwd: this.cwd,
+      source,
+      spawnDepth: 0,
+      hookDepth: 0,
+      provider: thread.provider,
+      threadId: thread.id,
+      ...(turnId === undefined ? {} : { turnId }),
     }
   }
 }

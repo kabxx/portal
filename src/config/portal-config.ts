@@ -3,6 +3,12 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { parse, stringify } from 'yaml'
+import {
+  createDefaultHooksConfig,
+  HookConfigError,
+  parseHooksConfig,
+} from '../hooks/hook-config.ts'
+import type { HooksConfig } from '../hooks/hook-types.ts'
 
 export interface PortalBrowserConfig {
   name: string
@@ -33,6 +39,7 @@ export interface PortalConfigDocument {
   api: PortalApiConfig
   mcp: Record<string, unknown>
   skills: unknown[]
+  hooks: HooksConfig
 }
 
 export class PortalConfigError extends Error {
@@ -50,6 +57,7 @@ const CONFIG_FIELDS = new Set([
   'api',
   'mcp',
   'skills',
+  'hooks',
 ])
 const BROWSER_FIELDS = new Set([
   'name',
@@ -82,6 +90,7 @@ export function createDefaultPortalConfig(
       servers: {},
     },
     skills: [],
+    hooks: createDefaultHooksConfig(),
   }
 }
 
@@ -236,6 +245,15 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
   if (!Array.isArray(skills)) {
     throw new PortalConfigError('skills must be an array')
   }
+  let hooks: HooksConfig
+  try {
+    hooks = parseHooksConfig(document.hooks)
+  } catch (error) {
+    if (error instanceof HookConfigError) {
+      throw new PortalConfigError(error.message)
+    }
+    throw error
+  }
 
   return {
     browser: {
@@ -248,6 +266,7 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
     api: { host, port, token },
     mcp: { ...mcp },
     skills: [...skills],
+    hooks,
   }
 }
 
@@ -258,7 +277,7 @@ export async function ensurePortalConfig(
   return await withConfigLock(configPath, async () => {
     const existing = await readPortalConfig(configPath)
     if (existing !== null) {
-      if (!(await hasCompleteApiSection(configPath))) {
+      if (!(await hasCompleteManagedSections(configPath))) {
         await writePortalConfigUnlocked(configPath, existing)
       }
       return existing
@@ -268,10 +287,16 @@ export async function ensurePortalConfig(
   })
 }
 
-async function hasCompleteApiSection(configPath: string): Promise<boolean> {
+async function hasCompleteManagedSections(
+  configPath: string
+): Promise<boolean> {
   const contents = await readFile(configPath, 'utf8')
   const document: unknown = parse(contents.replace(/^\uFEFF/, ''))
-  if (!isRecord(document) || !isRecord(document.api)) {
+  if (
+    !isRecord(document) ||
+    !isRecord(document.api) ||
+    !isRecord(document.hooks)
+  ) {
     return false
   }
   return ['host', 'port', 'token'].every((field) =>
@@ -390,6 +415,7 @@ function cloneConfig(config: PortalConfigDocument): PortalConfigDocument {
     api: { ...config.api },
     mcp: structuredClone(config.mcp),
     skills: structuredClone(config.skills),
+    hooks: structuredClone(config.hooks),
   }
 }
 

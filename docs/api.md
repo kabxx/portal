@@ -91,7 +91,12 @@ The event names are:
 
 `message.started`, `assistant.delta`, `assistant.message`, `status`,
 `tool.started`, `tool.output`, `tool.completed`, `message.completed`,
-`message.failed`, `message.cancelled`, and `thread.action`.
+`message.failed`, `message.cancelled`, `thread.action`, and `hook.execution`.
+
+`hook.execution` is emitted when a configured Hook handler starts and finishes.
+Its data contains `hookRunId`, `phase`, `event`, `handler`, `handlerType`,
+`durationMs` when available, and the relevant `threadId`, `turnId`, and
+`toolCallId`. Handler stdout and stderr are never exposed through SSE.
 
 `thread.action` is emitted for asynchronous thread actions. Its data includes
 `operationId`, `action`, and `phase` (`started`, `completed`, `failed`, or

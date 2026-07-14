@@ -70,6 +70,11 @@ import {
   PortalApiServer,
   type ApiHandlers,
 } from './api/api-server.ts'
+import { createHookSnapshot } from './hooks/hook-config.ts'
+import { HookCatalog } from './hooks/hook-catalog.ts'
+import { HookDispatcher } from './hooks/hook-dispatcher.ts'
+import { HookEventBus } from './hooks/hook-event-sink.ts'
+import { ChildRuntimeFactory } from './runtime/child-runtime-factory.ts'
 
 const LOGIN_CHECK_INTERVAL_MS = 1000
 const CLEAR_TERMINAL_ESCAPE = '\u001B[2J\u001B[3J\u001B[H'
@@ -132,6 +137,9 @@ export function canRunCommandWhileThreadBusy(input: string): boolean {
       ((subcommand === 'resource' || subcommand === 'prompt') &&
         action === 'list')
     )
+  }
+  if (command === '/hook') {
+    return true
   }
   return false
 }
@@ -309,6 +317,7 @@ function createToolServices({
   mcpLibrary,
   projectInstructions,
   runCommandJobs,
+  hookDispatcher,
 }: {
   context: import('playwright').BrowserContext
   provider: ProviderId
@@ -317,6 +326,7 @@ function createToolServices({
   mcpLibrary: McpLibrary
   projectInstructions: ProjectInstructions
   runCommandJobs: RunCommandJobManager
+  hookDispatcher: HookDispatcher
 }): ToolServices {
   return {
     runCommandJobs,
@@ -340,6 +350,25 @@ function createToolServices({
         mcpLibrary,
         projectInstructions: projectInstructions.fork(),
         runCommandJobs,
+        hookDispatcher,
+        ...(options.executionScope !== undefined
+          ? {
+              executionScope: {
+                ...options.executionScope,
+                source: 'spawn' as const,
+                spawnDepth: options.executionScope.spawnDepth + 1,
+                ...(options.executionScope.threadId === undefined
+                  ? {}
+                  : { parentThreadId: options.executionScope.threadId }),
+                ...(options.executionScope.turnId === undefined
+                  ? {}
+                  : { parentTurnId: options.executionScope.turnId }),
+                ...(options.toolCallId === undefined
+                  ? {}
+                  : { parentToolCallId: options.toolCallId }),
+              },
+            }
+          : {}),
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
       }
       return await runSpawnTask(spawnOptions)
@@ -356,6 +385,8 @@ async function runSpawnTask({
   mcpLibrary,
   projectInstructions,
   runCommandJobs,
+  hookDispatcher,
+  executionScope,
   signal,
 }: {
   context: import('playwright').BrowserContext
@@ -366,12 +397,27 @@ async function runSpawnTask({
   mcpLibrary: McpLibrary
   projectInstructions: ProjectInstructions
   runCommandJobs: RunCommandJobManager
+  hookDispatcher: HookDispatcher
+  executionScope?: import('./hooks/hook-types.ts').HookExecutionScope
   signal?: AbortSignal
 }): Promise<string> {
   let adapter: ProviderAdapter | null = null
   let runtime: RuntimeCore | null = null
+  const spawnId = randomUUID()
   try {
     throwIfAborted(signal)
+    if (executionScope !== undefined) {
+      await hookDispatcher.dispatch(
+        hookDispatcher.createEvent(
+          'spawn.started',
+          executionScope,
+          { prompt },
+          { spawnId }
+        ),
+        executionScope,
+        signal
+      )
+    }
     adapter = await createAdapterForProvider(context, provider, null, signal)
     runtime = await createRuntimeFromAdapter(adapter, {
       model,
@@ -379,6 +425,7 @@ async function runSpawnTask({
       skillLibrary,
       mcpLibrary,
       projectInstructions,
+      hookDispatcher,
       toolServices: createToolServices({
         context,
         provider,
@@ -387,13 +434,26 @@ async function runSpawnTask({
         mcpLibrary,
         projectInstructions,
         runCommandJobs,
+        hookDispatcher,
       }),
       signal,
     })
     throwIfAborted(signal)
     const output = await runtime.submitUserInput(prompt, {
       ...(signal !== undefined ? { signal } : {}),
+      ...(executionScope === undefined ? {} : { executionScope }),
     })
+    if (executionScope !== undefined) {
+      await hookDispatcher.dispatch(
+        hookDispatcher.createEvent(
+          'spawn.completed',
+          executionScope,
+          { output },
+          { spawnId }
+        ),
+        executionScope
+      )
+    }
     return JSON.stringify(
       {
         provider,
@@ -403,6 +463,19 @@ async function runSpawnTask({
       null,
       2
     )
+  } catch (error) {
+    if (executionScope !== undefined) {
+      await hookDispatcher.dispatch(
+        hookDispatcher.createEvent(
+          isAbortError(error) ? 'spawn.cancelled' : 'spawn.failed',
+          executionScope,
+          { message: error instanceof Error ? error.message : String(error) },
+          { spawnId }
+        ),
+        executionScope
+      )
+    }
+    throw error
   } finally {
     if (runtime !== null) {
       await runtime.close().catch(() => {})
@@ -471,6 +544,7 @@ async function openThread(
   skillLibrary: SkillLibrary,
   mcpLibrary: McpLibrary,
   runCommandJobs: RunCommandJobManager,
+  hookDispatcher: HookDispatcher,
   instructionConfig: PortalAgentInstructionsConfig,
   context: import('playwright').BrowserContext,
   provider: ProviderId,
@@ -514,6 +588,7 @@ async function openThread(
           skillLibrary,
           mcpLibrary,
           projectInstructions,
+          hookDispatcher,
           onMcpWarning: async (warning) => {
             ui.renderWarning('MCP', warning.markdown, 'markdown')
           },
@@ -525,6 +600,7 @@ async function openThread(
             mcpLibrary,
             projectInstructions,
             runCommandJobs,
+            hookDispatcher,
           }),
           signal,
         }),
@@ -597,6 +673,7 @@ async function resumeThread(
   skillLibrary: SkillLibrary,
   mcpLibrary: McpLibrary,
   runCommandJobs: RunCommandJobManager,
+  hookDispatcher: HookDispatcher,
   instructionConfig: PortalAgentInstructionsConfig,
   context: import('playwright').BrowserContext,
   conversationUrl: string,
@@ -648,6 +725,7 @@ async function resumeThread(
           providerPrompt: getProviderPrompt(provider),
           skillLibrary,
           mcpLibrary,
+          hookDispatcher,
           onMcpWarning: async (warning) => {
             ui.renderWarning('MCP', warning.markdown, 'markdown')
           },
@@ -659,6 +737,7 @@ async function resumeThread(
             mcpLibrary,
             projectInstructions,
             runCommandJobs,
+            hookDispatcher,
           }),
           skipSetup: true,
           signal,
@@ -700,6 +779,7 @@ async function resumeThread(
       provider,
       runtime,
       createdAt: Date.now(),
+      origin: 'resumed',
     })
     pendingTimeline.keep()
     waitingForLogin = false
@@ -764,6 +844,12 @@ export async function run(argv = process.argv): Promise<void> {
     configPath,
     createDefaultPortalConfig(dataDirectory)
   )
+  const hookCatalog = new HookCatalog(
+    configPath,
+    createHookSnapshot(portalConfig.hooks)
+  )
+  const hookEvents = new HookEventBus()
+  const hookDispatcher = new HookDispatcher(null, hookEvents)
   const browserName = options.browserName ?? portalConfig.browser.name
   const browserExecutablePath = path.resolve(
     options.browserExecutablePath ?? portalConfig.browser.executablePath
@@ -787,7 +873,11 @@ export async function run(argv = process.argv): Promise<void> {
   const threadStore = await createThreadStore(
     path.join(dataDirectory, 'threads.db')
   )
-  const threadManager = new ThreadManager()
+  const threadManager = new ThreadManager(
+    hookCatalog,
+    hookDispatcher,
+    process.cwd()
+  )
   const threadOperations = new ThreadOperationCoordinator()
   const runCommandJobs = new RunCommandJobManager()
   const commandRegistry = new CommandRegistry(DEFAULT_COMMANDS)
@@ -831,7 +921,9 @@ export async function run(argv = process.argv): Promise<void> {
         await runCommandJobs.stopAll()
 
         for (const thread of threadManager.listThreads()) {
-          await closeWithTimeout(async () => await thread.runtime.close())
+          await closeWithTimeout(async () => {
+            await threadManager.closeThread(thread.id)
+          })
         }
 
         if (browserLaunch !== null) {
@@ -1126,6 +1218,65 @@ export async function run(argv = process.argv): Promise<void> {
     }
     const context = browserLaunch.context
 
+    hookDispatcher.setModelExecutor(
+      new ChildRuntimeFactory('chatgpt', async (request) => {
+        const projectInstructions = await createProjectInstructions(
+          portalConfig.agentInstructions,
+          (warning) => {
+            ui.renderWarning(
+              'Hook instructions',
+              formatInstructionWarning(warning)
+            )
+          }
+        )
+        const adapter = await createAdapterForProvider(
+          context,
+          request.provider,
+          null,
+          request.signal
+        )
+        let runtime: RuntimeCore | null = null
+        try {
+          const allowsSkills = request.allowedTools.includes('load_skill')
+          const allowsMcp = request.allowedTools.some(
+            (name) => name === 'mcp_search_tool' || name === 'mcp_call_tool'
+          )
+          runtime = await createRuntimeFromAdapter(adapter, {
+            model: null,
+            providerPrompt: getProviderPrompt(request.provider),
+            ...(allowsSkills ? { skillLibrary } : {}),
+            ...(allowsMcp ? { mcpLibrary } : {}),
+            projectInstructions,
+            hookDispatcher,
+            allowedTools: request.allowedTools,
+            toolServices: createToolServices({
+              context,
+              provider: request.provider,
+              model: null,
+              skillLibrary,
+              mcpLibrary,
+              projectInstructions,
+              runCommandJobs,
+              hookDispatcher,
+            }),
+            signal: request.signal,
+          })
+          const childRuntime = runtime
+          return {
+            runtime: childRuntime,
+            close: async () => await childRuntime.close(),
+          }
+        } catch (error) {
+          if (runtime !== null) {
+            await runtime.close().catch(() => {})
+          } else {
+            await adapter.close().catch(() => {})
+          }
+          throw error
+        }
+      })
+    )
+
     ui.setBrowserConnected(true)
 
     const getApiThread = (threadId: string) => {
@@ -1250,6 +1401,7 @@ export async function run(argv = process.argv): Promise<void> {
               input,
               {
                 signal,
+                source: 'api',
                 onAssistantStream: async (message) => {
                   const delta = message.startsWith(lastAssistantStream)
                     ? message.slice(lastAssistantStream.length)
@@ -1283,6 +1435,9 @@ export async function run(argv = process.argv): Promise<void> {
                     publishApiEvent(threadId, 'tool.started', {
                       tool: item.toolName,
                       payload: item.rawPayload,
+                      ...(item.toolCallId === undefined
+                        ? {}
+                        : { toolCallId: item.toolCallId }),
                     })
                     ui.renderToolCall(thread, item.toolName, item.rawPayload)
                   } else if (item.kind === 'tool_result') {
@@ -1290,6 +1445,9 @@ export async function run(argv = process.argv): Promise<void> {
                       tool: item.toolName,
                       outcome: item.outcome,
                       result: item.result,
+                      ...(item.toolCallId === undefined
+                        ? {}
+                        : { toolCallId: item.toolCallId }),
                       ...(item.displayText === undefined
                         ? {}
                         : { displayText: item.displayText }),
@@ -1361,6 +1519,7 @@ export async function run(argv = process.argv): Promise<void> {
         activeThreadId: threadManager.getActiveThread()?.id ?? null,
         busy: threadOperations.list().length > 0,
         server: apiServer!.status(),
+        hooks: hookCatalog.status(),
       }),
       providers: () => [...PROVIDERS],
       listThreads: () =>
@@ -1409,6 +1568,7 @@ export async function run(argv = process.argv): Promise<void> {
             skillLibrary,
             mcpLibrary,
             runCommandJobs,
+            hookDispatcher,
             portalConfig.agentInstructions,
             context,
             provider,
@@ -1475,6 +1635,7 @@ export async function run(argv = process.argv): Promise<void> {
             skillLibrary,
             mcpLibrary,
             runCommandJobs,
+            hookDispatcher,
             portalConfig.agentInstructions,
             context,
             resolvedConversation.conversationUrl,
@@ -1737,6 +1898,25 @@ export async function run(argv = process.argv): Promise<void> {
       token: portalConfig.api.token,
       handlers: apiHandlers,
     })
+    hookEvents.subscribe((event) => {
+      if (event.threadId !== undefined) {
+        apiServer?.eventHub.publish(event.threadId, {
+          type: 'hook.execution',
+          data: event,
+        })
+        const thread = threadManager.getThread(event.threadId)
+        if (
+          thread !== null &&
+          (event.phase === 'blocked' || event.phase === 'failed')
+        ) {
+          ui.renderThreadWarning(
+            thread,
+            `Hook ${event.handler}`,
+            event.message ?? `${event.event}: ${event.phase}`
+          )
+        }
+      }
+    })
 
     const commandContext: CliCommandContext = {
       readline: {} as CliCommandContext['readline'],
@@ -1745,6 +1925,7 @@ export async function run(argv = process.argv): Promise<void> {
       skillLibrary,
       mcpLibrary,
       runCommandJobs,
+      hookCatalog,
       api: apiServer,
       ui,
       browserProfileDir,
@@ -1758,6 +1939,7 @@ export async function run(argv = process.argv): Promise<void> {
             skillLibrary,
             mcpLibrary,
             runCommandJobs,
+            hookDispatcher,
             portalConfig.agentInstructions,
             context,
             provider,
@@ -1783,6 +1965,7 @@ export async function run(argv = process.argv): Promise<void> {
             skillLibrary,
             mcpLibrary,
             runCommandJobs,
+            hookDispatcher,
             portalConfig.agentInstructions,
             context,
             conversationUrl,
