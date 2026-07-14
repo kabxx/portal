@@ -28,6 +28,7 @@ import { isAbortError, throwIfAborted } from './runtime/runtime-cancellation.ts'
 import { sleepWithAbortAsync } from './shared/sleep.ts'
 import { ThreadManager } from './threads/thread-manager.ts'
 import {
+  ThreadCloseTimeoutError,
   ThreadOperationCoordinator,
   type ThreadOperationHandle,
 } from './threads/thread-operation-coordinator.ts'
@@ -1484,8 +1485,15 @@ export async function run(argv = process.argv): Promise<void> {
             )
           }
           return { closed: true, threadId }
+        } catch (error) {
+          if (error instanceof ThreadCloseTimeoutError) {
+            throw new ApiHttpError(409, 'THREAD_CLOSE_TIMEOUT', error.message)
+          }
+          throw error
         } finally {
-          ui.setThreadBusy(threadId, false)
+          if (threadOperations.get(threadId) === null) {
+            ui.setThreadBusy(threadId, false)
+          }
         }
       },
       submitMessage: startApiMessage,
@@ -1772,7 +1780,9 @@ export async function run(argv = process.argv): Promise<void> {
             return await threadManager.closeThread(threadId)
           })
         } finally {
-          ui.setThreadBusy(threadId, false)
+          if (threadOperations.get(threadId) === null) {
+            ui.setThreadBusy(threadId, false)
+          }
         }
       },
       addSkill: async (source, options = {}) =>

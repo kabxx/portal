@@ -1,7 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { ThreadOperationCoordinator } from '../../src/threads/thread-operation-coordinator.ts'
+import {
+  ThreadCloseTimeoutError,
+  ThreadOperationCoordinator,
+} from '../../src/threads/thread-operation-coordinator.ts'
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -200,6 +203,64 @@ test('coordinator bounds cancellation waits without releasing a stuck operation'
       reason: 'running',
     }
   )
+})
+
+test('coordinator does not close a thread when cancellation times out', async () => {
+  const coordinator = new ThreadOperationCoordinator(10)
+  const stopDone = deferred()
+  let closeCalls = 0
+  const operation = coordinator.tryStart(
+    'a',
+    {
+      stopGeneration: async () => {
+        await stopDone.promise
+      },
+    },
+    async ({ signal }) => {
+      await new Promise<void>((resolve) => {
+        signal.addEventListener('abort', () => resolve(), { once: true })
+      })
+    }
+  )
+
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  await assert.rejects(
+    coordinator.close('a', async () => {
+      closeCalls += 1
+      return true
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ThreadCloseTimeoutError)
+      assert.equal(error.threadId, 'a')
+      assert.equal(error.timeoutMs, 10)
+      return true
+    }
+  )
+
+  if (operation.accepted) {
+    await operation.operation.done
+  }
+  assert.equal(closeCalls, 0)
+  assert.equal(coordinator.get('a')?.phase, 'closing')
+  assert.deepEqual(
+    coordinator.tryStart('a', null, async () => {}),
+    {
+      accepted: false,
+      reason: 'closing',
+    }
+  )
+
+  stopDone.resolve()
+  await coordinator.cancel('a')
+  assert.equal(coordinator.get('a'), null)
+  assert.equal(
+    await coordinator.close('a', async () => {
+      closeCalls += 1
+      return true
+    }),
+    true
+  )
+  assert.equal(closeCalls, 1)
 })
 
 test('coordinator cleans up rejected detached operations', async () => {
