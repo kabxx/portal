@@ -2,16 +2,9 @@ import { mkdir } from 'fs/promises'
 import path from 'path'
 import type { AbortOptions } from '../runtime/runtime-cancellation.ts'
 import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
-import {
-  fetchSkillHttp,
-  MAX_SKILL_DOWNLOAD_BYTES,
-  writeSkillHttpResponse,
-} from './skill-http.ts'
-import {
-  assertSafeRelativePath,
-  MAX_SKILL_FILES,
-  SkillInstallError,
-} from './skill-files.ts'
+import { fetchSkillHttp, writeSkillHttpResponse } from './skill-http.ts'
+import { assertSafeRelativePath, SkillInstallError } from './skill-files.ts'
+import { DEFAULT_SKILL_POLICY, type SkillPolicy } from './skill-policy.ts'
 
 const MAX_GITHUB_API_RESPONSE_BYTES = 10 * 1024 * 1024
 const GITHUB_RETRY_DELAYS_MS = [250, 1000, 3000, 5000] as const
@@ -107,7 +100,8 @@ export function resolveGitHubDirectoryTarget(
 export async function downloadGitHubDirectory(
   target: GitHubDirectoryTarget,
   destination: string,
-  options: AbortOptions
+  options: AbortOptions,
+  policy: SkillPolicy = DEFAULT_SKILL_POLICY
 ): Promise<void> {
   assertSafeRelativePath(target.directory)
   let entriesSeen = 0
@@ -124,15 +118,16 @@ export async function downloadGitHubDirectory(
     const entries = await listGitHubDirectory(
       target,
       remoteDirectory,
-      options.signal
+      options.signal,
+      policy
     )
 
     for (const entry of entries) {
       throwIfAborted(options.signal)
       entriesSeen += 1
-      if (entriesSeen > MAX_SKILL_FILES) {
+      if (entriesSeen > policy.maxFiles) {
         throw new SkillInstallError(
-          `GitHub skill contains more than ${MAX_SKILL_FILES} entries`
+          `GitHub skill contains more than ${policy.maxFiles} entries`
         )
       }
       assertSafeGitHubEntryName(entry.name)
@@ -143,10 +138,10 @@ export async function downloadGitHubDirectory(
       }
 
       declaredBytes += entry.size
-      if (declaredBytes > MAX_SKILL_DOWNLOAD_BYTES) {
-        throw downloadLimitError()
+      if (declaredBytes > policy.maxDownloadBytes) {
+        throw downloadLimitError(policy)
       }
-      const remainingBytes = MAX_SKILL_DOWNLOAD_BYTES - downloadedBytes
+      const remainingBytes = policy.maxDownloadBytes - downloadedBytes
       const rawUrl = validateGitHubFileUrl(
         entry.downloadUrl,
         'raw.githubusercontent.com'
@@ -161,6 +156,7 @@ export async function downloadGitHubDirectory(
             remainingBytes,
             options.signal,
             GITHUB_RAW_API_HEADERS,
+            policy,
             GITHUB_RETRY_DELAYS_MS
           )
           continue
@@ -178,6 +174,7 @@ export async function downloadGitHubDirectory(
           remainingBytes,
           options.signal,
           {},
+          policy,
           []
         )
       } catch (error) {
@@ -190,6 +187,7 @@ export async function downloadGitHubDirectory(
           remainingBytes,
           options.signal,
           GITHUB_RAW_API_HEADERS,
+          policy,
           GITHUB_RETRY_DELAYS_MS
         )
       }
@@ -202,7 +200,8 @@ export async function downloadGitHubDirectory(
 async function listGitHubDirectory(
   target: GitHubDirectoryTarget,
   directory: string,
-  signal?: AbortSignal
+  signal: AbortSignal | undefined,
+  policy: SkillPolicy
 ): Promise<GitHubContentEntry[]> {
   const encodedDirectory = directory
     .split('/')
@@ -216,6 +215,8 @@ async function listGitHubDirectory(
     signal,
     headers: GITHUB_API_HEADERS,
     retryDelays: GITHUB_RETRY_DELAYS_MS,
+    timeoutMs: policy.downloadTimeoutMs,
+    maxRedirects: policy.maxRedirects,
   })
   assertGitHubResponse(response, 'skill directory request')
 
@@ -246,18 +247,21 @@ async function downloadGitHubFile(
   maxBytes: number,
   signal: AbortSignal | undefined,
   headers: Record<string, string>,
+  policy: SkillPolicy,
   retryDelays?: readonly number[]
 ): Promise<number> {
   const response = await fetchSkillHttp(sourceUrl, {
     signal,
     headers,
     ...(retryDelays === undefined ? {} : { retryDelays }),
+    timeoutMs: policy.downloadTimeoutMs,
+    maxRedirects: policy.maxRedirects,
   })
   assertGitHubResponse(response, 'skill file download')
   return await writeSkillHttpResponse(response, destination, {
     signal,
     maxBytes,
-    limitMessage: downloadLimitError().message,
+    limitMessage: downloadLimitError(policy).message,
   })
 }
 
@@ -330,9 +334,9 @@ function validateGitHubFileUrl(
   return url
 }
 
-function downloadLimitError(): SkillInstallError {
+function downloadLimitError(policy: SkillPolicy): SkillInstallError {
   return new SkillInstallError(
-    `GitHub skill exceeds ${MAX_SKILL_DOWNLOAD_BYTES} downloaded bytes`
+    `GitHub skill exceeds ${policy.maxDownloadBytes} downloaded bytes`
   )
 }
 

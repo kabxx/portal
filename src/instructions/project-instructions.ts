@@ -10,6 +10,13 @@ const CLAUDE_MAX_BYTES = 96 * 1024
 const MAX_FILES = 128
 const MAX_IMPORT_DEPTH = 4
 
+export interface ProjectInstructionLimits {
+  codexMaxBytes: number
+  claudeMaxBytes: number
+  maxFiles: number
+  maxImportDepth: number
+}
+
 export type InstructionKind = 'codex' | 'claudeCode'
 
 export interface ProjectInstructionWarning {
@@ -55,6 +62,7 @@ interface LoaderContext {
   readonly allowedRoots: readonly string[]
   readonly globalRoots: readonly string[]
   readonly config: PortalAgentInstructionsConfig
+  readonly limits: ProjectInstructionLimits
   readonly seen: Set<string>
   readonly loading: Set<string>
   readonly conditionalKeys: Set<string>
@@ -79,6 +87,7 @@ export async function loadProjectInstructions(options: {
   cwd: string
   config: PortalAgentInstructionsConfig
   homeDirectory?: string
+  limits?: ProjectInstructionLimits
 }): Promise<ProjectInstructionsLoadResult> {
   const cwd = await resolveDirectory(options.cwd)
   let root = cwd
@@ -102,7 +111,13 @@ export async function loadProjectInstructions(options: {
     cwd,
     homeDirectory,
     globalRoots,
-    options.config
+    options.config,
+    options.limits ?? {
+      codexMaxBytes: CODEX_MAX_BYTES,
+      claudeMaxBytes: CLAUDE_MAX_BYTES,
+      maxFiles: MAX_FILES,
+      maxImportDepth: MAX_IMPORT_DEPTH,
+    }
   )
   if (rootWarning !== null) {
     addWarning(
@@ -288,7 +303,8 @@ function createLoaderContext(
   cwd: string,
   homeDirectory: string,
   globalRoots: readonly string[],
-  config: PortalAgentInstructionsConfig
+  config: PortalAgentInstructionsConfig,
+  limits: ProjectInstructionLimits
 ): LoaderContext {
   const loadedDirectories = new Set<string>()
   for (const directory of ancestorDirectories(root, cwd)) {
@@ -301,6 +317,7 @@ function createLoaderContext(
     allowedRoots: [root, ...globalRoots].map((value) => path.resolve(value)),
     globalRoots: globalRoots.map((value) => path.resolve(value)),
     config,
+    limits,
     seen: new Set(),
     loading: new Set(),
     conditionalKeys: new Set(),
@@ -325,6 +342,7 @@ function cloneLoaderContext(source: LoaderContext): LoaderContext {
       claude: { ...source.config.claude },
       codex: { ...source.config.codex },
     },
+    limits: { ...source.limits },
     seen: new Set(source.seen),
     loading: new Set(),
     conditionalKeys: new Set(source.conditionalKeys),
@@ -562,16 +580,19 @@ async function readDocument(
     }
     return null
   }
-  if (context.fileCount >= MAX_FILES) {
+  if (context.fileCount >= context.limits.maxFiles) {
     addWarning(
       context,
       resolved.path,
-      `Skipped after reaching the ${MAX_FILES}-file limit.`
+      `Skipped after reaching the ${context.limits.maxFiles}-file limit.`
     )
     return null
   }
 
-  const budget = kind === 'codex' ? CODEX_MAX_BYTES : CLAUDE_MAX_BYTES
+  const budget =
+    kind === 'codex'
+      ? context.limits.codexMaxBytes
+      : context.limits.claudeMaxBytes
   const used = kind === 'codex' ? context.codexBytes : context.claudeBytes
   const remaining = Math.max(0, budget - used)
   let bytes: Buffer
@@ -662,11 +683,11 @@ async function expandClaudeImports(
       continue
     }
     output += content.slice(cursor, tokenStart)
-    if (importDepth >= MAX_IMPORT_DEPTH) {
+    if (importDepth >= context.limits.maxImportDepth) {
       addWarning(
         context,
         baseDirectory,
-        `Import depth exceeded ${MAX_IMPORT_DEPTH}; skipped @${token}.`
+        `Import depth exceeded ${context.limits.maxImportDepth}; skipped @${token}.`
       )
       cursor = tokenEnd
       continue

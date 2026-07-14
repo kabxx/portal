@@ -129,6 +129,33 @@ test('HookDispatcher fails closed for an empty command response', async () => {
   assert.match(result.action === 'deny' ? result.reason : '', /empty output/)
 })
 
+test('HookDispatcher enforces the configured command output limit', async () => {
+  const scope = createScope({
+    enabled: true,
+    handlers: [
+      {
+        name: 'oversized',
+        type: 'command',
+        events: ['tool.before'],
+        command: [
+          process.execPath,
+          '-e',
+          `process.stdout.write(JSON.stringify({action:'allow'}))`,
+        ],
+      },
+    ],
+  })
+  const dispatcher = new HookDispatcher(null, null, 8)
+  const event = dispatcher.createEvent('tool.before', scope, {
+    tool: 'run_command',
+    params: {},
+  })
+
+  const result = await dispatcher.dispatch(event, scope)
+  assert.equal(result.action, 'deny')
+  assert.match(result.action === 'deny' ? result.reason : '', /8 bytes/)
+})
+
 test('HookDispatcher skips handlers when the global switch is disabled', async () => {
   const scope = createScope({
     enabled: false,

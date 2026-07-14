@@ -47,9 +47,6 @@ const GEMINI_MICROPHONE_BUTTON_SELECTOR = [
 ].join(', ')
 const GEMINI_STREAM_GENERATE_PATH =
   '/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate'
-const GEMINI_SUBMIT_RESPONSE_TIMEOUT_MS = 300000
-const GEMINI_HISTORY_LOAD_TIMEOUT_MS = 60000
-const GEMINI_HISTORY_PAGE_TIMEOUT_MS = 10000
 const GEMINI_HISTORY_POLL_MS = 100
 
 type GeminiParsedResponse = {
@@ -184,18 +181,18 @@ export class GeminiAdapter extends ProviderAdapter {
           await abortable(
             this.page.goto(this.conversationUrl, {
               waitUntil: 'domcontentloaded',
-              timeout: 30000,
+              timeout: this.getRestoreTimeoutMs(),
             }),
             signal
           )
           await waitAsync(async () => await isAvailable(), {
-            timeoutMs: 60000,
+            timeoutMs: this.getRestoreTimeoutMs(),
             signal,
           })
         })
       })
       await waitAsync(async () => await isAvailable(), {
-        timeoutMs: 60000,
+        timeoutMs: this.getRestoreTimeoutMs(),
         signal,
       })
       if (!(await this.isLoggedIn())) {
@@ -211,7 +208,11 @@ export class GeminiAdapter extends ProviderAdapter {
           }
         )
       }
-      await this.waitForMicrophoneReady('restore', 60000, signal)
+      await this.waitForMicrophoneReady(
+        'restore',
+        this.getRestoreTimeoutMs(),
+        signal
+      )
     } catch (error) {
       if (this.isRetryableError(error)) {
         throw new ProviderAdapterError(
@@ -258,7 +259,7 @@ export class GeminiAdapter extends ProviderAdapter {
     }
 
     let state = await readResult()
-    const deadline = Date.now() + GEMINI_HISTORY_LOAD_TIMEOUT_MS
+    const deadline = Date.now() + this.getHistoryLoadTimeoutMs()
     while (!state.result.complete && Date.now() < deadline) {
       throwIfAborted(signal)
       const scrolled = await this.page
@@ -286,7 +287,7 @@ export class GeminiAdapter extends ProviderAdapter {
       const previousMessageCount = state.result.messages.length
       const pageDeadline = Math.min(
         deadline,
-        Date.now() + GEMINI_HISTORY_PAGE_TIMEOUT_MS
+        Date.now() + this.getHistoryPageTimeoutMs()
       )
       let progressed = false
       while (Date.now() < pageDeadline) {
@@ -787,7 +788,7 @@ export class GeminiAdapter extends ProviderAdapter {
           async () =>
             (await sendButton.isEnabled()) && (await sendButton.isVisible()),
           {
-            timeoutMs: GEMINI_SUBMIT_RESPONSE_TIMEOUT_MS,
+            timeoutMs: this.getSubmitResponseTimeoutMs(),
             signal,
           }
         )
@@ -938,7 +939,7 @@ export class GeminiAdapter extends ProviderAdapter {
 
           await awaitWithTimeout(
             targetResponse.promise,
-            GEMINI_SUBMIT_RESPONSE_TIMEOUT_MS,
+            this.getSubmitResponseTimeoutMs(),
             () => new Error('Timed out waiting for Gemini response payload.'),
             { signal }
           )
@@ -966,7 +967,7 @@ export class GeminiAdapter extends ProviderAdapter {
         await this.emitSubmitText(this.lastParsedResponse.text)
         await this.waitForMicrophoneReady(
           'submit',
-          GEMINI_SUBMIT_RESPONSE_TIMEOUT_MS,
+          this.getSubmitResponseTimeoutMs(),
           signal
         )
         throwIfAborted(signal)

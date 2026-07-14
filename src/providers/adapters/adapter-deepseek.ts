@@ -32,7 +32,6 @@ const DEEPSEEK_MODEL_BUTTON_SELECTOR =
   'div.b0db7355 div[role="radio"][data-model-type]'
 const DEEPSEEK_STOP_ICON_PATH_PREFIX =
   'M2 4.88C2 3.68009 2 3.08013 2.30557 2.65954C2.40426 2.52371 2.52371 2.40426 2.65954'
-const DEEPSEEK_SUBMIT_RESPONSE_TIMEOUT_MS = 300000
 
 export type DeepSeekToggleCapability = 'thinking' | 'search'
 export type DeepSeekToggleState = 'on' | 'off'
@@ -221,18 +220,18 @@ export class DeepSeekAdapter extends ProviderAdapter {
           await abortable(
             this.page.goto(this.conversationUrl, {
               waitUntil: 'domcontentloaded',
-              timeout: 30000,
+              timeout: this.getRestoreTimeoutMs(),
             }),
             signal
           )
           await waitAsync(async () => await isAvailable(), {
-            timeoutMs: 60000,
+            timeoutMs: this.getRestoreTimeoutMs(),
             signal,
           })
         })
       })
       await waitAsync(async () => await isAvailable(), {
-        timeoutMs: 60000,
+        timeoutMs: this.getRestoreTimeoutMs(),
         signal,
       })
       if (!(await this.isLoggedIn())) {
@@ -248,7 +247,11 @@ export class DeepSeekAdapter extends ProviderAdapter {
           }
         )
       }
-      await this.waitForReadyButton('restore', 60000, signal)
+      await this.waitForReadyButton(
+        'restore',
+        this.getRestoreTimeoutMs(),
+        signal
+      )
     } catch (error) {
       if (this.isRetryableError(error)) {
         throw new ProviderAdapterError(
@@ -317,6 +320,14 @@ export class DeepSeekAdapter extends ProviderAdapter {
     fullHistoryUrl.searchParams.delete('cache_version')
     fullHistoryUrl.searchParams.delete('cache_reset_at')
 
+    const replayTimeoutSignal = AbortSignal.timeout(
+      this.getHistoryLoadTimeoutMs()
+    )
+    const replaySignal =
+      options.signal === undefined
+        ? replayTimeoutSignal
+        : AbortSignal.any([options.signal, replayTimeoutSignal])
+
     try {
       const fullHistoryResponse = await abortable(
         this.page.evaluate(
@@ -333,7 +344,7 @@ export class DeepSeekAdapter extends ProviderAdapter {
           },
           { url: fullHistoryUrl.toString(), headers: replayHeaders }
         ),
-        options.signal
+        replaySignal
       )
       if (!fullHistoryResponse.ok) {
         return {
@@ -350,6 +361,15 @@ export class DeepSeekAdapter extends ProviderAdapter {
         ? fullResult
         : result
     } catch (error) {
+      if (options.signal?.aborted === true) throw error
+      if (replayTimeoutSignal.aborted) {
+        return {
+          ...result,
+          complete: false,
+          warning:
+            'DeepSeek history is incomplete because the full-history request timed out.',
+        }
+      }
       if (isAbortError(error)) throw error
       return {
         ...result,
@@ -446,10 +466,6 @@ export class DeepSeekAdapter extends ProviderAdapter {
 
   protected getSubmitBlockedWarningMessage(): string {
     return buildSubmitBlockedWarningMessage('DeepSeek')
-  }
-
-  protected getSubmitResponseTimeoutMs(): number {
-    return DEEPSEEK_SUBMIT_RESPONSE_TIMEOUT_MS
   }
 
   private async readCurrentStreamedResponseText(

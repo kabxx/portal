@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { parse, stringify } from 'yaml'
+import { Document, isMap, isScalar, parse, stringify } from 'yaml'
 import {
   createDefaultHooksConfig,
   HookConfigError,
@@ -33,6 +33,72 @@ export interface PortalApiConfig {
   token: string | null
 }
 
+export interface PortalAdvancedBrowserConfig {
+  startupTimeoutSeconds: number
+  closeTimeoutSeconds: number
+}
+
+export interface PortalAdvancedProviderConfig {
+  requestStartWarningAfterSeconds: number
+  blockedWarningEverySeconds: number
+  responseTimeoutMinutes: number
+  restoreTimeoutSeconds: number
+  historyLoadTimeoutSeconds: number
+  historyPageTimeoutSeconds: number
+}
+
+export interface PortalAdvancedRuntimeConfig {
+  initializationAttemptLimit: number
+  requestAttemptLimit: number
+  cancelWaitTimeoutSeconds: number
+  shutdownCloseTimeoutSeconds: number
+  childRuntimeCloseTimeoutSeconds: number
+}
+
+export interface PortalAdvancedCommandConfig {
+  resultOutputLimitMB: number
+  stopGraceSeconds: number
+  stopTimeoutSeconds: number
+}
+
+export interface PortalAdvancedSkillInstallConfig {
+  downloadTimeoutSeconds: number
+  downloadLimitMB: number
+  extractedSizeLimitMB: number
+  fileCountLimit: number
+  resourceFileCountLimit: number
+  manifestSizeLimitKB: number
+  redirectLimit: number
+}
+
+export interface PortalAdvancedApiConfig {
+  requestBodyLimitKB: number
+  requestTimeoutSeconds: number
+  sseHeartbeatSeconds: number
+}
+
+export interface PortalAdvancedInstructionsConfig {
+  codexSizeLimitKB: number
+  claudeSizeLimitKB: number
+  fileCountLimit: number
+  importDepthLimit: number
+}
+
+export interface PortalAdvancedHooksConfig {
+  commandOutputLimitMB: number
+}
+
+export interface PortalAdvancedConfig {
+  browser: PortalAdvancedBrowserConfig
+  provider: PortalAdvancedProviderConfig
+  runtime: PortalAdvancedRuntimeConfig
+  command: PortalAdvancedCommandConfig
+  skillInstall: PortalAdvancedSkillInstallConfig
+  api: PortalAdvancedApiConfig
+  instructions: PortalAdvancedInstructionsConfig
+  hooks: PortalAdvancedHooksConfig
+}
+
 export interface PortalConfigDocument {
   browser: PortalBrowserConfig
   agentInstructions: PortalAgentInstructionsConfig
@@ -40,6 +106,7 @@ export interface PortalConfigDocument {
   mcp: Record<string, unknown>
   skills: unknown[]
   hooks: HooksConfig
+  advanced: PortalAdvancedConfig
 }
 
 export class PortalConfigError extends Error {
@@ -58,6 +125,7 @@ const CONFIG_FIELDS = new Set([
   'mcp',
   'skills',
   'hooks',
+  'advanced',
 ])
 const BROWSER_FIELDS = new Set([
   'name',
@@ -68,6 +136,61 @@ const BROWSER_FIELDS = new Set([
 const AGENT_INSTRUCTIONS_FIELDS = new Set(['claude', 'codex'])
 const INSTRUCTION_SCOPE_FIELDS = new Set(['global', 'local'])
 const API_FIELDS = new Set(['host', 'port', 'token'])
+const ADVANCED_FIELDS = new Set([
+  'browser',
+  'provider',
+  'runtime',
+  'command',
+  'skillInstall',
+  'api',
+  'instructions',
+  'hooks',
+])
+const ADVANCED_BROWSER_FIELDS = new Set([
+  'startupTimeoutSeconds',
+  'closeTimeoutSeconds',
+])
+const ADVANCED_PROVIDER_FIELDS = new Set([
+  'requestStartWarningAfterSeconds',
+  'blockedWarningEverySeconds',
+  'responseTimeoutMinutes',
+  'restoreTimeoutSeconds',
+  'historyLoadTimeoutSeconds',
+  'historyPageTimeoutSeconds',
+])
+const ADVANCED_RUNTIME_FIELDS = new Set([
+  'initializationAttemptLimit',
+  'requestAttemptLimit',
+  'cancelWaitTimeoutSeconds',
+  'shutdownCloseTimeoutSeconds',
+  'childRuntimeCloseTimeoutSeconds',
+])
+const ADVANCED_COMMAND_FIELDS = new Set([
+  'resultOutputLimitMB',
+  'stopGraceSeconds',
+  'stopTimeoutSeconds',
+])
+const ADVANCED_SKILL_INSTALL_FIELDS = new Set([
+  'downloadTimeoutSeconds',
+  'downloadLimitMB',
+  'extractedSizeLimitMB',
+  'fileCountLimit',
+  'resourceFileCountLimit',
+  'manifestSizeLimitKB',
+  'redirectLimit',
+])
+const ADVANCED_API_FIELDS = new Set([
+  'requestBodyLimitKB',
+  'requestTimeoutSeconds',
+  'sseHeartbeatSeconds',
+])
+const ADVANCED_INSTRUCTIONS_FIELDS = new Set([
+  'codexSizeLimitKB',
+  'claudeSizeLimitKB',
+  'fileCountLimit',
+  'importDepthLimit',
+])
+const ADVANCED_HOOKS_FIELDS = new Set(['commandOutputLimitMB'])
 const localTails = new Map<string, Promise<void>>()
 
 export function createDefaultPortalConfig(
@@ -91,6 +214,59 @@ export function createDefaultPortalConfig(
     },
     skills: [],
     hooks: createDefaultHooksConfig(),
+    advanced: createDefaultAdvancedConfig(),
+  }
+}
+
+export function createDefaultAdvancedConfig(): PortalAdvancedConfig {
+  return {
+    browser: {
+      startupTimeoutSeconds: 60,
+      closeTimeoutSeconds: 3,
+    },
+    provider: {
+      requestStartWarningAfterSeconds: 30,
+      blockedWarningEverySeconds: 30,
+      responseTimeoutMinutes: 5,
+      restoreTimeoutSeconds: 60,
+      historyLoadTimeoutSeconds: 60,
+      historyPageTimeoutSeconds: 10,
+    },
+    runtime: {
+      initializationAttemptLimit: 3,
+      requestAttemptLimit: 3,
+      cancelWaitTimeoutSeconds: 3,
+      shutdownCloseTimeoutSeconds: 3,
+      childRuntimeCloseTimeoutSeconds: 2,
+    },
+    command: {
+      resultOutputLimitMB: 4,
+      stopGraceSeconds: 0.25,
+      stopTimeoutSeconds: 3,
+    },
+    skillInstall: {
+      downloadTimeoutSeconds: 60,
+      downloadLimitMB: 100,
+      extractedSizeLimitMB: 500,
+      fileCountLimit: 5000,
+      resourceFileCountLimit: 2000,
+      manifestSizeLimitKB: 512,
+      redirectLimit: 5,
+    },
+    api: {
+      requestBodyLimitKB: 256,
+      requestTimeoutSeconds: 0,
+      sseHeartbeatSeconds: 15,
+    },
+    instructions: {
+      codexSizeLimitKB: 32,
+      claudeSizeLimitKB: 96,
+      fileCountLimit: 128,
+      importDepthLimit: 4,
+    },
+    hooks: {
+      commandOutputLimitMB: 1,
+    },
   }
 }
 
@@ -254,6 +430,7 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
     }
     throw error
   }
+  const advanced = parseAdvancedConfig(document.advanced)
 
   return {
     browser: {
@@ -267,22 +444,238 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
     mcp: { ...mcp },
     skills: [...skills],
     hooks,
+    advanced,
+  }
+}
+
+export function parseAdvancedConfig(value: unknown): PortalAdvancedConfig {
+  const defaults = createDefaultAdvancedConfig()
+  const advanced = parseOptionalRecord(value, 'advanced')
+  assertSupportedFields(advanced, ADVANCED_FIELDS, 'advanced')
+  const browser = parseOptionalRecord(advanced.browser, 'advanced.browser')
+  const provider = parseOptionalRecord(advanced.provider, 'advanced.provider')
+  const runtime = parseOptionalRecord(advanced.runtime, 'advanced.runtime')
+  const command = parseOptionalRecord(advanced.command, 'advanced.command')
+  const skillInstall = parseOptionalRecord(
+    advanced.skillInstall,
+    'advanced.skillInstall'
+  )
+  const api = parseOptionalRecord(advanced.api, 'advanced.api')
+  const instructions = parseOptionalRecord(
+    advanced.instructions,
+    'advanced.instructions'
+  )
+  const hooks = parseOptionalRecord(advanced.hooks, 'advanced.hooks')
+
+  assertSupportedFields(browser, ADVANCED_BROWSER_FIELDS, 'advanced.browser')
+  assertSupportedFields(provider, ADVANCED_PROVIDER_FIELDS, 'advanced.provider')
+  assertSupportedFields(runtime, ADVANCED_RUNTIME_FIELDS, 'advanced.runtime')
+  assertSupportedFields(command, ADVANCED_COMMAND_FIELDS, 'advanced.command')
+  assertSupportedFields(
+    skillInstall,
+    ADVANCED_SKILL_INSTALL_FIELDS,
+    'advanced.skillInstall'
+  )
+  assertSupportedFields(api, ADVANCED_API_FIELDS, 'advanced.api')
+  assertSupportedFields(
+    instructions,
+    ADVANCED_INSTRUCTIONS_FIELDS,
+    'advanced.instructions'
+  )
+  assertSupportedFields(hooks, ADVANCED_HOOKS_FIELDS, 'advanced.hooks')
+
+  return {
+    browser: {
+      startupTimeoutSeconds: parsePositiveInteger(
+        browser.startupTimeoutSeconds,
+        defaults.browser.startupTimeoutSeconds,
+        'advanced.browser.startupTimeoutSeconds'
+      ),
+      closeTimeoutSeconds: parsePositiveInteger(
+        browser.closeTimeoutSeconds,
+        defaults.browser.closeTimeoutSeconds,
+        'advanced.browser.closeTimeoutSeconds'
+      ),
+    },
+    provider: {
+      requestStartWarningAfterSeconds: parsePositiveInteger(
+        provider.requestStartWarningAfterSeconds,
+        defaults.provider.requestStartWarningAfterSeconds,
+        'advanced.provider.requestStartWarningAfterSeconds'
+      ),
+      blockedWarningEverySeconds: parsePositiveInteger(
+        provider.blockedWarningEverySeconds,
+        defaults.provider.blockedWarningEverySeconds,
+        'advanced.provider.blockedWarningEverySeconds'
+      ),
+      responseTimeoutMinutes: parsePositiveInteger(
+        provider.responseTimeoutMinutes,
+        defaults.provider.responseTimeoutMinutes,
+        'advanced.provider.responseTimeoutMinutes'
+      ),
+      restoreTimeoutSeconds: parsePositiveInteger(
+        provider.restoreTimeoutSeconds,
+        defaults.provider.restoreTimeoutSeconds,
+        'advanced.provider.restoreTimeoutSeconds'
+      ),
+      historyLoadTimeoutSeconds: parsePositiveInteger(
+        provider.historyLoadTimeoutSeconds,
+        defaults.provider.historyLoadTimeoutSeconds,
+        'advanced.provider.historyLoadTimeoutSeconds'
+      ),
+      historyPageTimeoutSeconds: parsePositiveInteger(
+        provider.historyPageTimeoutSeconds,
+        defaults.provider.historyPageTimeoutSeconds,
+        'advanced.provider.historyPageTimeoutSeconds'
+      ),
+    },
+    runtime: {
+      initializationAttemptLimit: parsePositiveInteger(
+        runtime.initializationAttemptLimit,
+        defaults.runtime.initializationAttemptLimit,
+        'advanced.runtime.initializationAttemptLimit'
+      ),
+      requestAttemptLimit: parsePositiveInteger(
+        runtime.requestAttemptLimit,
+        defaults.runtime.requestAttemptLimit,
+        'advanced.runtime.requestAttemptLimit'
+      ),
+      cancelWaitTimeoutSeconds: parsePositiveInteger(
+        runtime.cancelWaitTimeoutSeconds,
+        defaults.runtime.cancelWaitTimeoutSeconds,
+        'advanced.runtime.cancelWaitTimeoutSeconds'
+      ),
+      shutdownCloseTimeoutSeconds: parsePositiveInteger(
+        runtime.shutdownCloseTimeoutSeconds,
+        defaults.runtime.shutdownCloseTimeoutSeconds,
+        'advanced.runtime.shutdownCloseTimeoutSeconds'
+      ),
+      childRuntimeCloseTimeoutSeconds: parsePositiveInteger(
+        runtime.childRuntimeCloseTimeoutSeconds,
+        defaults.runtime.childRuntimeCloseTimeoutSeconds,
+        'advanced.runtime.childRuntimeCloseTimeoutSeconds'
+      ),
+    },
+    command: {
+      resultOutputLimitMB: parsePositiveInteger(
+        command.resultOutputLimitMB,
+        defaults.command.resultOutputLimitMB,
+        'advanced.command.resultOutputLimitMB'
+      ),
+      stopGraceSeconds: parsePositiveNumber(
+        command.stopGraceSeconds,
+        defaults.command.stopGraceSeconds,
+        'advanced.command.stopGraceSeconds'
+      ),
+      stopTimeoutSeconds: parsePositiveInteger(
+        command.stopTimeoutSeconds,
+        defaults.command.stopTimeoutSeconds,
+        'advanced.command.stopTimeoutSeconds'
+      ),
+    },
+    skillInstall: {
+      downloadTimeoutSeconds: parsePositiveInteger(
+        skillInstall.downloadTimeoutSeconds,
+        defaults.skillInstall.downloadTimeoutSeconds,
+        'advanced.skillInstall.downloadTimeoutSeconds'
+      ),
+      downloadLimitMB: parsePositiveInteger(
+        skillInstall.downloadLimitMB,
+        defaults.skillInstall.downloadLimitMB,
+        'advanced.skillInstall.downloadLimitMB'
+      ),
+      extractedSizeLimitMB: parsePositiveInteger(
+        skillInstall.extractedSizeLimitMB,
+        defaults.skillInstall.extractedSizeLimitMB,
+        'advanced.skillInstall.extractedSizeLimitMB'
+      ),
+      fileCountLimit: parsePositiveInteger(
+        skillInstall.fileCountLimit,
+        defaults.skillInstall.fileCountLimit,
+        'advanced.skillInstall.fileCountLimit'
+      ),
+      resourceFileCountLimit: parsePositiveInteger(
+        skillInstall.resourceFileCountLimit,
+        defaults.skillInstall.resourceFileCountLimit,
+        'advanced.skillInstall.resourceFileCountLimit'
+      ),
+      manifestSizeLimitKB: parsePositiveInteger(
+        skillInstall.manifestSizeLimitKB,
+        defaults.skillInstall.manifestSizeLimitKB,
+        'advanced.skillInstall.manifestSizeLimitKB'
+      ),
+      redirectLimit: parsePositiveInteger(
+        skillInstall.redirectLimit,
+        defaults.skillInstall.redirectLimit,
+        'advanced.skillInstall.redirectLimit'
+      ),
+    },
+    api: {
+      requestBodyLimitKB: parsePositiveInteger(
+        api.requestBodyLimitKB,
+        defaults.api.requestBodyLimitKB,
+        'advanced.api.requestBodyLimitKB'
+      ),
+      requestTimeoutSeconds: parseNonNegativeInteger(
+        api.requestTimeoutSeconds,
+        defaults.api.requestTimeoutSeconds,
+        'advanced.api.requestTimeoutSeconds'
+      ),
+      sseHeartbeatSeconds: parsePositiveInteger(
+        api.sseHeartbeatSeconds,
+        defaults.api.sseHeartbeatSeconds,
+        'advanced.api.sseHeartbeatSeconds'
+      ),
+    },
+    instructions: {
+      codexSizeLimitKB: parsePositiveInteger(
+        instructions.codexSizeLimitKB,
+        defaults.instructions.codexSizeLimitKB,
+        'advanced.instructions.codexSizeLimitKB'
+      ),
+      claudeSizeLimitKB: parsePositiveInteger(
+        instructions.claudeSizeLimitKB,
+        defaults.instructions.claudeSizeLimitKB,
+        'advanced.instructions.claudeSizeLimitKB'
+      ),
+      fileCountLimit: parsePositiveInteger(
+        instructions.fileCountLimit,
+        defaults.instructions.fileCountLimit,
+        'advanced.instructions.fileCountLimit'
+      ),
+      importDepthLimit: parsePositiveInteger(
+        instructions.importDepthLimit,
+        defaults.instructions.importDepthLimit,
+        'advanced.instructions.importDepthLimit'
+      ),
+    },
+    hooks: {
+      commandOutputLimitMB: parsePositiveInteger(
+        hooks.commandOutputLimitMB,
+        defaults.hooks.commandOutputLimitMB,
+        'advanced.hooks.commandOutputLimitMB'
+      ),
+    },
   }
 }
 
 export async function ensurePortalConfig(
   configPath: string,
-  defaults: PortalConfigDocument
+  defaults: PortalConfigDocument,
+  options: { rewriteWithComments?: boolean } = {}
 ): Promise<PortalConfigDocument> {
   return await withConfigLock(configPath, async () => {
     const existing = await readPortalConfig(configPath)
     if (existing !== null) {
-      if (!(await hasCompleteManagedSections(configPath))) {
-        await writePortalConfigUnlocked(configPath, existing)
+      if (
+        options.rewriteWithComments === true ||
+        !(await hasCompleteManagedSections(configPath))
+      ) {
+        await writePortalConfigUnlocked(configPath, existing, true)
       }
       return existing
     }
-    await writePortalConfigUnlocked(configPath, defaults)
+    await writePortalConfigUnlocked(configPath, defaults, true)
     return defaults
   })
 }
@@ -295,13 +688,34 @@ async function hasCompleteManagedSections(
   if (
     !isRecord(document) ||
     !isRecord(document.api) ||
-    !isRecord(document.hooks)
+    !isRecord(document.hooks) ||
+    !isRecord(document.advanced)
   ) {
     return false
   }
-  return ['host', 'port', 'token'].every((field) =>
+  const apiComplete = ['host', 'port', 'token'].every((field) =>
     Object.hasOwn(document.api as Record<string, unknown>, field)
   )
+  const advancedSections: Array<
+    readonly [name: string, fields: ReadonlySet<string>]
+  > = [
+    ['browser', ADVANCED_BROWSER_FIELDS],
+    ['provider', ADVANCED_PROVIDER_FIELDS],
+    ['runtime', ADVANCED_RUNTIME_FIELDS],
+    ['command', ADVANCED_COMMAND_FIELDS],
+    ['skillInstall', ADVANCED_SKILL_INSTALL_FIELDS],
+    ['api', ADVANCED_API_FIELDS],
+    ['instructions', ADVANCED_INSTRUCTIONS_FIELDS],
+    ['hooks', ADVANCED_HOOKS_FIELDS],
+  ]
+  const advancedComplete = advancedSections.every(([name, fields]) => {
+    const section = (document.advanced as Record<string, unknown>)[name]
+    return (
+      isRecord(section) &&
+      [...fields].every((field) => Object.hasOwn(section, field))
+    )
+  })
+  return apiComplete && advancedComplete
 }
 
 export async function updatePortalConfig(
@@ -320,7 +734,8 @@ export async function updatePortalConfig(
 
 async function writePortalConfigUnlocked(
   configPath: string,
-  config: PortalConfigDocument
+  config: PortalConfigDocument,
+  includeComments = false
 ): Promise<void> {
   const directory = path.dirname(configPath)
   const temporaryPath = path.join(
@@ -329,10 +744,16 @@ async function writePortalConfigUnlocked(
   )
   await mkdir(directory, { recursive: true })
   try {
-    await writeFile(temporaryPath, stringify(config), {
-      encoding: 'utf8',
-      flag: 'wx',
-    })
+    await writeFile(
+      temporaryPath,
+      includeComments
+        ? stringifyInitialPortalConfig(config)
+        : stringify(config),
+      {
+        encoding: 'utf8',
+        flag: 'wx',
+      }
+    )
     await rename(temporaryPath, configPath)
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => {})
@@ -416,6 +837,281 @@ function cloneConfig(config: PortalConfigDocument): PortalConfigDocument {
     mcp: structuredClone(config.mcp),
     skills: structuredClone(config.skills),
     hooks: structuredClone(config.hooks),
+    advanced: structuredClone(config.advanced),
+  }
+}
+
+function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
+  const document = new Document(config)
+  commentMap(
+    document,
+    [],
+    [
+      ['browser', 'Browser launch and profile settings.'],
+      [
+        'agentInstructions',
+        'Project instruction sources loaded into runtimes.',
+      ],
+      ['api', 'Local HTTP API listener and authentication settings.'],
+      ['mcp', 'Model Context Protocol server configuration.'],
+      ['skills', 'Registered Skill directories and enabled states.'],
+      ['hooks', 'Lifecycle hook handlers and execution policy.'],
+      ['advanced', 'Low-frequency runtime tuning and resource limits.'],
+    ],
+    true
+  )
+  commentMap(
+    document,
+    ['browser'],
+    [
+      ['name', 'Chromium-based browser type to launch.'],
+      ['executablePath', 'Path to the browser executable.'],
+      ['profilePath', 'Directory that stores the dedicated browser profile.'],
+      ['remoteDebuggingPort', 'Local CDP port used to control the browser.'],
+    ]
+  )
+  commentMap(
+    document,
+    ['agentInstructions'],
+    [
+      ['claude', 'Enable global or project-local Claude instruction files.'],
+      ['codex', 'Enable global or project-local Codex instruction files.'],
+    ]
+  )
+  for (const source of ['claude', 'codex']) {
+    commentMap(
+      document,
+      ['agentInstructions', source],
+      [
+        ['global', 'Load the user-level instruction file when available.'],
+        ['local', 'Load instruction files from the current project.'],
+      ]
+    )
+  }
+  commentMap(
+    document,
+    ['api'],
+    [
+      ['host', 'Network interface used by the local HTTP API.'],
+      ['port', 'TCP port used by the local HTTP API.'],
+      ['token', 'Bearer token required by the API, or null to disable it.'],
+    ]
+  )
+  commentMap(
+    document,
+    ['mcp'],
+    [
+      ['connectionStrategy', 'How MCP connections are scoped across threads.'],
+      ['servers', 'MCP servers keyed by their unique local names.'],
+    ]
+  )
+  commentMap(
+    document,
+    ['hooks'],
+    [
+      ['enabled', 'Enable or disable all configured hooks.'],
+      ['maxDepth', 'Maximum nested hook dispatch depth.'],
+      ['handlers', 'Hook handlers evaluated for lifecycle events.'],
+    ]
+  )
+  commentMap(
+    document,
+    ['advanced'],
+    [
+      ['browser', 'Browser startup and shutdown timing.'],
+      ['provider', 'Web provider response and history timing.'],
+      ['runtime', 'Runtime retry, cancellation, and shutdown behavior.'],
+      ['command', 'Local command output and process termination limits.'],
+      ['skillInstall', 'Skill download, extraction, and file limits.'],
+      ['api', 'HTTP API request and event-stream limits.'],
+      ['instructions', 'Project instruction loading limits.'],
+      ['hooks', 'Hook command resource limits.'],
+    ],
+    true
+  )
+  commentMap(
+    document,
+    ['advanced', 'browser'],
+    [
+      [
+        'startupTimeoutSeconds',
+        'Seconds allowed for browser startup and CDP connection.',
+      ],
+      [
+        'closeTimeoutSeconds',
+        'Seconds allowed for the browser to close cleanly.',
+      ],
+    ]
+  )
+  commentMap(
+    document,
+    ['advanced', 'provider'],
+    [
+      [
+        'requestStartWarningAfterSeconds',
+        'Seconds before warning that a submitted request has not started.',
+      ],
+      [
+        'blockedWarningEverySeconds',
+        'Seconds between repeated blocked-request warnings.',
+      ],
+      [
+        'responseTimeoutMinutes',
+        'Minutes allowed for one provider response to complete; idle safety checks may finish earlier.',
+      ],
+      [
+        'restoreTimeoutSeconds',
+        'Seconds allowed for a provider page to become ready.',
+      ],
+      [
+        'historyLoadTimeoutSeconds',
+        'Seconds allowed to load all available conversation history.',
+      ],
+      [
+        'historyPageTimeoutSeconds',
+        'Seconds allowed to load one history page.',
+      ],
+    ]
+  )
+  commentMap(
+    document,
+    ['advanced', 'runtime'],
+    [
+      [
+        'initializationAttemptLimit',
+        'Maximum attempts to initialize a provider runtime.',
+      ],
+      [
+        'requestAttemptLimit',
+        'Maximum attempts for one retryable provider request.',
+      ],
+      [
+        'cancelWaitTimeoutSeconds',
+        'Seconds to wait for a cancelled thread operation to settle.',
+      ],
+      [
+        'shutdownCloseTimeoutSeconds',
+        'Seconds to wait for each resource during portal shutdown.',
+      ],
+      [
+        'childRuntimeCloseTimeoutSeconds',
+        'Seconds to wait for a hook child runtime to close.',
+      ],
+    ]
+  )
+  commentMap(
+    document,
+    ['advanced', 'command'],
+    [
+      [
+        'resultOutputLimitMB',
+        'Maximum combined stdout and stderr retained per command, in MB.',
+      ],
+      [
+        'stopGraceSeconds',
+        'Seconds allowed for POSIX graceful process-tree termination before force kill; Windows uses Job/taskkill termination.',
+      ],
+      [
+        'stopTimeoutSeconds',
+        'Seconds to wait for a stopped command job to settle.',
+      ],
+    ]
+  )
+  commentMap(
+    document,
+    ['advanced', 'skillInstall'],
+    [
+      [
+        'downloadTimeoutSeconds',
+        'Seconds allowed for one Skill download operation.',
+      ],
+      ['downloadLimitMB', 'Maximum downloaded Skill size, in MB.'],
+      ['extractedSizeLimitMB', 'Maximum extracted Skill size, in MB.'],
+      ['fileCountLimit', 'Maximum number of files in one installed Skill.'],
+      [
+        'resourceFileCountLimit',
+        'Maximum resource files exposed by one Skill.',
+      ],
+      ['manifestSizeLimitKB', 'Maximum SKILL.md file size, in KB.'],
+      [
+        'redirectLimit',
+        'Maximum HTTP redirects followed during a Skill download.',
+      ],
+    ]
+  )
+  commentMap(
+    document,
+    ['advanced', 'api'],
+    [
+      ['requestBodyLimitKB', 'Maximum HTTP API request body size, in KB.'],
+      [
+        'requestTimeoutSeconds',
+        'HTTP request timeout in seconds; 0 disables the timeout.',
+      ],
+      [
+        'sseHeartbeatSeconds',
+        'Seconds between HTTP event-stream heartbeat messages.',
+      ],
+    ]
+  )
+  commentMap(
+    document,
+    ['advanced', 'instructions'],
+    [
+      [
+        'codexSizeLimitKB',
+        'Maximum Codex instruction bytes loaded, expressed in KB.',
+      ],
+      [
+        'claudeSizeLimitKB',
+        'Maximum Claude instruction bytes loaded, expressed in KB.',
+      ],
+      ['fileCountLimit', 'Maximum instruction files scanned for one project.'],
+      [
+        'importDepthLimit',
+        'Maximum nested depth for imported instruction files.',
+      ],
+    ]
+  )
+  commentMap(
+    document,
+    ['advanced', 'hooks'],
+    [
+      [
+        'commandOutputLimitMB',
+        'Maximum output retained from one command hook, in MB.',
+      ],
+    ]
+  )
+  return String(document)
+}
+
+function commentMap(
+  document: Document,
+  path: readonly string[],
+  comments: readonly (readonly [key: string, comment: string])[],
+  addSpacing = false
+): void {
+  const node =
+    path.length === 0 ? document.contents : document.getIn(path, true)
+  if (!isMap(node)) {
+    throw new PortalConfigError(
+      `Cannot annotate config path: ${path.join('.')}`
+    )
+  }
+  const commentByKey = new Map(comments)
+  let matched = 0
+  for (const pair of node.items) {
+    if (!isScalar(pair.key) || typeof pair.key.value !== 'string') {
+      continue
+    }
+    const comment = commentByKey.get(pair.key.value)
+    if (comment === undefined) {
+      continue
+    }
+    pair.key.commentBefore = ` ${comment}`
+    pair.key.spaceBefore = addSpacing && matched > 0
+    matched += 1
   }
 }
 
@@ -447,6 +1143,55 @@ function parseInstructionScope(
     global: global === undefined ? false : global,
     local: local === undefined ? true : local,
   }
+}
+
+function parseOptionalRecord(
+  value: unknown,
+  label: string
+): Record<string, unknown> {
+  if (value === undefined) {
+    return {}
+  }
+  if (!isRecord(value)) {
+    throw new PortalConfigError(`${label} must be an object`)
+  }
+  return value
+}
+
+function parsePositiveInteger(
+  value: unknown,
+  fallback: number,
+  label: string
+): number {
+  const parsed = value === undefined ? fallback : value
+  if (!Number.isSafeInteger(parsed) || (parsed as number) <= 0) {
+    throw new PortalConfigError(`${label} must be a positive integer`)
+  }
+  return parsed as number
+}
+
+function parseNonNegativeInteger(
+  value: unknown,
+  fallback: number,
+  label: string
+): number {
+  const parsed = value === undefined ? fallback : value
+  if (!Number.isSafeInteger(parsed) || (parsed as number) < 0) {
+    throw new PortalConfigError(`${label} must be a non-negative integer`)
+  }
+  return parsed as number
+}
+
+function parsePositiveNumber(
+  value: unknown,
+  fallback: number,
+  label: string
+): number {
+  const parsed = value === undefined ? fallback : value
+  if (typeof parsed !== 'number' || !Number.isFinite(parsed) || parsed <= 0) {
+    throw new PortalConfigError(`${label} must be a positive number`)
+  }
+  return parsed
 }
 
 function getErrorMessage(error: unknown): string {

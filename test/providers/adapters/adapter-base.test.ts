@@ -102,6 +102,17 @@ class ThrowingAuthInitAdapter extends ProviderAdapter {
 }
 
 class PollingAdapter extends ProviderAdapter {
+  public readTimingOptions() {
+    return {
+      requestStartWarningAfterMs: this.getSubmitRequestStartGraceMs(),
+      blockedWarningIntervalMs: this.getSubmitBlockedWarningIntervalMs(),
+      responseTimeoutMs: this.getSubmitResponseTimeoutMs(),
+      restoreTimeoutMs: this.getRestoreTimeoutMs(),
+      historyLoadTimeoutMs: this.getHistoryLoadTimeoutMs(),
+      historyPageTimeoutMs: this.getHistoryPageTimeoutMs(),
+    }
+  }
+
   public async readHistoryEntries(
     predicate: (entry: CapturedFetchEntry) => boolean
   ) {
@@ -172,6 +183,46 @@ class PollingAdapter extends ProviderAdapter {
     return 'READY'
   }
 }
+
+test('ProviderAdapter uses configured provider timing options', () => {
+  const timings = {
+    requestStartWarningAfterMs: 1,
+    blockedWarningIntervalMs: 2,
+    responseTimeoutMs: 3,
+    restoreTimeoutMs: 4,
+    historyLoadTimeoutMs: 5,
+    historyPageTimeoutMs: 6,
+  }
+  const adapter = new PollingAdapter({} as any, { timings })
+
+  assert.deepEqual(adapter.readTimingOptions(), timings)
+})
+
+test('ProviderAdapter bounds history capture waits with the configured page timeout', async () => {
+  const page = {
+    addInitScript: async () => undefined,
+    evaluate: async () => [],
+    close: async () => undefined,
+  }
+  const adapter = await PollingAdapter.create(
+    { newPage: async () => page } as any,
+    {
+      timings: {
+        requestStartWarningAfterMs: 1,
+        blockedWarningIntervalMs: 1,
+        responseTimeoutMs: 1,
+        restoreTimeoutMs: 1,
+        historyLoadTimeoutMs: 20,
+        historyPageTimeoutMs: 5,
+      },
+    }
+  )
+  const startedAt = Date.now()
+
+  assert.deepEqual(await adapter.readHistoryEntries(() => true), [])
+  assert.ok(Date.now() - startedAt < 200)
+  await adapter.close()
+})
 
 test('ProviderAdapter.create closes the opened page when init fails', async () => {
   let closeCalls = 0

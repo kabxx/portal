@@ -30,7 +30,6 @@ const GROK_MODEL_MENU_SELECTOR =
 const GROK_MODEL_ITEM_SELECTOR =
   'xpath=./div[@role="menuitem" and contains(@class, "ps-2.5") and contains(@class, "flex-row")]'
 const GROK_WEBSOCKET_URL = 'wss://grok.com/ws/mgw/'
-const GROK_SUBMIT_RESPONSE_TIMEOUT_MS = 300000
 const GROK_STOP_ICON_PATH_PREFIX = 'M4 9.2v5.6c0 1.116 0 1.673.11 2.134'
 
 function normalizeToPathArray(path: string | readonly string[]): string[] {
@@ -180,18 +179,18 @@ export class GrokAdapter extends ProviderAdapter {
           await abortable(
             this.page.goto(this.conversationUrl, {
               waitUntil: 'commit',
-              timeout: 30000,
+              timeout: this.getRestoreTimeoutMs(),
             }),
             signal
           )
           await waitAsync(async () => await isAvailable(), {
-            timeoutMs: 60000,
+            timeoutMs: this.getRestoreTimeoutMs(),
             signal,
           })
         })
       })
       await waitAsync(async () => await isAvailable(), {
-        timeoutMs: 60000,
+        timeoutMs: this.getRestoreTimeoutMs(),
         signal,
       })
       if (!(await this.isLoggedIn())) {
@@ -207,7 +206,11 @@ export class GrokAdapter extends ProviderAdapter {
           }
         )
       }
-      await this.waitForComposerReady('restore', 60000, signal)
+      await this.waitForComposerReady(
+        'restore',
+        this.getRestoreTimeoutMs(),
+        signal
+      )
     } catch (error) {
       if (this.isRetryableError(error)) {
         throw new ProviderAdapterError(
@@ -422,7 +425,7 @@ export class GrokAdapter extends ProviderAdapter {
         const { signal } = options
         throwIfAborted(signal)
         await waitAsync(async () => await this.isSubmitButtonReady(), {
-          timeoutMs: GROK_SUBMIT_RESPONSE_TIMEOUT_MS,
+          timeoutMs: this.getSubmitResponseTimeoutMs(),
           signal,
         })
         const websocketStartIndex = this.websocketFrames.length
@@ -481,7 +484,7 @@ export class GrokAdapter extends ProviderAdapter {
               return parsedResponse.isFinished
             },
             {
-              timeoutMs: GROK_SUBMIT_RESPONSE_TIMEOUT_MS,
+              timeoutMs: this.getSubmitResponseTimeoutMs(),
               signal,
               onTimeout: async () => {
                 throw new ProviderAdapterError(
@@ -512,12 +515,12 @@ export class GrokAdapter extends ProviderAdapter {
             )
           }
           await waitAsync(async () => await this.isComposerIdle(), {
-            timeoutMs: GROK_SUBMIT_RESPONSE_TIMEOUT_MS,
+            timeoutMs: this.getSubmitResponseTimeoutMs(),
             signal,
           })
           await this.waitForComposerReady(
             'submit',
-            GROK_SUBMIT_RESPONSE_TIMEOUT_MS,
+            this.getSubmitResponseTimeoutMs(),
             signal
           )
           this.conversationIdVal =
