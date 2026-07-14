@@ -9,7 +9,9 @@ import { RuntimeCore } from '../../src/runtime/runtime-core.ts'
 import {
   ProviderAdapter,
   ProviderAdapterError,
+  ProviderResponseTimeoutError,
   type AbortOptions,
+  type ProviderTimingOptions,
 } from '../../src/providers/adapters/adapter-base.ts'
 import { ToolRegistry } from '../../src/tools/core/tool-registry.ts'
 import {
@@ -34,8 +36,11 @@ class FakeAdapter extends ProviderAdapter {
   public readonly submitSignals: Array<AbortSignal | undefined> = []
   public submitTextReporterMessages: string[] = []
 
-  public constructor(private readonly responses: string[]) {
-    super({} as BrowserContext)
+  public constructor(
+    private readonly responses: string[],
+    timings?: ProviderTimingOptions
+  ) {
+    super({} as BrowserContext, timings === undefined ? {} : { timings })
   }
 
   public async restore(): Promise<void> {
@@ -84,6 +89,32 @@ class FakeAdapter extends ProviderAdapter {
       throw new Error('No fake adapter response queued.')
     }
     return response
+  }
+}
+
+class StallingAdapter extends FakeAdapter {
+  public stopCalls = 0
+
+  public constructor() {
+    super([], {
+      requestStartWarningAfterMs: 100,
+      blockedWarningIntervalMs: 100,
+      responseStartTimeoutMs: 10,
+      responseStallTimeoutMs: 10,
+      restoreTimeoutMs: 100,
+      historyLoadTimeoutMs: 100,
+      historyPageTimeoutMs: 100,
+    })
+  }
+
+  public override async submit(options: AbortOptions = {}): Promise<string> {
+    this.submitSignals.push(options.signal)
+    this.emitSubmitSent()
+    return await abortable(new Promise<string>(() => {}), options.signal)
+  }
+
+  public override async stopGeneration(): Promise<void> {
+    this.stopCalls += 1
   }
 }
 
@@ -521,7 +552,7 @@ test('RuntimeCore forwards assistant stream snapshots before the final assistant
   assert.deepEqual(finalMessages, ['Streaming complete.'])
 })
 
-test('RuntimeCore forwards submit abort signal to the adapter', async () => {
+test('RuntimeCore propagates submit aborts to the adapter watchdog signal', async () => {
   const adapter = new FakeAdapter(['Done.'])
   const runtime = new RuntimeCore(adapter, new ToolRegistry(adapter, []))
   const controller = new AbortController()
@@ -530,7 +561,34 @@ test('RuntimeCore forwards submit abort signal to the adapter', async () => {
     signal: controller.signal,
   })
 
-  assert.equal(adapter.submitSignals[0], controller.signal)
+  const submitSignal = adapter.submitSignals[0]
+  assert.equal(submitSignal?.aborted, false)
+  controller.abort(new PortalAbortError('cancel after submit'))
+  assert.equal(submitSignal?.aborted, true)
+})
+
+test('RuntimeCore does not retry a provider response activity timeout', async () => {
+  const adapter = new StallingAdapter()
+  const runtime = new RuntimeCore(
+    adapter,
+    new ToolRegistry(adapter, []),
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [],
+    null,
+    3
+  )
+
+  await assert.rejects(
+    runtime.submitUserInput('Wait forever.'),
+    ProviderResponseTimeoutError
+  )
+  assert.equal(adapter.submitSignals.length, 1)
+  assert.equal(adapter.stopCalls, 1)
 })
 
 test('RuntimeCore cancels an adapter restore during retry recovery', async () => {

@@ -7,8 +7,13 @@ import {
   type CapturedFetchEntry,
   ProviderAdapter,
   ProviderAdapterError,
+  ProviderResponseTimeoutError,
+  type ProviderTimingOptions,
 } from '../../../src/providers/adapters/adapter-base.ts'
-import { PortalAbortError } from '../../../src/runtime/runtime-cancellation.ts'
+import {
+  abortable,
+  PortalAbortError,
+} from '../../../src/runtime/runtime-cancellation.ts'
 
 class ThrowingInitAdapter extends ProviderAdapter {
   protected override async init() {
@@ -106,7 +111,8 @@ class PollingAdapter extends ProviderAdapter {
     return {
       requestStartWarningAfterMs: this.getSubmitRequestStartGraceMs(),
       blockedWarningIntervalMs: this.getSubmitBlockedWarningIntervalMs(),
-      responseTimeoutMs: this.getSubmitResponseTimeoutMs(),
+      responseStartTimeoutMs: this.getSubmitResponseStartTimeoutMs(),
+      responseStallTimeoutMs: this.getSubmitResponseStallTimeoutMs(),
       restoreTimeoutMs: this.getRestoreTimeoutMs(),
       historyLoadTimeoutMs: this.getHistoryLoadTimeoutMs(),
       historyPageTimeoutMs: this.getHistoryPageTimeoutMs(),
@@ -184,18 +190,185 @@ class PollingAdapter extends ProviderAdapter {
   }
 }
 
+class ResponseTimingAdapter extends ProviderAdapter {
+  public submitCalls = 0
+  public stopCalls = 0
+  public activityCalls = 0
+
+  public constructor(
+    timings: ProviderTimingOptions,
+    private readonly runSubmit: (
+      adapter: ResponseTimingAdapter,
+      signal?: AbortSignal
+    ) => Promise<string>
+  ) {
+    super({} as any, { timings })
+  }
+
+  public reportActivity(): void {
+    this.emitSubmitActivity()
+  }
+
+  public reportCapturedEntries(entries: readonly CapturedFetchEntry[]): void {
+    this.reportCapturedSubmitActivity(entries)
+  }
+
+  protected override emitSubmitActivity(): void {
+    this.activityCalls += 1
+    super.emitSubmitActivity()
+  }
+
+  public async restore() {
+    return undefined
+  }
+
+  public async isLoggedIn() {
+    return true
+  }
+
+  public get conversationId(): string | null {
+    return null
+  }
+
+  public get conversationUrl(): string {
+    return 'https://example.com/thread'
+  }
+
+  public async changeModel(_model: string) {
+    return undefined
+  }
+
+  public async attachText(_text: string) {
+    return undefined
+  }
+
+  public async attachFile(_path: string | readonly string[]) {
+    return undefined
+  }
+
+  public async attachImage(_path: string | readonly string[]) {
+    return undefined
+  }
+
+  public override async stopGeneration(): Promise<void> {
+    this.stopCalls += 1
+  }
+
+  public async submit(options: { signal?: AbortSignal } = {}): Promise<string> {
+    this.submitCalls += 1
+    this.emitSubmitSent()
+    return await this.runSubmit(this, options.signal)
+  }
+}
+
+function responseTimings(
+  responseStartTimeoutMs: number,
+  responseStallTimeoutMs: number
+): ProviderTimingOptions {
+  return {
+    requestStartWarningAfterMs: 100,
+    blockedWarningIntervalMs: 100,
+    responseStartTimeoutMs,
+    responseStallTimeoutMs,
+    restoreTimeoutMs: 100,
+    historyLoadTimeoutMs: 100,
+    historyPageTimeoutMs: 100,
+  }
+}
+
 test('ProviderAdapter uses configured provider timing options', () => {
   const timings = {
     requestStartWarningAfterMs: 1,
     blockedWarningIntervalMs: 2,
-    responseTimeoutMs: 3,
-    restoreTimeoutMs: 4,
-    historyLoadTimeoutMs: 5,
-    historyPageTimeoutMs: 6,
+    responseStartTimeoutMs: 3,
+    responseStallTimeoutMs: 4,
+    restoreTimeoutMs: 5,
+    historyLoadTimeoutMs: 6,
+    historyPageTimeoutMs: 7,
   }
   const adapter = new PollingAdapter({} as any, { timings })
 
   assert.deepEqual(adapter.readTimingOptions(), timings)
+})
+
+test('ProviderAdapter fails and stops generation when initial response activity times out', async () => {
+  const adapter = new ResponseTimingAdapter(
+    responseTimings(10, 20),
+    async (_adapter, signal) =>
+      await abortable(new Promise<string>(() => {}), signal)
+  )
+
+  await assert.rejects(
+    adapter.submitWithResponseTimeout(),
+    (error: unknown) => {
+      assert.ok(error instanceof ProviderResponseTimeoutError)
+      assert.equal(error.detailCode, 'provider_response_start_timeout')
+      assert.equal(error.retryable, false)
+      return true
+    }
+  )
+  assert.equal(adapter.submitCalls, 1)
+  assert.equal(adapter.stopCalls, 1)
+})
+
+test('ProviderAdapter switches to stall timeout after non-text response activity', async () => {
+  const adapter = new ResponseTimingAdapter(
+    responseTimings(50, 10),
+    async (current, signal) => {
+      setTimeout(() => current.reportActivity(), 5)
+      return await abortable(new Promise<string>(() => {}), signal)
+    }
+  )
+
+  await assert.rejects(
+    adapter.submitWithResponseTimeout(),
+    (error: unknown) => {
+      assert.ok(error instanceof ProviderResponseTimeoutError)
+      assert.equal(error.detailCode, 'provider_response_stall_timeout')
+      return true
+    }
+  )
+  assert.equal(adapter.stopCalls, 1)
+})
+
+test('ProviderAdapter response activity keeps a long stream alive and completion clears the watchdog', async () => {
+  const adapter = new ResponseTimingAdapter(
+    responseTimings(20, 20),
+    async (current) => {
+      for (let index = 0; index < 3; index += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        current.reportActivity()
+      }
+      return 'done'
+    }
+  )
+
+  assert.equal(await adapter.submitWithResponseTimeout(), 'done')
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  assert.equal(adapter.stopCalls, 0)
+})
+
+test('ProviderAdapter does not count an unchanged captured response snapshot twice', async () => {
+  const entry: CapturedFetchEntry = {
+    id: 1,
+    url: 'https://example.com/provider-response',
+    method: 'POST',
+    status: 200,
+    chunks: [': heartbeat\n\n'],
+    done: false,
+    error: null,
+  }
+  const adapter = new ResponseTimingAdapter(
+    responseTimings(20, 20),
+    async (current) => {
+      current.reportCapturedEntries([entry])
+      current.reportCapturedEntries([{ ...entry, chunks: [...entry.chunks] }])
+      return 'done'
+    }
+  )
+
+  assert.equal(await adapter.submitWithResponseTimeout(), 'done')
+  assert.equal(adapter.activityCalls, 1)
 })
 
 test('ProviderAdapter bounds history capture waits with the configured page timeout', async () => {
@@ -210,7 +383,8 @@ test('ProviderAdapter bounds history capture waits with the configured page time
       timings: {
         requestStartWarningAfterMs: 1,
         blockedWarningIntervalMs: 1,
-        responseTimeoutMs: 1,
+        responseStartTimeoutMs: 1,
+        responseStallTimeoutMs: 1,
         restoreTimeoutMs: 1,
         historyLoadTimeoutMs: 20,
         historyPageTimeoutMs: 5,

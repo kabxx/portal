@@ -1139,6 +1139,7 @@ export class DoubaoAdapter extends ProviderAdapter {
             if (!this.isTargetCompletionRequest(response.request())) {
               return
             }
+            this.emitSubmitActivitySafely()
             resolveRequestStarted()
             if (await this.isTargetCompletionResponse(response)) {
               settleTargetResponse({ kind: 'resolve', response })
@@ -1185,6 +1186,7 @@ export class DoubaoAdapter extends ProviderAdapter {
               await this.readCurrentStreamedResponseText(fetchCaptureStartIndex)
           )
           await sendButton.click()
+          this.emitSubmitSent()
           throwIfAborted(signal)
 
           await abortable(

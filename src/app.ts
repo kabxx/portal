@@ -130,7 +130,12 @@ export function createPortalRuntimeSettings(
       blockedWarningIntervalMs: seconds(
         advanced.provider.blockedWarningEverySeconds
       ),
-      responseTimeoutMs: advanced.provider.responseTimeoutMinutes * 60_000,
+      responseStartTimeoutMs: seconds(
+        advanced.provider.responseStartTimeoutSeconds
+      ),
+      responseStallTimeoutMs: seconds(
+        advanced.provider.responseStallTimeoutSeconds
+      ),
       restoreTimeoutMs: seconds(advanced.provider.restoreTimeoutSeconds),
       historyLoadTimeoutMs: seconds(
         advanced.provider.historyLoadTimeoutSeconds

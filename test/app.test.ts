@@ -43,10 +43,11 @@ test('createPortalRuntimeSettings converts every advanced section to runtime uni
   advanced.provider = {
     requestStartWarningAfterSeconds: 13,
     blockedWarningEverySeconds: 14,
-    responseTimeoutMinutes: 15,
-    restoreTimeoutSeconds: 16,
-    historyLoadTimeoutSeconds: 17,
-    historyPageTimeoutSeconds: 18,
+    responseStartTimeoutSeconds: 15,
+    responseStallTimeoutSeconds: 16,
+    restoreTimeoutSeconds: 17,
+    historyLoadTimeoutSeconds: 18,
+    historyPageTimeoutSeconds: 19,
   }
   advanced.runtime = {
     initializationAttemptLimit: 19,
@@ -87,10 +88,11 @@ test('createPortalRuntimeSettings converts every advanced section to runtime uni
     providerTimings: {
       requestStartWarningAfterMs: 13_000,
       blockedWarningIntervalMs: 14_000,
-      responseTimeoutMs: 900_000,
-      restoreTimeoutMs: 16_000,
-      historyLoadTimeoutMs: 17_000,
-      historyPageTimeoutMs: 18_000,
+      responseStartTimeoutMs: 15_000,
+      responseStallTimeoutMs: 16_000,
+      restoreTimeoutMs: 17_000,
+      historyLoadTimeoutMs: 18_000,
+      historyPageTimeoutMs: 19_000,
     },
     initializationAttemptLimit: 19,
     requestAttemptLimit: 20,

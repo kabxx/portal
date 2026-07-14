@@ -453,6 +453,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
         return
       }
       websocket.on('framereceived', (event) => {
+        this.emitSubmitActivitySafely()
         const payload =
           typeof event.payload === 'string'
             ? event.payload
@@ -975,6 +976,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
           if (!this.isTargetConversationRequest(response.request())) {
             return
           }
+          this.emitSubmitActivitySafely()
           resolveRequestStarted()
           if (response.status() !== 200) {
             return
@@ -1069,6 +1071,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
           }
           void pollSubmitText().catch(() => {})
           await sendButton.click()
+          this.emitSubmitSent()
           throwIfAborted(signal)
 
           await abortable(
