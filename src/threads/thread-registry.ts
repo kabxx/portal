@@ -19,6 +19,8 @@ export type TurnItem =
       kind: 'tool_call'
       toolName: string
       rawPayload: string
+      toolCallId?: string
+      originalInput?: Record<string, unknown> | string
       createdAt: number
     }
   | {
@@ -27,6 +29,9 @@ export type TurnItem =
       outcome: ToolOutcome
       result: Record<string, unknown>
       displayText?: string
+      toolCallId?: string
+      effectiveInput?: Record<string, unknown> | string
+      rewrittenBy?: readonly string[]
       createdAt: number
     }
   | {

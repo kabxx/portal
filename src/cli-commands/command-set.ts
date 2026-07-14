@@ -6,6 +6,7 @@ import { ThreadCommand } from './commands/command-thread.ts'
 import { SkillCommand } from './commands/command-skill.ts'
 import { McpCommand } from './commands/command-mcp.ts'
 import { ServeCommand } from './commands/command-serve.ts'
+import { HookCommand } from './commands/command-hook.ts'
 import { JobCommand } from './commands/command-job.ts'
 
 export const DEFAULT_COMMANDS: readonly CliCommand[] = [
@@ -14,6 +15,7 @@ export const DEFAULT_COMMANDS: readonly CliCommand[] = [
   SkillCommand,
   McpCommand,
   ServeCommand,
+  HookCommand,
   JobCommand,
   ProvidersCommand,
   ExitCommand,

@@ -12,6 +12,7 @@ import type {
   SkillAddOptions,
 } from '../../skills/skill-installer.ts'
 import type { McpLibrary } from '../../mcp/mcp-library.ts'
+import type { HookCatalog } from '../../hooks/hook-catalog.ts'
 import type { RunCommandJobService } from '../../processes/run-command-job-manager.ts'
 
 export interface ApiCommandController {
@@ -32,6 +33,7 @@ export interface CliCommandContext {
   skillLibrary: SkillLibrary
   mcpLibrary: McpLibrary
   runCommandJobs?: RunCommandJobService
+  hookCatalog?: HookCatalog
   api?: ApiCommandController
   ui: TerminalController
   browserProfileDir: string
