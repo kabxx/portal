@@ -153,6 +153,35 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
   }
 })
 
+test('PortalApiServer can restart after stopping', async () => {
+  const server = new PortalApiServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: null,
+    handlers: createHandlers([]),
+  })
+
+  await server.start()
+  try {
+    const firstAddress = server.address()
+    assert.notEqual(firstAddress, null)
+    const firstHealth = await fetch(`${firstAddress}/health`)
+    assert.equal(firstHealth.status, 200)
+
+    await server.stop()
+    assert.equal(server.isStarted, false)
+    assert.equal(server.address(), null)
+
+    await server.start()
+    const secondAddress = server.address()
+    assert.notEqual(secondAddress, null)
+    const secondHealth = await fetch(`${secondAddress}/health`)
+    assert.equal(secondHealth.status, 200)
+  } finally {
+    await server.stop()
+  }
+})
+
 test('PortalApiServer reports unsupported thread reload handlers', async () => {
   const server = new PortalApiServer({
     host: '127.0.0.1',
