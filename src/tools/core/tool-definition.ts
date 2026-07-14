@@ -1,4 +1,5 @@
 import type { ProviderAdapter } from '../../providers/adapters/adapter-base.ts'
+import type { RunCommandJobService } from '../../processes/run-command-job-manager.ts'
 import type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
 import { joinPromptSections } from '../../shared/prompt-sections.ts'
 
@@ -46,6 +47,7 @@ interface ToolExecutionOptions extends AbortOptions {
 }
 
 interface ToolServices {
+  runCommandJobs?: RunCommandJobService
   spawnTask?: (
     input: { prompt: string; provider?: string },
     options?: AbortOptions

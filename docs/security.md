@@ -30,6 +30,9 @@ Provider output, loaded Skill instructions, MCP content, and resumed conversatio
 - portal does not confine tools to the repository or current working directory.
 - `apply_patch` limits operations to regular UTF-8 files and refuses move/delete operations, but those checks are not a filesystem sandbox.
 - `run_command` output is bounded, but command side effects are not. A call without `timeoutMs` has no tool-level timeout.
+- Cancelling a turn with Ctrl+C does not stop its `run_command` process. Inspect active jobs with `/job` and stop a specific job with `/job stop <job-id>`; controlled portal shutdown stops all managed jobs.
+- `/job` displays a sanitized command summary and working directory. Avoid putting credentials directly in command arguments.
+- Job tracking is process-local and is not persisted. A forcibly terminated portal process, or a command that deliberately escapes its process group or Windows Job Object, may leave descendants running.
 - Ctrl+C propagates cancellation where supported, but cancellation cannot prove that an external process, provider request, or MCP operation had no side effects.
 - An MCP timeout or connection loss after dispatch is reported as an unknown outcome and must not be retried automatically.
 

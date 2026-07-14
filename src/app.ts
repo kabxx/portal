@@ -23,6 +23,7 @@ import {
   tryRestoreRuntimeForRecovery,
 } from './runtime/runtime-recovery.ts'
 import type { ToolServices } from './tools/core/tool-definition.ts'
+import { RunCommandJobManager } from './processes/run-command-job-manager.ts'
 import { initializeRuntimeWithLoginWait } from './runtime/runtime-initializer.ts'
 import { isAbortError, throwIfAborted } from './runtime/runtime-cancellation.ts'
 import { sleepWithAbortAsync } from './shared/sleep.ts'
@@ -98,7 +99,12 @@ export function clearInteractiveTerminal(
 
 export function canRunCommandWhileThreadBusy(input: string): boolean {
   const [command, subcommand, action] = tokenizeCommandInput(input)
-  if (command === '/help' || command === '/providers' || command === '/exit') {
+  if (
+    command === '/help' ||
+    command === '/providers' ||
+    command === '/job' ||
+    command === '/exit'
+  ) {
     return true
   }
   if (command === '/thread') {
@@ -302,6 +308,7 @@ function createToolServices({
   skillLibrary,
   mcpLibrary,
   projectInstructions,
+  runCommandJobs,
 }: {
   context: import('playwright').BrowserContext
   provider: ProviderId
@@ -309,8 +316,10 @@ function createToolServices({
   skillLibrary: SkillLibrary
   mcpLibrary: McpLibrary
   projectInstructions: ProjectInstructions
+  runCommandJobs: RunCommandJobManager
 }): ToolServices {
   return {
+    runCommandJobs,
     spawnTask: async (
       { prompt, provider: requestedProvider },
       options = {}
@@ -330,6 +339,7 @@ function createToolServices({
         skillLibrary,
         mcpLibrary,
         projectInstructions: projectInstructions.fork(),
+        runCommandJobs,
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
       }
       return await runSpawnTask(spawnOptions)
@@ -345,6 +355,7 @@ async function runSpawnTask({
   skillLibrary,
   mcpLibrary,
   projectInstructions,
+  runCommandJobs,
   signal,
 }: {
   context: import('playwright').BrowserContext
@@ -354,6 +365,7 @@ async function runSpawnTask({
   skillLibrary: SkillLibrary
   mcpLibrary: McpLibrary
   projectInstructions: ProjectInstructions
+  runCommandJobs: RunCommandJobManager
   signal?: AbortSignal
 }): Promise<string> {
   let adapter: ProviderAdapter | null = null
@@ -374,6 +386,7 @@ async function runSpawnTask({
         skillLibrary,
         mcpLibrary,
         projectInstructions,
+        runCommandJobs,
       }),
       signal,
     })
@@ -457,6 +470,7 @@ async function openThread(
   threadManager: ThreadManager,
   skillLibrary: SkillLibrary,
   mcpLibrary: McpLibrary,
+  runCommandJobs: RunCommandJobManager,
   instructionConfig: PortalAgentInstructionsConfig,
   context: import('playwright').BrowserContext,
   provider: ProviderId,
@@ -510,6 +524,7 @@ async function openThread(
             skillLibrary,
             mcpLibrary,
             projectInstructions,
+            runCommandJobs,
           }),
           signal,
         }),
@@ -581,6 +596,7 @@ async function resumeThread(
   threadManager: ThreadManager,
   skillLibrary: SkillLibrary,
   mcpLibrary: McpLibrary,
+  runCommandJobs: RunCommandJobManager,
   instructionConfig: PortalAgentInstructionsConfig,
   context: import('playwright').BrowserContext,
   conversationUrl: string,
@@ -642,6 +658,7 @@ async function resumeThread(
             skillLibrary,
             mcpLibrary,
             projectInstructions,
+            runCommandJobs,
           }),
           skipSetup: true,
           signal,
@@ -772,6 +789,7 @@ export async function run(argv = process.argv): Promise<void> {
   )
   const threadManager = new ThreadManager()
   const threadOperations = new ThreadOperationCoordinator()
+  const runCommandJobs = new RunCommandJobManager()
   const commandRegistry = new CommandRegistry(DEFAULT_COMMANDS)
   const ui = new TerminalController()
   ui.bindThreadManager(threadManager)
@@ -797,6 +815,7 @@ export async function run(argv = process.argv): Promise<void> {
 
       shuttingDown = true
       try {
+        runCommandJobs.beginShutdown()
         if (apiServer !== null) {
           await apiServer.stop().catch(() => {})
         }
@@ -809,6 +828,7 @@ export async function run(argv = process.argv): Promise<void> {
           await Promise.allSettled([stopGeneration, foregroundOperation.done])
         }
         await threadOperations.cancelAll()
+        await runCommandJobs.stopAll()
 
         for (const thread of threadManager.listThreads()) {
           await closeWithTimeout(async () => await thread.runtime.close())
@@ -973,10 +993,16 @@ export async function run(argv = process.argv): Promise<void> {
             } catch (error) {
               if (isAbortError(error)) {
                 ui.commitLiveAssistant(activeThread)
+                const runningJobCount = runCommandJobs.list().length
                 ui.renderThreadWarning(
                   activeThread,
                   'thread',
-                  'Cancelled current message.'
+                  runningJobCount === 0
+                    ? 'Cancelled current message.'
+                    : [
+                        'Cancelled current message.',
+                        `${runningJobCount} run_command ${runningJobCount === 1 ? 'job is' : 'jobs are'} still running. Use /job to inspect or stop them.`,
+                      ]
                 )
                 break
               }
@@ -1382,6 +1408,7 @@ export async function run(argv = process.argv): Promise<void> {
             threadManager,
             skillLibrary,
             mcpLibrary,
+            runCommandJobs,
             portalConfig.agentInstructions,
             context,
             provider,
@@ -1447,6 +1474,7 @@ export async function run(argv = process.argv): Promise<void> {
             threadManager,
             skillLibrary,
             mcpLibrary,
+            runCommandJobs,
             portalConfig.agentInstructions,
             context,
             resolvedConversation.conversationUrl,
@@ -1716,6 +1744,7 @@ export async function run(argv = process.argv): Promise<void> {
       threadStore,
       skillLibrary,
       mcpLibrary,
+      runCommandJobs,
       api: apiServer,
       ui,
       browserProfileDir,
@@ -1728,6 +1757,7 @@ export async function run(argv = process.argv): Promise<void> {
             threadManager,
             skillLibrary,
             mcpLibrary,
+            runCommandJobs,
             portalConfig.agentInstructions,
             context,
             provider,
@@ -1752,6 +1782,7 @@ export async function run(argv = process.argv): Promise<void> {
             threadManager,
             skillLibrary,
             mcpLibrary,
+            runCommandJobs,
             portalConfig.agentInstructions,
             context,
             conversationUrl,
