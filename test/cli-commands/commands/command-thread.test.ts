@@ -278,6 +278,12 @@ test('ThreadCommand resume requires hash-prefixed history ids', async () => {
     getLatestTimelineEntry(ui).body,
     'Unsupported conversation URL: 1'
   )
+
+  await ThreadCommand.execute(context, ['resume', 'https://chatgpt.com/c/%ZZ'])
+  assert.equal(
+    getLatestTimelineEntry(ui).body,
+    'Unsupported conversation URL: https://chatgpt.com/c/%ZZ'
+  )
 })
 
 test('ThreadCommand resume accepts URLs and rejects duplicate open threads', async () => {

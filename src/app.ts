@@ -1422,14 +1422,23 @@ export async function run(argv = process.argv): Promise<void> {
             'Another foreground operation is already running.'
           )
         }
+        const conversationUrl = input.conversationUrl
         if (
-          typeof input.conversationUrl !== 'string' ||
-          input.conversationUrl.trim() === ''
+          typeof conversationUrl !== 'string' ||
+          conversationUrl.trim() === ''
         ) {
           throw new ApiHttpError(
             400,
             'INVALID_REQUEST',
             'conversationUrl is required.'
+          )
+        }
+        const resolvedConversation = resolveConversationUrl(conversationUrl)
+        if (resolvedConversation === null) {
+          throw new ApiHttpError(
+            400,
+            'INVALID_REQUEST',
+            'conversationUrl is invalid or unsupported.'
           )
         }
         await withCancellableOperation(null, async (signal, setStopTarget) => {
@@ -1440,7 +1449,7 @@ export async function run(argv = process.argv): Promise<void> {
             mcpLibrary,
             portalConfig.agentInstructions,
             context,
-            input.conversationUrl as string,
+            resolvedConversation.conversationUrl,
             browserProfileDir,
             signal,
             setStopTarget

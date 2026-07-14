@@ -83,3 +83,11 @@ test('resolveConversationUrl rejects unsupported URLs', () => {
     null
   )
 })
+
+test('resolveConversationUrl rejects malformed path encoding', () => {
+  assert.equal(resolveConversationUrl('https://chatgpt.com/c/%ZZ'), null)
+  assert.equal(
+    resolveConversationUrl('https://gemini.google.com/app/%E0%A4%A'),
+    null
+  )
+})
