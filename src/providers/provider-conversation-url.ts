@@ -111,5 +111,12 @@ function resolveProviderFromUrl(url: URL): ResolvedConversationUrl | null {
 
 function readPathSegment(url: URL, index: number): string | null {
   const segment = url.pathname.split('/').filter(Boolean).at(index)
-  return segment ? decodeURIComponent(segment) : null
+  if (!segment) {
+    return null
+  }
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return null
+  }
 }
