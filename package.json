@@ -31,7 +31,7 @@
     "better-sqlite3": "^12.11.1",
     "commander": "^14.0.3",
     "fastify": "^5.10.0",
-    "ink": "github:kabxx/ink4portal#c7d74862253077fe49527c5c9c61b719f1fb4da6",
+    "ink": "github:kabxx/ink4portal#3b84108e10d3c6be494947ccc908f39ede7010c7",
     "koffi": "^3.0.2",
     "markdansi": "github:kabxx/Markdansi4portal#c075195137fbf91b9d610543a999bf5913730859",
     "node-unrar-js": "^2.0.2",

@@ -17,6 +17,7 @@ import {
   formatInputForDisplay,
   insertAtCursor,
   isNewlineKey,
+  isSubmitKey,
   moveCursorHorizontal,
   moveCursorToLineBoundary,
   moveCursorVertical,
@@ -33,6 +34,7 @@ import type { KeyModifiers } from '../../src/terminal-ui/terminal-screen.tsx'
 function key(modifiers: Partial<KeyModifiers> = {}): KeyModifiers {
   return {
     return: false,
+    ctrl: false,
     shift: false,
     meta: false,
     ...modifiers,
@@ -40,11 +42,18 @@ function key(modifiers: Partial<KeyModifiers> = {}): KeyModifiers {
 }
 
 test('isNewlineKey keeps plain Enter as submit', () => {
-  assert.equal(isNewlineKey('\r', key({ return: true })), false)
+  assert.equal(isNewlineKey(key({ return: true })), false)
+  assert.equal(isSubmitKey(key({ return: true })), true)
 })
 
-test('isNewlineKey treats Ctrl+Enter / Ctrl+J as newline', () => {
-  assert.equal(isNewlineKey('\n', key({ return: false })), true)
+test('isNewlineKey treats Shift+Enter as newline', () => {
+  assert.equal(isNewlineKey(key({ return: true, shift: true })), true)
+  assert.equal(isSubmitKey(key({ return: true, shift: true })), false)
+})
+
+test('Ctrl+Enter is neither newline nor submit', () => {
+  assert.equal(isNewlineKey(key({ return: true, ctrl: true })), false)
+  assert.equal(isSubmitKey(key({ return: true, ctrl: true })), false)
 })
 
 test('clearInput clears the current input', () => {
