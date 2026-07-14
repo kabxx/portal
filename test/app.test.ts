@@ -7,9 +7,11 @@ import {
   clearInteractiveTerminal,
   clearTerminalBeforeRender,
   closeWithTimeout,
+  createPortalRuntimeSettings,
   showPendingThreadTimeline,
   transitionLoginWaitWarning,
 } from '../src/app.ts'
+import { createDefaultAdvancedConfig } from '../src/config/portal-config.ts'
 import { TerminalController } from '../src/terminal-ui/terminal-controller.ts'
 import { ThreadManager } from '../src/threads/thread-manager.ts'
 import { createFakeRuntime } from './helpers/fakes.ts'
@@ -33,6 +35,95 @@ test('closeWithTimeout returns when a close operation hangs', async () => {
   await closeWithTimeout(async () => {
     await new Promise(() => {})
   }, 10)
+})
+
+test('createPortalRuntimeSettings converts every advanced section to runtime units', () => {
+  const advanced = createDefaultAdvancedConfig()
+  advanced.browser = { startupTimeoutSeconds: 11, closeTimeoutSeconds: 12 }
+  advanced.provider = {
+    requestStartWarningAfterSeconds: 13,
+    blockedWarningEverySeconds: 14,
+    responseTimeoutMinutes: 15,
+    restoreTimeoutSeconds: 16,
+    historyLoadTimeoutSeconds: 17,
+    historyPageTimeoutSeconds: 18,
+  }
+  advanced.runtime = {
+    initializationAttemptLimit: 19,
+    requestAttemptLimit: 20,
+    cancelWaitTimeoutSeconds: 21,
+    shutdownCloseTimeoutSeconds: 22,
+    childRuntimeCloseTimeoutSeconds: 23,
+  }
+  advanced.command = {
+    resultOutputLimitMB: 24,
+    stopGraceSeconds: 0.25,
+    stopTimeoutSeconds: 26,
+  }
+  advanced.skillInstall = {
+    downloadTimeoutSeconds: 27,
+    downloadLimitMB: 28,
+    extractedSizeLimitMB: 29,
+    fileCountLimit: 30,
+    resourceFileCountLimit: 31,
+    manifestSizeLimitKB: 32,
+    redirectLimit: 33,
+  }
+  advanced.api = {
+    requestBodyLimitKB: 34,
+    requestTimeoutSeconds: 35,
+    sseHeartbeatSeconds: 36,
+  }
+  advanced.instructions = {
+    codexSizeLimitKB: 37,
+    claudeSizeLimitKB: 38,
+    fileCountLimit: 39,
+    importDepthLimit: 40,
+  }
+  advanced.hooks = { commandOutputLimitMB: 41 }
+
+  assert.deepEqual(createPortalRuntimeSettings(advanced), {
+    browserLaunch: { startupTimeoutMs: 11_000, closeTimeoutMs: 12_000 },
+    providerTimings: {
+      requestStartWarningAfterMs: 13_000,
+      blockedWarningIntervalMs: 14_000,
+      responseTimeoutMs: 900_000,
+      restoreTimeoutMs: 16_000,
+      historyLoadTimeoutMs: 17_000,
+      historyPageTimeoutMs: 18_000,
+    },
+    initializationAttemptLimit: 19,
+    requestAttemptLimit: 20,
+    cancelWaitTimeoutMs: 21_000,
+    shutdownCloseTimeoutMs: 22_000,
+    childRuntimeCloseTimeoutMs: 23_000,
+    runCommand: {
+      maxOutputBufferBytes: 24 * 1024 * 1024,
+      terminationGraceMs: 250,
+      terminationSettleTimeoutMs: 26_000,
+    },
+    skillPolicy: {
+      downloadTimeoutMs: 27_000,
+      maxDownloadBytes: 28 * 1024 * 1024,
+      maxExtractedBytes: 29 * 1024 * 1024,
+      maxFiles: 30,
+      maxResourceFiles: 31,
+      maxManifestBytes: 32 * 1024,
+      maxRedirects: 33,
+    },
+    api: {
+      bodyLimitBytes: 34 * 1024,
+      requestTimeoutMs: 35_000,
+      sseHeartbeatMs: 36_000,
+    },
+    instructionLimits: {
+      codexMaxBytes: 37 * 1024,
+      claudeMaxBytes: 38 * 1024,
+      maxFiles: 39,
+      maxImportDepth: 40,
+    },
+    hookCommandOutputLimitBytes: 41 * 1024 * 1024,
+  })
 })
 
 test('clearInteractiveTerminal clears only interactive output in order', () => {

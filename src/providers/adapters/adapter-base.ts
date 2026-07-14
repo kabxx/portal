@@ -14,7 +14,6 @@ export type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
 
 export const DEFAULT_SUBMIT_REQUEST_START_GRACE_MS = 30000
 export const DEFAULT_SUBMIT_BLOCKED_WARNING_INTERVAL_MS = 30000
-const HISTORY_CAPTURE_WAIT_MS = 15000
 const HISTORY_CAPTURE_POLL_MS = 100
 
 export type ProviderAdapterErrorKind =
@@ -139,6 +138,16 @@ export interface ProviderAdapterOptions {
 export interface ProviderAdapterCreateOptions {
   conversationUrl?: string | null
   signal?: AbortSignal | undefined
+  timings?: ProviderTimingOptions
+}
+
+export interface ProviderTimingOptions {
+  requestStartWarningAfterMs: number
+  blockedWarningIntervalMs: number
+  responseTimeoutMs: number
+  restoreTimeoutMs: number
+  historyLoadTimeoutMs: number
+  historyPageTimeoutMs: number
 }
 
 export function createDeferred<T>() {
@@ -631,11 +640,33 @@ export abstract class ProviderAdapter {
   }
 
   protected getSubmitRequestStartGraceMs(): number {
-    return DEFAULT_SUBMIT_REQUEST_START_GRACE_MS
+    return (
+      this.options?.timings?.requestStartWarningAfterMs ??
+      DEFAULT_SUBMIT_REQUEST_START_GRACE_MS
+    )
   }
 
   protected getSubmitBlockedWarningIntervalMs(): number {
-    return DEFAULT_SUBMIT_BLOCKED_WARNING_INTERVAL_MS
+    return (
+      this.options?.timings?.blockedWarningIntervalMs ??
+      DEFAULT_SUBMIT_BLOCKED_WARNING_INTERVAL_MS
+    )
+  }
+
+  protected getSubmitResponseTimeoutMs(): number {
+    return this.options?.timings?.responseTimeoutMs ?? 300_000
+  }
+
+  protected getRestoreTimeoutMs(): number {
+    return this.options?.timings?.restoreTimeoutMs ?? 60_000
+  }
+
+  protected getHistoryLoadTimeoutMs(): number {
+    return this.options?.timings?.historyLoadTimeoutMs ?? 60_000
+  }
+
+  protected getHistoryPageTimeoutMs(): number {
+    return this.options?.timings?.historyPageTimeoutMs ?? 10_000
   }
 
   protected async ensureFetchCaptureInstalled(): Promise<void> {
@@ -688,7 +719,7 @@ export abstract class ProviderAdapter {
   ): Promise<CapturedFetchEntry[]> {
     try {
       let injectedEntries: CapturedFetchEntry[] = []
-      const deadline = Date.now() + HISTORY_CAPTURE_WAIT_MS
+      const deadline = Date.now() + this.getHistoryPageTimeoutMs()
       while (true) {
         injectedEntries = (await this.getCapturedFetchEntries()).filter(
           predicate

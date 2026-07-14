@@ -20,7 +20,8 @@ export class SkillManifestError extends Error {
 }
 
 export async function readSkillManifest(
-  skillDirectory: string
+  skillDirectory: string,
+  maxSkillFileBytes = MAX_SKILL_FILE_BYTES
 ): Promise<SkillManifest> {
   const manifestPath = path.join(skillDirectory, SKILL_FILE_NAME)
   let fileStat
@@ -33,9 +34,9 @@ export async function readSkillManifest(
   if (!fileStat.isFile()) {
     throw new SkillManifestError(`${SKILL_FILE_NAME} is not a file`)
   }
-  if (fileStat.size > MAX_SKILL_FILE_BYTES) {
+  if (fileStat.size > maxSkillFileBytes) {
     throw new SkillManifestError(
-      `${SKILL_FILE_NAME} exceeds ${MAX_SKILL_FILE_BYTES} bytes`
+      `${SKILL_FILE_NAME} exceeds ${maxSkillFileBytes} bytes`
     )
   }
 

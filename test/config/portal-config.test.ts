@@ -14,6 +14,7 @@ import path from 'node:path'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
 import {
+  createDefaultAdvancedConfig,
   createDefaultPortalConfig,
   ensurePortalConfig,
   parsePortalConfig,
@@ -50,6 +51,7 @@ test('ensurePortalConfig creates one YAML file with concrete defaults', async ()
       port: 8787,
       token: null,
     })
+    assert.deepEqual(defaults.advanced, createDefaultAdvancedConfig())
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -94,10 +96,155 @@ test('readPortalConfig parses YAML and strips a UTF-8 BOM', async () => {
       mcp: { connectionStrategy: 'per-thread', servers: {} },
       skills: [],
       hooks: { enabled: false, maxDepth: 1, handlers: [] },
+      advanced: createDefaultAdvancedConfig(),
     })
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test('ensurePortalConfig writes advanced last with field comments and section spacing', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-comments-'))
+  const configPath = path.join(root, 'config.yaml')
+
+  try {
+    await ensurePortalConfig(configPath, createDefaultPortalConfig(root))
+    const contents = await readFile(configPath, 'utf8')
+    const advancedStart = contents.indexOf('\nadvanced:\n')
+    const advancedContents = contents.slice(advancedStart)
+    const advancedFields = [
+      'startupTimeoutSeconds',
+      'closeTimeoutSeconds',
+      'requestStartWarningAfterSeconds',
+      'blockedWarningEverySeconds',
+      'responseTimeoutMinutes',
+      'restoreTimeoutSeconds',
+      'historyLoadTimeoutSeconds',
+      'historyPageTimeoutSeconds',
+      'initializationAttemptLimit',
+      'requestAttemptLimit',
+      'cancelWaitTimeoutSeconds',
+      'shutdownCloseTimeoutSeconds',
+      'childRuntimeCloseTimeoutSeconds',
+      'resultOutputLimitMB',
+      'stopGraceSeconds',
+      'stopTimeoutSeconds',
+      'downloadTimeoutSeconds',
+      'downloadLimitMB',
+      'extractedSizeLimitMB',
+      'fileCountLimit',
+      'resourceFileCountLimit',
+      'manifestSizeLimitKB',
+      'redirectLimit',
+      'requestBodyLimitKB',
+      'requestTimeoutSeconds',
+      'sseHeartbeatSeconds',
+      'codexSizeLimitKB',
+      'claudeSizeLimitKB',
+      'importDepthLimit',
+      'commandOutputLimitMB',
+    ]
+
+    assert.notEqual(advancedStart, -1)
+    assert.match(
+      contents,
+      /\nhooks:[\s\S]+\n\n# Low-frequency runtime tuning and resource limits\.\nadvanced:\n/
+    )
+    assert.equal(contents.trimEnd().endsWith('commandOutputLimitMB: 1'), true)
+    assert.equal((advancedContents.match(/\n\n  # /g) ?? []).length, 7)
+    for (const field of advancedFields) {
+      assert.match(
+        advancedContents,
+        new RegExp(`\\n    # [^\\n]+\\n    ${field}:`),
+        `expected an English comment immediately above ${field}`
+      )
+    }
+    assert.equal(
+      (advancedContents.match(/\n    # [^\n]+\n    fileCountLimit:/g) ?? [])
+        .length,
+      2
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('ensurePortalConfig can restore comments after first-run bootstrap writes', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-bootstrap-'))
+  const configPath = path.join(root, 'config.yaml')
+  const defaults = createDefaultPortalConfig(root)
+
+  try {
+    await writeFile(configPath, stringifyYaml(defaults), 'utf8')
+    await ensurePortalConfig(configPath, defaults, {
+      rewriteWithComments: true,
+    })
+
+    assert.match(
+      await readFile(configPath, 'utf8'),
+      /# Low-frequency runtime tuning and resource limits\.\nadvanced:/
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('parsePortalConfig completes partial advanced settings from defaults', () => {
+  const defaults = createDefaultPortalConfig()
+  const parsed = parsePortalConfig({
+    ...defaults,
+    advanced: {
+      command: { resultOutputLimitMB: 8 },
+      api: { requestTimeoutSeconds: 12 },
+    },
+  })
+
+  assert.deepEqual(parsed.advanced, {
+    ...createDefaultAdvancedConfig(),
+    command: {
+      ...createDefaultAdvancedConfig().command,
+      resultOutputLimitMB: 8,
+    },
+    api: {
+      ...createDefaultAdvancedConfig().api,
+      requestTimeoutSeconds: 12,
+    },
+  })
+})
+
+test('parsePortalConfig rejects unknown and invalid advanced settings', () => {
+  const valid = createDefaultPortalConfig()
+
+  assert.throws(
+    () =>
+      parsePortalConfig({
+        ...valid,
+        advanced: { ...valid.advanced, hidden: true },
+      }),
+    /Unsupported advanced fields: hidden/
+  )
+  assert.throws(
+    () =>
+      parsePortalConfig({
+        ...valid,
+        advanced: {
+          ...valid.advanced,
+          api: { ...valid.advanced.api, requestTimeoutSeconds: null },
+        },
+      }),
+    /advanced\.api\.requestTimeoutSeconds must be a non-negative integer/
+  )
+  assert.throws(
+    () =>
+      parsePortalConfig({
+        ...valid,
+        advanced: {
+          ...valid.advanced,
+          command: { ...valid.advanced.command, stopGraceSeconds: 0 },
+        },
+      }),
+    /advanced\.command\.stopGraceSeconds must be a positive number/
+  )
 })
 
 test('ensurePortalConfig writes a missing API section into an existing config', async () => {

@@ -15,7 +15,8 @@ import type {
 export class HookDispatcher {
   public constructor(
     private modelExecutor: HookModelExecutor | null = null,
-    private readonly sink: HookEventSink | null = null
+    private readonly sink: HookEventSink | null = null,
+    private readonly commandOutputLimitBytes = 1024 * 1024
   ) {}
 
   public setModelExecutor(executor: HookModelExecutor): void {
@@ -167,6 +168,7 @@ export class HookDispatcher {
         output = await runHookCommand(handler.command, event, {
           cwd: event.cwd,
           timeoutMs: handler.timeoutMs,
+          maxOutputBytes: this.commandOutputLimitBytes,
           signal: timeout.signal,
         })
       } else {

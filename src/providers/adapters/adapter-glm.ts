@@ -32,9 +32,6 @@ const GLM_SIGNED_OUT_AVATAR_SELECTOR =
 const GLM_BLOCKING_DIALOG_SELECTOR = '[data-dialog-overlay][data-state="open"]'
 const GLM_ADVANCED_SEARCH_SWITCH_SELECTOR =
   '[data-tooltip-content] button[role="switch"][data-switch-root]'
-const GLM_SUBMIT_RESPONSE_TIMEOUT_MS = 300000
-const GLM_HISTORY_LOAD_TIMEOUT_MS = 60000
-const GLM_HISTORY_PAGE_TIMEOUT_MS = 10000
 const GLM_HISTORY_POLL_MS = 100
 
 export type GlmToggleCapability = 'thinking' | 'search' | 'advanced_search'
@@ -435,17 +432,21 @@ export class GlmAdapter extends ProviderAdapter {
           await abortable(
             this.page.goto(this.conversationUrl, {
               waitUntil: 'domcontentloaded',
-              timeout: 30000,
+              timeout: this.getRestoreTimeoutMs(),
             }),
             signal
           )
           await waitAsync(async () => await isAvailable(), {
-            timeoutMs: 60000,
+            timeoutMs: this.getRestoreTimeoutMs(),
             signal,
           })
         })
       })
-      await this.waitForReadyButton('restore', 60000, signal)
+      await this.waitForReadyButton(
+        'restore',
+        this.getRestoreTimeoutMs(),
+        signal
+      )
       if (!(await this.isLoggedIn())) {
         throw new ProviderAdapterError(
           'restore',
@@ -460,7 +461,11 @@ export class GlmAdapter extends ProviderAdapter {
         )
       }
       await this.dismissBlockingDialog('restore', signal)
-      await this.waitForReadyButton('restore', 60000, signal)
+      await this.waitForReadyButton(
+        'restore',
+        this.getRestoreTimeoutMs(),
+        signal
+      )
     } catch (error) {
       if (this.isRetryableError(error)) {
         throw new ProviderAdapterError(
@@ -514,7 +519,7 @@ export class GlmAdapter extends ProviderAdapter {
     }
 
     let state = await readResult()
-    const deadline = Date.now() + GLM_HISTORY_LOAD_TIMEOUT_MS
+    const deadline = Date.now() + this.getHistoryLoadTimeoutMs()
     while (!state.result.complete && Date.now() < deadline) {
       throwIfAborted(signal)
       const scrolled = await this.page
@@ -540,7 +545,7 @@ export class GlmAdapter extends ProviderAdapter {
       const previousMessageCount = state.result.messages.length
       const pageDeadline = Math.min(
         deadline,
-        Date.now() + GLM_HISTORY_PAGE_TIMEOUT_MS
+        Date.now() + this.getHistoryPageTimeoutMs()
       )
       let progressed = false
       while (Date.now() < pageDeadline) {
@@ -689,7 +694,7 @@ export class GlmAdapter extends ProviderAdapter {
         await this.dismissBlockingDialog('submit', signal)
         const sendButton = this.getSendButton()
         await waitAsync(async () => await this.isSendButtonReady(), {
-          timeoutMs: GLM_SUBMIT_RESPONSE_TIMEOUT_MS,
+          timeoutMs: this.getSubmitResponseTimeoutMs(),
           signal,
         })
         throwIfAborted(signal)
@@ -816,7 +821,7 @@ export class GlmAdapter extends ProviderAdapter {
 
           const response = await awaitWithTimeout(
             targetResponse.promise,
-            GLM_SUBMIT_RESPONSE_TIMEOUT_MS,
+            this.getSubmitResponseTimeoutMs(),
             () =>
               new Error(
                 'Timed out waiting for GLM response after the request started.'
@@ -858,7 +863,7 @@ export class GlmAdapter extends ProviderAdapter {
 
           await this.waitForReadyButton(
             'submit',
-            GLM_SUBMIT_RESPONSE_TIMEOUT_MS,
+            this.getSubmitResponseTimeoutMs(),
             signal
           )
           this.conversationIdVal =

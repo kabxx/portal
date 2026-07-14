@@ -3,17 +3,20 @@ import type { AbortOptions } from '../runtime/runtime-cancellation.ts'
 import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
 import { sleepWithAbortAsync } from '../shared/sleep.ts'
 import { SkillInstallError } from './skill-files.ts'
+import { DEFAULT_SKILL_POLICY } from './skill-policy.ts'
 
-export const MAX_SKILL_DOWNLOAD_BYTES = 100 * 1024 * 1024
+export const MAX_SKILL_DOWNLOAD_BYTES = DEFAULT_SKILL_POLICY.maxDownloadBytes
 
-const MAX_REDIRECTS = 5
-const DOWNLOAD_TIMEOUT_MS = 60000
+const MAX_REDIRECTS = DEFAULT_SKILL_POLICY.maxRedirects
+const DOWNLOAD_TIMEOUT_MS = DEFAULT_SKILL_POLICY.downloadTimeoutMs
 const DEFAULT_RETRY_DELAYS_MS = [250, 1000] as const
 const RETRYABLE_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504])
 
 interface SkillHttpOptions extends AbortOptions {
   headers?: Record<string, string>
   retryDelays?: readonly number[]
+  timeoutMs?: number
+  maxRedirects?: number
 }
 
 interface WriteResponseOptions extends AbortOptions {
@@ -25,7 +28,9 @@ export async function fetchSkillHttp(
   sourceUrl: URL,
   options: SkillHttpOptions = {}
 ): Promise<Response> {
-  const timeoutSignal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS)
+  const timeoutMs = options.timeoutMs ?? DOWNLOAD_TIMEOUT_MS
+  const maxRedirects = options.maxRedirects ?? MAX_REDIRECTS
+  const timeoutSignal = AbortSignal.timeout(timeoutMs)
   const signal =
     options.signal === undefined
       ? timeoutSignal
@@ -33,15 +38,16 @@ export async function fetchSkillHttp(
   const retryDelays = options.retryDelays ?? DEFAULT_RETRY_DELAYS_MS
   let currentUrl = sourceUrl
 
-  for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
-    assertRequestActive(currentUrl, timeoutSignal, options.signal)
+  for (let redirect = 0; redirect <= maxRedirects; redirect += 1) {
+    assertRequestActive(currentUrl, timeoutSignal, options.signal, timeoutMs)
     const response = await fetchWithRetries(
       currentUrl,
       signal,
       timeoutSignal,
       options.signal,
       options.headers ?? {},
-      retryDelays
+      retryDelays,
+      timeoutMs
     )
     if (![301, 302, 303, 307, 308].includes(response.status)) {
       return response
@@ -49,9 +55,9 @@ export async function fetchSkillHttp(
 
     const location = response.headers.get('location')
     if (location === null) return response
-    if (redirect === MAX_REDIRECTS) {
+    if (redirect === maxRedirects) {
       throw new SkillInstallError(
-        `Skill download exceeded ${MAX_REDIRECTS} redirects`
+        `Skill download exceeded ${maxRedirects} redirects`
       )
     }
     await response.body?.cancel().catch(() => {})
@@ -120,12 +126,13 @@ async function fetchWithRetries(
   timeoutSignal: AbortSignal,
   userSignal: AbortSignal | undefined,
   headers: Record<string, string>,
-  retryDelays: readonly number[]
+  retryDelays: readonly number[],
+  timeoutMs: number
 ): Promise<Response> {
   const attempts = retryDelays.length + 1
   let lastError: unknown
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    assertRequestActive(sourceUrl, timeoutSignal, userSignal)
+    assertRequestActive(sourceUrl, timeoutSignal, userSignal, timeoutMs)
     try {
       const response = await fetch(sourceUrl, {
         redirect: 'manual',
@@ -142,14 +149,15 @@ async function fetchWithRetries(
           sourceUrl,
           signal,
           timeoutSignal,
-          userSignal
+          userSignal,
+          timeoutMs
         )
         continue
       }
       return response
     } catch (error) {
       throwIfAborted(userSignal)
-      if (timeoutSignal.aborted) throw requestTimeoutError(sourceUrl)
+      if (timeoutSignal.aborted) throw requestTimeoutError(sourceUrl, timeoutMs)
       lastError = error
       if (attempt >= attempts - 1) break
       await waitBeforeRetry(
@@ -157,7 +165,8 @@ async function fetchWithRetries(
         sourceUrl,
         signal,
         timeoutSignal,
-        userSignal
+        userSignal,
+        timeoutMs
       )
     }
   }
@@ -172,13 +181,14 @@ async function waitBeforeRetry(
   sourceUrl: URL,
   signal: AbortSignal,
   timeoutSignal: AbortSignal,
-  userSignal?: AbortSignal
+  userSignal: AbortSignal | undefined,
+  timeoutMs: number
 ): Promise<void> {
   try {
     await sleepWithAbortAsync(delayMs, signal)
   } catch {
     throwIfAborted(userSignal)
-    if (timeoutSignal.aborted) throw requestTimeoutError(sourceUrl)
+    if (timeoutSignal.aborted) throw requestTimeoutError(sourceUrl, timeoutMs)
     throw new SkillInstallError(
       `Network request interrupted before retry: ${formatSafeUrl(sourceUrl)}`
     )
@@ -188,15 +198,19 @@ async function waitBeforeRetry(
 function assertRequestActive(
   sourceUrl: URL,
   timeoutSignal: AbortSignal,
-  userSignal?: AbortSignal
+  userSignal: AbortSignal | undefined,
+  timeoutMs: number
 ): void {
   throwIfAborted(userSignal)
-  if (timeoutSignal.aborted) throw requestTimeoutError(sourceUrl)
+  if (timeoutSignal.aborted) throw requestTimeoutError(sourceUrl, timeoutMs)
 }
 
-function requestTimeoutError(sourceUrl: URL): SkillInstallError {
+function requestTimeoutError(
+  sourceUrl: URL,
+  timeoutMs: number
+): SkillInstallError {
   return new SkillInstallError(
-    `Network request timed out after ${DOWNLOAD_TIMEOUT_MS} ms: ${formatSafeUrl(sourceUrl)}`
+    `Network request timed out after ${timeoutMs} ms: ${formatSafeUrl(sourceUrl)}`
   )
 }
 

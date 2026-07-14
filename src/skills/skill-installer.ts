@@ -24,6 +24,7 @@ import {
   parseSkillRegistryUrl,
 } from './skill-hub-download.ts'
 import { readSkillManifest, type SkillManifest } from './skill-manifest.ts'
+import { DEFAULT_SKILL_POLICY, type SkillPolicy } from './skill-policy.ts'
 
 export { SkillInstallError } from './skill-files.ts'
 
@@ -46,7 +47,8 @@ interface SkillInstallResult extends AddedSkill {
 export class SkillInstaller {
   public constructor(
     private readonly skillsDirectory: string,
-    private readonly tempDirectory: string
+    private readonly tempDirectory: string,
+    private readonly policy: SkillPolicy = DEFAULT_SKILL_POLICY
   ) {}
 
   public async install(
@@ -113,8 +115,11 @@ export class SkillInstaller {
       )
     }
 
-    await inspectSkillTree(sourceDirectory, options.signal)
-    const manifest = await readSkillManifest(sourceDirectory)
+    await inspectSkillTree(sourceDirectory, options.signal, this.policy)
+    const manifest = await readSkillManifest(
+      sourceDirectory,
+      this.policy.maxManifestBytes
+    )
     if (path.basename(sourceDirectory) !== manifest.name) {
       throw new SkillInstallError(
         `Skill folder "${path.basename(sourceDirectory)}" does not match manifest name "${manifest.name}"`
@@ -139,7 +144,8 @@ export class SkillInstaller {
       await downloadGitHubDirectory(
         githubDirectory,
         candidateDirectory,
-        options
+        options,
+        this.policy
       )
       return candidateDirectory
     }
@@ -149,13 +155,15 @@ export class SkillInstaller {
     const downloaded = await downloadSkillFile(
       sourceUrl,
       downloadDirectory,
-      options
+      options,
+      this.policy
     )
 
     if (await isDownloadedSkillDocument(downloaded)) {
       return await prepareDownloadedSkillFile(
         downloaded.path,
-        operationDirectory
+        operationDirectory,
+        this.policy
       )
     }
     if (!(await isSupportedArchive(downloaded.path))) {
@@ -172,11 +180,13 @@ export class SkillInstaller {
     const extractedDirectory = await extractSkillArchive(
       downloaded.path,
       path.join(operationDirectory, 'extracted'),
-      options.signal
+      options.signal,
+      this.policy
     )
     return await findSkillCandidate(
       extractedDirectory,
-      downloaded.archiveSubdirectory
+      downloaded.archiveSubdirectory,
+      this.policy
     )
   }
 
@@ -192,7 +202,8 @@ export class SkillInstaller {
       slug,
       registryUrl,
       downloadDirectory,
-      options
+      options,
+      this.policy
     )
     if (!(await isSupportedArchive(downloadedPath))) {
       throw new SkillInstallError(
@@ -203,17 +214,21 @@ export class SkillInstaller {
     const extractedDirectory = await extractSkillArchive(
       downloadedPath,
       path.join(operationDirectory, 'extracted'),
-      options.signal
+      options.signal,
+      this.policy
     )
-    return await findSkillCandidate(extractedDirectory, null)
+    return await findSkillCandidate(extractedDirectory, null, this.policy)
   }
 
   private async commitCandidate(
     candidateDirectory: string,
     operationDirectory: string
   ): Promise<SkillInstallResult> {
-    await inspectSkillTree(candidateDirectory)
-    const manifest = await readSkillManifest(candidateDirectory)
+    await inspectSkillTree(candidateDirectory, undefined, this.policy)
+    const manifest = await readSkillManifest(
+      candidateDirectory,
+      this.policy.maxManifestBytes
+    )
     const normalizedDirectory = path.join(
       operationDirectory,
       'install',
@@ -221,8 +236,12 @@ export class SkillInstaller {
     )
     await mkdir(path.dirname(normalizedDirectory), { recursive: true })
     await cp(candidateDirectory, normalizedDirectory, { recursive: true })
-    await inspectSkillTree(normalizedDirectory)
-    await assertManifestMatchesDirectory(normalizedDirectory, manifest)
+    await inspectSkillTree(normalizedDirectory, undefined, this.policy)
+    await assertManifestMatchesDirectory(
+      normalizedDirectory,
+      manifest,
+      this.policy
+    )
 
     await mkdir(this.skillsDirectory, { recursive: true })
     const destination = path.join(this.skillsDirectory, manifest.name)
@@ -244,20 +263,22 @@ export class SkillInstaller {
 
 async function prepareDownloadedSkillFile(
   filePath: string,
-  operationDirectory: string
+  operationDirectory: string,
+  policy: SkillPolicy
 ): Promise<string> {
   const rawDirectory = path.join(operationDirectory, 'raw-skill')
   await mkdir(rawDirectory, { recursive: true })
   await cp(filePath, path.join(rawDirectory, 'SKILL.md'))
-  await readSkillManifest(rawDirectory)
+  await readSkillManifest(rawDirectory, policy.maxManifestBytes)
   return rawDirectory
 }
 
 async function assertManifestMatchesDirectory(
   directory: string,
-  expected: SkillManifest
+  expected: SkillManifest,
+  policy: SkillPolicy
 ): Promise<void> {
-  const installed = await readSkillManifest(directory)
+  const installed = await readSkillManifest(directory, policy.maxManifestBytes)
   if (
     installed.name !== path.basename(directory) ||
     installed.name !== expected.name

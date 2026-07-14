@@ -34,7 +34,6 @@ const CHATGPT_ACTION_CAPABILITIES = [
   'openai_platform',
 ] as const
 const CHATGPT_RESPONSE_IDLE_TIMEOUT_MS = 60000
-const CHATGPT_SUBMIT_RESPONSE_TIMEOUT_MS = 300000
 const CHATGPT_FINISHED_RESPONSE_SETTLE_MS = 1000
 
 function toCssString(value: string): string {
@@ -475,13 +474,13 @@ export class ChatGPTAdapter extends ProviderAdapter {
         await this.wrapAdapterActionErrorAsync('restore', async () => {
           await abortable(this.page.goto(this.conversationUrl), signal)
           await waitAsync(async () => await isAvailable(), {
-            timeoutMs: 60000,
+            timeoutMs: this.getRestoreTimeoutMs(),
             signal,
           })
         })
       })
       await waitAsync(async () => await isAvailable(), {
-        timeoutMs: 60000,
+        timeoutMs: this.getRestoreTimeoutMs(),
         signal,
       })
       if (!(await this.isLoggedIn())) {
@@ -497,7 +496,11 @@ export class ChatGPTAdapter extends ProviderAdapter {
           }
         )
       }
-      await this.waitForComposerReady('restore', 60000, signal)
+      await this.waitForComposerReady(
+        'restore',
+        this.getRestoreTimeoutMs(),
+        signal
+      )
     } catch (error) {
       if (this.isRetryableError(error)) {
         throw new ProviderAdapterError(
@@ -863,7 +866,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
           async () =>
             (await sendButton.isEnabled()) && (await sendButton.isVisible()),
           {
-            timeoutMs: CHATGPT_SUBMIT_RESPONSE_TIMEOUT_MS,
+            timeoutMs: this.getSubmitResponseTimeoutMs(),
             signal,
           }
         )
@@ -1104,7 +1107,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
           if (parsedResponse === null && terminalError === null) {
             const responseDeadlineAt =
               (requestStartedAt ?? Date.now()) +
-              CHATGPT_SUBMIT_RESPONSE_TIMEOUT_MS
+              this.getSubmitResponseTimeoutMs()
             await waitAsync(
               async () => {
                 await updateCapturedHttpResponse()
@@ -1130,7 +1133,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
             let lastProgressAt = Date.now()
             const responseDeadlineAt =
               (requestStartedAt ?? Date.now()) +
-              CHATGPT_SUBMIT_RESPONSE_TIMEOUT_MS
+              this.getSubmitResponseTimeoutMs()
             await waitAsync(
               async () => {
                 await updateCapturedHttpResponse()
@@ -1179,7 +1182,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
           if (parsedResponse === null) {
             await awaitWithTimeout(
               httpParsedResponsePromise,
-              CHATGPT_SUBMIT_RESPONSE_TIMEOUT_MS,
+              this.getSubmitResponseTimeoutMs(),
               () =>
                 new Error(
                   'Timed out waiting for ChatGPT response after the request started.'
@@ -1222,7 +1225,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
           this.websocketFrames = this.websocketFrames.slice(frameStart)
           await this.waitForComposerReady(
             'submit',
-            CHATGPT_SUBMIT_RESPONSE_TIMEOUT_MS,
+            this.getSubmitResponseTimeoutMs(),
             signal
           )
           throwIfAborted(signal)

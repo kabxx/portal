@@ -161,6 +161,28 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
   }
 })
 
+test('PortalApiServer enforces the configured request body limit', async () => {
+  const server = new PortalApiServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: null,
+    handlers: createHandlers([]),
+    bodyLimitBytes: 16,
+  })
+
+  await server.start()
+  try {
+    const response = await fetch(`${server.address()}/v1/threads`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: 'deepseek', padding: 'x'.repeat(32) }),
+    })
+    assert.equal(response.status, 413)
+  } finally {
+    await server.stop()
+  }
+})
+
 test('PortalApiServer can restart after stopping', async () => {
   const server = new PortalApiServer({
     host: '127.0.0.1',

@@ -11,6 +11,12 @@ export interface BrowserLaunch {
 }
 
 const BROWSER_CLOSE_TIMEOUT_MS = 3000
+const BROWSER_STARTUP_TIMEOUT_MS = 60_000
+
+export interface BrowserLaunchOptions {
+  startupTimeoutMs?: number
+  closeTimeoutMs?: number
+}
 
 function resolveBrowserType(browserName: string): BrowserType {
   switch (browserName) {
@@ -42,9 +48,13 @@ export async function launchBrowser(
   browserName: string,
   browserExecutablePath: string,
   browserRemoteDebuggingPort: number,
-  browserUserDataDir: string
+  browserUserDataDir: string,
+  options: BrowserLaunchOptions = {}
 ): Promise<BrowserLaunch> {
   const browserType = resolveBrowserType(browserName)
+  const startupTimeoutMs =
+    options.startupTimeoutMs ?? BROWSER_STARTUP_TIMEOUT_MS
+  const closeTimeoutMs = options.closeTimeoutMs ?? BROWSER_CLOSE_TIMEOUT_MS
 
   if (!fs.existsSync(browserExecutablePath)) {
     throw new Error(
@@ -78,18 +88,19 @@ export async function launchBrowser(
   }
 
   let lastError: unknown = null
-  for (let attempt = 0; attempt < 60; attempt++) {
+  const startupDeadline = Date.now() + startupTimeoutMs
+  while (Date.now() < startupDeadline) {
     try {
+      const remainingMs = Math.max(1, startupDeadline - Date.now())
       const browser = await browserType.connectOverCDP(
-        `http://localhost:${browserRemoteDebuggingPort}`
+        `http://localhost:${browserRemoteDebuggingPort}`,
+        { timeout: remainingMs }
       )
       const context = browser.contexts()[0]!
       return {
         context,
         close: async () => {
-          await withTimeout(browser.close(), BROWSER_CLOSE_TIMEOUT_MS).catch(
-            () => {}
-          )
+          await withTimeout(browser.close(), closeTimeoutMs).catch(() => {})
           if (browserProcess !== null && !browserProcess.killed) {
             browserProcess.kill()
           }
@@ -98,7 +109,10 @@ export async function launchBrowser(
       }
     } catch (error) {
       lastError = error
-      await sleepAsync(1000)
+      const remainingMs = startupDeadline - Date.now()
+      if (remainingMs > 0) {
+        await sleepAsync(Math.min(1000, remainingMs))
+      }
     }
   }
 

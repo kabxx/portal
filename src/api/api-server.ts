@@ -44,6 +44,9 @@ export interface ApiServerOptions {
   port: number
   token: string | null
   handlers: ApiHandlers
+  bodyLimitBytes?: number
+  requestTimeoutMs?: number
+  sseHeartbeatMs?: number
 }
 
 export interface ApiEvent {
@@ -84,6 +87,8 @@ export class ApiEventHub {
   private readonly subscribers = new Map<string, Set<Subscriber>>()
   private readonly sequences = new Map<string, number>()
 
+  public constructor(private readonly heartbeatMs = 15_000) {}
+
   public publish(threadId: string, event: ApiEvent): void {
     const subscribers = this.subscribers.get(threadId)
     if (subscribers === undefined) {
@@ -115,7 +120,7 @@ export class ApiEventHub {
         } catch {
           this.remove(threadId, subscriber)
         }
-      }, 15_000),
+      }, this.heartbeatMs),
     }
     let subscribers = this.subscribers.get(threadId)
     if (subscribers === undefined) {
@@ -151,10 +156,11 @@ export class ApiEventHub {
 
 export class PortalApiServer {
   private fastify: FastifyInstance | null = null
-  private readonly events = new ApiEventHub()
+  private readonly events: ApiEventHub
   private started = false
 
   public constructor(private readonly options: ApiServerOptions) {
+    this.events = new ApiEventHub(options.sseHeartbeatMs)
     this.fastify = this.createFastify()
   }
 
@@ -230,8 +236,8 @@ export class PortalApiServer {
   private createFastify(): FastifyInstance {
     const fastify = Fastify({
       logger: false,
-      bodyLimit: 256 * 1024,
-      requestTimeout: 0,
+      bodyLimit: this.options.bodyLimitBytes ?? 256 * 1024,
+      requestTimeout: this.options.requestTimeoutMs ?? 0,
     })
     this.registerRoutes(fastify)
     return fastify

@@ -2,9 +2,10 @@ import { lstat, open, readdir, stat } from 'fs/promises'
 import path from 'path'
 import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
 import { readSkillManifest } from './skill-manifest.ts'
+import { DEFAULT_SKILL_POLICY, type SkillPolicy } from './skill-policy.ts'
 
-export const MAX_SKILL_FILES = 5000
-export const MAX_SKILL_BYTES = 500 * 1024 * 1024
+export const MAX_SKILL_FILES = DEFAULT_SKILL_POLICY.maxFiles
+export const MAX_SKILL_BYTES = DEFAULT_SKILL_POLICY.maxExtractedBytes
 
 export class SkillInstallError extends Error {
   public constructor(message: string) {
@@ -15,7 +16,8 @@ export class SkillInstallError extends Error {
 
 export async function inspectSkillTree(
   root: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  policy: SkillPolicy = DEFAULT_SKILL_POLICY
 ): Promise<void> {
   let files = 0
   let totalBytes = 0
@@ -35,14 +37,14 @@ export async function inspectSkillTree(
       } else if (entryStat.isFile()) {
         files += 1
         totalBytes += entryStat.size
-        if (files > MAX_SKILL_FILES) {
+        if (files > policy.maxFiles) {
           throw new SkillInstallError(
-            `Skill contains more than ${MAX_SKILL_FILES} files`
+            `Skill contains more than ${policy.maxFiles} files`
           )
         }
-        if (totalBytes > MAX_SKILL_BYTES) {
+        if (totalBytes > policy.maxExtractedBytes) {
           throw new SkillInstallError(
-            `Skill exceeds ${MAX_SKILL_BYTES} extracted bytes`
+            `Skill exceeds ${policy.maxExtractedBytes} extracted bytes`
           )
         }
       }
@@ -53,7 +55,8 @@ export async function inspectSkillTree(
 
 export async function findSkillCandidate(
   extractedDirectory: string,
-  requestedSubdirectory: string | null
+  requestedSubdirectory: string | null,
+  policy: SkillPolicy = DEFAULT_SKILL_POLICY
 ): Promise<string> {
   if (requestedSubdirectory !== null) {
     assertSafeRelativePath(requestedSubdirectory)
@@ -65,7 +68,7 @@ export async function findSkillCandidate(
         `GitHub skill directory not found: ${requestedSubdirectory}`
       )
     }
-    await readSkillManifest(candidate)
+    await readSkillManifest(candidate, policy.maxManifestBytes)
     return candidate
   }
 

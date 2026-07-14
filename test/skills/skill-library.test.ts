@@ -15,6 +15,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
 import { createDefaultPortalConfig } from '../../src/config/portal-config.ts'
 import { SkillLibrary } from '../../src/skills/skill-library.ts'
+import { DEFAULT_SKILL_POLICY } from '../../src/skills/skill-policy.ts'
 import { createTestSkill } from '../helpers/skills.ts'
 
 interface SkillRegistryDocumentEntry {
@@ -134,6 +135,28 @@ test('SkillLibrary installs, catalogs, disables, enables, and removes skills', a
     assert.equal(await library.remove('test-skill'), true)
     assert.equal((await library.list()).skills.length, 0)
     await access(path.join(source, 'SKILL.md'))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('SkillLibrary applies the configured resource file limit', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-policy-'))
+  const source = await createTestSkill(path.join(root, 'sources'), 'limited', {
+    resource: true,
+  })
+  const library = new SkillLibrary({
+    skillsDirectory: path.join(root, 'data', 'skills'),
+    tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
+    registryPath: path.join(root, 'data', 'config.yaml'),
+    policy: { ...DEFAULT_SKILL_POLICY, maxResourceFiles: 0 },
+  })
+
+  try {
+    await library.add(source)
+    const result = await library.list()
+    assert.deepEqual(result.skills, [])
+    assert.match(result.issues[0]?.message ?? '', /more than 0 resource files/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
