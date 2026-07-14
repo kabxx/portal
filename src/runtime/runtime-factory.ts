@@ -23,6 +23,7 @@ import {
 import { RuntimeCore } from './runtime-core.ts'
 import { throwIfAborted } from './runtime-cancellation.ts'
 import type { ProjectInstructions } from '../instructions/project-instructions.ts'
+import type { HookDispatcher } from '../hooks/hook-dispatcher.ts'
 
 export interface RuntimeFactoryOptions extends ProviderAdapterOptions {
   providerPrompt?: string | null
@@ -32,6 +33,8 @@ export interface RuntimeFactoryOptions extends ProviderAdapterOptions {
   mcpConnector?: McpConnector
   onMcpWarning?: (warning: McpSessionWarning) => void | Promise<void>
   projectInstructions?: ProjectInstructions | null
+  hookDispatcher?: HookDispatcher | null
+  allowedTools?: readonly string[] | null
 }
 
 const DEFAULT_TOOLS = [
@@ -67,11 +70,29 @@ export async function createRuntimeFromAdapter(
         ? async (name: string) => await skillCatalog.load(name)
         : null
     const hasMcp = mcpSession?.hasAvailableConnections === true
-    const tools = [
+    const availableTools = [
       ...DEFAULT_TOOLS,
       ...(hasSkills ? [LoadSkillTool] : []),
       ...(hasMcp ? [McpSearchTool, McpCallTool] : []),
     ]
+    const allowedTools = options.allowedTools ?? null
+    const tools =
+      allowedTools === null
+        ? availableTools
+        : availableTools.filter((ToolClass) => {
+            const tool = new ToolClass(adapter, {})
+            return allowedTools.includes(tool.name)
+          })
+    if (allowedTools !== null) {
+      const selected = new Set(
+        tools.map((ToolClass) => new ToolClass(adapter, {}).name)
+      )
+      const unavailable = allowedTools.filter((name) => !selected.has(name))
+      if (unavailable.length > 0)
+        throw new Error(
+          `Hook requested unavailable tools: ${unavailable.join(', ')}`
+        )
+    }
     const services: ToolServices = {
       ...(options.toolServices ?? {}),
       ...(hasSkills
@@ -130,7 +151,8 @@ export async function createRuntimeFromAdapter(
       mcpSession,
       manualSkillLoader,
       options.projectInstructions ?? null,
-      skillCatalog?.names ?? []
+      skillCatalog?.names ?? [],
+      options.hookDispatcher ?? null
     )
     throwIfAborted(signal)
     if (options.model !== null) {

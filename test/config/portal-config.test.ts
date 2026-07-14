@@ -93,6 +93,7 @@ test('readPortalConfig parses YAML and strips a UTF-8 BOM', async () => {
       api: { host: '127.0.0.1', port: 8787, token: null },
       mcp: { connectionStrategy: 'per-thread', servers: {} },
       skills: [],
+      hooks: { enabled: false, maxDepth: 1, handlers: [] },
     })
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -309,6 +310,7 @@ test('concurrent section updates preserve both MCP and Skill changes', async () 
         enabled: true,
       },
     ])
+    assert.deepEqual(config?.hooks, defaults.hooks)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

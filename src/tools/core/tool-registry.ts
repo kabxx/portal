@@ -28,6 +28,14 @@ export interface ToolResult {
   displayText?: string
 }
 
+export type PreparedToolCall =
+  | {
+      ok: true
+      toolCall: ToolCall
+      execute(options?: ToolExecutionOptions): Promise<ToolResult>
+    }
+  | { ok: false; toolCall: ToolCall | null; result: ToolResult }
+
 export function extractToolCall(response: string): ExtractedToolCall | null {
   const match = response.match(
     /([\s\S]*?)<tool(?:\s+name\s*=\s*(?:"([^"]+)"|'([^']+)'))?\s*>([\s\S]*?)<\/tool>([\s\S]*)/i
@@ -153,6 +161,14 @@ class ToolRegistry {
     options: ToolExecutionOptions = {},
     declaredToolName: string | null = null
   ): Promise<ToolResult> {
+    const prepared = this.prepareToolCall(toolCallPayload, declaredToolName)
+    return prepared.ok ? await prepared.execute(options) : prepared.result
+  }
+
+  public prepareToolCall(
+    toolCallPayload: string,
+    declaredToolName: string | null = null
+  ): PreparedToolCall {
     const toolCall = this.parseToolCallPayload(
       toolCallPayload,
       declaredToolName
@@ -172,36 +188,69 @@ class ToolRegistry {
       } catch (error) {
         parseError = String(error)
       }
-      return asErrorResult(`Invalid tool call JSON: ${parseError}`)
+      return {
+        ok: false,
+        toolCall: null,
+        result: asErrorResult(`Invalid tool call JSON: ${parseError}`),
+      }
     }
 
+    return this.prepareParsedToolCall(toolCall, declaredToolName !== null)
+  }
+
+  public prepareParsedToolCall(
+    toolCall: ToolCall,
+    freeformInvocation: boolean
+  ): PreparedToolCall {
     const tool = this.tools.get(toolCall.tool)
     if (!tool) {
-      return asErrorResult(`Tool not found: ${toolCall.tool}`)
+      return {
+        ok: false,
+        toolCall,
+        result: asErrorResult(`Tool not found: ${toolCall.tool}`),
+      }
     }
     if (tool.inputFormat === 'freeform') {
-      if (declaredToolName === null) {
-        return asErrorResult(
-          `Tool ${toolCall.tool} requires <tool name="${toolCall.tool}"> with a freeform payload`
-        )
+      if (!freeformInvocation) {
+        return {
+          ok: false,
+          toolCall,
+          result: asErrorResult(
+            `Tool ${toolCall.tool} requires <tool name="${toolCall.tool}"> with a freeform payload`
+          ),
+        }
       }
       if (typeof toolCall.params !== 'string') {
-        return asErrorResult(
-          `Tool ${toolCall.tool} requires a freeform invocation`
-        )
+        return {
+          ok: false,
+          toolCall,
+          result: asErrorResult(
+            `Tool ${toolCall.tool} requires a freeform invocation`
+          ),
+        }
       }
     }
     if (tool.inputFormat === 'json' && typeof toolCall.params === 'string') {
-      return asErrorResult(`Tool ${toolCall.tool} requires a JSON invocation`)
+      return {
+        ok: false,
+        toolCall,
+        result: asErrorResult(
+          `Tool ${toolCall.tool} requires a JSON invocation`
+        ),
+      }
     }
 
-    try {
-      return normalizeToolOutput(await tool.call(toolCall.params, options))
-    } catch (error) {
-      if (isAbortError(error)) {
-        throw error
-      }
-      return asErrorResult(`Tool execution failed: ${String(error)}`)
+    return {
+      ok: true,
+      toolCall,
+      execute: async (options: ToolExecutionOptions = {}) => {
+        try {
+          return normalizeToolOutput(await tool.call(toolCall.params, options))
+        } catch (error) {
+          if (isAbortError(error)) throw error
+          return asErrorResult(`Tool execution failed: ${String(error)}`)
+        }
+      },
     }
   }
 }

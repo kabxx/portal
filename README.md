@@ -2,7 +2,7 @@
 
 **Turn web AI products into local, tool-using terminal agents.**
 
-[简体中文](docs/README.zh-CN.md) | [API](docs/api.md) | [Providers](docs/providers.md) | [Architecture](docs/architecture.md) | [Security](docs/security.md) | [Skills](docs/skills.md) | [MCP](docs/mcp.md) | [Contributing](docs/contributing.md)
+[简体中文](docs/README.zh-CN.md) | [API](docs/api.md) | [Providers](docs/providers.md) | [Architecture](docs/architecture.md) | [Security](docs/security.md) | [Skills](docs/skills.md) | [MCP](docs/mcp.md) | [Hooks](docs/hooks.md) | [Contributing](docs/contributing.md)
 
 > [!IMPORTANT]
 > portal is an early-stage development project. Provider websites can change without notice, so passing tests do not guarantee that every real browser workflow still works.
@@ -19,6 +19,7 @@ portal does **not** call provider model APIs. It does not bypass provider accoun
 - **Resumable conversations.** portal stores conversation URLs and reloads visible provider history when a conversation is resumed.
 - **Isolated timelines.** Home and every open thread keep separate in-memory terminal timelines; switching restores cached output without reloading the provider.
 - **Skills and MCP.** Runtimes can load registered instruction packages and connect to stdio or Streamable HTTP MCP servers.
+- **Lifecycle Hooks.** Command, prompt, and isolated agent handlers can observe lifecycle events or allow, deny, and rewrite Tool parameters.
 
 ## How it works
 
@@ -136,15 +137,16 @@ Remote messages loaded by resume are display-only and do not increase the local 
 
 ## Commands
 
-| Command       | Purpose                                            |
-| ------------- | -------------------------------------------------- |
-| `/help`       | Show top-level command help                        |
-| `/providers`  | List supported provider ids                        |
-| `/thread ...` | Open, resume, switch, inspect, detach, and close   |
-| `/skill ...`  | Add, list, enable, disable, and remove Skills      |
-| `/mcp ...`    | Manage MCP servers and attach Resources or Prompts |
-| `/serve ...`  | Start and manage the local HTTP API                |
-| `/exit`       | Shut down portal                                   |
+| Command       | Purpose                                             |
+| ------------- | --------------------------------------------------- |
+| `/help`       | Show top-level command help                         |
+| `/providers`  | List supported provider ids                         |
+| `/thread ...` | Open, resume, switch, inspect, detach, and close    |
+| `/skill ...`  | Add, list, enable, disable, and remove Skills       |
+| `/mcp ...`    | Manage MCP servers and attach Resources or Prompts  |
+| `/serve ...`  | Start and manage the local HTTP API                 |
+| `/hook ...`   | Inspect, reload, enable, or disable lifecycle Hooks |
+| `/exit`       | Shut down portal                                    |
 
 Top-level commands and first-level subcommands support unique-prefix completion with `Tab`.
 
