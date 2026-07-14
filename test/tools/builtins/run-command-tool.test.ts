@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { RunCommandTool } from '../../../src/tools/builtins/run-command-tool.ts'
+import { RunCommandJobManager } from '../../../src/processes/run-command-job-manager.ts'
 import { PortalAbortError } from '../../../src/runtime/runtime-cancellation.ts'
 import type { ToolProgressEvent } from '../../../src/tools/core/tool-definition.ts'
 
@@ -21,6 +22,55 @@ function echoCommand(): string {
   return os.platform() === 'win32' ? 'echo ok' : 'printf ok'
 }
 
+function quoteShellArg(value: string): string {
+  return os.platform() === 'win32'
+    ? `'${value.replaceAll("'", "''")}'`
+    : `'${value.replaceAll("'", `'"'"'`)}'`
+}
+
+function nodeCommand(script: string): string {
+  const invocation = `${quoteShellArg(process.execPath)} -e ${quoteShellArg(script)}`
+  return os.platform() === 'win32' ? `& ${invocation}` : invocation
+}
+
+function markerCommand(
+  ready: string,
+  finished: string
+): {
+  command: string
+  shell: 'powershell' | 'sh'
+} {
+  if (os.platform() === 'win32') {
+    const quotePowerShell = (value: string) =>
+      `'${value.replaceAll("'", "''")}'`
+    return {
+      command: [
+        `Set-Content -LiteralPath ${quotePowerShell(ready)} -Value ready`,
+        'Start-Sleep -Milliseconds 200',
+        `Set-Content -LiteralPath ${quotePowerShell(finished)} -Value finished`,
+        'Start-Sleep -Milliseconds 800',
+      ].join('; '),
+      shell: 'powershell',
+    }
+  }
+  return {
+    command: nodeCommand(
+      `const fs=require("fs");fs.writeFileSync(${JSON.stringify(ready)},"ready");setTimeout(()=>fs.writeFileSync(${JSON.stringify(finished)},"finished"),200);setTimeout(()=>{},1000)`
+    ),
+    shell: 'sh',
+  }
+}
+
+async function waitForFile(filePath: string, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!existsSync(filePath)) {
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for file: ${filePath}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+
 function windowsCodePage(): string | null {
   const result = spawnSync(
     process.env.ComSpec || 'cmd.exe',
@@ -30,8 +80,14 @@ function windowsCodePage(): string | null {
   return result.stdout.toString('ascii').match(/\d+/)?.[0] ?? null
 }
 
+function createRunCommandTool(): RunCommandTool {
+  return new RunCommandTool({} as any, {
+    runCommandJobs: new RunCommandJobManager(),
+  })
+}
+
 test('RunCommandTool does not advertise a default timeout', () => {
-  const tool = new RunCommandTool({} as any)
+  const tool = createRunCommandTool()
   const schema = tool.metadata.inputSchema as {
     properties?: {
       timeoutMs?: {
@@ -45,11 +101,20 @@ test('RunCommandTool does not advertise a default timeout', () => {
   assert.match(tool.prompt, /-Encoding UTF8/)
 })
 
+test('RunCommandTool requires the portal shared job manager', async () => {
+  const tool = new RunCommandTool({} as any)
+
+  await assert.rejects(
+    tool.call({ command: echoCommand(), shell: testShell() }),
+    /shared job manager/
+  )
+})
+
 test(
   'RunCommandTool uses process-local UTF-8 for Windows PowerShell output',
   { skip: os.platform() !== 'win32' },
   async () => {
-    const tool = new RunCommandTool({} as any)
+    const tool = createRunCommandTool()
     const codePageBefore = windowsCodePage()
 
     const output = await tool.call({
@@ -74,7 +139,7 @@ test(
   'RunCommandTool preserves Windows PowerShell failure status and UTF-8 stderr',
   { skip: os.platform() !== 'win32' },
   async () => {
-    const tool = new RunCommandTool({} as any)
+    const tool = createRunCommandTool()
     const output = await tool.call({
       command: "Write-Error '中文错误'",
       shell: 'powershell',
@@ -91,7 +156,7 @@ test(
 )
 
 test('RunCommandTool rejects non-UTF-8 stdout and stderr', async () => {
-  const tool = new RunCommandTool({} as any)
+  const tool = createRunCommandTool()
 
   for (const stream of ['stdout', 'stderr'] as const) {
     const command =
@@ -110,7 +175,7 @@ test('RunCommandTool rejects non-UTF-8 stdout and stderr', async () => {
 })
 
 test('RunCommandTool does not register a timeout when timeoutMs is omitted', async () => {
-  const tool = new RunCommandTool({} as any)
+  const tool = createRunCommandTool()
   const originalSetTimeout = globalThis.setTimeout
   let timerCount = 0
 
@@ -141,7 +206,7 @@ test('RunCommandTool does not register a timeout when timeoutMs is omitted', asy
 })
 
 test('RunCommandTool marks nonzero command exits as errors', async () => {
-  const tool = new RunCommandTool({} as any)
+  const tool = createRunCommandTool()
   const output = await tool.call({
     command: os.platform() === 'win32' ? 'exit /b 2' : 'exit 2',
     shell: testShell(),
@@ -153,7 +218,7 @@ test('RunCommandTool marks nonzero command exits as errors', async () => {
 })
 
 test('RunCommandTool registers a timeout when timeoutMs is provided', async () => {
-  const tool = new RunCommandTool({} as any)
+  const tool = createRunCommandTool()
   const originalSetTimeout = globalThis.setTimeout
   let timerCount = 0
 
@@ -183,7 +248,7 @@ test('RunCommandTool registers a timeout when timeoutMs is provided', async () =
 })
 
 test('RunCommandTool emits start and UTF-8 stdout/stderr progress events', async () => {
-  const tool = new RunCommandTool({} as any)
+  const tool = createRunCommandTool()
   const events: ToolProgressEvent[] = []
   const command =
     os.platform() === 'win32'
@@ -217,7 +282,7 @@ test('RunCommandTool emits start and UTF-8 stdout/stderr progress events', async
 })
 
 test('RunCommandTool keeps UTF-8 code points intact across output chunks', async () => {
-  const tool = new RunCommandTool({} as any)
+  const tool = createRunCommandTool()
   const outputChunks: string[] = []
   const command =
     os.platform() === 'win32'
@@ -238,49 +303,55 @@ test('RunCommandTool keeps UTF-8 code points intact across output chunks', async
   assert.equal(outputChunks.join(''), '中\n')
 })
 
-test('RunCommandTool terminates an active command when aborted', async () => {
-  const tool = new RunCommandTool({} as any)
+test('RunCommandTool aborts its waiter but leaves the job running', async () => {
+  const manager = new RunCommandJobManager()
+  const tool = new RunCommandTool({} as any, { runCommandJobs: manager })
   const controller = new AbortController()
-  const command = `"${process.execPath}" -e "setInterval(()=>{},1000)"`
-  const running = tool.call(
-    { command, shell: scriptShell() },
-    { signal: controller.signal }
-  )
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), 'portal-run-command-'))
+  const ready = path.join(tempDir, 'ready.txt')
+  const finished = path.join(tempDir, 'finished.txt')
 
-  await new Promise((resolve) => setTimeout(resolve, 30))
-  controller.abort(new PortalAbortError('cancel command'))
-  await assert.rejects(running, PortalAbortError)
+  try {
+    const running = tool.call(markerCommand(ready, finished), {
+      signal: controller.signal,
+    })
+    await waitForFile(ready)
+    controller.abort(new PortalAbortError('cancel command waiter'))
+    await assert.rejects(running, PortalAbortError)
+
+    assert.equal(manager.list().length, 1)
+    await waitForFile(finished)
+  } finally {
+    await manager.stopAll()
+    rmSync(tempDir, { recursive: true, force: true })
+  }
 })
 
-test(
-  'RunCommandTool cancellation terminates the Windows child process tree',
-  { skip: os.platform() !== 'win32' },
-  async () => {
-    const tool = new RunCommandTool({} as any)
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'portal-run-command-'))
-    const marker = path.join(tempDir, 'child-alive.txt')
-    const quotePowerShell = (value: string) =>
-      `'${value.replaceAll("'", "''")}'`
-    const childScript = `Start-Sleep -Milliseconds 500; Set-Content -LiteralPath ${quotePowerShell(marker)} -Value alive`
-    const command = [
-      `$childScript = ${quotePowerShell(childScript)}`,
-      `Start-Process -FilePath powershell.exe -ArgumentList @('-NoLogo','-NoProfile','-Command',$childScript) | Out-Null`,
-      'Start-Sleep -Seconds 5',
-    ].join('; ')
-    const controller = new AbortController()
+test('RunCommandTool returns an error result when its job is stopped', async () => {
+  const manager = new RunCommandJobManager()
+  const tool = new RunCommandTool({} as any, { runCommandJobs: manager })
+  const tempDir = mkdtempSync(
+    path.join(os.tmpdir(), 'portal-run-command-stop-')
+  )
+  const ready = path.join(tempDir, 'ready.txt')
+  const finished = path.join(tempDir, 'finished.txt')
 
-    try {
-      const running = tool.call(
-        { command, shell: 'powershell' },
-        { signal: controller.signal }
-      )
-      await new Promise((resolve) => setTimeout(resolve, 100))
-      controller.abort(new PortalAbortError('cancel process tree'))
-      await assert.rejects(running, PortalAbortError)
-      await new Promise((resolve) => setTimeout(resolve, 800))
-      assert.equal(existsSync(marker), false)
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true })
-    }
+  try {
+    const running = tool.call(markerCommand(ready, finished))
+    await waitForFile(ready)
+    const [job] = manager.list()
+    assert.ok(job)
+    assert.equal(await manager.stop(job.id), 'stopped')
+
+    const output = await running
+    if (typeof output === 'string') assert.fail(output)
+    assert.equal(output.outcome, 'error')
+    assert.equal(
+      (output.result as { terminationReason: string }).terminationReason,
+      'user'
+    )
+  } finally {
+    await manager.stopAll()
+    rmSync(tempDir, { recursive: true, force: true })
   }
-)
+})

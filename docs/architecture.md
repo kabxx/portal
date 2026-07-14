@@ -158,7 +158,7 @@ The runtime can perform multiple tool rounds before the local turn completes.
 
 `run_command` is the only built-in tool that currently emits display progress. It reports a start event and decoded stdout/stderr chunks. `TerminalController` keeps a temporary fixed-height bubble containing only the latest small output tail, throttles UI updates, and replaces that bubble with the final compact result using the same timeline entry id.
 
-Progress is display-only. Reporter errors cannot change command execution or the full structured tool result. On Windows, command processes use a Job Object where available so cancellation or timeout terminates their process tree.
+Progress is display-only. Reporter errors cannot change command execution or the full structured tool result. Each invocation is registered in the process-local run-command job manager. Cancelling a turn detaches only that turn's waiter, so the job continues draining stdout/stderr and can be inspected with `/job` or stopped with `/job stop <job-id>`. On Windows, command processes use a Job Object where available; POSIX commands use a detached process group. Timeout, explicit stop, and controlled portal shutdown terminate the managed tree. Jobs are not persisted across portal restarts.
 
 ## Provider adapter boundary
 
@@ -197,14 +197,14 @@ The SQLite database is an index for reopening conversations, not a transcript da
 
 Long-running app operations receive an `AbortSignal`.
 
-- Busy `Ctrl+C` aborts the current operation and asks its active adapter/process to stop.
+- Busy `Ctrl+C` aborts the current operation and asks its active adapter/process to stop. A `run_command` process is an exception: the current waiter is cancelled, but the registered job continues until completion, timeout, `/job stop`, or portal shutdown.
 - Idle `Ctrl+C` with non-empty input clears the input; idle empty `Ctrl+C` does nothing.
 - Idle `Ctrl+D` with empty input requests shutdown.
 - `/exit` requests the same shutdown path.
 
 Provider failures are classified by kind, retryability, and recovery action. Authentication errors retain the adapter page and enter a login-wait loop. Retryable network/page failures use bounded retries and adapter restore. Non-retryable UI or protocol errors remain visible in the current timeline.
 
-Cancellation is propagated through provider submit, runtime retries, tools, Skill installation, MCP requests, and app operations. Shutdown uses bounded close waits so a hanging provider page or transport cannot block process exit indefinitely.
+Cancellation is propagated through provider submit, runtime retries, tools, Skill installation, MCP requests, and app operations, except for the detached waiter behavior of `run_command` described above. Shutdown closes job admission and stops all active command jobs before closing providers. It uses bounded close waits so a hanging provider page or transport cannot block process exit indefinitely.
 
 ## Spawned runtimes
 
