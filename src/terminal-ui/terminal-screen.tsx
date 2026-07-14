@@ -98,16 +98,17 @@ export function shouldShowWaitingIndicator(state: TerminalState): boolean {
 
 export interface KeyModifiers {
   return: boolean
+  ctrl: boolean
   shift: boolean
   meta: boolean
 }
 
-export function isNewlineKey(input: string, key: KeyModifiers): boolean {
-  // Ctrl+Enter / Ctrl+J: terminal sends \n (0x0A), Ink parseKeypress maps
-  // it to name='enter' (not 'return'), so key.return=false and input='\n'.
-  if (input === '\n' && !key.return) return true
+export function isNewlineKey(key: KeyModifiers): boolean {
+  return key.return && key.shift && !key.ctrl
+}
 
-  return false
+export function isSubmitKey(key: KeyModifiers): boolean {
+  return key.return && !key.shift && !key.ctrl
 }
 
 export function clearInput(): string {
@@ -824,7 +825,11 @@ export function TerminalScreen({
       return
     }
 
-    if (isNewlineKey(input, key)) {
+    if (key.return && key.ctrl) {
+      return
+    }
+
+    if (isNewlineKey(key)) {
       historyRef.current.resetCursor()
       setInputState((current) => ({
         ...insertAtCursor(current.value, current.cursor, '\n'),
@@ -833,7 +838,7 @@ export function TerminalScreen({
       return
     }
 
-    if (key.return) {
+    if (isSubmitKey(key)) {
       const currentState = ui.getState()
       if (
         !currentState.prompt.active ||
