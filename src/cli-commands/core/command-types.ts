@@ -1,0 +1,62 @@
+import type { Interface as ReadlineInterface } from 'readline/promises'
+import type {
+  ThreadHandle,
+  ThreadManager,
+} from '../../threads/thread-manager.ts'
+import type { ThreadStore } from '../../threads/thread-store.ts'
+import type { ProviderId } from '../../providers/provider-id.ts'
+import type { TerminalController } from '../../terminal-ui/terminal-controller.ts'
+import type { SkillLibrary } from '../../skills/skill-library.ts'
+import type {
+  AddedSkill,
+  SkillAddOptions,
+} from '../../skills/skill-installer.ts'
+import type { McpLibrary } from '../../mcp/mcp-library.ts'
+
+export interface ApiCommandController {
+  start(): Promise<void>
+  stop(): Promise<void>
+  status(): { running: boolean; address: string | null; auth: boolean }
+  token(): string | null
+}
+
+export interface CommandResult {
+  continue: boolean
+}
+
+export interface CliCommandContext {
+  readline: ReadlineInterface
+  threadManager: ThreadManager
+  threadStore: ThreadStore
+  skillLibrary: SkillLibrary
+  mcpLibrary: McpLibrary
+  api?: ApiCommandController
+  ui: TerminalController
+  browserProfileDir: string
+  providers: readonly ProviderId[]
+  resolveProvider(value: string): ProviderId | null
+  createThread(provider: ProviderId, model: string | null): Promise<void>
+  resumeThread(conversationUrl: string): Promise<void>
+  reloadThread?: (threadId: string) => Promise<void>
+  closeThread(threadId: string): Promise<boolean>
+  addSkill(source: string, options?: SkillAddOptions): Promise<AddedSkill>
+  submitThreadInput(input: string, displayInput?: string): Promise<void>
+  listCommands(): readonly CliCommand[]
+}
+
+export interface CliCommand {
+  name: string
+  description: string
+  usage?: string
+  subcommands?: readonly string[]
+  execute(
+    context: CliCommandContext,
+    args: readonly string[]
+  ): Promise<CommandResult>
+}
+
+export function getActiveThread(
+  context: CliCommandContext
+): ThreadHandle | null {
+  return context.threadManager.getActiveThread()
+}
