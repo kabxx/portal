@@ -871,6 +871,7 @@ export class GeminiAdapter extends ProviderAdapter {
           if (!this.isTargetStreamRequest(response.request())) {
             return
           }
+          this.emitSubmitActivitySafely()
           resolveRequestStarted()
           if (response.status() !== 200) {
             return
@@ -913,6 +914,7 @@ export class GeminiAdapter extends ProviderAdapter {
               await this.readCurrentStreamedResponseText(fetchCaptureStartIndex)
           )
           await sendButton.click()
+          this.emitSubmitSent()
           throwIfAborted(signal)
 
           await abortable(

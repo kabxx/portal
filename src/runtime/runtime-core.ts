@@ -91,7 +91,8 @@ export class RuntimeCore {
       throwIfAborted(options.signal)
       await this.agentAdapter.attachText(this.prompt)
       throwIfAborted(options.signal)
-      const response = await this.agentAdapter.submit(options)
+      const response =
+        await this.agentAdapter.submitWithResponseTimeout(options)
       throwIfAborted(options.signal)
       if (!/\bREADY\b/i.test(response)) {
         throw new Error(
@@ -214,7 +215,7 @@ export class RuntimeCore {
             await handlers.onStatus?.(message)
           })
           try {
-            const response = await this.agentAdapter.submit({
+            const response = await this.agentAdapter.submitWithResponseTimeout({
               signal: handlers.signal,
             })
             throwIfAborted(handlers.signal)
