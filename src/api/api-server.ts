@@ -239,7 +239,10 @@ export class PortalApiServer {
 
   private registerRoutes(fastify: FastifyInstance): void {
     fastify.addHook('onRequest', async (request, reply) => {
-      if (request.url === '/health' || this.options.token === null) {
+      if (
+        request.routeOptions.url === '/health' ||
+        this.options.token === null
+      ) {
         return
       }
       const expected = `Bearer ${this.options.token}`
