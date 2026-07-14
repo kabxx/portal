@@ -117,7 +117,8 @@ test('ensurePortalConfig writes advanced last with field comments and section sp
       'closeTimeoutSeconds',
       'requestStartWarningAfterSeconds',
       'blockedWarningEverySeconds',
-      'responseTimeoutMinutes',
+      'responseStartTimeoutSeconds',
+      'responseStallTimeoutSeconds',
       'restoreTimeoutSeconds',
       'historyLoadTimeoutSeconds',
       'historyPageTimeoutSeconds',
@@ -210,6 +211,60 @@ test('parsePortalConfig completes partial advanced settings from defaults', () =
       requestTimeoutSeconds: 12,
     },
   })
+})
+
+test('parsePortalConfig migrates the legacy provider response timeout', () => {
+  const legacy = structuredClone(createDefaultPortalConfig('data')) as any
+  delete legacy.advanced.provider.responseStartTimeoutSeconds
+  delete legacy.advanced.provider.responseStallTimeoutSeconds
+  legacy.advanced.provider.responseTimeoutMinutes = 5
+
+  const migratedDefault = parsePortalConfig(legacy)
+  assert.equal(
+    migratedDefault.advanced.provider.responseStartTimeoutSeconds,
+    30
+  )
+  assert.equal(
+    migratedDefault.advanced.provider.responseStallTimeoutSeconds,
+    30
+  )
+
+  legacy.advanced.provider.responseTimeoutMinutes = 2
+  const migratedCustom = parsePortalConfig(legacy)
+  assert.equal(
+    migratedCustom.advanced.provider.responseStartTimeoutSeconds,
+    120
+  )
+  assert.equal(
+    migratedCustom.advanced.provider.responseStallTimeoutSeconds,
+    120
+  )
+})
+
+test('ensurePortalConfig rewrites the legacy provider response timeout fields', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-timeout-'))
+  const configPath = path.join(root, 'config.yaml')
+  const legacy = structuredClone(createDefaultPortalConfig(root)) as any
+  delete legacy.advanced.provider.responseStartTimeoutSeconds
+  delete legacy.advanced.provider.responseStallTimeoutSeconds
+  legacy.advanced.provider.responseTimeoutMinutes = 5
+
+  try {
+    await writeFile(configPath, stringifyYaml(legacy), 'utf8')
+    const config = await ensurePortalConfig(
+      configPath,
+      createDefaultPortalConfig(root)
+    )
+    const contents = await readFile(configPath, 'utf8')
+
+    assert.equal(config.advanced.provider.responseStartTimeoutSeconds, 30)
+    assert.equal(config.advanced.provider.responseStallTimeoutSeconds, 30)
+    assert.doesNotMatch(contents, /responseTimeoutMinutes/)
+    assert.match(contents, /responseStartTimeoutSeconds: 30/)
+    assert.match(contents, /responseStallTimeoutSeconds: 30/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test('parsePortalConfig rejects unknown and invalid advanced settings', () => {

@@ -14,6 +14,9 @@ export type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
 
 export const DEFAULT_SUBMIT_REQUEST_START_GRACE_MS = 30000
 export const DEFAULT_SUBMIT_BLOCKED_WARNING_INTERVAL_MS = 30000
+export const DEFAULT_RESPONSE_START_TIMEOUT_MS = 30000
+export const DEFAULT_RESPONSE_STALL_TIMEOUT_MS = 30000
+const MAX_INTERNAL_SUBMIT_WAIT_MS = 2_147_483_647
 const HISTORY_CAPTURE_POLL_MS = 100
 
 export type ProviderAdapterErrorKind =
@@ -123,6 +126,28 @@ export class ProviderAdapterUnsupportedError extends ProviderAdapterError {
   }
 }
 
+export class ProviderResponseTimeoutError extends ProviderAdapterError {
+  public constructor(phase: 'start' | 'stall', timeoutMs: number) {
+    super(
+      'submit',
+      phase === 'start'
+        ? `Provider did not send response activity within ${timeoutMs}ms after submit.`
+        : `Provider response had no activity for ${timeoutMs}ms before completion.`,
+      {
+        kind: 'protocol',
+        recovery: 'none',
+        retryable: false,
+        maxAttempts: 1,
+        detailCode:
+          phase === 'start'
+            ? 'provider_response_start_timeout'
+            : 'provider_response_stall_timeout',
+      }
+    )
+    this.name = 'ProviderResponseTimeoutError'
+  }
+}
+
 export function isProviderAdapterError(
   error: unknown
 ): error is ProviderAdapterError {
@@ -144,7 +169,8 @@ export interface ProviderAdapterCreateOptions {
 export interface ProviderTimingOptions {
   requestStartWarningAfterMs: number
   blockedWarningIntervalMs: number
-  responseTimeoutMs: number
+  responseStartTimeoutMs: number
+  responseStallTimeoutMs: number
   restoreTimeoutMs: number
   historyLoadTimeoutMs: number
   historyPageTimeoutMs: number
@@ -471,6 +497,9 @@ export abstract class ProviderAdapter {
   private submitTextReporter:
     | ((message: string) => void | Promise<void>)
     | null = null
+  private submitSentReporter: (() => void) | null = null
+  private submitActivityReporter: (() => void) | null = null
+  private readonly submitFetchActivitySnapshots = new Map<number, string>()
   private fetchCaptureInitialized = false
   private readonly capturedPageResponses: Response[] = []
   private readonly capturedPageResponseBodies = new WeakMap<
@@ -627,6 +656,67 @@ export abstract class ProviderAdapter {
   public abstract attachImage(path: string | readonly string[]): Promise<void>
   public abstract submit(options?: AbortOptions): Promise<string>
 
+  public async submitWithResponseTimeout(
+    options: AbortOptions = {}
+  ): Promise<string> {
+    const timeoutController = new AbortController()
+    const signal =
+      options.signal === undefined
+        ? timeoutController.signal
+        : AbortSignal.any([options.signal, timeoutController.signal])
+    const timeoutDeferred = createDeferred<never>()
+    let timeoutTimer: NodeJS.Timeout | null = null
+    let timeoutError: ProviderResponseTimeoutError | null = null
+    let settled = false
+    let responseStarted = false
+    let phase: 'start' | 'stall' = 'start'
+
+    const clearTimer = () => {
+      if (timeoutTimer !== null) {
+        clearTimeout(timeoutTimer)
+        timeoutTimer = null
+      }
+    }
+    const scheduleTimeout = (timeoutMs: number) => {
+      clearTimer()
+      timeoutTimer = setTimeout(() => {
+        if (settled) return
+        timeoutError = new ProviderResponseTimeoutError(phase, timeoutMs)
+        timeoutController.abort(timeoutError)
+        void this.stopGeneration().catch(() => {})
+        timeoutDeferred.reject(timeoutError)
+      }, timeoutMs)
+    }
+
+    this.submitFetchActivitySnapshots.clear()
+    this.submitSentReporter = () => {
+      if (settled || timeoutError !== null || responseStarted) return
+      phase = 'start'
+      scheduleTimeout(this.getSubmitResponseStartTimeoutMs())
+    }
+    this.submitActivityReporter = () => {
+      if (settled || timeoutError !== null) return
+      responseStarted = true
+      phase = 'stall'
+      scheduleTimeout(this.getSubmitResponseStallTimeoutMs())
+    }
+
+    try {
+      return await Promise.race([
+        this.submit({ signal }),
+        timeoutDeferred.promise,
+      ])
+    } catch (error) {
+      throw timeoutError ?? error
+    } finally {
+      settled = true
+      clearTimer()
+      this.submitSentReporter = null
+      this.submitActivityReporter = null
+      this.submitFetchActivitySnapshots.clear()
+    }
+  }
+
   protected async emitSubmitStatus(message: string): Promise<void> {
     await this.submitStatusReporter?.(message)
   }
@@ -636,7 +726,22 @@ export abstract class ProviderAdapter {
   }
 
   protected async emitSubmitText(message: string): Promise<void> {
+    this.emitSubmitActivity()
     await this.submitTextReporter?.(message)
+  }
+
+  protected emitSubmitSent(): void {
+    this.submitSentReporter?.()
+  }
+
+  protected emitSubmitActivity(): void {
+    this.submitActivityReporter?.()
+  }
+
+  protected emitSubmitActivitySafely(): void {
+    try {
+      this.emitSubmitActivity()
+    } catch {}
   }
 
   protected getSubmitRequestStartGraceMs(): number {
@@ -653,8 +758,22 @@ export abstract class ProviderAdapter {
     )
   }
 
+  protected getSubmitResponseStartTimeoutMs(): number {
+    return (
+      this.options?.timings?.responseStartTimeoutMs ??
+      DEFAULT_RESPONSE_START_TIMEOUT_MS
+    )
+  }
+
+  protected getSubmitResponseStallTimeoutMs(): number {
+    return (
+      this.options?.timings?.responseStallTimeoutMs ??
+      DEFAULT_RESPONSE_STALL_TIMEOUT_MS
+    )
+  }
+
   protected getSubmitResponseTimeoutMs(): number {
-    return this.options?.timings?.responseTimeoutMs ?? 300_000
+    return MAX_INTERNAL_SUBMIT_WAIT_MS
   }
 
   protected getRestoreTimeoutMs(): number {
@@ -1026,6 +1145,7 @@ export abstract class ProviderAdapter {
     const entries = (await this.getCapturedFetchEntries(startIndex)).filter(
       predicate
     )
+    this.reportCapturedSubmitActivity(entries)
     const latestEntry = entries.at(-1) ?? null
     if (latestEntry === null) {
       return null
@@ -1033,6 +1153,25 @@ export abstract class ProviderAdapter {
 
     const body = latestEntry.chunks.join('')
     return body.trim() ? body : null
+  }
+
+  protected reportCapturedSubmitActivity(
+    entries: readonly CapturedFetchEntry[]
+  ): void {
+    if (this.submitActivityReporter === null) return
+    for (const entry of entries) {
+      const snapshot = [
+        entry.status ?? '',
+        entry.chunks.length,
+        entry.done,
+        entry.error ?? '',
+      ].join(':')
+      if (this.submitFetchActivitySnapshots.get(entry.id) === snapshot) {
+        continue
+      }
+      this.submitFetchActivitySnapshots.set(entry.id, snapshot)
+      this.emitSubmitActivity()
+    }
   }
 
   protected startSubmitTextPolling(

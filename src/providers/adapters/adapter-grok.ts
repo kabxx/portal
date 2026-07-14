@@ -341,6 +341,7 @@ export class GrokAdapter extends ProviderAdapter {
         return
       }
       websocket.on('framereceived', (event) => {
+        this.emitSubmitActivitySafely()
         const payload =
           typeof event.payload === 'string'
             ? event.payload
@@ -444,6 +445,7 @@ export class GrokAdapter extends ProviderAdapter {
         })
         try {
           await this.getSubmitButton().click()
+          this.emitSubmitSent()
           throwIfAborted(signal)
           await waitAsync(
             async () => {

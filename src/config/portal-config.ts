@@ -41,7 +41,8 @@ export interface PortalAdvancedBrowserConfig {
 export interface PortalAdvancedProviderConfig {
   requestStartWarningAfterSeconds: number
   blockedWarningEverySeconds: number
-  responseTimeoutMinutes: number
+  responseStartTimeoutSeconds: number
+  responseStallTimeoutSeconds: number
   restoreTimeoutSeconds: number
   historyLoadTimeoutSeconds: number
   historyPageTimeoutSeconds: number
@@ -153,7 +154,18 @@ const ADVANCED_BROWSER_FIELDS = new Set([
 const ADVANCED_PROVIDER_FIELDS = new Set([
   'requestStartWarningAfterSeconds',
   'blockedWarningEverySeconds',
+  'responseStartTimeoutSeconds',
+  'responseStallTimeoutSeconds',
   'responseTimeoutMinutes',
+  'restoreTimeoutSeconds',
+  'historyLoadTimeoutSeconds',
+  'historyPageTimeoutSeconds',
+])
+const ADVANCED_PROVIDER_MANAGED_FIELDS = new Set([
+  'requestStartWarningAfterSeconds',
+  'blockedWarningEverySeconds',
+  'responseStartTimeoutSeconds',
+  'responseStallTimeoutSeconds',
   'restoreTimeoutSeconds',
   'historyLoadTimeoutSeconds',
   'historyPageTimeoutSeconds',
@@ -227,7 +239,8 @@ export function createDefaultAdvancedConfig(): PortalAdvancedConfig {
     provider: {
       requestStartWarningAfterSeconds: 30,
       blockedWarningEverySeconds: 30,
-      responseTimeoutMinutes: 5,
+      responseStartTimeoutSeconds: 30,
+      responseStallTimeoutSeconds: 30,
       restoreTimeoutSeconds: 60,
       historyLoadTimeoutSeconds: 60,
       historyPageTimeoutSeconds: 10,
@@ -484,6 +497,19 @@ export function parseAdvancedConfig(value: unknown): PortalAdvancedConfig {
   )
   assertSupportedFields(hooks, ADVANCED_HOOKS_FIELDS, 'advanced.hooks')
 
+  const legacyResponseTimeoutMinutes =
+    provider.responseTimeoutMinutes === undefined
+      ? null
+      : parsePositiveInteger(
+          provider.responseTimeoutMinutes,
+          5,
+          'advanced.provider.responseTimeoutMinutes'
+        )
+  const legacyResponseTimeoutSeconds =
+    legacyResponseTimeoutMinutes === null || legacyResponseTimeoutMinutes === 5
+      ? 30
+      : legacyResponseTimeoutMinutes * 60
+
   return {
     browser: {
       startupTimeoutSeconds: parsePositiveInteger(
@@ -508,10 +534,15 @@ export function parseAdvancedConfig(value: unknown): PortalAdvancedConfig {
         defaults.provider.blockedWarningEverySeconds,
         'advanced.provider.blockedWarningEverySeconds'
       ),
-      responseTimeoutMinutes: parsePositiveInteger(
-        provider.responseTimeoutMinutes,
-        defaults.provider.responseTimeoutMinutes,
-        'advanced.provider.responseTimeoutMinutes'
+      responseStartTimeoutSeconds: parsePositiveInteger(
+        provider.responseStartTimeoutSeconds,
+        legacyResponseTimeoutSeconds,
+        'advanced.provider.responseStartTimeoutSeconds'
+      ),
+      responseStallTimeoutSeconds: parsePositiveInteger(
+        provider.responseStallTimeoutSeconds,
+        legacyResponseTimeoutSeconds,
+        'advanced.provider.responseStallTimeoutSeconds'
       ),
       restoreTimeoutSeconds: parsePositiveInteger(
         provider.restoreTimeoutSeconds,
@@ -700,7 +731,7 @@ async function hasCompleteManagedSections(
     readonly [name: string, fields: ReadonlySet<string>]
   > = [
     ['browser', ADVANCED_BROWSER_FIELDS],
-    ['provider', ADVANCED_PROVIDER_FIELDS],
+    ['provider', ADVANCED_PROVIDER_MANAGED_FIELDS],
     ['runtime', ADVANCED_RUNTIME_FIELDS],
     ['command', ADVANCED_COMMAND_FIELDS],
     ['skillInstall', ADVANCED_SKILL_INSTALL_FIELDS],
@@ -712,6 +743,9 @@ async function hasCompleteManagedSections(
     const section = (document.advanced as Record<string, unknown>)[name]
     return (
       isRecord(section) &&
+      !(
+        name === 'provider' && Object.hasOwn(section, 'responseTimeoutMinutes')
+      ) &&
       [...fields].every((field) => Object.hasOwn(section, field))
     )
   })
@@ -956,8 +990,12 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
         'Seconds between repeated blocked-request warnings.',
       ],
       [
-        'responseTimeoutMinutes',
-        'Minutes allowed for one provider response to complete; idle safety checks may finish earlier.',
+        'responseStartTimeoutSeconds',
+        'Seconds allowed for the first provider response activity after submit.',
+      ],
+      [
+        'responseStallTimeoutSeconds',
+        'Seconds allowed between provider response activities before the request fails.',
       ],
       [
         'restoreTimeoutSeconds',

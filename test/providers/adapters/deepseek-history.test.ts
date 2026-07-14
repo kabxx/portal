@@ -110,7 +110,8 @@ test('DeepSeekAdapter.loadHistory bounds the full replay with the configured tim
     timings: {
       requestStartWarningAfterMs: 1,
       blockedWarningIntervalMs: 1,
-      responseTimeoutMs: 1,
+      responseStartTimeoutMs: 1,
+      responseStallTimeoutMs: 1,
       restoreTimeoutMs: 1,
       historyLoadTimeoutMs: 5,
       historyPageTimeoutMs: 1,
