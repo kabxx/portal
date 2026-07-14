@@ -772,6 +772,7 @@ export class GlmAdapter extends ProviderAdapter {
           if (!this.isTargetCompletionRequest(response.request())) {
             return
           }
+          this.emitSubmitActivitySafely()
           resolveRequestStarted()
           settleTargetResponse({ kind: 'resolve', response })
         }
@@ -796,6 +797,7 @@ export class GlmAdapter extends ProviderAdapter {
               await this.readCurrentStreamedResponseText(fetchCaptureStartIndex)
           )
           await sendButton.click()
+          this.emitSubmitSent()
           throwIfAborted(signal)
 
           await abortable(

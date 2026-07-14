@@ -338,9 +338,11 @@ test('load_skill reports files deleted after runtime creation to the model', asy
 
 test('createRuntimeFromAdapter passes abort signal into setup and closes on abort', async () => {
   const controller = new AbortController()
+  let submitSignal: AbortSignal | undefined
   const adapter = new FakeAdapter({
     onSubmit: (options) => {
-      assert.equal(options?.signal, controller.signal)
+      submitSignal = options?.signal
+      assert.equal(submitSignal?.aborted, false)
       controller.abort(new PortalAbortError('cancel setup'))
       throw options?.signal?.reason ?? new Error('missing abort reason')
     },
@@ -354,7 +356,8 @@ test('createRuntimeFromAdapter passes abort signal into setup and closes on abor
     PortalAbortError
   )
 
-  assert.equal(adapter.submitSignals[0], controller.signal)
+  assert.equal(adapter.submitSignals[0], submitSignal)
+  assert.equal(submitSignal?.aborted, true)
   assert.equal(adapter.closeCalls, 1)
 })
 
