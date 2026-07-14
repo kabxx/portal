@@ -27,7 +27,8 @@ export class ChildRuntimeFactory implements HookModelExecutor {
     private readonly defaultProvider: ProviderId,
     private readonly createChild: (
       request: ChildRuntimeRequest
-    ) => Promise<ChildRuntimeHandle>
+    ) => Promise<ChildRuntimeHandle>,
+    private readonly closeTimeoutMs = CHILD_CLOSE_TIMEOUT_MS
   ) {}
 
   public async execute(
@@ -74,7 +75,7 @@ export class ChildRuntimeFactory implements HookModelExecutor {
       await Promise.race([
         child.close().catch(() => {}),
         new Promise<void>((resolve) =>
-          setTimeout(resolve, CHILD_CLOSE_TIMEOUT_MS)
+          setTimeout(resolve, this.closeTimeoutMs)
         ),
       ])
     }

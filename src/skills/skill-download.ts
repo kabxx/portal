@@ -1,12 +1,9 @@
 import path from 'path'
 import type { AbortOptions } from '../runtime/runtime-cancellation.ts'
 import { parseGitHubUrl } from './skill-github-download.ts'
-import {
-  fetchSkillHttp,
-  MAX_SKILL_DOWNLOAD_BYTES,
-  writeSkillHttpResponse,
-} from './skill-http.ts'
+import { fetchSkillHttp, writeSkillHttpResponse } from './skill-http.ts'
 import { readFilePrefix, SkillInstallError } from './skill-files.ts'
+import { DEFAULT_SKILL_POLICY, type SkillPolicy } from './skill-policy.ts'
 
 export interface DownloadTarget {
   url: URL
@@ -85,10 +82,15 @@ export function resolveDownloadTarget(sourceUrl: URL): DownloadTarget {
 export async function downloadSkillFile(
   sourceUrl: URL,
   directory: string,
-  options: AbortOptions
+  options: AbortOptions,
+  policy: SkillPolicy = DEFAULT_SKILL_POLICY
 ): Promise<DownloadedSkillFile> {
   const target = resolveDownloadTarget(sourceUrl)
-  const response = await fetchSkillHttp(target.url, options)
+  const response = await fetchSkillHttp(target.url, {
+    ...options,
+    timeoutMs: policy.downloadTimeoutMs,
+    maxRedirects: policy.maxRedirects,
+  })
   if (!response.ok) {
     throw new SkillInstallError(
       `Skill download failed with HTTP ${response.status} ${response.statusText}`
@@ -103,7 +105,7 @@ export async function downloadSkillFile(
   const destination = path.join(directory, fileName)
   await writeSkillHttpResponse(response, destination, {
     signal: options.signal,
-    maxBytes: MAX_SKILL_DOWNLOAD_BYTES,
+    maxBytes: policy.maxDownloadBytes,
   })
 
   return {

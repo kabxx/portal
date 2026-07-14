@@ -103,3 +103,27 @@ test('DeepSeekAdapter.loadHistory reports a partial delta when the full replay f
   assert.equal(result.messages.length, 2)
   assert.match(result.warning ?? '', /full-history request failed/)
 })
+
+test('DeepSeekAdapter.loadHistory bounds the full replay with the configured timeout', async () => {
+  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  adapter.options = {
+    timings: {
+      requestStartWarningAfterMs: 1,
+      blockedWarningIntervalMs: 1,
+      responseTimeoutMs: 1,
+      restoreTimeoutMs: 1,
+      historyLoadTimeoutMs: 5,
+      historyPageTimeoutMs: 1,
+    },
+  }
+  stubCapturedHistory(adapter, historyBody('MERGE', 2))
+  adapter.page = {
+    evaluate: async () => await new Promise(() => {}),
+  }
+
+  const result = await adapter.loadHistory()
+
+  assert.equal(result.complete, false)
+  assert.equal(result.messages.length, 2)
+  assert.match(result.warning ?? '', /full-history request timed out/)
+})

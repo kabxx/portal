@@ -8,6 +8,7 @@ import {
   type SkillInstallOptions,
 } from './skill-installer.ts'
 import { readSkillManifest, validateSkillName } from './skill-manifest.ts'
+import { DEFAULT_SKILL_POLICY, type SkillPolicy } from './skill-policy.ts'
 import {
   readSkillRegistry,
   resolveSkillDirectory,
@@ -16,8 +17,6 @@ import {
   updateSkillRegistry,
   writeSkillRegistry,
 } from './skill-registry.ts'
-
-const MAX_RESOURCE_FILES = 2000
 
 export interface SkillSummary {
   name: string
@@ -54,13 +53,19 @@ export interface SkillLibraryOptions {
   skillsDirectory: string
   tempDirectory: string
   registryPath: string
+  policy?: SkillPolicy
 }
 
 export class SkillCatalogSnapshot {
   private readonly skillsByName: ReadonlyMap<string, SkillCatalogEntry>
+  private readonly policy: SkillPolicy
 
-  public constructor(skills: readonly SkillCatalogEntry[]) {
+  public constructor(
+    skills: readonly SkillCatalogEntry[],
+    policy: SkillPolicy = DEFAULT_SKILL_POLICY
+  ) {
     this.skillsByName = new Map(skills.map((skill) => [skill.name, skill]))
+    this.policy = policy
   }
 
   public get size(): number {
@@ -104,13 +109,19 @@ export class SkillCatalogSnapshot {
     let manifest
     let resources: readonly string[]
     try {
-      manifest = await readSkillManifest(skill.directory)
+      manifest = await readSkillManifest(
+        skill.directory,
+        this.policy.maxManifestBytes
+      )
       if (manifest.name !== skill.name) {
         throw new Error(
           `Manifest name "${manifest.name}" does not match catalog name "${skill.name}"`
         )
       }
-      resources = await listSkillResources(skill.directory)
+      resources = await listSkillResources(
+        skill.directory,
+        this.policy.maxResourceFiles
+      )
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(
@@ -149,11 +160,14 @@ export class SkillCatalogSnapshot {
 
 export class SkillLibrary {
   private readonly installer: SkillInstaller
+  private readonly policy: SkillPolicy
 
   public constructor(private readonly options: SkillLibraryOptions) {
+    this.policy = options.policy ?? DEFAULT_SKILL_POLICY
     this.installer = new SkillInstaller(
       options.skillsDirectory,
-      options.tempDirectory
+      options.tempDirectory,
+      this.policy
     )
   }
 
@@ -259,7 +273,8 @@ export class SkillLibrary {
           name,
           description,
           directory,
-        }))
+        })),
+      this.policy
     )
   }
 
@@ -325,11 +340,14 @@ export class SkillLibrary {
       }
       const directory = path.join(this.options.skillsDirectory, entry.name)
       try {
-        const manifest = await readSkillManifest(directory)
+        const manifest = await readSkillManifest(
+          directory,
+          this.policy.maxManifestBytes
+        )
         if (manifest.name !== entry.name) {
           continue
         }
-        await listSkillResources(directory)
+        await listSkillResources(directory, this.policy.maxResourceFiles)
         skills.set(manifest.name, {
           directory: this.formatManagedDirectory(directory),
           enabled: true,
@@ -358,13 +376,16 @@ export class SkillLibrary {
         entry.directory
       )
       try {
-        const manifest = await readSkillManifest(directory)
+        const manifest = await readSkillManifest(
+          directory,
+          this.policy.maxManifestBytes
+        )
         if (manifest.name !== name) {
           throw new Error(
             `Registry name "${name}" does not match manifest name "${manifest.name}"`
           )
         }
-        await listSkillResources(directory)
+        await listSkillResources(directory, this.policy.maxResourceFiles)
         skills.push({
           name: manifest.name,
           description: manifest.description,
@@ -398,7 +419,10 @@ export class SkillLibrary {
   }
 }
 
-async function listSkillResources(skillDirectory: string): Promise<string[]> {
+async function listSkillResources(
+  skillDirectory: string,
+  maxResourceFiles: number
+): Promise<string[]> {
   const resources: string[] = []
   const visit = async (directory: string): Promise<void> => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -418,9 +442,9 @@ async function listSkillResources(skillDirectory: string): Promise<string[]> {
         continue
       }
       resources.push(relativePath.replace(/\\/g, '/'))
-      if (resources.length > MAX_RESOURCE_FILES) {
+      if (resources.length > maxResourceFiles) {
         throw new Error(
-          `Skill contains more than ${MAX_RESOURCE_FILES} resource files`
+          `Skill contains more than ${maxResourceFiles} resource files`
         )
       }
     }

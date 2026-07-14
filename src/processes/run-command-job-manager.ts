@@ -79,6 +79,18 @@ const MAX_OUTPUT_BUFFER_BYTES = 1024 * 1024 * 4
 const TERMINATION_GRACE_MS = 250
 const TERMINATION_SETTLE_TIMEOUT_MS = 3000
 
+export interface RunCommandJobManagerOptions {
+  maxOutputBufferBytes?: number
+  terminationGraceMs?: number
+  terminationSettleTimeoutMs?: number
+}
+
+interface ResolvedRunCommandJobManagerOptions {
+  maxOutputBufferBytes: number
+  terminationGraceMs: number
+  terminationSettleTimeoutMs: number
+}
+
 export class RunCommandEncodingError extends Error {
   public constructor(shell: RunCommandShell, stream: RunCommandOutputStream) {
     super(
@@ -92,6 +104,17 @@ export class RunCommandJobManager implements RunCommandJobService {
   private readonly jobs = new Map<string, ManagedRunCommandJob>()
   private nextId = 1
   private accepting = true
+  private readonly options: ResolvedRunCommandJobManagerOptions
+
+  public constructor(options: RunCommandJobManagerOptions = {}) {
+    this.options = {
+      maxOutputBufferBytes:
+        options.maxOutputBufferBytes ?? MAX_OUTPUT_BUFFER_BYTES,
+      terminationGraceMs: options.terminationGraceMs ?? TERMINATION_GRACE_MS,
+      terminationSettleTimeoutMs:
+        options.terminationSettleTimeoutMs ?? TERMINATION_SETTLE_TIMEOUT_MS,
+    }
+  }
 
   public start(
     input: RunCommandInput,
@@ -105,7 +128,7 @@ export class RunCommandJobManager implements RunCommandJobService {
 
     const id = `job-${this.nextId}`
     this.nextId += 1
-    const job = new ManagedRunCommandJob(id, input, onProgress)
+    const job = new ManagedRunCommandJob(id, input, this.options, onProgress)
     this.jobs.set(id, job)
     void job.completion
       .catch(() => {})
@@ -188,6 +211,7 @@ class ManagedRunCommandJob {
   public constructor(
     private readonly id: string,
     input: RunCommandInput,
+    private readonly options: ResolvedRunCommandJobManagerOptions,
     onProgress?: (event: RunCommandProgressEvent) => void
   ) {
     this.command = input.command
@@ -279,13 +303,16 @@ class ManagedRunCommandJob {
     >
   ): Promise<RunCommandStopResult> {
     if (this.settled) {
-      await waitForSettlement(this.completion, TERMINATION_SETTLE_TIMEOUT_MS)
+      await waitForSettlement(
+        this.completion,
+        this.options.terminationSettleTimeoutMs
+      )
       return 'not_found'
     }
     await this.requestTermination(reason)
     return (await waitForSettlement(
       this.completion,
-      TERMINATION_SETTLE_TIMEOUT_MS
+      this.options.terminationSettleTimeoutMs
     ))
       ? 'stopped'
       : 'timeout'
@@ -336,7 +363,13 @@ class ManagedRunCommandJob {
     const chunks = stream === 'stdout' ? this.stdoutChunks : this.stderrChunks
     const streamState =
       stream === 'stdout' ? this.stdoutState : this.stderrState
-    appendBounded(chunks, chunk, this.outputState, streamState)
+    appendBounded(
+      chunks,
+      chunk,
+      this.outputState,
+      streamState,
+      this.options.maxOutputBufferBytes
+    )
 
     const decoderFailed =
       stream === 'stdout' ? this.stdoutDecoderFailed : this.stderrDecoderFailed
@@ -447,13 +480,23 @@ class ManagedRunCommandJob {
         closeJob(job)
       } catch {
         if (this.platform === 'win32' && this.child.pid !== undefined) {
-          await terminateWindowsProcessTree(this.child.pid)
+          await terminateWindowsProcessTree(
+            this.child.pid,
+            this.options.terminationSettleTimeoutMs
+          )
         }
       }
     } else if (this.platform === 'win32' && this.child.pid !== undefined) {
-      await terminateWindowsProcessTree(this.child.pid)
+      await terminateWindowsProcessTree(
+        this.child.pid,
+        this.options.terminationSettleTimeoutMs
+      )
     } else if (this.child.pid !== undefined) {
-      await terminatePosixProcessGroup(this.child.pid)
+      await terminatePosixProcessGroup(
+        this.child.pid,
+        this.options.terminationGraceMs,
+        this.options.terminationSettleTimeoutMs
+      )
     }
 
     if (!this.child.killed) {
@@ -481,7 +524,11 @@ class ManagedRunCommandJob {
       return
     }
     if (this.platform !== 'win32' && this.child.pid !== undefined) {
-      await terminatePosixProcessGroup(this.child.pid)
+      await terminatePosixProcessGroup(
+        this.child.pid,
+        this.options.terminationGraceMs,
+        this.options.terminationSettleTimeoutMs
+      )
     }
   }
 
@@ -556,15 +603,16 @@ function appendBounded(
   chunks: Buffer[],
   chunk: Buffer,
   state: { size: number; truncated: boolean },
-  streamState: { truncated: boolean }
+  streamState: { truncated: boolean },
+  maxOutputBufferBytes: number
 ): void {
-  if (state.size >= MAX_OUTPUT_BUFFER_BYTES) {
+  if (state.size >= maxOutputBufferBytes) {
     state.truncated = true
     streamState.truncated = true
     return
   }
 
-  const remaining = MAX_OUTPUT_BUFFER_BYTES - state.size
+  const remaining = maxOutputBufferBytes - state.size
   if (chunk.length > remaining) {
     chunks.push(chunk.subarray(0, remaining))
     state.size += remaining
@@ -594,18 +642,25 @@ function decodeUtf8Output(
   }
 }
 
-async function terminateWindowsProcessTree(pid: number): Promise<void> {
+async function terminateWindowsProcessTree(
+  pid: number,
+  timeoutMs: number
+): Promise<void> {
   await new Promise<void>((resolve) => {
     execFile(
       'taskkill.exe',
       ['/PID', String(pid), '/T', '/F'],
-      { windowsHide: true, timeout: TERMINATION_SETTLE_TIMEOUT_MS },
+      { windowsHide: true, timeout: timeoutMs },
       () => resolve()
     )
   })
 }
 
-async function terminatePosixProcessGroup(pid: number): Promise<void> {
+async function terminatePosixProcessGroup(
+  pid: number,
+  graceMs: number,
+  settleTimeoutMs: number
+): Promise<void> {
   if (!processGroupExists(pid)) {
     return
   }
@@ -614,7 +669,7 @@ async function terminatePosixProcessGroup(pid: number): Promise<void> {
   } catch {
     return
   }
-  await delay(TERMINATION_GRACE_MS)
+  await delay(graceMs)
   if (!processGroupExists(pid)) {
     return
   }
@@ -623,7 +678,7 @@ async function terminatePosixProcessGroup(pid: number): Promise<void> {
   } catch {
     return
   }
-  const deadline = Date.now() + TERMINATION_SETTLE_TIMEOUT_MS
+  const deadline = Date.now() + settleTimeoutMs
   while (processGroupExists(pid) && Date.now() < deadline) {
     await delay(25)
   }

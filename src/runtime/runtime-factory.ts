@@ -35,6 +35,7 @@ export interface RuntimeFactoryOptions extends ProviderAdapterOptions {
   projectInstructions?: ProjectInstructions | null
   hookDispatcher?: HookDispatcher | null
   allowedTools?: readonly string[] | null
+  requestAttemptLimit?: number
 }
 
 const DEFAULT_TOOLS = [
@@ -152,7 +153,8 @@ export async function createRuntimeFromAdapter(
       manualSkillLoader,
       options.projectInstructions ?? null,
       skillCatalog?.names ?? [],
-      options.hookDispatcher ?? null
+      options.hookDispatcher ?? null,
+      options.requestAttemptLimit ?? 3
     )
     throwIfAborted(signal)
     if (options.model !== null) {

@@ -5,11 +5,15 @@ import { stdin, stdout } from 'process'
 import { Command } from 'commander'
 import { render } from 'ink'
 import { createElement } from 'react'
-import { launchBrowser } from './platform/browser-cdp-launcher.ts'
+import {
+  launchBrowser,
+  type BrowserLaunchOptions,
+} from './platform/browser-cdp-launcher.ts'
 import type { RuntimeCore } from './runtime/runtime-core.ts'
 import { createRuntimeFromAdapter } from './runtime/runtime-factory.ts'
 import {
   type ProviderAdapter,
+  type ProviderTimingOptions,
   isProviderAdapterError,
 } from './providers/adapters/adapter-base.ts'
 import { ChatGPTAdapter } from './providers/adapters/adapter-chatgpt.ts'
@@ -23,7 +27,10 @@ import {
   tryRestoreRuntimeForRecovery,
 } from './runtime/runtime-recovery.ts'
 import type { ToolServices } from './tools/core/tool-definition.ts'
-import { RunCommandJobManager } from './processes/run-command-job-manager.ts'
+import {
+  RunCommandJobManager,
+  type RunCommandJobManagerOptions,
+} from './processes/run-command-job-manager.ts'
 import { initializeRuntimeWithLoginWait } from './runtime/runtime-initializer.ts'
 import { isAbortError, throwIfAborted } from './runtime/runtime-cancellation.ts'
 import { sleepWithAbortAsync } from './shared/sleep.ts'
@@ -58,12 +65,15 @@ import type { ConversationHistoryResult } from './providers/conversation-history
 import {
   createDefaultPortalConfig,
   ensurePortalConfig,
+  readPortalConfig,
+  type PortalAdvancedConfig,
   type PortalAgentInstructionsConfig,
 } from './config/portal-config.ts'
 import {
   loadProjectInstructions,
   type ProjectInstructionWarning,
   type ProjectInstructions,
+  type ProjectInstructionLimits,
 } from './instructions/project-instructions.ts'
 import {
   ApiHttpError,
@@ -75,12 +85,97 @@ import { HookCatalog } from './hooks/hook-catalog.ts'
 import { HookDispatcher } from './hooks/hook-dispatcher.ts'
 import { HookEventBus } from './hooks/hook-event-sink.ts'
 import { ChildRuntimeFactory } from './runtime/child-runtime-factory.ts'
+import type { SkillPolicy } from './skills/skill-policy.ts'
 
 const LOGIN_CHECK_INTERVAL_MS = 1000
 const CLEAR_TERMINAL_ESCAPE = '\u001B[2J\u001B[3J\u001B[H'
 const PORTAL_VERSION = (
   createRequire(import.meta.url)('../package.json') as { version: string }
 ).version
+
+interface PortalRuntimeSettings {
+  browserLaunch: BrowserLaunchOptions
+  providerTimings: ProviderTimingOptions
+  initializationAttemptLimit: number
+  requestAttemptLimit: number
+  cancelWaitTimeoutMs: number
+  shutdownCloseTimeoutMs: number
+  childRuntimeCloseTimeoutMs: number
+  runCommand: RunCommandJobManagerOptions
+  skillPolicy: SkillPolicy
+  api: {
+    bodyLimitBytes: number
+    requestTimeoutMs: number
+    sseHeartbeatMs: number
+  }
+  instructionLimits: ProjectInstructionLimits
+  hookCommandOutputLimitBytes: number
+}
+
+export function createPortalRuntimeSettings(
+  advanced: PortalAdvancedConfig
+): PortalRuntimeSettings {
+  const kb = (value: number) => value * 1024
+  const mb = (value: number) => value * 1024 * 1024
+  const seconds = (value: number) => value * 1000
+  return {
+    browserLaunch: {
+      startupTimeoutMs: seconds(advanced.browser.startupTimeoutSeconds),
+      closeTimeoutMs: seconds(advanced.browser.closeTimeoutSeconds),
+    },
+    providerTimings: {
+      requestStartWarningAfterMs: seconds(
+        advanced.provider.requestStartWarningAfterSeconds
+      ),
+      blockedWarningIntervalMs: seconds(
+        advanced.provider.blockedWarningEverySeconds
+      ),
+      responseTimeoutMs: advanced.provider.responseTimeoutMinutes * 60_000,
+      restoreTimeoutMs: seconds(advanced.provider.restoreTimeoutSeconds),
+      historyLoadTimeoutMs: seconds(
+        advanced.provider.historyLoadTimeoutSeconds
+      ),
+      historyPageTimeoutMs: seconds(
+        advanced.provider.historyPageTimeoutSeconds
+      ),
+    },
+    initializationAttemptLimit: advanced.runtime.initializationAttemptLimit,
+    requestAttemptLimit: advanced.runtime.requestAttemptLimit,
+    cancelWaitTimeoutMs: seconds(advanced.runtime.cancelWaitTimeoutSeconds),
+    shutdownCloseTimeoutMs: seconds(
+      advanced.runtime.shutdownCloseTimeoutSeconds
+    ),
+    childRuntimeCloseTimeoutMs: seconds(
+      advanced.runtime.childRuntimeCloseTimeoutSeconds
+    ),
+    runCommand: {
+      maxOutputBufferBytes: mb(advanced.command.resultOutputLimitMB),
+      terminationGraceMs: seconds(advanced.command.stopGraceSeconds),
+      terminationSettleTimeoutMs: seconds(advanced.command.stopTimeoutSeconds),
+    },
+    skillPolicy: {
+      downloadTimeoutMs: seconds(advanced.skillInstall.downloadTimeoutSeconds),
+      maxDownloadBytes: mb(advanced.skillInstall.downloadLimitMB),
+      maxExtractedBytes: mb(advanced.skillInstall.extractedSizeLimitMB),
+      maxFiles: advanced.skillInstall.fileCountLimit,
+      maxResourceFiles: advanced.skillInstall.resourceFileCountLimit,
+      maxManifestBytes: kb(advanced.skillInstall.manifestSizeLimitKB),
+      maxRedirects: advanced.skillInstall.redirectLimit,
+    },
+    api: {
+      bodyLimitBytes: kb(advanced.api.requestBodyLimitKB),
+      requestTimeoutMs: seconds(advanced.api.requestTimeoutSeconds),
+      sseHeartbeatMs: seconds(advanced.api.sseHeartbeatSeconds),
+    },
+    instructionLimits: {
+      codexMaxBytes: kb(advanced.instructions.codexSizeLimitKB),
+      claudeMaxBytes: kb(advanced.instructions.claudeSizeLimitKB),
+      maxFiles: advanced.instructions.fileCountLimit,
+      maxImportDepth: advanced.instructions.importDepthLimit,
+    },
+    hookCommandOutputLimitBytes: mb(advanced.hooks.commandOutputLimitMB),
+  }
+}
 
 export function clearTerminalBeforeRender(output: {
   isTTY?: boolean
@@ -288,11 +383,13 @@ function getProviderPrompt(provider: ProviderId): string | null {
 
 async function createProjectInstructions(
   config: PortalAgentInstructionsConfig,
-  onWarning: (warning: ProjectInstructionWarning) => void | Promise<void>
+  onWarning: (warning: ProjectInstructionWarning) => void | Promise<void>,
+  limits: ProjectInstructionLimits
 ): Promise<ProjectInstructions> {
   const loaded = await loadProjectInstructions({
     cwd: process.cwd(),
     config,
+    limits,
   })
   for (const warning of loaded.warnings) {
     await onWarning(warning)
@@ -318,6 +415,7 @@ function createToolServices({
   projectInstructions,
   runCommandJobs,
   hookDispatcher,
+  settings,
 }: {
   context: import('playwright').BrowserContext
   provider: ProviderId
@@ -327,6 +425,7 @@ function createToolServices({
   projectInstructions: ProjectInstructions
   runCommandJobs: RunCommandJobManager
   hookDispatcher: HookDispatcher
+  settings: PortalRuntimeSettings
 }): ToolServices {
   return {
     runCommandJobs,
@@ -351,6 +450,7 @@ function createToolServices({
         projectInstructions: projectInstructions.fork(),
         runCommandJobs,
         hookDispatcher,
+        settings,
         ...(options.executionScope !== undefined
           ? {
               executionScope: {
@@ -386,6 +486,7 @@ async function runSpawnTask({
   projectInstructions,
   runCommandJobs,
   hookDispatcher,
+  settings,
   executionScope,
   signal,
 }: {
@@ -398,6 +499,7 @@ async function runSpawnTask({
   projectInstructions: ProjectInstructions
   runCommandJobs: RunCommandJobManager
   hookDispatcher: HookDispatcher
+  settings: PortalRuntimeSettings
   executionScope?: import('./hooks/hook-types.ts').HookExecutionScope
   signal?: AbortSignal
 }): Promise<string> {
@@ -418,7 +520,13 @@ async function runSpawnTask({
         signal
       )
     }
-    adapter = await createAdapterForProvider(context, provider, null, signal)
+    adapter = await createAdapterForProvider(
+      context,
+      provider,
+      null,
+      signal,
+      settings.providerTimings
+    )
     runtime = await createRuntimeFromAdapter(adapter, {
       model,
       providerPrompt: getProviderPrompt(provider),
@@ -426,6 +534,7 @@ async function runSpawnTask({
       mcpLibrary,
       projectInstructions,
       hookDispatcher,
+      requestAttemptLimit: settings.requestAttemptLimit,
       toolServices: createToolServices({
         context,
         provider,
@@ -435,6 +544,7 @@ async function runSpawnTask({
         projectInstructions,
         runCommandJobs,
         hookDispatcher,
+        settings,
       }),
       signal,
     })
@@ -489,21 +599,27 @@ async function createAdapterForProvider(
   context: import('playwright').BrowserContext,
   provider: ProviderId,
   conversationUrl: string | null = null,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  timings?: ProviderTimingOptions
 ): Promise<ProviderAdapter> {
+  const options = {
+    conversationUrl,
+    signal,
+    ...(timings === undefined ? {} : { timings }),
+  }
   switch (provider) {
     case 'chatgpt':
-      return await ChatGPTAdapter.create(context, { conversationUrl, signal })
+      return await ChatGPTAdapter.create(context, options)
     case 'gemini':
-      return await GeminiAdapter.create(context, { conversationUrl, signal })
+      return await GeminiAdapter.create(context, options)
     case 'deepseek':
-      return await DeepSeekAdapter.create(context, { conversationUrl, signal })
+      return await DeepSeekAdapter.create(context, options)
     case 'doubao':
-      return await DoubaoAdapter.create(context, { conversationUrl, signal })
+      return await DoubaoAdapter.create(context, options)
     case 'grok':
-      return await GrokAdapter.create(context, { conversationUrl, signal })
+      return await GrokAdapter.create(context, options)
     case 'glm':
-      return await GlmAdapter.create(context, { conversationUrl, signal })
+      return await GlmAdapter.create(context, options)
   }
 }
 
@@ -545,6 +661,7 @@ async function openThread(
   mcpLibrary: McpLibrary,
   runCommandJobs: RunCommandJobManager,
   hookDispatcher: HookDispatcher,
+  settings: PortalRuntimeSettings,
   instructionConfig: PortalAgentInstructionsConfig,
   context: import('playwright').BrowserContext,
   provider: ProviderId,
@@ -564,7 +681,8 @@ async function openThread(
       instructionConfig,
       (warning) => {
         ui.renderWarning('instructions', formatInstructionWarning(warning))
-      }
+      },
+      settings.instructionLimits
     )
     throwIfAborted(signal)
     const runtime = await initializeRuntimeWithLoginWait({
@@ -576,7 +694,8 @@ async function openThread(
           context,
           provider,
           null,
-          signal
+          signal,
+          settings.providerTimings
         )
         onStopTarget?.(adapter)
         return adapter
@@ -589,6 +708,7 @@ async function openThread(
           mcpLibrary,
           projectInstructions,
           hookDispatcher,
+          requestAttemptLimit: settings.requestAttemptLimit,
           onMcpWarning: async (warning) => {
             ui.renderWarning('MCP', warning.markdown, 'markdown')
           },
@@ -601,6 +721,7 @@ async function openThread(
             projectInstructions,
             runCommandJobs,
             hookDispatcher,
+            settings,
           }),
           signal,
         }),
@@ -621,6 +742,7 @@ async function openThread(
         await sleepWithAbortAsync(LOGIN_CHECK_INTERVAL_MS, signal)
       },
       signal,
+      maxRetryAttempts: settings.initializationAttemptLimit,
     })
     if (signal?.aborted) {
       await runtime?.close().catch(() => {})
@@ -674,6 +796,7 @@ async function resumeThread(
   mcpLibrary: McpLibrary,
   runCommandJobs: RunCommandJobManager,
   hookDispatcher: HookDispatcher,
+  settings: PortalRuntimeSettings,
   instructionConfig: PortalAgentInstructionsConfig,
   context: import('playwright').BrowserContext,
   conversationUrl: string,
@@ -702,7 +825,8 @@ async function resumeThread(
       instructionConfig,
       (warning) => {
         ui.renderWarning('instructions', formatInstructionWarning(warning))
-      }
+      },
+      settings.instructionLimits
     )
     throwIfAborted(signal)
     const runtime = await initializeRuntimeWithLoginWait({
@@ -714,7 +838,8 @@ async function resumeThread(
           context,
           provider,
           resolved.conversationUrl,
-          signal
+          signal,
+          settings.providerTimings
         )
         onStopTarget?.(adapter)
         return adapter
@@ -726,6 +851,7 @@ async function resumeThread(
           skillLibrary,
           mcpLibrary,
           hookDispatcher,
+          requestAttemptLimit: settings.requestAttemptLimit,
           onMcpWarning: async (warning) => {
             ui.renderWarning('MCP', warning.markdown, 'markdown')
           },
@@ -738,6 +864,7 @@ async function resumeThread(
             projectInstructions,
             runCommandJobs,
             hookDispatcher,
+            settings,
           }),
           skipSetup: true,
           signal,
@@ -759,6 +886,7 @@ async function resumeThread(
         await sleepWithAbortAsync(LOGIN_CHECK_INTERVAL_MS, signal)
       },
       signal,
+      maxRetryAttempts: settings.initializationAttemptLimit,
     })
     if (signal?.aborted) {
       await runtime?.close().catch(() => {})
@@ -834,22 +962,33 @@ export async function run(argv = process.argv): Promise<void> {
   const options = program.opts<Options>()
   const dataDirectory = path.join(process.cwd(), 'data')
   const configPath = path.join(dataDirectory, 'config.yaml')
+  const defaultPortalConfig = createDefaultPortalConfig(dataDirectory)
+  const existingPortalConfig = await readPortalConfig(configPath)
+  const settings = createPortalRuntimeSettings(
+    (existingPortalConfig ?? defaultPortalConfig).advanced
+  )
   const skillLibrary = new SkillLibrary({
     skillsDirectory: path.join(dataDirectory, 'skills'),
     tempDirectory: path.join(dataDirectory, 'temp', 'skill-install'),
     registryPath: configPath,
+    policy: settings.skillPolicy,
   })
   await skillLibrary.initialize()
   const portalConfig = await ensurePortalConfig(
     configPath,
-    createDefaultPortalConfig(dataDirectory)
+    defaultPortalConfig,
+    { rewriteWithComments: existingPortalConfig === null }
   )
   const hookCatalog = new HookCatalog(
     configPath,
     createHookSnapshot(portalConfig.hooks)
   )
   const hookEvents = new HookEventBus()
-  const hookDispatcher = new HookDispatcher(null, hookEvents)
+  const hookDispatcher = new HookDispatcher(
+    null,
+    hookEvents,
+    settings.hookCommandOutputLimitBytes
+  )
   const browserName = options.browserName ?? portalConfig.browser.name
   const browserExecutablePath = path.resolve(
     options.browserExecutablePath ?? portalConfig.browser.executablePath
@@ -878,8 +1017,10 @@ export async function run(argv = process.argv): Promise<void> {
     hookDispatcher,
     process.cwd()
   )
-  const threadOperations = new ThreadOperationCoordinator()
-  const runCommandJobs = new RunCommandJobManager()
+  const threadOperations = new ThreadOperationCoordinator(
+    settings.cancelWaitTimeoutMs
+  )
+  const runCommandJobs = new RunCommandJobManager(settings.runCommand)
   const commandRegistry = new CommandRegistry(DEFAULT_COMMANDS)
   const ui = new TerminalController()
   ui.bindThreadManager(threadManager)
@@ -923,13 +1064,16 @@ export async function run(argv = process.argv): Promise<void> {
         for (const thread of threadManager.listThreads()) {
           await closeWithTimeout(async () => {
             await threadManager.closeThread(thread.id)
-          })
+          }, settings.shutdownCloseTimeoutMs)
         }
 
         if (browserLaunch !== null) {
           const activeBrowserLaunch = browserLaunch
           browserLaunch = null
-          await closeWithTimeout(async () => await activeBrowserLaunch.close())
+          await closeWithTimeout(
+            async () => await activeBrowserLaunch.close(),
+            settings.shutdownCloseTimeoutMs
+          )
         }
 
         threadStore.close()
@@ -1205,7 +1349,8 @@ export async function run(argv = process.argv): Promise<void> {
         browserName,
         browserExecutablePath,
         browserRemoteDebuggingPort,
-        browserProfileDir
+        browserProfileDir,
+        settings.browserLaunch
       )
     } catch (error) {
       ui.setBrowserConnected(false)
@@ -1220,62 +1365,70 @@ export async function run(argv = process.argv): Promise<void> {
     const context = browserLaunch.context
 
     hookDispatcher.setModelExecutor(
-      new ChildRuntimeFactory('chatgpt', async (request) => {
-        const projectInstructions = await createProjectInstructions(
-          portalConfig.agentInstructions,
-          (warning) => {
-            ui.renderWarning(
-              'Hook instructions',
-              formatInstructionWarning(warning)
-            )
-          }
-        )
-        const adapter = await createAdapterForProvider(
-          context,
-          request.provider,
-          null,
-          request.signal
-        )
-        let runtime: RuntimeCore | null = null
-        try {
-          const allowsSkills = request.allowedTools.includes('load_skill')
-          const allowsMcp = request.allowedTools.some(
-            (name) => name === 'mcp_search_tool' || name === 'mcp_call_tool'
+      new ChildRuntimeFactory(
+        'chatgpt',
+        async (request) => {
+          const projectInstructions = await createProjectInstructions(
+            portalConfig.agentInstructions,
+            (warning) => {
+              ui.renderWarning(
+                'Hook instructions',
+                formatInstructionWarning(warning)
+              )
+            },
+            settings.instructionLimits
           )
-          runtime = await createRuntimeFromAdapter(adapter, {
-            model: null,
-            providerPrompt: getProviderPrompt(request.provider),
-            ...(allowsSkills ? { skillLibrary } : {}),
-            ...(allowsMcp ? { mcpLibrary } : {}),
-            projectInstructions,
-            hookDispatcher,
-            allowedTools: request.allowedTools,
-            toolServices: createToolServices({
-              context,
-              provider: request.provider,
+          const adapter = await createAdapterForProvider(
+            context,
+            request.provider,
+            null,
+            request.signal,
+            settings.providerTimings
+          )
+          let runtime: RuntimeCore | null = null
+          try {
+            const allowsSkills = request.allowedTools.includes('load_skill')
+            const allowsMcp = request.allowedTools.some(
+              (name) => name === 'mcp_search_tool' || name === 'mcp_call_tool'
+            )
+            runtime = await createRuntimeFromAdapter(adapter, {
               model: null,
-              skillLibrary,
-              mcpLibrary,
+              providerPrompt: getProviderPrompt(request.provider),
+              ...(allowsSkills ? { skillLibrary } : {}),
+              ...(allowsMcp ? { mcpLibrary } : {}),
               projectInstructions,
-              runCommandJobs,
               hookDispatcher,
-            }),
-            signal: request.signal,
-          })
-          const childRuntime = runtime
-          return {
-            runtime: childRuntime,
-            close: async () => await childRuntime.close(),
+              requestAttemptLimit: settings.requestAttemptLimit,
+              allowedTools: request.allowedTools,
+              toolServices: createToolServices({
+                context,
+                provider: request.provider,
+                model: null,
+                skillLibrary,
+                mcpLibrary,
+                projectInstructions,
+                runCommandJobs,
+                hookDispatcher,
+                settings,
+              }),
+              signal: request.signal,
+            })
+            const childRuntime = runtime
+            return {
+              runtime: childRuntime,
+              close: async () => await childRuntime.close(),
+            }
+          } catch (error) {
+            if (runtime !== null) {
+              await runtime.close().catch(() => {})
+            } else {
+              await adapter.close().catch(() => {})
+            }
+            throw error
           }
-        } catch (error) {
-          if (runtime !== null) {
-            await runtime.close().catch(() => {})
-          } else {
-            await adapter.close().catch(() => {})
-          }
-          throw error
-        }
-      })
+        },
+        settings.childRuntimeCloseTimeoutMs
+      )
     )
 
     ui.setBrowserConnected(true)
@@ -1570,6 +1723,7 @@ export async function run(argv = process.argv): Promise<void> {
             mcpLibrary,
             runCommandJobs,
             hookDispatcher,
+            settings,
             portalConfig.agentInstructions,
             context,
             provider,
@@ -1637,6 +1791,7 @@ export async function run(argv = process.argv): Promise<void> {
             mcpLibrary,
             runCommandJobs,
             hookDispatcher,
+            settings,
             portalConfig.agentInstructions,
             context,
             resolvedConversation.conversationUrl,
@@ -1898,6 +2053,9 @@ export async function run(argv = process.argv): Promise<void> {
       port: portalConfig.api.port,
       token: portalConfig.api.token,
       handlers: apiHandlers,
+      bodyLimitBytes: settings.api.bodyLimitBytes,
+      requestTimeoutMs: settings.api.requestTimeoutMs,
+      sseHeartbeatMs: settings.api.sseHeartbeatMs,
     })
     hookEvents.subscribe((event) => {
       if (event.threadId !== undefined) {
@@ -1941,6 +2099,7 @@ export async function run(argv = process.argv): Promise<void> {
             mcpLibrary,
             runCommandJobs,
             hookDispatcher,
+            settings,
             portalConfig.agentInstructions,
             context,
             provider,
@@ -1967,6 +2126,7 @@ export async function run(argv = process.argv): Promise<void> {
             mcpLibrary,
             runCommandJobs,
             hookDispatcher,
+            settings,
             portalConfig.agentInstructions,
             context,
             conversationUrl,

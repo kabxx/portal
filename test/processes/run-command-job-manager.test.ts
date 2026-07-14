@@ -87,6 +87,16 @@ test('RunCommandJobManager lists active jobs and removes completed jobs', async 
   assert.deepEqual(manager.list(), [])
 })
 
+test('RunCommandJobManager applies a configured output buffer limit', async () => {
+  const manager = new RunCommandJobManager({ maxOutputBufferBytes: 16 })
+  const result = await manager
+    .start(nodeCommand('process.stdout.write("x".repeat(32))'))
+    .wait()
+
+  assert.ok(Buffer.byteLength(result.stdout) <= 16)
+  assert.equal(result.truncated, true)
+})
+
 test('RunCommandJobManager drains bounded output after a waiter detaches', async () => {
   const manager = new RunCommandJobManager()
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'portal-job-output-'))

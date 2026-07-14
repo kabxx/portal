@@ -12,11 +12,10 @@ import {
   collectRegularFiles,
   containsSkillManifest,
   inspectSkillTree,
-  MAX_SKILL_BYTES,
-  MAX_SKILL_FILES,
   readFilePrefix,
   SkillInstallError,
 } from './skill-files.ts'
+import { DEFAULT_SKILL_POLICY, type SkillPolicy } from './skill-policy.ts'
 
 const MAX_7ZIP_OUTPUT_BYTES = 16 * 1024 * 1024
 const RAR4_SIGNATURE = Buffer.from([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00])
@@ -50,19 +49,20 @@ export async function extractSkillArchive(
   archivePath: string,
   destination: string,
   signal: AbortSignal | undefined,
+  policy: SkillPolicy = DEFAULT_SKILL_POLICY,
   depth = 0
 ): Promise<string> {
   await mkdir(destination, { recursive: true })
   if (await isRarArchive(archivePath)) {
-    await extractRarArchive(archivePath, destination, signal)
+    await extractRarArchive(archivePath, destination, signal, policy)
   } else {
-    await validateSevenZipArchive(archivePath, signal)
+    await validateSevenZipArchive(archivePath, signal, policy)
     await runSevenZip(
       ['x', '-y', '-bd', '-bb0', `-o${destination}`, archivePath],
       signal
     )
   }
-  await inspectSkillTree(destination, signal)
+  await inspectSkillTree(destination, signal, policy)
 
   if (depth >= 2 || (await containsSkillManifest(destination))) {
     return destination
@@ -74,6 +74,7 @@ export async function extractSkillArchive(
       files[0]!,
       path.join(destination, 'expanded'),
       signal,
+      policy,
       depth + 1
     )
   }
@@ -95,7 +96,8 @@ function isRarPrefix(prefix: Buffer): boolean {
 async function extractRarArchive(
   archivePath: string,
   destination: string,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  policy: SkillPolicy
 ): Promise<void> {
   throwIfAborted(signal)
   const extractor = await createExtractorFromFile({
@@ -117,7 +119,7 @@ async function extractRarArchive(
       totalSize += Math.max(0, header.unpSize)
     }
   }
-  enforceArchiveLimits(fileCount, totalSize)
+  enforceArchiveLimits(fileCount, totalSize, policy)
 
   throwIfAborted(signal)
   for (const extractedFile of extractor.extract().files) {
@@ -128,7 +130,8 @@ async function extractRarArchive(
 
 async function validateSevenZipArchive(
   archivePath: string,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  policy: SkillPolicy
 ): Promise<void> {
   const output = await runSevenZip(['l', '-slt', '-ba', archivePath], signal)
   const blocks = output
@@ -156,18 +159,22 @@ async function validateSevenZipArchive(
     }
   }
 
-  enforceArchiveLimits(fileCount, totalSize)
+  enforceArchiveLimits(fileCount, totalSize, policy)
 }
 
-function enforceArchiveLimits(fileCount: number, totalSize: number): void {
-  if (fileCount > MAX_SKILL_FILES) {
+function enforceArchiveLimits(
+  fileCount: number,
+  totalSize: number,
+  policy: SkillPolicy
+): void {
+  if (fileCount > policy.maxFiles) {
     throw new SkillInstallError(
-      `Archive contains more than ${MAX_SKILL_FILES} files`
+      `Archive contains more than ${policy.maxFiles} files`
     )
   }
-  if (totalSize > MAX_SKILL_BYTES) {
+  if (totalSize > policy.maxExtractedBytes) {
     throw new SkillInstallError(
-      `Archive expands beyond ${MAX_SKILL_BYTES} bytes`
+      `Archive expands beyond ${policy.maxExtractedBytes} bytes`
     )
   }
 }

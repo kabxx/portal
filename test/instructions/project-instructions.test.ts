@@ -85,6 +85,31 @@ test('loads Codex hierarchy and Claude imports in deterministic order', async ()
   }
 })
 
+test('loadProjectInstructions applies configured file limits', async () => {
+  const root = await createWorkspace()
+  const nested = path.join(root, 'nested')
+  try {
+    await writeText(path.join(root, 'AGENTS.md'), 'root instructions')
+    await writeText(path.join(nested, 'AGENTS.md'), 'nested instructions')
+    const result = await loadProjectInstructions({
+      cwd: nested,
+      config: createConfig({ claudeLocal: false }),
+      limits: {
+        codexMaxBytes: 1024,
+        claudeMaxBytes: 1024,
+        maxFiles: 1,
+        maxImportDepth: 1,
+      },
+    })
+
+    assert.match(result.instructions.prompt ?? '', /root instructions/)
+    assert.doesNotMatch(result.instructions.prompt ?? '', /nested instructions/)
+    assert.match(result.warnings[0]?.message ?? '', /1-file limit/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('Codex override selects one file and suppresses AGENTS.md', async () => {
   const root = await createWorkspace()
   const nested = path.join(root, 'nested')
