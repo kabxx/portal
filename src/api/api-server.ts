@@ -149,17 +149,12 @@ export class ApiEventHub {
 }
 
 export class PortalApiServer {
-  private readonly fastify: FastifyInstance
+  private fastify: FastifyInstance | null = null
   private readonly events = new ApiEventHub()
   private started = false
 
   public constructor(private readonly options: ApiServerOptions) {
-    this.fastify = Fastify({
-      logger: false,
-      bodyLimit: 256 * 1024,
-      requestTimeout: 0,
-    })
-    this.registerRoutes()
+    this.fastify = this.createFastify()
   }
 
   public get eventHub(): ApiEventHub {
@@ -193,7 +188,9 @@ export class PortalApiServer {
         'An API token is required for non-loopback hosts.'
       )
     }
-    await this.fastify.listen({
+    const fastify = this.fastify ?? this.createFastify()
+    this.fastify = fastify
+    await fastify.listen({
       host: this.options.host,
       port: this.options.port,
     })
@@ -201,16 +198,25 @@ export class PortalApiServer {
   }
 
   public async stop(): Promise<void> {
-    if (!this.started) {
+    if (!this.started || this.fastify === null) {
       return
     }
     this.events.close()
-    await this.fastify.close()
-    this.started = false
+    const fastify = this.fastify
+    try {
+      await fastify.close()
+    } finally {
+      this.fastify = null
+      this.started = false
+    }
   }
 
   public address(): string | null {
-    const address = this.fastify.server.address()
+    const fastify = this.fastify
+    if (fastify === null) {
+      return null
+    }
+    const address = fastify.server.address()
     if (address === null || typeof address === 'string') {
       return null
     }
@@ -220,8 +226,18 @@ export class PortalApiServer {
     return `http://${host}:${address.port}`
   }
 
-  private registerRoutes(): void {
-    this.fastify.addHook('onRequest', async (request, reply) => {
+  private createFastify(): FastifyInstance {
+    const fastify = Fastify({
+      logger: false,
+      bodyLimit: 256 * 1024,
+      requestTimeout: 0,
+    })
+    this.registerRoutes(fastify)
+    return fastify
+  }
+
+  private registerRoutes(fastify: FastifyInstance): void {
+    fastify.addHook('onRequest', async (request, reply) => {
       if (request.url === '/health' || this.options.token === null) {
         return
       }
@@ -231,7 +247,7 @@ export class PortalApiServer {
       }
     })
 
-    this.fastify.setErrorHandler((error, _request, reply) => {
+    fastify.setErrorHandler((error, _request, reply) => {
       const apiError = error as Partial<ApiHttpError>
       const statusCode = apiError.statusCode ?? 500
       const code = apiError.code ?? 'INTERNAL_ERROR'
@@ -244,48 +260,45 @@ export class PortalApiServer {
       void reply.code(statusCode).send({ error: { code, message } })
     })
 
-    this.fastify.get('/health', async () => ({
+    fastify.get('/health', async () => ({
       ok: true,
       service: 'portal',
       apiVersion: 'v1',
     }))
-    this.fastify.get(
-      '/v1/status',
-      async () => await this.options.handlers.status()
-    )
-    this.fastify.get(
+    fastify.get('/v1/status', async () => await this.options.handlers.status())
+    fastify.get(
       '/v1/providers',
       async () => await this.options.handlers.providers()
     )
-    this.fastify.get(
+    fastify.get(
       '/v1/threads',
       async () => await this.options.handlers.listThreads()
     )
-    this.fastify.get<{ Params: { threadId: string } }>(
+    fastify.get<{ Params: { threadId: string } }>(
       '/v1/threads/:threadId',
       async (request) =>
         await this.options.handlers.getThread(request.params.threadId)
     )
-    this.fastify.post<{ Body: Record<string, unknown> }>(
+    fastify.post<{ Body: Record<string, unknown> }>(
       '/v1/threads',
       async (request, reply) =>
         await reply
           .code(201)
           .send(await this.options.handlers.createThread(request.body))
     )
-    this.fastify.post<{ Body: Record<string, unknown> }>(
+    fastify.post<{ Body: Record<string, unknown> }>(
       '/v1/threads/resume',
       async (request, reply) =>
         await reply
           .code(201)
           .send(await this.options.handlers.resumeThread(request.body))
     )
-    this.fastify.delete<{ Params: { threadId: string } }>(
+    fastify.delete<{ Params: { threadId: string } }>(
       '/v1/threads/:threadId',
       async (request) =>
         await this.options.handlers.closeThread(request.params.threadId)
     )
-    this.fastify.post<{
+    fastify.post<{
       Params: { threadId: string }
       Body: { input?: unknown }
     }>('/v1/threads/:threadId/messages', async (request, reply) => {
@@ -305,12 +318,12 @@ export class PortalApiServer {
       )
       return await reply.code(202).send(result)
     })
-    this.fastify.post<{ Params: { threadId: string } }>(
+    fastify.post<{ Params: { threadId: string } }>(
       '/v1/threads/:threadId/cancel',
       async (request) =>
         await this.options.handlers.cancelMessage(request.params.threadId)
     )
-    this.fastify.post<{ Params: { threadId: string } }>(
+    fastify.post<{ Params: { threadId: string } }>(
       '/v1/threads/:threadId/reload',
       async (request, reply) => {
         if (this.options.handlers.reloadThread === undefined) {
@@ -327,7 +340,7 @@ export class PortalApiServer {
           )
       }
     )
-    this.fastify.get<{ Params: { threadId: string } }>(
+    fastify.get<{ Params: { threadId: string } }>(
       '/v1/threads/:threadId/events',
       async (request, reply) => {
         await this.options.handlers.getThread(request.params.threadId)
@@ -342,7 +355,7 @@ export class PortalApiServer {
         request.raw.on('close', remove)
       }
     )
-    this.fastify.post<{
+    fastify.post<{
       Params: { threadId: string }
       Body: { name?: unknown }
     }>('/v1/threads/:threadId/skill', async (request, reply) => {
@@ -362,12 +375,12 @@ export class PortalApiServer {
       )
       return await reply.code(202).send(result)
     })
-    this.fastify.get<{ Params: { threadId: string } }>(
+    fastify.get<{ Params: { threadId: string } }>(
       '/v1/threads/:threadId/capabilities',
       async (request) =>
         await this.options.handlers.listCapabilities(request.params.threadId)
     )
-    this.fastify.put<{
+    fastify.put<{
       Params: { threadId: string; name: string }
       Body: { state?: unknown }
     }>('/v1/threads/:threadId/capabilities/:name', async (request) => {
@@ -380,7 +393,7 @@ export class PortalApiServer {
         request.body.state
       )
     })
-    this.fastify.delete<{ Params: { threadId: string; name: string } }>(
+    fastify.delete<{ Params: { threadId: string; name: string } }>(
       '/v1/threads/:threadId/capabilities/:name',
       async (request) =>
         await this.options.handlers.clearCapability(
@@ -388,11 +401,11 @@ export class PortalApiServer {
           request.params.name
         )
     )
-    this.fastify.get(
+    fastify.get(
       '/v1/skills',
       async () => await this.options.handlers.listSkills()
     )
-    this.fastify.post<{ Body: Record<string, unknown> }>(
+    fastify.post<{ Body: Record<string, unknown> }>(
       '/v1/skills',
       async (request, reply) => {
         if (
@@ -416,7 +429,7 @@ export class PortalApiServer {
           .send(await this.options.handlers.addSkill(request.body))
       }
     )
-    this.fastify.put<{ Params: { name: string }; Body: { enabled?: unknown } }>(
+    fastify.put<{ Params: { name: string }; Body: { enabled?: unknown } }>(
       '/v1/skills/:name',
       async (request) => {
         if (typeof request.body?.enabled !== 'boolean') {
@@ -428,16 +441,16 @@ export class PortalApiServer {
         )
       }
     )
-    this.fastify.delete<{ Params: { name: string } }>(
+    fastify.delete<{ Params: { name: string } }>(
       '/v1/skills/:name',
       async (request) =>
         await this.options.handlers.removeSkill(request.params.name)
     )
-    this.fastify.get(
+    fastify.get(
       '/v1/mcp/servers',
       async () => await this.options.handlers.listMcpServers()
     )
-    this.fastify.post<{ Body: Record<string, unknown> }>(
+    fastify.post<{ Body: Record<string, unknown> }>(
       '/v1/mcp/servers',
       async (request, reply) => {
         const name = request.body.name
@@ -450,7 +463,7 @@ export class PortalApiServer {
           .send(await this.options.handlers.addMcpServer(name, config))
       }
     )
-    this.fastify.put<{
+    fastify.put<{
       Params: { name: string }
       Body: { enabled?: unknown; config?: unknown }
     }>('/v1/mcp/servers/:name', async (request) => {
@@ -472,12 +485,12 @@ export class PortalApiServer {
         request.body.config
       )
     })
-    this.fastify.delete<{ Params: { name: string } }>(
+    fastify.delete<{ Params: { name: string } }>(
       '/v1/mcp/servers/:name',
       async (request) =>
         await this.options.handlers.removeMcpServer(request.params.name)
     )
-    this.fastify.get<{
+    fastify.get<{
       Params: { threadId: string }
       Querystring: { server?: string }
     }>(
@@ -488,7 +501,7 @@ export class PortalApiServer {
           request.query.server
         )
     )
-    this.fastify.get<{
+    fastify.get<{
       Params: { threadId: string }
       Querystring: { server?: string }
     }>(
