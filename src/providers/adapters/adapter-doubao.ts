@@ -41,11 +41,6 @@ const DOUBAO_OVERFLOW_POPOVER_SELECTOR =
 const DOUBAO_DESKTOP_PROMOTION_CLOSE_SELECTOR =
   'xpath=//img[contains(@src, "/obj/flow-doubao/samantha/jianti.png")]/preceding-sibling::button[@type="button"][1]'
 const DOUBAO_DESKTOP_PROMOTION_DISMISS_TIMEOUT_MS = 5000
-const DOUBAO_SUBMIT_REQUEST_START_GRACE_MS = 30000
-const DOUBAO_SUBMIT_BLOCKED_WARNING_INTERVAL_MS = 30000
-const DOUBAO_SUBMIT_RESPONSE_TIMEOUT_MS = 300000
-const DOUBAO_HISTORY_LOAD_TIMEOUT_MS = 60000
-const DOUBAO_HISTORY_PAGE_TIMEOUT_MS = 10000
 const DOUBAO_HISTORY_POLL_MS = 100
 const DOUBAO_STOP_ICON_PATH_PREFIX = 'M12 0.5C18.3513 0.5 23.5 5.64873 23.5 12'
 const DOUBAO_STOP_BUTTON_SELECTORS = [
@@ -687,13 +682,13 @@ export class DoubaoAdapter extends ProviderAdapter {
         await this.wrapAdapterActionErrorAsync('restore', async () => {
           await abortable(this.page.goto(this.conversationUrl), signal)
           await waitAsync(async () => await isAvailable(), {
-            timeoutMs: 60000,
+            timeoutMs: this.getRestoreTimeoutMs(),
             signal,
           })
         })
       })
       await waitAsync(async () => await isAvailable(), {
-        timeoutMs: 60000,
+        timeoutMs: this.getRestoreTimeoutMs(),
         signal,
       })
       if (!(await this.isLoggedIn())) {
@@ -709,7 +704,11 @@ export class DoubaoAdapter extends ProviderAdapter {
           }
         )
       }
-      await this.waitForReadyContainer('restore', 60000, signal)
+      await this.waitForReadyContainer(
+        'restore',
+        this.getRestoreTimeoutMs(),
+        signal
+      )
     } catch (error) {
       if (this.isRetryableError(error)) {
         throw new ProviderAdapterError(
@@ -754,7 +753,7 @@ export class DoubaoAdapter extends ProviderAdapter {
     }
 
     let state = await readResult()
-    const deadline = Date.now() + DOUBAO_HISTORY_LOAD_TIMEOUT_MS
+    const deadline = Date.now() + this.getHistoryLoadTimeoutMs()
     while (!state.result.complete && Date.now() < deadline) {
       throwIfAborted(signal)
       const scrolled = await this.page
@@ -779,7 +778,7 @@ export class DoubaoAdapter extends ProviderAdapter {
       const previousMessageCount = state.result.messages.length
       const pageDeadline = Math.min(
         deadline,
-        Date.now() + DOUBAO_HISTORY_PAGE_TIMEOUT_MS
+        Date.now() + this.getHistoryPageTimeoutMs()
       )
       let progressed = false
       while (Date.now() < pageDeadline) {
@@ -925,18 +924,6 @@ export class DoubaoAdapter extends ProviderAdapter {
       typeof contentType === 'string' &&
       contentType.includes('text/event-stream')
     )
-  }
-
-  protected getSubmitRequestStartGraceMs(): number {
-    return DOUBAO_SUBMIT_REQUEST_START_GRACE_MS
-  }
-
-  protected getSubmitBlockedWarningIntervalMs(): number {
-    return DOUBAO_SUBMIT_BLOCKED_WARNING_INTERVAL_MS
-  }
-
-  protected getSubmitResponseTimeoutMs(): number {
-    return DOUBAO_SUBMIT_RESPONSE_TIMEOUT_MS
   }
 
   protected getSubmitBlockedWarningMessage(): string {

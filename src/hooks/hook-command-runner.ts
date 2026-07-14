@@ -12,10 +12,16 @@ const MAX_OUTPUT_BYTES = 1024 * 1024
 export async function runHookCommand(
   command: readonly string[],
   input: unknown,
-  options: { cwd: string; timeoutMs: number; signal?: AbortSignal }
+  options: {
+    cwd: string
+    timeoutMs: number
+    maxOutputBytes?: number
+    signal?: AbortSignal
+  }
 ): Promise<string> {
   const [file, ...args] = command
   if (file === undefined) throw new Error('Hook command is empty')
+  const maxOutputBytes = options.maxOutputBytes ?? MAX_OUTPUT_BYTES
   return await new Promise<string>((resolve, reject) => {
     const child = spawn(file, args, {
       cwd: options.cwd,
@@ -64,9 +70,9 @@ export async function runHookCommand(
     }
     const collect = (target: Buffer[]) => (chunk: Buffer) => {
       outputBytes += chunk.length
-      if (outputBytes > MAX_OUTPUT_BYTES) {
+      if (outputBytes > maxOutputBytes) {
         terminate()
-        finish(new Error(`Hook output exceeded ${MAX_OUTPUT_BYTES} bytes`))
+        finish(new Error(`Hook output exceeded ${maxOutputBytes} bytes`))
         return
       }
       target.push(chunk)

@@ -78,7 +78,8 @@ export class RuntimeCore {
     private readonly manualSkillLoader: ManualSkillLoader | null = null,
     private readonly projectInstructions: ProjectInstructions | null = null,
     private readonly manualSkillNames: readonly string[] = [],
-    private readonly hookDispatcher: HookDispatcher | null = null
+    private readonly hookDispatcher: HookDispatcher | null = null,
+    private readonly requestAttemptLimit = 3
   ) {}
 
   public get availableManualSkillNames(): readonly string[] {
@@ -158,7 +159,7 @@ export class RuntimeCore {
     options: AbortOptions = {}
   ) {
     return await retryAsync(fn, {
-      maxAttempts: 3,
+      maxAttempts: this.requestAttemptLimit,
       retryIf: async (error, attempt) => {
         if (isAbortError(error) || !isProviderAdapterError(error)) {
           return false
