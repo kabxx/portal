@@ -90,7 +90,15 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
       apiVersion: 'v1',
     })
 
-    const unauthorized = await fetch(`${address}/v1/status`)
+    const queriedHealth = await fetch(`${address}/health?probe=1`)
+    assert.equal(queriedHealth.status, 200)
+    assert.deepEqual(await queriedHealth.json(), {
+      ok: true,
+      service: 'portal',
+      apiVersion: 'v1',
+    })
+
+    const unauthorized = await fetch(`${address}/v1/status?probe=1`)
     assert.equal(unauthorized.status, 401)
     assert.deepEqual(await unauthorized.json(), {
       error: { code: 'AUTH_INVALID', message: 'Invalid API token.' },
