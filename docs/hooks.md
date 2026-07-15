@@ -37,7 +37,7 @@ hooks:
 
 A command handler launches the configured argv directly with `shell: false`. It receives one Hook event envelope as JSON on stdin and must write one JSON object to stdout. Relative command paths resolve from portal's current working directory.
 
-Command handlers have bounded runtime and output. Cancellation terminates the process tree; Windows uses a Job Object. stderr is used only for local error details and is not sent through the API event stream.
+Command handlers have bounded runtime and output. Cancellation terminates the process tree; Windows uses a Job Object and POSIX systems use process groups. stderr is used only for local error details and is not sent through the API event stream.
 
 ### Prompt
 

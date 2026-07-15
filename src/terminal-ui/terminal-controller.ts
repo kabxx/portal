@@ -11,6 +11,7 @@ import {
   extractToolCall,
   parseToolCallPayload,
 } from '../tools/core/tool-registry.ts'
+import { getDefaultShell } from '../platform/platform-defaults.ts'
 
 export type UiTone =
   | 'info'
@@ -1096,11 +1097,7 @@ export class TerminalController {
       switch (toolName) {
         case 'run_command': {
           const shell =
-            typeof params.shell === 'string'
-              ? params.shell
-              : process.platform === 'win32'
-                ? 'powershell'
-                : 'bash'
+            typeof params.shell === 'string' ? params.shell : getDefaultShell()
           return [
             `cwd: ${String(params.cwd ?? process.cwd())}`,
             `shell: ${shell}`,
