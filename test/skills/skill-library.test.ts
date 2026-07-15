@@ -30,7 +30,7 @@ interface SkillRegistryDocumentEntry {
 
 function defaultConfig() {
   return createDefaultPortalConfig(path.resolve('data'), {
-    name: 'edge',
+    engine: 'chromium',
     executablePath: path.resolve('test-browser'),
     profilePath: path.resolve('test-profile'),
     remoteDebuggingPort: 9222,

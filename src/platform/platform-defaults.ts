@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 
 export type PortalPlatform = 'win32' | 'darwin' | 'linux'
+export type BrowserEngine = 'chromium'
 
 export type RunCommandShell =
   | 'powershell'
@@ -241,7 +242,30 @@ function getWindowsBrowserCandidates(
       'Application',
       'chrome.exe'
     ),
+    platformPath.join(localAppData, 'Chromium', 'Application', 'chrome.exe'),
+    ...getWindowsApplicationCandidates(
+      [programFiles, programFilesX86, localAppData],
+      ['BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe']
+    ),
+    ...getWindowsApplicationCandidates(
+      [programFiles, programFilesX86, localAppData],
+      ['Vivaldi', 'Application', 'vivaldi.exe']
+    ),
+    platformPath.join(localAppData, 'Programs', 'Opera', 'launcher.exe'),
+    platformPath.join(localAppData, 'Programs', 'Opera GX', 'launcher.exe'),
+    platformPath.join(programFiles, 'Opera', 'launcher.exe'),
+    platformPath.join(programFilesX86, 'Opera', 'launcher.exe'),
+    platformPath.join(programFiles, 'Opera GX', 'launcher.exe'),
+    platformPath.join(programFilesX86, 'Opera GX', 'launcher.exe'),
+    platformPath.join(localAppData, 'Microsoft', 'WindowsApps', 'Arc.exe'),
   ]
+}
+
+function getWindowsApplicationCandidates(
+  roots: string[],
+  segments: string[]
+): string[] {
+  return roots.map((root) => path.win32.join(root, ...segments))
 }
 
 function getMacBrowserCandidates(homeDirectory: string): string[] {
@@ -272,6 +296,23 @@ function getMacBrowserCandidates(homeDirectory: string): string[] {
       'MacOS',
       'Chromium'
     ),
+    platformPath.join(
+      directory,
+      'Brave Browser.app',
+      'Contents',
+      'MacOS',
+      'Brave Browser'
+    ),
+    platformPath.join(directory, 'Vivaldi.app', 'Contents', 'MacOS', 'Vivaldi'),
+    platformPath.join(directory, 'Opera.app', 'Contents', 'MacOS', 'Opera'),
+    platformPath.join(
+      directory,
+      'Opera GX.app',
+      'Contents',
+      'MacOS',
+      'Opera GX'
+    ),
+    platformPath.join(directory, 'Arc.app', 'Contents', 'MacOS', 'Arc'),
   ])
 }
 
@@ -285,6 +326,17 @@ function getLinuxBrowserCandidates(): string[] {
     '/usr/bin/chromium-browser',
     '/snap/bin/chromium',
     '/opt/google/chrome/google-chrome',
+    '/usr/bin/brave-browser',
+    '/usr/bin/brave-browser-stable',
+    '/opt/brave.com/brave/brave-browser',
+    '/snap/bin/brave',
+    '/usr/bin/vivaldi',
+    '/usr/bin/vivaldi-stable',
+    '/opt/vivaldi/vivaldi',
+    '/snap/bin/vivaldi',
+    '/usr/bin/opera',
+    '/usr/bin/opera-stable',
+    '/snap/bin/opera',
   ]
 }
 
@@ -294,9 +346,26 @@ function getBrowserPathCandidates(
 ): string[] {
   const names =
     platform === 'win32'
-      ? ['msedge.exe', 'chrome.exe', 'chromium.exe']
+      ? [
+          'msedge.exe',
+          'chrome.exe',
+          'chromium.exe',
+          'brave.exe',
+          'vivaldi.exe',
+          'opera.exe',
+          'Arc.exe',
+        ]
       : platform === 'darwin'
-        ? ['Microsoft Edge', 'Google Chrome', 'Chromium']
+        ? [
+            'Microsoft Edge',
+            'Google Chrome',
+            'Chromium',
+            'Brave Browser',
+            'Vivaldi',
+            'Opera',
+            'Opera GX',
+            'Arc',
+          ]
         : [
             'microsoft-edge',
             'microsoft-edge-stable',
@@ -304,6 +373,12 @@ function getBrowserPathCandidates(
             'google-chrome-stable',
             'chromium',
             'chromium-browser',
+            'brave-browser',
+            'brave-browser-stable',
+            'vivaldi',
+            'vivaldi-stable',
+            'opera',
+            'opera-stable',
           ]
   return getPathEntries(platform, environment).flatMap((directory) =>
     names.map((name) => getPlatformPath(platform).join(directory, name))
