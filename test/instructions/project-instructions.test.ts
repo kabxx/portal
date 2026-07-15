@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -181,6 +181,53 @@ test('loads enabled global Claude and Codex instructions before local rules', as
   } finally {
     await rm(root, { recursive: true, force: true })
     await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('canonicalizes an aliased home without allowing nested symlink escapes', async () => {
+  const root = await createWorkspace()
+  const container = await mkdtemp(
+    path.join(os.tmpdir(), 'portal-instructions-home-alias-')
+  )
+  const home = path.join(container, 'home')
+  const homeAlias = path.join(container, 'home-alias')
+  const outside = path.join(container, 'outside')
+  try {
+    await writeText(path.join(home, '.codex', 'AGENTS.md'), 'global codex')
+    await writeText(
+      path.join(home, '.claude', 'CLAUDE.md'),
+      '@./escape/secret.md\nglobal claude'
+    )
+    await writeText(path.join(outside, 'secret.md'), 'outside global secret')
+    await symlink(
+      home,
+      homeAlias,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    await symlink(
+      outside,
+      path.join(home, '.claude', 'escape'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    const result = await loadProjectInstructions({
+      cwd: root,
+      homeDirectory: homeAlias,
+      config: createConfig({ claudeGlobal: true, codexGlobal: true }),
+    })
+    const prompt = result.instructions.prompt ?? ''
+
+    assert.match(prompt, /global codex/)
+    assert.match(prompt, /global claude/)
+    assert.doesNotMatch(prompt, /outside global secret/)
+    assert.ok(
+      result.warnings.some((warning) =>
+        /outside the workspace or configured global roots/.test(warning.message)
+      )
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+    await rm(container, { recursive: true, force: true })
   }
 })
 

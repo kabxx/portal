@@ -118,13 +118,29 @@ test('DeepSeekAdapter.loadHistory bounds the full replay with the configured tim
     },
   }
   stubCapturedHistory(adapter, historyBody('MERGE', 2))
+  let replayTimer: ReturnType<typeof setTimeout> | undefined
   adapter.page = {
-    evaluate: async () => await new Promise(() => {}),
+    evaluate: async () =>
+      await new Promise((resolve) => {
+        replayTimer = setTimeout(
+          () =>
+            resolve({
+              body: historyBody('REPLACE', 6),
+              ok: true,
+              status: 200,
+            }),
+          1_000
+        )
+      }),
   }
 
-  const result = await adapter.loadHistory()
+  try {
+    const result = await adapter.loadHistory()
 
-  assert.equal(result.complete, false)
-  assert.equal(result.messages.length, 2)
-  assert.match(result.warning ?? '', /full-history request timed out/)
+    assert.equal(result.complete, false)
+    assert.equal(result.messages.length, 2)
+    assert.match(result.warning ?? '', /full-history request timed out/)
+  } finally {
+    if (replayTimer !== undefined) clearTimeout(replayTimer)
+  }
 })
