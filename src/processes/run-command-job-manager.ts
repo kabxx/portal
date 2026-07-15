@@ -9,8 +9,14 @@ import {
   PortalAbortError,
   throwIfAborted,
 } from '../runtime/runtime-cancellation.ts'
+import {
+  getDefaultShell,
+  getPortalPlatform,
+  getShellCommand,
+  type RunCommandShell,
+} from '../platform/platform-defaults.ts'
 
-export type RunCommandShell = 'powershell' | 'cmd' | 'bash' | 'sh'
+export type { RunCommandShell } from '../platform/platform-defaults.ts'
 export type RunCommandOutputStream = 'stdout' | 'stderr'
 export type RunCommandJobState = 'running' | 'stopping'
 export type RunCommandTerminationReason =
@@ -226,7 +232,11 @@ class ManagedRunCommandJob {
       this.rejectCompletion = reject
     })
 
-    const shellCommand = getShellCommand(this.shell, input.command)
+    const shellCommand = getShellCommand(
+      this.shell,
+      input.command,
+      getPortalPlatform()
+    )
     this.child = spawn(shellCommand.file, shellCommand.args, {
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
       windowsHide: true,
@@ -540,62 +550,6 @@ class ManagedRunCommandJob {
         // Progress is display-only and must not change command execution.
       }
     }
-  }
-}
-
-function getDefaultShell(): RunCommandShell {
-  return os.platform() === 'win32' ? 'powershell' : 'bash'
-}
-
-function buildPowerShellUtf8Command(command: string): string {
-  const commandWithStatus = `${command}\n$global:__portalRunCommandSucceeded = $?`
-  const encodedCommand = Buffer.from(commandWithStatus, 'utf16le').toString(
-    'base64'
-  )
-
-  return [
-    '$__portalUtf8Encoding = [System.Text.UTF8Encoding]::new($false)',
-    '[Console]::OutputEncoding = $__portalUtf8Encoding',
-    '[Console]::InputEncoding = $__portalUtf8Encoding',
-    '$OutputEncoding = $__portalUtf8Encoding',
-    "$PSDefaultParameterValues['*:Encoding'] = 'utf8'",
-    '$global:__portalRunCommandSucceeded = $true',
-    `$__portalEncodedCommand = '${encodedCommand}'`,
-    '$__portalCommand = [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($__portalEncodedCommand))',
-    '& ([ScriptBlock]::Create($__portalCommand))',
-    'if (-not $global:__portalRunCommandSucceeded) { exit 1 }',
-  ].join('; ')
-}
-
-function getShellCommand(shell: RunCommandShell, command: string) {
-  switch (shell) {
-    case 'powershell':
-      return {
-        file: 'powershell.exe',
-        args: [
-          '-NoLogo',
-          '-NoProfile',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-Command',
-          buildPowerShellUtf8Command(command),
-        ],
-      }
-    case 'cmd':
-      return {
-        file: process.env.ComSpec || 'cmd.exe',
-        args: ['/d', '/s', '/c', command],
-      }
-    case 'bash':
-      return {
-        file: process.env.SHELL || '/bin/bash',
-        args: ['-lc', command],
-      }
-    case 'sh':
-      return {
-        file: '/bin/sh',
-        args: ['-c', command],
-      }
   }
 }
 

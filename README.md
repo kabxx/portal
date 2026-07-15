@@ -61,7 +61,7 @@ See [Providers](docs/providers.md) for accepted conversation URLs, model-number 
 - Google Chrome or another supported Chromium-based browser
 - A valid account for each provider you use
 
-Windows is the primary development and verification environment. A generic non-Windows launch path exists, but it is not a documented support target yet.
+Windows, macOS, and Linux are supported launch environments. Browser executable discovery and the default command shell use the conventions of the current platform.
 
 ## Quick start
 
@@ -77,10 +77,10 @@ On first run, portal creates a commented `data/config.yaml` covering the browser
 Override the browser name, executable, or port when needed:
 
 ```text
-npm run dev -- --browser-name chrome --browser-executable-path "C:\Program Files\Google\Chrome\Application\chrome.exe" --browser-remote-debugging-port 9222
+npm run dev -- --browser-name chrome --browser-executable-path "<browser executable path>" --browser-remote-debugging-port 9222
 ```
 
-Supported browser names are `chromium`, `chrome`, and `edge`. Both `browser.executablePath` and `browser.profilePath` accept absolute or relative paths; generated defaults are absolute, while configured relative values resolve from portal's working directory. Run `npm run dev -- --help` for all startup options.
+Supported browser names are `chromium`, `chrome`, and `edge`. Both `browser.executablePath` and `browser.profilePath` accept absolute or relative paths; generated defaults are absolute and use platform-native browser locations, while configured relative values resolve from portal's working directory. Run `npm run dev -- --help` for all startup options.
 
 portal opens on the command help screen. Create a thread and enter a normal task:
 
@@ -175,7 +175,7 @@ Input can be edited while portal is busy, but it cannot be submitted until the o
 | Tool              | Purpose                                                                 |
 | ----------------- | ----------------------------------------------------------------------- |
 | `attach_image`    | Attempt to attach a local image to the active provider conversation     |
-| `run_command`     | Execute PowerShell, cmd, Bash, or sh and return structured output       |
+| `run_command`     | Execute the platform's available shell and return structured output     |
 | `apply_patch`     | Apply V4A Add/Update patches to one or more UTF-8 files                 |
 | `spawn`           | Run a focused synchronous task in a temporary child conversation        |
 | `load_skill`      | Load one exact Skill from the runtime catalog when Skills are available |
