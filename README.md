@@ -82,6 +82,8 @@ npm run dev -- --browser-engine chromium --browser-executable-path "<browser exe
 
 The only supported browser engine is `chromium`. portal automatically checks common Edge, Chrome, Chromium, Brave, Vivaldi, Opera, Opera GX, and Arc locations where those browsers are available. Portable and non-standard installations can be selected with `browser.executablePath`. Both `browser.executablePath` and `browser.profilePath` accept absolute or relative paths; generated defaults are absolute, while configured relative values resolve from portal's working directory. Run `npm run dev -- --help` for all startup options.
 
+The dedicated browser and portal share one lifecycle. Closing or crashing the browser process, or losing its CDP connection, triggers portal's controlled shutdown and stops active threads, jobs, API, and MCP services. Closing one provider tab does not exit portal.
+
 portal opens on the command help screen. Create a thread and enter a normal task:
 
 ```text

@@ -8,7 +8,14 @@ import type { BrowserEngine } from './platform-defaults.ts'
 
 export interface BrowserLaunch {
   context: BrowserContext
+  disconnected: Promise<void>
   close(): Promise<void>
+}
+
+export interface BrowserConnectionEvents {
+  once(event: 'disconnected', listener: () => void): unknown
+  off(event: 'disconnected', listener: () => void): unknown
+  isConnected(): boolean
 }
 
 const BROWSER_CLOSE_TIMEOUT_MS = 3000
@@ -17,6 +24,30 @@ const BROWSER_STARTUP_TIMEOUT_MS = 60_000
 export interface BrowserLaunchOptions {
   startupTimeoutMs?: number
   closeTimeoutMs?: number
+}
+
+export function createBrowserDisconnectSignal(
+  browser: BrowserConnectionEvents,
+  isClosing: () => boolean
+): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false
+    const onDisconnected = () => {
+      if (settled) {
+        return
+      }
+      settled = true
+      if (!isClosing()) {
+        resolve()
+      }
+    }
+
+    browser.once('disconnected', onDisconnected)
+    if (!browser.isConnected()) {
+      browser.off('disconnected', onDisconnected)
+      onDisconnected()
+    }
+  })
 }
 
 function resolveBrowserType(browserEngine: BrowserEngine): BrowserType {
@@ -94,14 +125,25 @@ export async function launchBrowser(
         { timeout: remainingMs }
       )
       const context = browser.contexts()[0]!
+      let closing = false
+      let closePromise: Promise<void> | null = null
+      const disconnected = createBrowserDisconnectSignal(browser, () => closing)
       return {
         context,
-        close: async () => {
-          await withTimeout(browser.close(), closeTimeoutMs).catch(() => {})
-          if (browserProcess !== null && !browserProcess.killed) {
-            browserProcess.kill()
+        disconnected,
+        close: () => {
+          if (closePromise !== null) {
+            return closePromise
           }
-          windowsBrowserProcess?.close()
+          closing = true
+          closePromise = (async () => {
+            await withTimeout(browser.close(), closeTimeoutMs).catch(() => {})
+            if (browserProcess !== null && !browserProcess.killed) {
+              browserProcess.kill()
+            }
+            windowsBrowserProcess?.close()
+          })()
+          return closePromise
         },
       }
     } catch (error) {
