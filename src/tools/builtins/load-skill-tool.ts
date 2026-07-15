@@ -1,5 +1,9 @@
 import type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
-import { Tool, defineToolMetadata } from '../core/tool-definition.ts'
+import {
+  createToolError,
+  Tool,
+  defineToolMetadata,
+} from '../core/tool-definition.ts'
 import type { ToolOutput } from '../core/tool-definition.ts'
 
 interface LoadSkillInput {
@@ -29,10 +33,12 @@ class LoadSkillTool extends Tool<LoadSkillInput, ToolOutput> {
     _options: AbortOptions = {}
   ): Promise<ToolOutput> {
     if (typeof input.name !== 'string' || input.name.trim() === '') {
-      return '[ERROR] load_skill requires a non-empty string params.name'
+      return createToolError(
+        'load_skill requires a non-empty string params.name'
+      )
     }
     if (this.services.loadSkill === undefined) {
-      return '[ERROR] load_skill is not configured in this runtime'
+      return createToolError('load_skill is not configured in this runtime')
     }
     return await this.services.loadSkill(input.name)
   }

@@ -4,7 +4,11 @@ import {
   type RunCommandResult,
 } from '../../processes/run-command-job-manager.ts'
 import { throwIfAborted } from '../../runtime/runtime-cancellation.ts'
-import { Tool, defineToolMetadata } from '../core/tool-definition.ts'
+import {
+  createToolError,
+  Tool,
+  defineToolMetadata,
+} from '../core/tool-definition.ts'
 import type {
   ToolExecutionOptions,
   ToolOutput,
@@ -98,7 +102,7 @@ class RunCommandTool extends Tool<RunCommandInput, ToolOutput> {
       result = await job.wait(options.signal)
     } catch (error) {
       if (error instanceof RunCommandEncodingError) {
-        return `[ERROR] ${error.message}`
+        return createToolError(error.message)
       }
       throw error
     }

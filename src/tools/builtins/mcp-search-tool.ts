@@ -1,5 +1,9 @@
 import type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
-import { Tool, defineToolMetadata } from '../core/tool-definition.ts'
+import {
+  createToolError,
+  Tool,
+  defineToolMetadata,
+} from '../core/tool-definition.ts'
 import type { ToolOutput } from '../core/tool-definition.ts'
 
 interface McpSearchToolInput {
@@ -34,13 +38,19 @@ class McpSearchTool extends Tool<McpSearchToolInput, ToolOutput> {
     _options: AbortOptions = {}
   ): Promise<ToolOutput> {
     if (typeof input.server !== 'string' || input.server.trim() === '') {
-      return '[ERROR] mcp_search_tool requires a non-empty string params.server'
+      return createToolError(
+        'mcp_search_tool requires a non-empty string params.server'
+      )
     }
     if (typeof input.tool !== 'string' || input.tool.trim() === '') {
-      return '[ERROR] mcp_search_tool requires a non-empty string params.tool'
+      return createToolError(
+        'mcp_search_tool requires a non-empty string params.tool'
+      )
     }
     if (this.services.mcpSearchTool === undefined) {
-      return '[ERROR] mcp_search_tool is not configured in this runtime'
+      return createToolError(
+        'mcp_search_tool is not configured in this runtime'
+      )
     }
     return await this.services.mcpSearchTool(input.server, input.tool)
   }

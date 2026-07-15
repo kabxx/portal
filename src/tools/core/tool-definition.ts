@@ -24,13 +24,19 @@ interface ToolMetadata {
 
 type ToolOutcome = 'success' | 'error' | 'unknown'
 
-interface ToolOutputDetail {
+interface ToolOutput {
   result: Record<string, unknown>
   displayText: string
   outcome?: ToolOutcome
 }
 
-type ToolOutput = string | ToolOutputDetail
+function createToolError(message: string): ToolOutput & { outcome: 'error' } {
+  return {
+    outcome: 'error',
+    result: { message },
+    displayText: message,
+  }
+}
 
 type ToolProgressEvent =
   | {
@@ -54,7 +60,7 @@ interface ToolServices {
   spawnTask?: (
     input: { prompt: string; provider?: string },
     options?: ToolExecutionOptions
-  ) => Promise<string>
+  ) => Promise<SpawnTaskResult>
   loadSkill?: (name: string) => Promise<ToolOutput>
   mcpSearchTool?: (server: string, tool: string) => Promise<ToolOutput>
   mcpCallTool?: (
@@ -67,13 +73,24 @@ interface ToolServices {
   ) => Promise<ToolOutput>
 }
 
+type SpawnTaskResult =
+  | {
+      provider: string
+      conversationUrl: string
+      output: string
+    }
+  | {
+      kind: 'error'
+      message: string
+    }
+
 function defineToolMetadata(metadata: ToolMetadata) {
   return function (target: any) {
     target[TOOL_METADATA_SYMBOL] = metadata
   }
 }
 
-abstract class Tool<TInput = any, TOutput = ToolOutput> {
+abstract class Tool<TInput = any, TOutput extends ToolOutput = ToolOutput> {
   constructor(
     protected readonly providerAdapter: ProviderAdapter,
     protected readonly services: ToolServices = {}
@@ -151,7 +168,7 @@ interface ToolConstructor {
   new (providerAdapter: ProviderAdapter, services?: ToolServices): Tool
 }
 
-export { TOOL_METADATA_SYMBOL, defineToolMetadata, Tool }
+export { TOOL_METADATA_SYMBOL, createToolError, defineToolMetadata, Tool }
 export type {
   ToolConstructor,
   ToolMetadata,
@@ -160,7 +177,7 @@ export type {
   ToolExecutionOptions,
   ToolOutcome,
   ToolOutput,
-  ToolOutputDetail,
   ToolProgressEvent,
+  SpawnTaskResult,
   ToolServices,
 }

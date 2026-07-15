@@ -12,8 +12,6 @@ test('AttachImageTool preserves model content and provides display text', async 
   } as any)
 
   const output = await tool.call({ path: 'C:\\images\\sample.png' })
-  assert.equal(typeof output, 'object')
-  if (typeof output === 'string') assert.fail('expected structured output')
   assert.deepEqual(attached, ['C:\\images\\sample.png'])
   assert.equal(output.result.attempted, true)
   assert.equal(output.result.path, 'C:\\images\\sample.png')

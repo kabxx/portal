@@ -3,7 +3,10 @@ import type {
   ProviderAdapterOptions,
 } from '../providers/adapters/adapter-base.ts'
 import { isProviderAdapterError } from '../providers/adapters/adapter-base.ts'
-import type { ToolServices } from '../tools/core/tool-definition.ts'
+import {
+  createToolError,
+  type ToolServices,
+} from '../tools/core/tool-definition.ts'
 import { ToolRegistry } from '../tools/core/tool-registry.ts'
 import { AttachImageTool } from '../tools/builtins/attach-image-tool.ts'
 import { ApplyPatchTool } from '../tools/builtins/apply-patch-tool.ts'
@@ -102,7 +105,9 @@ export async function createRuntimeFromAdapter(
               try {
                 const loaded = await skillCatalog.load(name)
                 if (loaded === null) {
-                  return `[ERROR] Skill is not available in this runtime: ${name}`
+                  return createToolError(
+                    `Skill is not available in this runtime: ${name}`
+                  )
                 }
                 return {
                   result: {
@@ -116,7 +121,7 @@ export async function createRuntimeFromAdapter(
               } catch (error) {
                 const message =
                   error instanceof Error ? error.message : String(error)
-                return `[ERROR] ${message}`
+                return createToolError(message)
               }
             },
           }

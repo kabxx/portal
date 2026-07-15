@@ -121,7 +121,6 @@ test(
       command: "Write-Output '中文测试'",
       shell: 'powershell',
     })
-    if (typeof output === 'string') assert.fail(output)
     const result = output.result as {
       exitCode: number | null
       stdout: string
@@ -144,7 +143,6 @@ test(
       command: "Write-Error '中文错误'",
       shell: 'powershell',
     })
-    if (typeof output === 'string') assert.fail(output)
     const result = output.result as {
       exitCode: number | null
       stderr: string
@@ -168,9 +166,12 @@ test('RunCommandTool rejects non-UTF-8 stdout and stderr', async () => {
       shell: os.platform() === 'win32' ? 'powershell' : 'sh',
     })
 
-    assert.equal(typeof output, 'string')
-    assert.match(String(output), new RegExp(`${stream}.*not valid UTF-8`, 'i'))
-    assert.doesNotMatch(String(output), /�/)
+    assert.equal(output.outcome, 'error')
+    assert.match(
+      String(output.result.message),
+      new RegExp(`${stream}.*not valid UTF-8`, 'i')
+    )
+    assert.doesNotMatch(String(output.result.message), /�/)
   }
 })
 
@@ -189,7 +190,6 @@ test('RunCommandTool does not register a timeout when timeoutMs is omitted', asy
       command: echoCommand(),
       shell: testShell(),
     })
-    if (typeof output === 'string') assert.fail('expected structured output')
     const result = output.result as {
       stdout: string
       timedOut: boolean
@@ -212,7 +212,6 @@ test('RunCommandTool marks nonzero command exits as errors', async () => {
     shell: testShell(),
   })
 
-  if (typeof output === 'string') assert.fail(output)
   assert.equal(output.outcome, 'error')
   assert.equal(output.result.exitCode, 2)
 })
@@ -233,7 +232,6 @@ test('RunCommandTool registers a timeout when timeoutMs is provided', async () =
       shell: testShell(),
       timeoutMs: 1000,
     })
-    if (typeof output === 'string') assert.fail('expected structured output')
     const result = output.result as {
       stdout: string
       timedOut: boolean
@@ -260,7 +258,6 @@ test('RunCommandTool emits start and UTF-8 stdout/stderr progress events', async
     { onProgress: (event) => events.push(event) }
   )
 
-  assert.equal(typeof output === 'string', false)
   assert.equal(events[0]?.type, 'start')
   const stdout = events
     .filter(
@@ -344,7 +341,6 @@ test('RunCommandTool returns an error result when its job is stopped', async () 
     assert.equal(await manager.stop(job.id), 'stopped')
 
     const output = await running
-    if (typeof output === 'string') assert.fail(output)
     assert.equal(output.outcome, 'error')
     assert.equal(
       (output.result as { terminationReason: string }).terminationReason,
