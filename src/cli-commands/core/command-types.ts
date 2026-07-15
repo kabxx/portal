@@ -15,7 +15,7 @@ import type { McpLibrary } from '../../mcp/mcp-library.ts'
 import type { HookCatalog } from '../../hooks/hook-catalog.ts'
 import type { RunCommandJobService } from '../../processes/run-command-job-manager.ts'
 
-export interface ApiCommandController {
+export interface ListenerCommandController {
   start(): Promise<void>
   stop(): Promise<void>
   status(): { running: boolean; address: string | null; auth: boolean }
@@ -34,7 +34,8 @@ export interface CliCommandContext {
   mcpLibrary: McpLibrary
   runCommandJobs?: RunCommandJobService
   hookCatalog?: HookCatalog
-  api?: ApiCommandController
+  api?: ListenerCommandController
+  mcpServer?: ListenerCommandController
   ui: TerminalController
   browserProfileDir: string
   providers: readonly ProviderId[]

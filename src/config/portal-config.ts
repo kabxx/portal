@@ -37,6 +37,12 @@ export interface PortalApiConfig {
   token: string | null
 }
 
+export interface PortalMcpServerConfig {
+  host: string
+  port: number
+  token: string | null
+}
+
 export interface PortalAdvancedBrowserConfig {
   startupTimeoutSeconds: number
   closeTimeoutSeconds: number
@@ -108,6 +114,7 @@ export interface PortalConfigDocument {
   browser: PortalBrowserConfig
   agentInstructions: PortalAgentInstructionsConfig
   api: PortalApiConfig
+  mcpServer: PortalMcpServerConfig
   mcp: Record<string, unknown>
   skills: unknown[]
   hooks: HooksConfig
@@ -127,6 +134,7 @@ const CONFIG_FIELDS = new Set([
   'browser',
   'agentInstructions',
   'api',
+  'mcpServer',
   'mcp',
   'skills',
   'hooks',
@@ -141,6 +149,7 @@ const BROWSER_FIELDS = new Set([
 const AGENT_INSTRUCTIONS_FIELDS = new Set(['claude', 'codex'])
 const INSTRUCTION_SCOPE_FIELDS = new Set(['global', 'local'])
 const API_FIELDS = new Set(['host', 'port', 'token'])
+const MCP_SERVER_FIELDS = new Set(['host', 'port', 'token'])
 const ADVANCED_FIELDS = new Set([
   'browser',
   'provider',
@@ -212,6 +221,11 @@ export function createDefaultPortalConfig(
     api: {
       host: '127.0.0.1',
       port: 8787,
+      token: null,
+    },
+    mcpServer: {
+      host: '127.0.0.1',
+      port: 8788,
       token: null,
     },
     mcp: {
@@ -400,7 +414,34 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
   if (rawToken !== null && typeof rawToken !== 'string') {
     throw new PortalConfigError('api.token must be a string or null')
   }
-  const token = typeof rawToken === 'string' ? rawToken.trim() || null : null
+
+  const mcpServer = document.mcpServer
+  if (mcpServer !== undefined && !isRecord(mcpServer)) {
+    throw new PortalConfigError('mcpServer must be an object')
+  }
+  if (mcpServer !== undefined) {
+    assertSupportedFields(mcpServer, MCP_SERVER_FIELDS, 'mcpServer')
+  }
+  const mcpServerRecord = isRecord(mcpServer) ? mcpServer : {}
+  const mcpServerHost = mcpServerRecord.host ?? '127.0.0.1'
+  if (typeof mcpServerHost !== 'string' || mcpServerHost === '') {
+    throw new PortalConfigError('mcpServer.host must be a non-empty string')
+  }
+  const mcpServerPort = mcpServerRecord.port ?? 8788
+  if (
+    typeof mcpServerPort !== 'number' ||
+    !Number.isSafeInteger(mcpServerPort) ||
+    mcpServerPort <= 0 ||
+    mcpServerPort > 65_535
+  ) {
+    throw new PortalConfigError(
+      'mcpServer.port must be an integer from 1 to 65535'
+    )
+  }
+  const mcpServerToken = mcpServerRecord.token ?? null
+  if (mcpServerToken !== null && typeof mcpServerToken !== 'string') {
+    throw new PortalConfigError('mcpServer.token must be a string or null')
+  }
 
   const mcp = document.mcp
   if (!isRecord(mcp)) {
@@ -429,7 +470,12 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
       remoteDebuggingPort: browser.remoteDebuggingPort as number,
     },
     agentInstructions: { claude, codex },
-    api: { host, port, token },
+    api: { host, port, token: rawToken },
+    mcpServer: {
+      host: mcpServerHost,
+      port: mcpServerPort,
+      token: mcpServerToken,
+    },
     mcp: { ...mcp },
     skills: [...skills],
     hooks,
@@ -682,6 +728,7 @@ async function hasCompleteManagedSections(
   if (
     !isRecord(document) ||
     !isRecord(document.api) ||
+    !isRecord(document.mcpServer) ||
     !isRecord(document.hooks) ||
     !isRecord(document.advanced)
   ) {
@@ -690,12 +737,9 @@ async function hasCompleteManagedSections(
   const apiComplete = ['host', 'port', 'token'].every((field) =>
     Object.hasOwn(document.api as Record<string, unknown>, field)
   )
-  const rawToken = (document.api as Record<string, unknown>).token
-  const tokenNormalized =
-    rawToken === null ||
-    (typeof rawToken === 'string' &&
-      rawToken !== '' &&
-      rawToken.trim() === rawToken)
+  const mcpServerComplete = ['host', 'port', 'token'].every((field) =>
+    Object.hasOwn(document.mcpServer as Record<string, unknown>, field)
+  )
   const advancedSections: Array<
     readonly [name: string, fields: ReadonlySet<string>]
   > = [
@@ -715,7 +759,7 @@ async function hasCompleteManagedSections(
       [...fields].every((field) => Object.hasOwn(section, field))
     )
   })
-  return apiComplete && tokenNormalized && advancedComplete
+  return apiComplete && mcpServerComplete && advancedComplete
 }
 
 export async function updatePortalConfig(
@@ -834,6 +878,7 @@ function cloneConfig(config: PortalConfigDocument): PortalConfigDocument {
       codex: { ...config.agentInstructions.codex },
     },
     api: { ...config.api },
+    mcpServer: { ...config.mcpServer },
     mcp: structuredClone(config.mcp),
     skills: structuredClone(config.skills),
     hooks: structuredClone(config.hooks),
@@ -853,7 +898,8 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
         'Project instruction sources loaded into runtimes.',
       ],
       ['api', 'Local HTTP API listener and authentication settings.'],
-      ['mcp', 'Model Context Protocol server configuration.'],
+      ['mcpServer', 'Portal MCP Server listener and authentication settings.'],
+      ['mcp', 'Outbound Model Context Protocol client connections.'],
       ['skills', 'Registered Skill directories and enabled states.'],
       ['hooks', 'Lifecycle hook handlers and execution policy.'],
       ['advanced', 'Low-frequency runtime tuning and resource limits.'],
@@ -894,7 +940,22 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
     [
       ['host', 'Network interface used by the local HTTP API.'],
       ['port', 'TCP port used by the local HTTP API.'],
-      ['token', 'Bearer token required by the API, or null to disable it.'],
+      [
+        'token',
+        'Bearer token required by the API; null or an empty string disables authentication.',
+      ],
+    ]
+  )
+  commentMap(
+    document,
+    ['mcpServer'],
+    [
+      ['host', 'Network interface used by the Portal MCP Server.'],
+      ['port', 'TCP port used by the Portal MCP Server.'],
+      [
+        'token',
+        'Bearer token required by the MCP Server; null or an empty string disables authentication.',
+      ],
     ]
   )
   commentMap(

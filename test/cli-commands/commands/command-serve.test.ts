@@ -28,6 +28,7 @@ test('ServeCommand starts and stops the API', async () => {
   const { context, ui } = createContext({
     start: async () => calls.push('start'),
     stop: async () => calls.push('stop'),
+    status: () => ({ running: true, address: null, auth: false }),
   })
 
   await ServeCommand.execute(context, ['start'])
@@ -36,6 +37,25 @@ test('ServeCommand starts and stops the API', async () => {
   await ServeCommand.execute(context, ['stop'])
   assert.equal(latestTimelineEntry(ui)?.body, 'HTTP API server stopped.')
   assert.deepEqual(calls, ['start', 'stop'])
+})
+
+test('ServeCommand warns but allows an unauthenticated non-loopback listener', async () => {
+  const { context, ui } = createContext({
+    start: async () => {},
+    status: () => ({
+      running: true,
+      address: 'http://0.0.0.0:8787',
+      auth: false,
+    }),
+  })
+
+  await ServeCommand.execute(context, ['start'])
+
+  assert.equal(latestTimelineEntry(ui)?.tone, 'warning')
+  assert.equal(
+    latestTimelineEntry(ui)?.body,
+    'Authentication is disabled on a non-loopback listener.'
+  )
 })
 
 test('ServeCommand reports start and stop failures', async () => {
@@ -68,6 +88,14 @@ test('ServeCommand renders token, status, and subcommand help', async () => {
 
   await ServeCommand.execute(context, ['token'])
   assert.equal(latestTimelineEntry(ui)?.body, 'Authentication disabled.')
+
+  token = ''
+  await ServeCommand.execute(context, ['token'])
+  assert.equal(latestTimelineEntry(ui)?.body, 'Authentication disabled.')
+
+  token = '   '
+  await ServeCommand.execute(context, ['token'])
+  assert.equal(latestTimelineEntry(ui)?.body, '   ')
 
   token = 'secret-token'
   await ServeCommand.execute(context, ['token'])

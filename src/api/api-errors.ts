@@ -1,4 +1,5 @@
 import { McpConfigError } from '../mcp/mcp-config.ts'
+export { parseBearerToken } from '../shared/http-auth.ts'
 
 export class ApiHttpError extends Error {
   public readonly statusCode: number
@@ -85,11 +86,6 @@ export function mapApiError(error: unknown): ApiErrorDescriptor {
         message: 'Internal server error.',
       }
   }
-}
-
-export function parseBearerToken(header: string | undefined): string | null {
-  const match = /^Bearer[ \t]+(.+)$/i.exec(header ?? '')
-  return match?.[1] ?? null
 }
 
 export function requireRecordBody(body: unknown): Record<string, unknown> {
