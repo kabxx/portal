@@ -19,7 +19,7 @@ description: Prepare concise release notes from a Git diff and commit history.
 Inspect the requested changes, group them by user impact, and write a short release summary.
 ```
 
-Current validation rules include:
+Default validation rules include:
 
 - `name` uses 1–64 lowercase letters, numbers, and single hyphens;
 - the registry name matches the manifest name;
@@ -29,15 +29,19 @@ Current validation rules include:
 - symbolic links are rejected;
 - a skill may list at most 2,000 resource files at runtime.
 
+Download, extraction, manifest, and resource limits can be changed under
+`advanced.skillInstall`; see [Configuration](configuration.md).
+
 ## Commands
 
-| Command                 | Behavior                                                     |
-| ----------------------- | ------------------------------------------------------------ |
-| `/skill add <source>`   | Register a local directory or download a remote skill        |
-| `/skill list`           | List registered skills, enabled state, and validation issues |
-| `/skill enable <name>`  | Enable a registered skill for new runtimes                   |
-| `/skill disable <name>` | Disable a registered skill for new runtimes                  |
-| `/skill remove <name>`  | Unregister a skill and delete its portal-managed download    |
+| Command                              | Behavior                                                       |
+| ------------------------------------ | -------------------------------------------------------------- |
+| `/skill add <source>`                | Register a local directory or download a remote Skill          |
+| `/skill add <name> --registry <url>` | Download the latest named Skill from a Hub-compatible registry |
+| `/skill list`                        | List registered Skills, enabled state, and validation issues   |
+| `/skill enable <name>`               | Enable a registered Skill for new runtimes                     |
+| `/skill disable <name>`              | Disable a registered Skill for new runtimes                    |
+| `/skill remove <name>`               | Unregister a Skill and delete its portal-managed download      |
 
 Examples:
 
@@ -46,12 +50,37 @@ Examples:
 /skill add https://example.com/SKILL.md
 /skill add https://github.com/owner/repository/tree/main/skills/release-notes
 /skill add https://example.com/release-notes.zip
+/skill add release-notes --registry https://skills.example.com
 /skill list
 ```
 
 Local directories are validated and registered in place; portal does not copy them. HTTP(S) sources are downloaded into `data/skills/<name>` and then registered.
 
 Removing an external absolute directory only removes its registry entry. Removing a portal-managed relative `skills/<name>` entry also deletes that directory.
+
+The HTTP API accepts the same install inputs through `POST /v1/skills` with
+`{ "source": "...", "registryUrl": "..." }`. Omit `registryUrl` for a local
+path or direct remote source. See [HTTP API](api.md).
+
+## Manual selection
+
+An enabled Skill can be selected explicitly for one turn by putting its name at
+the start of the input:
+
+```text
+$release-notes Summarize the changes since the last tag.
+$release-notes
+```
+
+The prefix must be `$` followed immediately by the exact registered name. The
+Skill must be enabled in the current runtime snapshot. portal loads its current
+manifest and resources, wraps the optional trailing text as the user task, and
+applies the Skill only to that turn. With no trailing task, the model is told to
+ask what to do. An unknown or unavailable `$name` prefix remains ordinary user
+input.
+
+`POST /v1/threads/:threadId/skill` provides the activation-only form by name;
+it does not synthesize the combined `$name task` form.
 
 ## Registry
 
@@ -86,6 +115,13 @@ Registry writes use a temporary file followed by an atomic replacement.
 - a GitHub `blob` URL pointing to `SKILL.md`;
 - ZIP, 7z, RAR, TAR, TGZ, and TAR.GZ archives.
 
+The `--registry` form accepts one valid Skill name and an HTTP(S) registry URL.
+portal requests `.well-known/clawhub.json` relative to that URL, resolves its `apiBase`, reads the
+named Skill metadata and latest version, then downloads the corresponding
+archive. Registry discovery, metadata, redirects, downloaded bytes, extracted
+bytes, file count, and manifest validation use the same bounded installation
+policy as other remote sources.
+
 Downloads and extracted trees are bounded by file-count and byte limits. Archive entries are checked for absolute paths and `..` traversal, and extracted trees are rejected when they contain symbolic links. An archive must resolve to exactly one skill candidate unless a GitHub subdirectory was explicitly selected.
 
 These checks reduce accidental damage; they do not prove that a skill is safe.
@@ -115,7 +151,7 @@ Resources are not automatically injected into the conversation. The model must u
 
 ```text
 data/
-├── config.yaml                # user-editable browser, MCP, and Skill configuration
+├── config.yaml                # browser, instructions, API, MCP, Skills, Hooks, and limits
 ├── skills/<name>/             # remotely downloaded managed skills
 └── temp/skill-install/        # temporary download workspace
 ```

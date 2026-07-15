@@ -51,9 +51,14 @@ Do not include browser profiles, cookies, screenshots, conversation URLs, or pro
 
 ```text
 src/
+├── api/            # HTTP routes and SSE event delivery
 ├── cli-commands/   # slash command infrastructure and implementations
+├── config/         # portal configuration parsing and atomic updates
+├── hooks/          # lifecycle handlers, policy, and event dispatch
+├── instructions/   # Codex and Claude Code project instruction loading
 ├── mcp/            # configuration, transports, per-thread sessions, rendering
 ├── platform/       # browser launch and OS process handling
+├── processes/      # run_command job tracking and process-tree cleanup
 ├── providers/      # provider adapters and URL utilities
 ├── runtime/        # setup, tool loop, cancellation, and recovery
 ├── shared/         # small shared helpers
@@ -117,6 +122,17 @@ Add focused tests for configuration parsing, environment expansion, CLI mutation
 ## Documentation changes
 
 Document only behavior supported by the current code. Provider selectors and private history endpoints should be described as implementation details rather than stable upstream contracts. Check every relative Markdown link and keep examples free of real profile paths, credentials, and conversation ids.
+
+Keep documentation ownership narrow:
+
+- `configuration.md` owns configuration fields, defaults, and reload timing;
+- `instructions.md`, `skills.md`, `mcp.md`, and `hooks.md` own their feature-specific formats and lifecycles;
+- `api.md` owns HTTP routes and request shapes;
+- README files provide synchronized entry points and short examples rather than duplicating complete references.
+
+When one behavior crosses these boundaries, update the canonical reference and
+link to it from the other pages. Configuration defaults must be checked against
+`src/config/portal-config.ts`, and API routes against `src/api/api-server.ts`.
 
 ## Pull request checklist
 

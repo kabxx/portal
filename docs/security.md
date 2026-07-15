@@ -6,11 +6,11 @@ portal intentionally connects an untrusted web model to powerful operations on t
 
 ## Security model
 
-The web model receives a textual catalog of available tools. When its response contains a valid tool request, portal executes that request and sends the result back to the same web conversation. Setup prompts, ordinary user input, MCP attachments, tool results, and selected local images all cross the provider boundary.
+The web model receives a textual catalog of available tools. When its response contains a valid tool request, portal executes that request and sends the result back to the same web conversation. Setup prompts, enabled project instructions, ordinary user input, MCP attachments, loaded Skill instructions, tool results, and selected local images all cross the provider boundary.
 
 There is currently no human approval gate between a valid model-generated request and local execution. The effective permissions are the permissions of the user account running portal.
 
-Provider output, loaded Skill instructions, MCP content, and resumed conversation history are untrusted input. Any of them can contain prompt injection intended to trigger local tools or disclose data.
+Provider output, repository-owned project instructions, loaded Skill instructions, MCP content, and resumed conversation history are untrusted input. Any of them can contain prompt injection intended to trigger local tools or disclose data.
 
 ## Powerful operations
 
@@ -46,6 +46,7 @@ Provider output, loaded Skill instructions, MCP content, and resumed conversatio
 - Use a dedicated browser profile and provider account where practical.
 - Do not expose the browser's remote debugging port to an untrusted network.
 - Stop the current operation with Ctrl+C if model behavior becomes unexpected.
+- Review `AGENTS.md`, `CLAUDE.md`, and imported/rule files before enabling local project instructions.
 - Review a skill's `SKILL.md` and resources before registering, downloading, or enabling it.
 - Review an MCP server and its configuration before adding or enabling it.
 - Prefer environment placeholders over literal secrets in the `mcp` section of `data/config.yaml`.
@@ -60,9 +61,24 @@ Resume reads provider history into the terminal's in-memory timeline. The reposi
 
 Do not publish or attach `data/`, browser profiles, raw captures, screenshots, or private conversation URLs to bug reports.
 
+## Project instructions
+
+Codex and Claude Code instruction sources are disabled by default. When enabled,
+portal reads configured global and project-local files and includes applicable
+text in Provider conversations. Nested directory instructions and Claude path
+rules can also be activated before supported file-targeting tool calls.
+
+These files are repository-controlled input, not trusted policy. They can ask
+the model to read files, run commands, modify paths outside the repository, or
+send additional content to external systems. Loader path, symlink, import,
+size, and file-count checks limit what portal reads, but they do not make the
+instructions safe. Keep secrets out of instruction files and leave local
+sources disabled for repositories you have not reviewed. See
+[Project Instructions](instructions.md).
+
 ## Skill installation
 
-Skills may be registered from local directories or downloaded from direct web URLs, GitHub paths, and archives. Validation applies size limits, rejects path traversal and symbolic links, and checks manifest structure, but these checks do not establish trust.
+Skills may be registered from local directories or downloaded from direct web URLs, GitHub paths, archives, and Hub-compatible registries. Validation applies size limits, rejects path traversal and symbolic links, and checks manifest structure, but these checks do not establish trust.
 
 The current skills system does not provide:
 
