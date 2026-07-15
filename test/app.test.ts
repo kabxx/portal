@@ -6,7 +6,9 @@ import {
   canRunCommandWhileThreadBusy,
   clearInteractiveTerminal,
   clearTerminalBeforeRender,
+  closeLateBrowserLaunchAfterShutdown,
   closeWithTimeout,
+  createIdempotentAsyncTask,
   createPortalRuntimeSettings,
   showPendingThreadTimeline,
   shouldRenderFallbackThreadError,
@@ -37,6 +39,39 @@ test('closeWithTimeout returns when a close operation hangs', async () => {
   await closeWithTimeout(async () => {
     await new Promise(() => {})
   }, 10)
+})
+
+test('createIdempotentAsyncTask runs concurrent and later calls once', async () => {
+  let calls = 0
+  const task = createIdempotentAsyncTask(async () => {
+    calls += 1
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  })
+
+  await Promise.all([task(), task(), task()])
+  await task()
+
+  assert.equal(calls, 1)
+})
+
+test('late browser launch closes after an earlier shutdown', async () => {
+  const events: string[] = []
+  const shutdown = createIdempotentAsyncTask(async () => {
+    events.push('shutdown')
+  })
+  await shutdown()
+
+  await closeLateBrowserLaunchAfterShutdown(
+    {
+      close: async () => {
+        events.push('browser close')
+      },
+    },
+    shutdown,
+    10
+  )
+
+  assert.deepEqual(events, ['shutdown', 'browser close'])
 })
 
 test('MCP foreground cancellation aborts and calls its stop target once', async () => {
