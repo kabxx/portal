@@ -17,6 +17,7 @@ export interface ThreadOperationSnapshot {
 
 export interface ThreadOperationHandle extends ThreadOperationSnapshot {
   done: Promise<void>
+  cancel(): Promise<boolean>
 }
 
 export type StartThreadOperationResult =
@@ -188,6 +189,27 @@ export class ThreadOperationCoordinator {
       return true
     }
 
+    return await this.cancelMutableOperation(operation, phase)
+  }
+
+  private async cancelOwnedOperation(
+    threadId: string,
+    token: symbol
+  ): Promise<boolean> {
+    const operation = this.operations.get(threadId)
+    if (operation === undefined || operation.token !== token) {
+      return false
+    }
+    await this.cancelMutableOperation(operation, 'cancelling')
+    return true
+  }
+
+  private async cancelMutableOperation(
+    operation: MutableThreadOperation,
+    phase: Exclude<ThreadOperationPhase, 'running'>
+  ): Promise<boolean> {
+    const { threadId } = operation
+
     operation.phase =
       phase === 'closing' || operation.phase === 'closing'
         ? 'closing'
@@ -223,6 +245,8 @@ export class ThreadOperationCoordinator {
     return {
       ...this.toSnapshot(operation),
       done: operation.done,
+      cancel: async () =>
+        await this.cancelOwnedOperation(operation.threadId, operation.token),
     }
   }
 }

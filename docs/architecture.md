@@ -17,6 +17,7 @@ Provider-specific website behavior stays behind adapters. The runtime understand
 | Process entry     | `src/index.ts`, `src/app.ts`            | Parse options, build services, run input dispatch, coordinate cancellation, and shut down           |
 | Configuration     | `src/config/`                           | Create, validate, comment, lock, and atomically update `data/config.yaml`                           |
 | HTTP API          | `src/api/`                              | Serve authenticated routes, thread operations, and per-thread SSE event streams                     |
+| MCP Server        | `src/mcp-server/`                       | Expose selected thread operations through an independent Streamable HTTP MCP listener               |
 | Browser platform  | `src/platform/`                         | Launch Chromium, connect over CDP, and manage platform-specific process lifetime                    |
 | Provider adapters | `src/providers/adapters/`               | Navigate pages, detect login/readiness, submit, stream, upload, select models, and stop output      |
 | History parsing   | `src/providers/conversation-history.ts` | Convert six provider history formats into visible user/assistant messages                           |
@@ -240,6 +241,19 @@ The `mcp` section of `data/config.yaml` currently supports only `connectionStrat
 Only connected Server and Tool names appear in the setup prompt. `mcp_search_tool` reads one exact cached definition, while `mcp_call_tool` dispatches one exact request. Tool list-change notifications refresh the current cache but do not rewrite the setup snapshot. Resource and Prompt commands operate through the active thread session and submit each attachment as its own user turn. See [MCP](mcp.md).
 
 Closing a runtime closes its MCP clients and stdio child processes.
+
+## Portal MCP Server
+
+`src/mcp-server/` is independent from both the HTTP API and the outbound MCP
+client code under `src/mcp/`. `/mcp-server start` creates a stateless Streamable
+HTTP listener with fixed Portal tools. Its handlers call the same in-process
+thread and runtime services used by the TUI; they do not call HTTP API routes.
+
+MCP message submissions receive process-local operation ids so clients can
+send, wait, and cancel without holding one request open for the full provider
+turn. The thread operation coordinator prevents concurrent work on one thread
+and uses operation-owned cancellation handles to avoid cancelling later work.
+See [Portal MCP Server](mcp-server.md).
 
 ## Local data layout
 

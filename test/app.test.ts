@@ -10,6 +10,7 @@ import {
   createPortalRuntimeSettings,
   showPendingThreadTimeline,
   shouldRenderFallbackThreadError,
+  stopMcpForegroundOperation,
   transitionLoginWaitWarning,
 } from '../src/app.ts'
 import { createDefaultAdvancedConfig } from '../src/config/portal-config.ts'
@@ -36,6 +37,29 @@ test('closeWithTimeout returns when a close operation hangs', async () => {
   await closeWithTimeout(async () => {
     await new Promise(() => {})
   }, 10)
+})
+
+test('MCP foreground cancellation aborts and calls its stop target once', async () => {
+  const controller = new AbortController()
+  let stopCalls = 0
+  const operation = {
+    controller,
+    stopTarget: {
+      stopGeneration: async () => {
+        stopCalls += 1
+      },
+    },
+    done: Promise.resolve(),
+    cancellation: null,
+  }
+
+  await Promise.all([
+    stopMcpForegroundOperation(operation, 100),
+    stopMcpForegroundOperation(operation, 100),
+  ])
+
+  assert.equal(controller.signal.aborted, true)
+  assert.equal(stopCalls, 1)
 })
 
 test('createPortalRuntimeSettings converts every advanced section to runtime units', () => {
@@ -180,6 +204,9 @@ test('busy threads allow navigation and queries but reject runtime mutations', (
     '/thread status',
     '/mcp list',
     '/mcp resource list',
+    '/mcp-server start',
+    '/mcp-server status',
+    '/mcp-server stop',
     '/skill list',
     '/job',
     '/job stop j-1',

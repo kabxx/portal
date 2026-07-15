@@ -72,7 +72,7 @@ npm install
 npm run dev
 ```
 
-首次运行时，portal 会创建带注释的 `data/config.yaml`，覆盖浏览器、项目指令、HTTP API、MCP、Skills、Hooks 和高级 runtime 限制。项目指令来源默认关闭，完整字段请参阅[配置文档](configuration.md)。自动生成的 `browser.profilePath` 是绝对路径 `data/profiles/chromium`。
+首次运行时，portal 会创建带注释的 `data/config.yaml`，覆盖浏览器、项目指令、HTTP API、Portal MCP Server、出站 MCP 连接、Skills、Hooks 和高级 runtime 限制。项目指令来源默认关闭，完整字段请参阅[配置文档](configuration.md)。自动生成的 `browser.profilePath` 是绝对路径 `data/profiles/chromium`。
 
 需要时可以覆盖浏览器引擎、可执行文件或端口：
 
@@ -139,18 +139,19 @@ resume 加载的远程消息只用于显示，不会增加 `/thread list` 中的
 
 ## 命令
 
-| 命令            | 用途                                          |
-| --------------- | --------------------------------------------- |
-| `/help`         | 显示顶级命令帮助                              |
-| `/providers`    | 列出支持的 Provider id                        |
-| `/thread ...`   | 创建、恢复、切换、查看、detach 和关闭         |
-| `/skill ...`    | 添加、列出、启用、禁用和删除 Skill            |
-| `/mcp ...`      | 管理 MCP Server，并 attach Resource 或 Prompt |
-| `/serve ...`    | 启动和管理本地 HTTP API                       |
-| `/job`          | 列出仍在运行的 `run_command` job              |
-| `/job stop ...` | 停止一个仍在运行的 `run_command` job          |
-| `/hook ...`     | 查看、reload、启用或禁用生命周期 Hooks        |
-| `/exit`         | 关闭 portal                                   |
+| 命令              | 用途                                          |
+| ----------------- | --------------------------------------------- |
+| `/help`           | 显示顶级命令帮助                              |
+| `/providers`      | 列出支持的 Provider id                        |
+| `/thread ...`     | 创建、恢复、切换、查看、detach 和关闭         |
+| `/skill ...`      | 添加、列出、启用、禁用和删除 Skill            |
+| `/mcp ...`        | 管理 MCP Server，并 attach Resource 或 Prompt |
+| `/serve ...`      | 启动和管理本地 HTTP API                       |
+| `/mcp-server ...` | 启动和管理独立的 Portal MCP Server            |
+| `/job`            | 列出仍在运行的 `run_command` job              |
+| `/job stop ...`   | 停止一个仍在运行的 `run_command` job          |
+| `/hook ...`       | 查看、reload、启用或禁用生命周期 Hooks        |
+| `/exit`           | 关闭 portal                                   |
 
 顶级命令和一级子命令支持用 `Tab` 进行唯一前缀补全。
 
@@ -206,6 +207,18 @@ $<name> [task]
 ## MCP
 
 portal 支持 stdio 和 Streamable HTTP MCP Server。当前 `per-thread` 策略会让每个新建、resume 或 spawn 的 runtime 按照 `data/config.yaml` 的 `mcp` 配置创建全新的独立连接。
+
+以上是 Portal 的出站 MCP client 能力。Portal 也可以通过独立的
+Streamable HTTP MCP Server 暴露精选 thread 操作：
+
+```text
+/mcp-server start
+/mcp-server status
+/mcp-server token
+/mcp-server stop
+```
+
+配置、工具、认证和安全边界参见 [Portal MCP Server](mcp-server.md)。
 
 ```text
 /mcp add <name> <url> [--header "Name: value"]...

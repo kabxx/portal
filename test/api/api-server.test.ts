@@ -288,6 +288,47 @@ test('PortalApiServer can restart after stopping', async () => {
   }
 })
 
+test('PortalApiServer allows non-loopback listeners without authentication', async () => {
+  const server = new PortalApiServer({
+    host: '0.0.0.0',
+    port: 0,
+    token: '',
+    handlers: createHandlers([]),
+  })
+
+  await server.start()
+  try {
+    assert.deepEqual(server.status(), {
+      running: true,
+      address: server.address(),
+      auth: false,
+    })
+    const address = server.address()!.replace('0.0.0.0', '127.0.0.1')
+    const response = await fetch(`${address}/v1/status`)
+    assert.equal(response.status, 200)
+  } finally {
+    await server.stop()
+  }
+})
+
+test('PortalApiServer treats whitespace as an enabled token', async () => {
+  const server = new PortalApiServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: '   ',
+    handlers: createHandlers([]),
+  })
+
+  await server.start()
+  try {
+    assert.equal(server.status().auth, true)
+    const response = await fetch(`${server.address()}/v1/status`)
+    assert.equal(response.status, 401)
+  } finally {
+    await server.stop()
+  }
+})
+
 test('PortalApiServer reports unsupported thread reload handlers', async () => {
   const server = new PortalApiServer({
     host: '127.0.0.1',

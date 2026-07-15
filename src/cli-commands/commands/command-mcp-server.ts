@@ -5,63 +5,63 @@ import type {
 } from '../core/command-types.ts'
 import { isUnauthenticatedNonLoopbackListener } from '../core/listener-security.ts'
 
-export const ServeCommand: CliCommand = {
-  name: '/serve',
-  usage: '/serve <start|status|stop|token>',
-  description: 'Manage the local HTTP API server.',
+export const McpServerCommand: CliCommand = {
+  name: '/mcp-server',
+  usage: '/mcp-server <start|status|stop|token>',
+  description: 'Manage the Portal MCP Server.',
   subcommands: ['start', 'status', 'stop', 'token'],
   async execute(context: CliCommandContext, args: readonly string[]) {
-    if (context.api === undefined) {
-      context.ui.renderError('/serve', 'HTTP API is unavailable.')
+    if (context.mcpServer === undefined) {
+      context.ui.renderError('/mcp-server', 'MCP Server is unavailable.')
       return { continue: true }
     }
     const action = args[0] ?? ''
     if (action === 'start') {
       try {
-        await context.api.start()
-        context.ui.renderSuccess('/serve start', 'HTTP API server started.')
-        if (isUnauthenticatedNonLoopbackListener(context.api.status())) {
+        await context.mcpServer.start()
+        context.ui.renderSuccess('/mcp-server start', 'MCP Server started.')
+        if (isUnauthenticatedNonLoopbackListener(context.mcpServer.status())) {
           context.ui.renderWarning(
-            '/serve start',
+            '/mcp-server start',
             'Authentication is disabled on a non-loopback listener.'
           )
         }
       } catch (error) {
-        context.ui.renderError('/serve start', getErrorMessage(error))
+        context.ui.renderError('/mcp-server start', getErrorMessage(error))
       }
       return { continue: true }
     }
     if (action === 'stop') {
       try {
-        await context.api.stop()
-        context.ui.renderSuccess('/serve stop', 'HTTP API server stopped.')
+        await context.mcpServer.stop()
+        context.ui.renderSuccess('/mcp-server stop', 'MCP Server stopped.')
       } catch (error) {
-        context.ui.renderError('/serve stop', getErrorMessage(error))
+        context.ui.renderError('/mcp-server stop', getErrorMessage(error))
       }
       return { continue: true }
     }
     if (action === 'token') {
-      const token = context.api.token()
+      const token = context.mcpServer.token()
       context.ui.renderInfo(
-        '/serve token',
+        '/mcp-server token',
         token === null || token === '' ? 'Authentication disabled.' : token
       )
       return { continue: true }
     }
     if (action === 'status') {
-      const status = context.api.status()
-      context.ui.renderInfo('/serve status', [
+      const status = context.mcpServer.status()
+      context.ui.renderInfo('/mcp-server status', [
         `Running: ${status.running ? 'yes' : 'no'}`,
         `Address: ${status.address ?? '-'}`,
         `Authentication: ${status.auth ? 'enabled' : 'disabled'}`,
       ])
       return { continue: true }
     }
-    context.ui.renderInfo('/serve', [
+    context.ui.renderInfo('/mcp-server', [
       'Subcommands:',
-      '  start   Start the HTTP API server.',
+      '  start   Start the Portal MCP Server.',
       '  status  Show server status.',
-      '  stop    Stop the HTTP API server.',
+      '  stop    Stop the Portal MCP Server.',
       '  token   Show the configured token state.',
     ])
     return { continue: true }
