@@ -91,10 +91,6 @@ test('TerminalController renders the thread command namespace in help', () => {
   assert.equal(body.startsWith('Commands:\n'), true)
   assert.ok(body.includes('/thread <subcommand>'))
   assert.ok(body.includes('/skill <subcommand>'))
-  assert.equal(body.includes('/open '), false)
-  assert.equal(body.includes('/switch '), false)
-  assert.equal(body.includes('/capability'), false)
-  assert.equal(body.includes('/clear'), false)
   const commandLines = body.split('\n').slice(1)
   const descriptionColumns = commandLines.map((line) => {
     const command = DEFAULT_COMMANDS.find((item) => {

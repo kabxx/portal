@@ -783,7 +783,6 @@ test('RuntimeCore exposes Tools directly and ends with the READY handshake', () 
   assert.equal(runtime.prompt, runtime.prompt.trim())
   assert.doesNotMatch(runtime.prompt, /\n{4,}/)
   assert.match(runtime.prompt, /# Tools/)
-  assert.doesNotMatch(runtime.prompt, /Runtime Capabilities|Host Tool/)
   assert.ok(
     runtime.prompt.indexOf('# Tools') <
       runtime.prompt.indexOf('# Runtime Context')

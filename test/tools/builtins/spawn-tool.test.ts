@@ -75,6 +75,33 @@ test('SpawnTool emits a start progress event before running the child task', asy
   assert.deepEqual(events, ['start'])
 })
 
+test('SpawnTool ignores progress rendering failures and forwards options', async () => {
+  let receivedInput: { prompt: string; provider?: string } | undefined
+  let receivedOptions: unknown
+  const tool = new SpawnTool({} as any, {
+    spawnTask: async (input, options) => {
+      receivedInput = input
+      receivedOptions = options
+      return {
+        provider: 'chatgpt',
+        conversationUrl: 'https://chatgpt.com/c/worker',
+        output: 'done',
+      }
+    },
+  })
+  const options = {
+    onProgress: () => {
+      throw new Error('display failed')
+    },
+  }
+
+  const output = await tool.call({ prompt: 'inspect the child task' }, options)
+
+  assert.deepEqual(receivedInput, { prompt: 'inspect the child task' })
+  assert.equal(receivedOptions, options)
+  assert.equal((output.result as { output: string }).output, 'done')
+})
+
 test('SpawnTool rejects missing prompt before invoking the runner', async () => {
   const tool = new SpawnTool({} as any, {
     spawnTask: async () => {
@@ -83,6 +110,16 @@ test('SpawnTool rejects missing prompt before invoking the runner', async () => 
   })
 
   assert.deepEqual(await tool.call({ prompt: '' }), {
+    outcome: 'error',
+    result: { message: 'spawn requires a non-empty string params.prompt' },
+    displayText: 'spawn requires a non-empty string params.prompt',
+  })
+  assert.deepEqual(await tool.call({ prompt: '   ' }), {
+    outcome: 'error',
+    result: { message: 'spawn requires a non-empty string params.prompt' },
+    displayText: 'spawn requires a non-empty string params.prompt',
+  })
+  assert.deepEqual(await tool.call({ prompt: 1 } as any), {
     outcome: 'error',
     result: { message: 'spawn requires a non-empty string params.prompt' },
     displayText: 'spawn requires a non-empty string params.prompt',

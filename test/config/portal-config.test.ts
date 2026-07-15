@@ -289,37 +289,6 @@ test('ensurePortalConfig writes normalized API tokens back to disk', async () =>
   }
 })
 
-test('parsePortalConfig rejects the removed provider response timeout', () => {
-  const config = structuredClone(createDefaultPortalConfig('data')) as any
-  config.advanced.provider.responseTimeoutMinutes = 5
-
-  assert.throws(
-    () => parsePortalConfig(config),
-    /Unsupported advanced\.provider fields: responseTimeoutMinutes/
-  )
-})
-
-test('ensurePortalConfig rejects the removed provider response timeout without rewriting', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-timeout-'))
-  const configPath = path.join(root, 'config.yaml')
-  const config = structuredClone(createDefaultPortalConfig(root)) as any
-  config.advanced.provider.responseTimeoutMinutes = 5
-  const contents = stringifyYaml(config)
-
-  try {
-    await writeFile(configPath, contents, 'utf8')
-
-    await assert.rejects(
-      ensurePortalConfig(configPath, createDefaultPortalConfig(root)),
-      /Unsupported advanced\.provider fields: responseTimeoutMinutes/
-    )
-
-    assert.equal(await readFile(configPath, 'utf8'), contents)
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
 test('parsePortalConfig rejects unknown and invalid advanced settings', () => {
   const valid = createDefaultPortalConfig()
 
@@ -353,6 +322,26 @@ test('parsePortalConfig rejects unknown and invalid advanced settings', () => {
       }),
     /advanced\.command\.stopGraceSeconds must be a positive number/
   )
+})
+
+test('ensurePortalConfig preserves files with unsupported advanced fields', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-invalid-'))
+  const configPath = path.join(root, 'config.yaml')
+  const config = createDefaultPortalConfig(root) as any
+  config.advanced.hidden = true
+  const contents = stringifyYaml(config)
+
+  try {
+    await writeFile(configPath, contents, 'utf8')
+
+    await assert.rejects(
+      ensurePortalConfig(configPath, createDefaultPortalConfig(root)),
+      /Unsupported advanced fields: hidden/
+    )
+    assert.equal(await readFile(configPath, 'utf8'), contents)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test('ensurePortalConfig writes a missing API section into an existing config', async () => {

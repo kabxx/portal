@@ -27,12 +27,19 @@ npm run dev
 npm test
 npm run test:type
 npm run test:unit
+npm run test:coverage
 npm run fmt:check
 ```
+
+`test:unit` includes deterministic local integration tests such as the MCP stdio and HTTP connection checks. `test:coverage` runs the same suite and reports line, branch, and function coverage for source modules loaded by the tests. It does not replace the manual browser checks below and must not be interpreted as coverage of provider websites or modules that the suite never imports.
+
+See [Testing](testing.md) for the current coverage inventory, audit decisions, and known gaps.
 
 Use `npm run fmt` only when you intend to rewrite formatting. Before submitting a change, review the final diff and make sure unrelated files were not modified.
 
 Every pull request runs the type check, unit tests, and formatting check in GitHub Actions on Node.js 22. Unit tests run on Ubuntu, Windows, and macOS because browser discovery and process support have platform-specific behavior.
+
+Tests should protect current observable behavior, failure handling, cleanup, and security boundaries. Do not keep migration-only assertions whose sole purpose is proving that a removed command, field, or wording is still absent. Negative tests remain valuable when they define a current invalid-input or safety contract.
 
 ## Manual browser smoke check
 

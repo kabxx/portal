@@ -169,7 +169,6 @@ test('Grok provider prompt defines a strict Tool boundary', () => {
   assert.match(GROK_PROVIDER_PROMPT, /^# Grok Tool Boundary/)
   assert.match(GROK_PROVIDER_PROMPT, /The "Tools" section/)
   assert.match(GROK_PROVIDER_PROMPT, /exactly one raw valid <tool>/)
-  assert.doesNotMatch(GROK_PROVIDER_PROMPT, /Runtime Capabilities|Host Tool/)
 })
 
 test('busy threads allow navigation and queries but reject runtime mutations', () => {
