@@ -140,7 +140,25 @@ test('vertical cursor movement follows display columns between lines', () => {
   assert.equal(moveCursorVertical('abcd\nx\nwxyz', 3, 1), 6)
   assert.equal(moveCursorVertical('abcd\nx\nwxyz', 10, -1), 6)
   assert.equal(moveCursorVertical('ab\n中x', 2, 1), 4)
-  assert.equal(moveCursorVertical('single line', 4, -1), 4)
+})
+
+test('vertical cursor movement reaches the input boundary from its edge lines', () => {
+  const multiline = 'abcd\nx\nwxyz'
+
+  assert.equal(moveCursorVertical(multiline, 3, -1), 0)
+  assert.equal(moveCursorVertical(multiline, 0, -1), 0)
+  assert.equal(moveCursorVertical(multiline, 9, 1), multiline.length)
+  assert.equal(
+    moveCursorVertical(multiline, multiline.length, 1),
+    multiline.length
+  )
+
+  assert.equal(moveCursorVertical('single line', 4, -1), 0)
+  assert.equal(moveCursorVertical('single line', 4, 1), 11)
+  assert.equal(moveCursorVertical('', 0, -1), 0)
+  assert.equal(moveCursorVertical('', 0, 1), 0)
+  assert.equal(moveCursorVertical('\nlast', 0, -1), 0)
+  assert.equal(moveCursorVertical('first\n', 6, 1), 6)
 })
 
 test('vertical cursor movement can preserve a preferred display column', () => {
