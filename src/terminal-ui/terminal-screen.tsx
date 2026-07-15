@@ -514,6 +514,39 @@ export function completeSlashCommand(
   return `/${commandPrefix} ${matches[0]} `
 }
 
+export function completeManualSkill(
+  value: string,
+  cursor: number,
+  manualSkillNames: readonly string[]
+): { value: string; cursor: number } {
+  const safeCursor = clampCursor(value, cursor)
+  const beforeCursor = value.slice(0, safeCursor)
+  const match = beforeCursor.match(/^\$(\S*)$/)
+  if (match === null) {
+    return { value, cursor: safeCursor }
+  }
+
+  const suffix = value.slice(safeCursor)
+  if (suffix.length > 0 && !/^\s/.test(suffix)) {
+    return { value, cursor: safeCursor }
+  }
+
+  const prefix = match[1] ?? ''
+  const matches = manualSkillNames.filter((name) => name.startsWith(prefix))
+  if (matches.length !== 1) {
+    return { value, cursor: safeCursor }
+  }
+
+  const completedToken = `$${matches[0]}`
+  const replacement =
+    suffix.length === 0 ? `${completedToken} ` : completedToken
+  const tokenStart = beforeCursor.length - match[0].length
+  return {
+    value: value.slice(0, tokenStart) + replacement + suffix,
+    cursor: tokenStart + replacement.length,
+  }
+}
+
 export function resolveInputSyntaxHighlight(
   value: string,
   commands: readonly CliCommand[],
@@ -816,11 +849,31 @@ export function TerminalScreen({
     }
 
     if (key.tab || input === '\t') {
-      if (state.busy && !inputValue.trimStart().startsWith('/')) return
+      const trimmedInput = inputValue.trimStart()
+      if (
+        state.busy &&
+        !trimmedInput.startsWith('/') &&
+        !trimmedInput.startsWith('$')
+      ) {
+        return
+      }
       historyRef.current.resetCursor()
       setInputState((current) => {
-        const value = completeSlashCommand(current.value, commands)
-        return { value, cursor: value.length, preferredColumn: null }
+        const commandValue = completeSlashCommand(current.value, commands)
+        if (commandValue !== current.value) {
+          return {
+            value: commandValue,
+            cursor: commandValue.length,
+            preferredColumn: null,
+          }
+        }
+
+        const skillCompletion = completeManualSkill(
+          current.value,
+          current.cursor,
+          ui.getActiveManualSkillNames()
+        )
+        return { ...skillCompletion, preferredColumn: null }
       })
       return
     }
