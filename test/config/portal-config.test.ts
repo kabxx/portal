@@ -273,55 +273,32 @@ test('ensurePortalConfig writes normalized API tokens back to disk', async () =>
   }
 })
 
-test('parsePortalConfig migrates the legacy provider response timeout', () => {
-  const legacy = structuredClone(createDefaultPortalConfig('data')) as any
-  delete legacy.advanced.provider.responseStartTimeoutSeconds
-  delete legacy.advanced.provider.responseStallTimeoutSeconds
-  legacy.advanced.provider.responseTimeoutMinutes = 5
+test('parsePortalConfig rejects the removed provider response timeout', () => {
+  const config = structuredClone(createDefaultPortalConfig('data')) as any
+  config.advanced.provider.responseTimeoutMinutes = 5
 
-  const migratedDefault = parsePortalConfig(legacy)
-  assert.equal(
-    migratedDefault.advanced.provider.responseStartTimeoutSeconds,
-    30
-  )
-  assert.equal(
-    migratedDefault.advanced.provider.responseStallTimeoutSeconds,
-    30
-  )
-
-  legacy.advanced.provider.responseTimeoutMinutes = 2
-  const migratedCustom = parsePortalConfig(legacy)
-  assert.equal(
-    migratedCustom.advanced.provider.responseStartTimeoutSeconds,
-    120
-  )
-  assert.equal(
-    migratedCustom.advanced.provider.responseStallTimeoutSeconds,
-    120
+  assert.throws(
+    () => parsePortalConfig(config),
+    /Unsupported advanced\.provider fields: responseTimeoutMinutes/
   )
 })
 
-test('ensurePortalConfig rewrites the legacy provider response timeout fields', async () => {
+test('ensurePortalConfig rejects the removed provider response timeout without rewriting', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-timeout-'))
   const configPath = path.join(root, 'config.yaml')
-  const legacy = structuredClone(createDefaultPortalConfig(root)) as any
-  delete legacy.advanced.provider.responseStartTimeoutSeconds
-  delete legacy.advanced.provider.responseStallTimeoutSeconds
-  legacy.advanced.provider.responseTimeoutMinutes = 5
+  const config = structuredClone(createDefaultPortalConfig(root)) as any
+  config.advanced.provider.responseTimeoutMinutes = 5
+  const contents = stringifyYaml(config)
 
   try {
-    await writeFile(configPath, stringifyYaml(legacy), 'utf8')
-    const config = await ensurePortalConfig(
-      configPath,
-      createDefaultPortalConfig(root)
-    )
-    const contents = await readFile(configPath, 'utf8')
+    await writeFile(configPath, contents, 'utf8')
 
-    assert.equal(config.advanced.provider.responseStartTimeoutSeconds, 30)
-    assert.equal(config.advanced.provider.responseStallTimeoutSeconds, 30)
-    assert.doesNotMatch(contents, /responseTimeoutMinutes/)
-    assert.match(contents, /responseStartTimeoutSeconds: 30/)
-    assert.match(contents, /responseStallTimeoutSeconds: 30/)
+    await assert.rejects(
+      ensurePortalConfig(configPath, createDefaultPortalConfig(root)),
+      /Unsupported advanced\.provider fields: responseTimeoutMinutes/
+    )
+
+    assert.equal(await readFile(configPath, 'utf8'), contents)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

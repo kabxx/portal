@@ -156,16 +156,6 @@ const ADVANCED_PROVIDER_FIELDS = new Set([
   'blockedWarningEverySeconds',
   'responseStartTimeoutSeconds',
   'responseStallTimeoutSeconds',
-  'responseTimeoutMinutes',
-  'restoreTimeoutSeconds',
-  'historyLoadTimeoutSeconds',
-  'historyPageTimeoutSeconds',
-])
-const ADVANCED_PROVIDER_MANAGED_FIELDS = new Set([
-  'requestStartWarningAfterSeconds',
-  'blockedWarningEverySeconds',
-  'responseStartTimeoutSeconds',
-  'responseStallTimeoutSeconds',
   'restoreTimeoutSeconds',
   'historyLoadTimeoutSeconds',
   'historyPageTimeoutSeconds',
@@ -498,19 +488,6 @@ export function parseAdvancedConfig(value: unknown): PortalAdvancedConfig {
   )
   assertSupportedFields(hooks, ADVANCED_HOOKS_FIELDS, 'advanced.hooks')
 
-  const legacyResponseTimeoutMinutes =
-    provider.responseTimeoutMinutes === undefined
-      ? null
-      : parsePositiveInteger(
-          provider.responseTimeoutMinutes,
-          5,
-          'advanced.provider.responseTimeoutMinutes'
-        )
-  const legacyResponseTimeoutSeconds =
-    legacyResponseTimeoutMinutes === null || legacyResponseTimeoutMinutes === 5
-      ? 30
-      : legacyResponseTimeoutMinutes * 60
-
   return {
     browser: {
       startupTimeoutSeconds: parsePositiveInteger(
@@ -537,12 +514,12 @@ export function parseAdvancedConfig(value: unknown): PortalAdvancedConfig {
       ),
       responseStartTimeoutSeconds: parsePositiveInteger(
         provider.responseStartTimeoutSeconds,
-        legacyResponseTimeoutSeconds,
+        defaults.provider.responseStartTimeoutSeconds,
         'advanced.provider.responseStartTimeoutSeconds'
       ),
       responseStallTimeoutSeconds: parsePositiveInteger(
         provider.responseStallTimeoutSeconds,
-        legacyResponseTimeoutSeconds,
+        defaults.provider.responseStallTimeoutSeconds,
         'advanced.provider.responseStallTimeoutSeconds'
       ),
       restoreTimeoutSeconds: parsePositiveInteger(
@@ -738,7 +715,7 @@ async function hasCompleteManagedSections(
     readonly [name: string, fields: ReadonlySet<string>]
   > = [
     ['browser', ADVANCED_BROWSER_FIELDS],
-    ['provider', ADVANCED_PROVIDER_MANAGED_FIELDS],
+    ['provider', ADVANCED_PROVIDER_FIELDS],
     ['runtime', ADVANCED_RUNTIME_FIELDS],
     ['command', ADVANCED_COMMAND_FIELDS],
     ['skillInstall', ADVANCED_SKILL_INSTALL_FIELDS],
@@ -750,9 +727,6 @@ async function hasCompleteManagedSections(
     const section = (document.advanced as Record<string, unknown>)[name]
     return (
       isRecord(section) &&
-      !(
-        name === 'provider' && Object.hasOwn(section, 'responseTimeoutMinutes')
-      ) &&
       [...fields].every((field) => Object.hasOwn(section, field))
     )
   })

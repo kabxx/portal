@@ -26,7 +26,10 @@ import {
   buildRuntimeRecoveryPlan,
   tryRestoreRuntimeForRecovery,
 } from './runtime/runtime-recovery.ts'
-import type { ToolServices } from './tools/core/tool-definition.ts'
+import type {
+  SpawnTaskResult,
+  ToolServices,
+} from './tools/core/tool-definition.ts'
 import {
   RunCommandJobManager,
   type RunCommandJobManagerOptions,
@@ -443,7 +446,10 @@ function createToolServices({
           ? provider
           : normalizeProviderId(requestedProvider)
       if (spawnProvider === null) {
-        return `[ERROR] Unsupported spawn provider: ${requestedProvider}`
+        return {
+          kind: 'error',
+          message: `Unsupported spawn provider: ${requestedProvider}`,
+        }
       }
       const spawnOptions = {
         context,
@@ -507,7 +513,7 @@ async function runSpawnTask({
   settings: PortalRuntimeSettings
   executionScope?: import('./hooks/hook-types.ts').HookExecutionScope
   signal?: AbortSignal
-}): Promise<string> {
+}): Promise<SpawnTaskResult> {
   let adapter: ProviderAdapter | null = null
   let runtime: RuntimeCore | null = null
   const spawnId = randomUUID()
@@ -569,15 +575,11 @@ async function runSpawnTask({
         executionScope
       )
     }
-    return JSON.stringify(
-      {
-        provider,
-        conversationUrl: runtime.conversationUrl,
-        output,
-      },
-      null,
-      2
-    )
+    return {
+      provider,
+      conversationUrl: runtime.conversationUrl,
+      output,
+    }
   } catch (error) {
     if (executionScope !== undefined) {
       await hookDispatcher.dispatch(

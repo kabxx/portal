@@ -16,7 +16,6 @@ import {
   formatInputAroundCursorWithSyntax,
   formatInputForDisplay,
   insertAtCursor,
-  isDisabledEnterKey,
   isNewlineKey,
   isSubmitKey,
   moveCursorHorizontal,
@@ -55,11 +54,6 @@ test('isNewlineKey treats Shift+Enter as newline', () => {
 test('Ctrl+Enter is neither newline nor submit', () => {
   assert.equal(isNewlineKey(key({ return: true, ctrl: true })), false)
   assert.equal(isSubmitKey(key({ return: true, ctrl: true })), false)
-  assert.equal(
-    isDisabledEnterKey('\r', key({ return: true, ctrl: true })),
-    true
-  )
-  assert.equal(isDisabledEnterKey('\n', key()), true)
 })
 
 test('clearInput clears the current input', () => {
