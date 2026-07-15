@@ -35,11 +35,11 @@ test('ensurePortalConfig creates one YAML file with concrete defaults', async ()
 
     assert.deepEqual(config, defaults)
     assert.deepEqual(document, defaults)
-    assert.equal(defaults.browser.name, 'edge')
+    assert.equal(defaults.browser.engine, 'chromium')
     assert.equal(path.isAbsolute(defaults.browser.executablePath), true)
     assert.equal(
       defaults.browser.profilePath,
-      path.join(dataDirectory, 'profiles', defaults.browser.name)
+      path.join(dataDirectory, 'profiles', defaults.browser.engine)
     )
     assert.equal(defaults.browser.remoteDebuggingPort, 9222)
     assert.deepEqual(defaults.agentInstructions, {
@@ -68,7 +68,7 @@ test('readPortalConfig parses YAML and strips a UTF-8 BOM', async () => {
       configPath,
       [
         '\uFEFFbrowser:',
-        '  name: edge',
+        '  engine: chromium',
         `  executablePath: ${JSON.stringify(executablePath)}`,
         `  profilePath: ${JSON.stringify(profilePath)}`,
         '  remoteDebuggingPort: 9222',
@@ -83,7 +83,7 @@ test('readPortalConfig parses YAML and strips a UTF-8 BOM', async () => {
 
     assert.deepEqual(await readPortalConfig(configPath), {
       browser: {
-        name: 'edge',
+        engine: 'chromium',
         executablePath,
         profilePath,
         remoteDebuggingPort: 9222,
@@ -98,6 +98,32 @@ test('readPortalConfig parses YAML and strips a UTF-8 BOM', async () => {
       hooks: { enabled: false, maxDepth: 1, handlers: [] },
       advanced: createDefaultAdvancedConfig(),
     })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('ensurePortalConfig rejects browser.name without rewriting the file', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-name-'))
+  const configPath = path.join(root, 'config.yaml')
+  const defaults = createDefaultPortalConfig(root)
+  const contents = stringifyYaml({
+    ...defaults,
+    browser: {
+      name: 'edge',
+      executablePath: defaults.browser.executablePath,
+      profilePath: defaults.browser.profilePath,
+      remoteDebuggingPort: defaults.browser.remoteDebuggingPort,
+    },
+  })
+
+  try {
+    await writeFile(configPath, contents, 'utf8')
+    await assert.rejects(
+      ensurePortalConfig(configPath, defaults),
+      /Unsupported browser fields: name/
+    )
+    assert.equal(await readFile(configPath, 'utf8'), contents)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -409,6 +435,27 @@ test('ensurePortalConfig completes a partial API section without replacing its v
 test('parsePortalConfig rejects invalid browser, MCP, and Skill sections', () => {
   const valid = createDefaultPortalConfig()
 
+  assert.throws(
+    () =>
+      parsePortalConfig({
+        ...valid,
+        browser: { ...valid.browser, engine: 'firefox' },
+      }),
+    /browser\.engine must be "chromium"/
+  )
+  assert.throws(
+    () =>
+      parsePortalConfig({
+        ...valid,
+        browser: {
+          name: 'edge',
+          executablePath: valid.browser.executablePath,
+          profilePath: valid.browser.profilePath,
+          remoteDebuggingPort: valid.browser.remoteDebuggingPort,
+        },
+      }),
+    /Unsupported browser fields: name/
+  )
   assert.equal(
     parsePortalConfig({
       ...valid,

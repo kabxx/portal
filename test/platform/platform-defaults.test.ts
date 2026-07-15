@@ -25,6 +25,15 @@ test('browser defaults include native macOS application paths', () => {
       '/Users/tester/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
     )
   )
+  for (const executable of [
+    '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+    '/Applications/Vivaldi.app/Contents/MacOS/Vivaldi',
+    '/Applications/Opera.app/Contents/MacOS/Opera',
+    '/Applications/Opera GX.app/Contents/MacOS/Opera GX',
+    '/Applications/Arc.app/Contents/MacOS/Arc',
+  ]) {
+    assert.ok(candidates.includes(executable))
+  }
 })
 
 test('browser defaults include Windows installation roots', () => {
@@ -47,6 +56,15 @@ test('browser defaults include Windows installation roots', () => {
       'D:\\Users\\tester\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe'
     )
   )
+  for (const executable of [
+    'D:\\Users\\tester\\AppData\\Local\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+    'D:\\Users\\tester\\AppData\\Local\\Vivaldi\\Application\\vivaldi.exe',
+    'D:\\Users\\tester\\AppData\\Local\\Programs\\Opera\\launcher.exe',
+    'D:\\Users\\tester\\AppData\\Local\\Programs\\Opera GX\\launcher.exe',
+    'D:\\Users\\tester\\AppData\\Local\\Microsoft\\WindowsApps\\Arc.exe',
+  ]) {
+    assert.ok(candidates.includes(executable))
+  }
 })
 
 test('browser defaults include Linux distribution and PATH locations', () => {
@@ -57,6 +75,14 @@ test('browser defaults include Linux distribution and PATH locations', () => {
   assert.equal(candidates[0], '/usr/bin/microsoft-edge')
   assert.ok(candidates.includes('/snap/bin/chromium'))
   assert.ok(candidates.includes('/custom/bin/chromium'))
+  for (const executable of [
+    '/usr/bin/brave-browser',
+    '/usr/bin/vivaldi-stable',
+    '/usr/bin/opera-stable',
+    '/custom/bin/brave-browser',
+  ]) {
+    assert.ok(candidates.includes(executable))
+  }
 })
 
 test('default shell follows the platform and login shell', () => {

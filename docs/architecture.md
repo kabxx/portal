@@ -35,7 +35,7 @@ Provider-specific website behavior stays behind adapters. The runtime understand
 
 `run()` in `src/app.ts` performs top-level orchestration:
 
-1. Parse the browser name, executable path, and remote debugging port.
+1. Parse the browser engine, executable path, and remote debugging port.
 2. Resolve `data/` from the current working directory.
 3. Initialize missing `config.yaml` without overwriting existing user files.
 4. Open `data/threads.db` and initialize its schema.
@@ -245,7 +245,7 @@ Closing a runtime closes its MCP clients and stdio child processes.
 
 ```text
 data/
-├── profiles/<browserName>/
+├── profiles/chromium/
 ├── threads.db
 ├── config.yaml
 ├── skills/
