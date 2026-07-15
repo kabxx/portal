@@ -280,7 +280,7 @@ export const GROK_PROVIDER_PROMPT = [
 ].join('\n')
 
 interface Options {
-  browserName?: string
+  browserEngine?: string
   browserExecutablePath?: string
   browserRemoteDebuggingPort?: string
 }
@@ -350,8 +350,8 @@ function buildProgram() {
     )
     .version(PORTAL_VERSION)
     .option(
-      '--browser-name <name>',
-      'browser to use (chromium-based browsers like chromium, chrome, or edge)'
+      '--browser-engine <engine>',
+      'browser automation engine (currently only chromium)'
     )
     .option(
       '--browser-executable-path <path>',
@@ -1006,7 +1006,10 @@ export async function run(argv = process.argv): Promise<void> {
     hookEvents,
     settings.hookCommandOutputLimitBytes
   )
-  const browserName = options.browserName ?? portalConfig.browser.name
+  const browserEngine = options.browserEngine ?? portalConfig.browser.engine
+  if (browserEngine !== 'chromium') {
+    throw new Error(`Unsupported browser engine: ${browserEngine}`)
+  }
   const browserExecutablePath = path.resolve(
     options.browserExecutablePath ?? portalConfig.browser.executablePath
   )
@@ -1380,7 +1383,7 @@ export async function run(argv = process.argv): Promise<void> {
   try {
     try {
       browserLaunch = await launchBrowser(
-        browserName,
+        browserEngine,
         browserExecutablePath,
         browserRemoteDebuggingPort,
         browserProfileDir,

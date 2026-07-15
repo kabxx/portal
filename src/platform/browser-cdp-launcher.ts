@@ -4,6 +4,7 @@ import { chromium } from 'playwright'
 import type { BrowserContext, BrowserType } from 'playwright'
 import { sleepAsync } from '../shared/sleep.ts'
 import { launchWin32BrowserMinimized } from './win32-minimized-browser-launcher.ts'
+import type { BrowserEngine } from './platform-defaults.ts'
 
 export interface BrowserLaunch {
   context: BrowserContext
@@ -18,15 +19,11 @@ export interface BrowserLaunchOptions {
   closeTimeoutMs?: number
 }
 
-function resolveBrowserType(browserName: string): BrowserType {
-  switch (browserName) {
-    case 'chromium':
-    case 'chrome':
-    case 'edge':
-      return chromium
-    default:
-      throw new Error(`Unsupported browser for CDP launch: ${browserName}`)
+function resolveBrowserType(browserEngine: BrowserEngine): BrowserType {
+  if (browserEngine !== 'chromium') {
+    throw new Error(`Unsupported browser engine: ${browserEngine}`)
   }
+  return chromium
 }
 
 export function buildBrowserLaunchArguments(
@@ -45,13 +42,13 @@ export function buildBrowserLaunchArguments(
 }
 
 export async function launchBrowser(
-  browserName: string,
+  browserEngine: BrowserEngine,
   browserExecutablePath: string,
   browserRemoteDebuggingPort: number,
   browserUserDataDir: string,
   options: BrowserLaunchOptions = {}
 ): Promise<BrowserLaunch> {
-  const browserType = resolveBrowserType(browserName)
+  const browserType = resolveBrowserType(browserEngine)
   const startupTimeoutMs =
     options.startupTimeoutMs ?? BROWSER_STARTUP_TIMEOUT_MS
   const closeTimeoutMs = options.closeTimeoutMs ?? BROWSER_CLOSE_TIMEOUT_MS

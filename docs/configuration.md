@@ -31,18 +31,19 @@ new-runtime behavior described in their dedicated documents.
 
 ```yaml
 browser:
-  name: edge
+  engine: chromium
   executablePath: '<platform-specific browser executable path>'
-  profilePath: data/profiles/edge
+  profilePath: data/profiles/chromium
   remoteDebuggingPort: 9222
 ```
 
-`name` is a non-empty browser label. `executablePath` and `profilePath` may be
+`engine` must be `chromium`. `executablePath` and `profilePath` may be
 absolute or relative; relative values resolve from portal's working directory.
-When the file is created, portal checks common Edge, Chrome, and Chromium
-locations for the current operating system, including macOS application bundles
-and Linux PATH entries. The remote debugging port must be an integer from `1` to `65535`. The CLI
-options `--browser-name`, `--browser-executable-path`, and
+When the file is created, portal checks common Edge, Chrome, Chromium, Brave,
+Vivaldi, Opera, Opera GX, and Arc locations for the current operating system,
+including macOS application bundles and Linux PATH entries. The remote debugging
+port must be an integer from `1` to `65535`. The CLI options
+`--browser-engine`, `--browser-executable-path`, and
 `--browser-remote-debugging-port` take precedence over the corresponding file
 values for one run.
 

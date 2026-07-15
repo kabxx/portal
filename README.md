@@ -72,15 +72,15 @@ npm install
 npm run dev
 ```
 
-On first run, portal creates a commented `data/config.yaml` covering the browser, project instructions, HTTP API, MCP, Skills, Hooks, and advanced runtime limits. Project instruction sources are disabled by default. See [Configuration](docs/configuration.md). The generated `browser.profilePath` is an absolute path under `data/profiles/<browser.name>`; with the default `edge` browser, it points to `data/profiles/edge`.
+On first run, portal creates a commented `data/config.yaml` covering the browser, project instructions, HTTP API, MCP, Skills, Hooks, and advanced runtime limits. Project instruction sources are disabled by default. See [Configuration](docs/configuration.md). The generated `browser.profilePath` is the absolute path `data/profiles/chromium`.
 
-Override the browser name, executable, or port when needed:
+Override the browser engine, executable, or port when needed:
 
 ```text
-npm run dev -- --browser-name chrome --browser-executable-path "<browser executable path>" --browser-remote-debugging-port 9222
+npm run dev -- --browser-engine chromium --browser-executable-path "<browser executable path>" --browser-remote-debugging-port 9222
 ```
 
-Supported browser names are `chromium`, `chrome`, and `edge`. Both `browser.executablePath` and `browser.profilePath` accept absolute or relative paths; generated defaults are absolute and use platform-native browser locations, while configured relative values resolve from portal's working directory. Run `npm run dev -- --help` for all startup options.
+The only supported browser engine is `chromium`. portal automatically checks common Edge, Chrome, Chromium, Brave, Vivaldi, Opera, Opera GX, and Arc locations where those browsers are available. Portable and non-standard installations can be selected with `browser.executablePath`. Both `browser.executablePath` and `browser.profilePath` accept absolute or relative paths; generated defaults are absolute, while configured relative values resolve from portal's working directory. Run `npm run dev -- --help` for all startup options.
 
 portal opens on the command help screen. Create a thread and enter a normal task:
 
@@ -226,7 +226,7 @@ Only successfully connected server and tool names are included under `# MCP Serv
 
 ```text
 data/
-├── profiles/<browserName>/   # Dedicated browser profile and login state
+├── profiles/chromium/        # Dedicated browser profile and login state
 ├── threads.db                # Conversation URL metadata, not transcripts
 ├── config.yaml               # Browser, instructions, API, MCP, Skills, Hooks, and limits
 ├── skills/                   # portal-managed remote Skills
