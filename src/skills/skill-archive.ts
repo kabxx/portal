@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { mkdir } from 'fs/promises'
+import { chmod, mkdir } from 'fs/promises'
 import path from 'path'
 import { path7za } from '7zip-bin'
 import { createExtractorFromFile } from 'node-unrar-js'
@@ -18,6 +18,7 @@ import {
 import { DEFAULT_SKILL_POLICY, type SkillPolicy } from './skill-policy.ts'
 
 const MAX_7ZIP_OUTPUT_BYTES = 16 * 1024 * 1024
+let sevenZipExecutableReady: Promise<void> | undefined
 const RAR4_SIGNATURE = Buffer.from([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00])
 const RAR5_SIGNATURE = Buffer.from([
   0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x01, 0x00,
@@ -184,6 +185,8 @@ async function runSevenZip(
   signal: AbortSignal | undefined
 ): Promise<string> {
   throwIfAborted(signal)
+  await ensureSevenZipExecutable()
+  throwIfAborted(signal)
   return await new Promise<string>((resolve, reject) => {
     const child = spawn(path7za, [...args], {
       windowsHide: true,
@@ -245,4 +248,17 @@ async function runSevenZip(
       resolve(Buffer.concat(stdout).toString('utf8'))
     })
   })
+}
+
+export function ensureSevenZipExecutable(): Promise<void> {
+  if (process.platform === 'win32' || !path.isAbsolute(path7za)) {
+    return Promise.resolve()
+  }
+  sevenZipExecutableReady ??= chmod(path7za, 0o755).catch((error: unknown) => {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new SkillInstallError(
+      `Unable to make the bundled 7-Zip executable (${path7za}): ${detail}`
+    )
+  })
+  return sevenZipExecutableReady
 }

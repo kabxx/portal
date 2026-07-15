@@ -1,4 +1,4 @@
-import test from 'node:test'
+import test, { before } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'child_process'
 import { createReadStream } from 'fs'
@@ -19,12 +19,19 @@ import { promisify } from 'util'
 import { path7za } from '7zip-bin'
 
 import { SkillLibrary } from '../../src/skills/skill-library.ts'
-import { isSupportedArchive } from '../../src/skills/skill-archive.ts'
+import {
+  ensureSevenZipExecutable,
+  isSupportedArchive,
+} from '../../src/skills/skill-archive.ts'
 import { resolveDownloadTarget } from '../../src/skills/skill-download.ts'
 import { resolveGitHubDirectoryTarget } from '../../src/skills/skill-github-download.ts'
 import { createTestSkill } from '../helpers/skills.ts'
 
 const execFileAsync = promisify(execFile)
+
+before(async () => {
+  await ensureSevenZipExecutable()
+})
 
 async function serveFile(filePath: string): Promise<{
   url: string

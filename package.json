@@ -7,7 +7,7 @@
     "dev": "tsx src/index.ts",
     "test": "npm run test:type && npm run test:unit",
     "test:type": "tsc -p tsconfig.json --noEmit",
-    "test:unit": "node --import tsx --test test/**/*.test.ts",
+    "test:unit": "node --import tsx --test \"test/**/*.test.ts\"",
     "fmt": "prettier . --write",
     "fmt:check": "prettier . --check"
   },
