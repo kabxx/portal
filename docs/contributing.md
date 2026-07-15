@@ -8,7 +8,7 @@ Contributions are welcome. portal is still evolving quickly, so small, focused c
 
 Requirements:
 
-- Node.js 22 or newer;
+- Node.js 24 or newer;
 - npm;
 - Git;
 - a Chromium-based browser for real provider checks;
@@ -37,7 +37,7 @@ See [Testing](testing.md) for the current coverage inventory, audit decisions, a
 
 Use `npm run fmt` only when you intend to rewrite formatting. Before submitting a change, review the final diff and make sure unrelated files were not modified.
 
-Every pull request uses Windows as the primary Node.js 22 quality gate for the formatting check, type check, and coverage run (which includes the full unit suite). Linux and macOS run the unit suite as compatibility checks because browser discovery and process support have platform-specific behavior.
+Every pull request uses Windows as the primary Node.js 24 quality gate for the formatting check, type check, and coverage run (which includes the full unit suite). Linux and macOS run the unit suite as compatibility checks because browser discovery and process support have platform-specific behavior.
 
 Tests should protect current observable behavior, failure handling, cleanup, and security boundaries. Do not keep migration-only assertions whose sole purpose is proving that a removed command, field, or wording is still absent. Negative tests remain valuable when they define a current invalid-input or safety contract.
 

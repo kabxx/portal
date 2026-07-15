@@ -55,7 +55,7 @@ flowchart LR
 
 ## 环境要求
 
-- Node.js 22 或更高版本
+- Node.js 24 或更高版本
 - npm
 - Git
 - Google Chrome 或其它受支持的 Chromium 系浏览器
