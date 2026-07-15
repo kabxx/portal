@@ -157,7 +157,7 @@ The runtime can perform multiple tool rounds before the local turn completes.
 
 ### Live command progress
 
-`run_command` is the only built-in tool that currently emits display progress. It reports a start event and decoded stdout/stderr chunks. `TerminalController` keeps a temporary fixed-height bubble containing only the latest small output tail, throttles UI updates, and replaces that bubble with the final compact result using the same timeline entry id.
+`run_command` and `spawn` emit display progress. Each progress event carries the runtime-generated `toolCallId`, so `TerminalController` can reject delayed start/output/result events from an older invocation. `run_command` reports a start event and decoded stdout/stderr chunks; `spawn` reports its start while the child runtime is active. The controller keeps one temporary bubble per thread, replaces it with the matching final result using the same timeline entry id, and discards it on cancellation, errors, thread switches, or thread removal. Timer and heartbeat callbacks also verify the current bubble identity before emitting.
 
 Progress is display-only. Reporter errors cannot change command execution or the full structured tool result. Each invocation is registered in the process-local run-command job manager. Cancelling a turn detaches only that turn's waiter, so the job continues draining stdout/stderr and can be inspected with `/job` or stopped with `/job stop <job-id>`. On Windows, command processes use a Job Object where available; POSIX commands use a detached process group. Timeout, explicit stop, and controlled portal shutdown terminate the managed tree. Jobs are not persisted across portal restarts.
 

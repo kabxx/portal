@@ -49,6 +49,7 @@ export interface ThreadInputHandlers {
   onToolProgress?: (
     event: ToolProgressEvent,
     toolCall: ToolCall | null,
+    toolCallId: string,
     turn: TurnRecord
   ) => void
   signal?: AbortSignal
@@ -304,9 +305,9 @@ export class ThreadManager {
             createdAt: Date.now(),
           })
         },
-        onToolProgress: (event, toolCall) => {
+        onToolProgress: (event, toolCall, toolCallId) => {
           if (handlers.signal?.aborted !== true) {
-            handlers.onToolProgress?.(event, toolCall, turn)
+            handlers.onToolProgress?.(event, toolCall, toolCallId, turn)
           }
         },
         ...(handlers.signal !== undefined ? { signal: handlers.signal } : {}),

@@ -1178,7 +1178,7 @@ export async function run(argv = process.argv): Promise<void> {
                     formatInstructionWarning(warning)
                   )
                 },
-                onToolProgress: (event, toolCall) => {
+                onToolProgress: (event, toolCall, toolCallId) => {
                   if (
                     signal.aborted ||
                     (toolCall?.tool !== 'run_command' &&
@@ -1186,7 +1186,12 @@ export async function run(argv = process.argv): Promise<void> {
                   ) {
                     return
                   }
-                  ui.renderToolProgress(activeThread, toolCall.tool, event)
+                  ui.renderToolProgress(
+                    activeThread,
+                    toolCall.tool,
+                    event,
+                    toolCallId
+                  )
                 },
                 onTurnItem: async (item) => {
                   throwIfAborted(signal)
@@ -1199,7 +1204,8 @@ export async function run(argv = process.argv): Promise<void> {
                     ui.renderToolCall(
                       activeThread,
                       item.toolName,
-                      item.rawPayload
+                      item.rawPayload,
+                      item.toolCallId
                     )
                     return
                   }
@@ -1210,7 +1216,8 @@ export async function run(argv = process.argv): Promise<void> {
                       item.toolName,
                       item.outcome,
                       item.result,
-                      item.displayText
+                      item.displayText,
+                      item.toolCallId
                     )
                     return
                   }
@@ -1580,9 +1587,11 @@ export async function run(argv = process.argv): Promise<void> {
                   })
                   ui.renderThreadInfo(thread, 'skill', `Using skill: ${name}`)
                 },
-                onToolProgress: (event, toolCall) => {
+                onToolProgress: (event, toolCall, toolCallId, turn) => {
                   publishApiEvent(threadId, 'tool.output', {
                     tool: toolCall?.tool ?? 'unknown',
+                    toolCallId,
+                    turnId: turn.id,
                     event,
                   })
                 },
@@ -1601,7 +1610,12 @@ export async function run(argv = process.argv): Promise<void> {
                         ? {}
                         : { toolCallId: item.toolCallId }),
                     })
-                    ui.renderToolCall(thread, item.toolName, item.rawPayload)
+                    ui.renderToolCall(
+                      thread,
+                      item.toolName,
+                      item.rawPayload,
+                      item.toolCallId
+                    )
                   } else if (item.kind === 'tool_result') {
                     publishApiEvent(threadId, 'tool.completed', {
                       tool: item.toolName,
@@ -1619,7 +1633,8 @@ export async function run(argv = process.argv): Promise<void> {
                       item.toolName,
                       item.outcome,
                       item.result,
-                      item.displayText
+                      item.displayText,
+                      item.toolCallId
                     )
                   } else if (item.kind === 'status') {
                     publishApiEvent(threadId, 'status', { message: item.text })
