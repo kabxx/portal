@@ -36,7 +36,7 @@ Download, extraction, manifest, and resource limits can be changed under
 
 | Command                              | Behavior                                                       |
 | ------------------------------------ | -------------------------------------------------------------- |
-| `/skill add <source>`                | Register a local directory or download a remote Skill          |
+| `/skill add <source>`                | Register or download one Skill or a Skill collection           |
 | `/skill add <name> --registry <url>` | Download the latest named Skill from a Hub-compatible registry |
 | `/skill list`                        | List registered Skills, enabled state, and validation issues   |
 | `/skill enable <name>`               | Enable a registered Skill for new runtimes                     |
@@ -47,6 +47,7 @@ Examples:
 
 ```text
 /skill add C:\path\to\release-notes
+/skill add C:\path\to\skill-collection
 /skill add https://example.com/SKILL.md
 /skill add https://github.com/owner/repository/tree/main/skills/release-notes
 /skill add https://example.com/release-notes.zip
@@ -54,7 +55,9 @@ Examples:
 /skill list
 ```
 
-Local directories are validated and registered in place; portal does not copy them. HTTP(S) sources are downloaded into `data/skills/<name>` and then registered.
+Local Skill directories are validated and registered in place; portal does not copy them. For a local collection, each discovered Skill keeps its original absolute directory. HTTP(S) sources are downloaded into `data/skills/<name>` and then registered.
+
+A source root containing `SKILL.md` is one Skill, even if its resource tree contains another file with that name. If the source root has no `SKILL.md`, portal recursively discovers Skill directories and stops descending whenever it finds one. Discovery order is deterministic. The complete source tree and every discovered Skill are validated before any registration or managed directory is committed. An invalid manifest, duplicate name, existing registry entry, or managed-directory conflict rejects the entire collection.
 
 Removing an external absolute directory only removes its registry entry. Removing a portal-managed relative `skills/<name>` entry also deletes that directory.
 
@@ -108,10 +111,10 @@ Registry writes use a temporary file followed by an atomic replacement.
 
 `/skill add` accepts:
 
-- a local skill directory;
+- a local Skill or collection directory;
 - a direct `SKILL.md` URL;
 - a GitHub repository URL;
-- a GitHub `tree` URL pointing to a skill subdirectory;
+- a GitHub `tree` URL pointing to a Skill or collection directory;
 - a GitHub `blob` URL pointing to `SKILL.md`;
 - ZIP, 7z, RAR, TAR, TGZ, and TAR.GZ archives.
 
@@ -122,7 +125,7 @@ archive. Registry discovery, metadata, redirects, downloaded bytes, extracted
 bytes, file count, and manifest validation use the same bounded installation
 policy as other remote sources.
 
-Downloads and extracted trees are bounded by file-count and byte limits. Archive entries are checked for absolute paths and `..` traversal, and extracted trees are rejected when they contain symbolic links. An archive must resolve to exactly one skill candidate unless a GitHub subdirectory was explicitly selected.
+Downloads and extracted trees are bounded by file-count and byte limits. Archive entries are checked for absolute paths and `..` traversal, and extracted trees are rejected when they contain symbolic links. A local directory, GitHub location, or ordinary archive may resolve to one or more Skill directories. A direct `SKILL.md` URL and a named Hub registry package remain single-Skill sources; a Hub manifest name must match the requested slug.
 
 These checks reduce accidental damage; they do not prove that a skill is safe.
 

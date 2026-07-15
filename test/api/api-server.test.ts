@@ -78,7 +78,21 @@ function createHandlers(calls: string[], includeReload = true): ApiHandlers {
     setCapability: async (_threadId, name, state) => ({ name, state }),
     clearCapability: async (_threadId, name) => ({ name, cleared: true }),
     listSkills: async () => ({ skills: [], issues: [] }),
-    addSkill: async (input) => input,
+    addSkill: async () => ({
+      skills: [
+        {
+          name: 'alpha-skill',
+          description: 'Alpha skill.',
+          directory: 'C:\\skills\\alpha-skill',
+        },
+        {
+          name: 'beta-skill',
+          description: 'Beta skill.',
+          directory: 'C:\\skills\\beta-skill',
+        },
+      ],
+      warnings: [],
+    }),
     setSkillEnabled: async (name, enabled) => ({ name, enabled }),
     removeSkill: async (name) => ({ name, removed: true }),
     listMcpServers: async () => ({ servers: [], issues: [] }),
@@ -166,6 +180,28 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
       status: 'busy',
       threadId: 't-1',
       skill: 'review',
+    })
+
+    const skillCollection = await fetch(`${address}/v1/skills`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ source: 'C:\\skill-collection' }),
+    })
+    assert.equal(skillCollection.status, 201)
+    assert.deepEqual(await skillCollection.json(), {
+      skills: [
+        {
+          name: 'alpha-skill',
+          description: 'Alpha skill.',
+          directory: 'C:\\skills\\alpha-skill',
+        },
+        {
+          name: 'beta-skill',
+          description: 'Beta skill.',
+          directory: 'C:\\skills\\beta-skill',
+        },
+      ],
+      warnings: [],
     })
 
     const reload = await fetch(`${address}/v1/threads/t-1/reload`, {
