@@ -1,7 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
+import type { ServerResponse } from 'node:http'
 
 import {
+  ApiEventHub,
   ApiHttpError,
   PortalApiServer,
   type ApiHandlers,
@@ -10,6 +13,28 @@ import {
   McpConfigError,
   McpDuplicateNameError,
 } from '../../src/mcp/mcp-config.ts'
+
+class FakeSseResponse extends EventEmitter {
+  public readonly writes: string[] = []
+  public writableEnded = false
+  public destroyed = false
+  public endCalls = 0
+  public failWrites = false
+
+  public write(chunk: string): boolean {
+    if (this.failWrites) {
+      throw new Error('disconnected')
+    }
+    this.writes.push(chunk)
+    return true
+  }
+
+  public end(): this {
+    this.endCalls += 1
+    this.writableEnded = true
+    return this
+  }
+}
 
 function createHandlers(calls: string[], includeReload = true): ApiHandlers {
   return {
@@ -417,6 +442,83 @@ test('PortalApiServer broadcasts one thread event to multiple SSE clients', asyn
       assert.match(text, /"action":"reload"/)
       assert.match(text, /"phase":"completed"/)
     }
+  } finally {
+    for (const reader of readers) {
+      await reader.cancel().catch(() => {})
+    }
+    await server.stop()
+  }
+})
+
+test('ApiEventHub cleans up closed subscribers and releases thread sequences', () => {
+  const hub = new ApiEventHub(60_000)
+  const response = new FakeSseResponse()
+  const remove = hub.subscribe('t-1', response as unknown as ServerResponse)
+
+  hub.publish('t-1', { type: 'status', data: { phase: 'first' } })
+  assert.match(response.writes[1] ?? '', /^id: 1\n/)
+
+  response.destroyed = true
+  response.emit('close')
+  hub.publish('t-1', { type: 'status', data: { phase: 'ignored' } })
+  assert.equal(response.writes.length, 2)
+
+  const replacement = new FakeSseResponse()
+  hub.subscribe('t-1', replacement as unknown as ServerResponse)
+  hub.publish('t-1', { type: 'status', data: { phase: 'replacement' } })
+  assert.match(replacement.writes[1] ?? '', /^id: 1\n/)
+
+  remove()
+  remove()
+  hub.close()
+})
+
+test('ApiEventHub rolls back a subscriber when the connected write fails', () => {
+  const hub = new ApiEventHub(60_000)
+  const response = new FakeSseResponse()
+  response.failWrites = true
+
+  assert.doesNotThrow(() =>
+    hub.subscribe('t-1', response as unknown as ServerResponse)
+  )
+  assert.equal(response.endCalls, 1)
+
+  response.failWrites = false
+  hub.publish('t-1', { type: 'status', data: { phase: 'ignored' } })
+  assert.deepEqual(response.writes, [])
+  hub.close()
+})
+
+test('PortalApiServer removes an SSE subscriber after HTTP cancellation', async () => {
+  const server = new PortalApiServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: null,
+    handlers: createHandlers([]),
+    sseHeartbeatMs: 60_000,
+  })
+
+  await server.start()
+  const readers: ReadableStreamDefaultReader<Uint8Array>[] = []
+  try {
+    const first = await fetch(`${server.address()}/v1/threads/t-1/events`)
+    const firstReader = first.body!.getReader()
+    readers.push(firstReader)
+    await firstReader.read()
+    await firstReader.cancel()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    const replacement = await fetch(`${server.address()}/v1/threads/t-1/events`)
+    const replacementReader = replacement.body!.getReader()
+    readers.push(replacementReader)
+    await replacementReader.read()
+
+    server.eventHub.publish('t-1', {
+      type: 'status',
+      data: { phase: 'replacement' },
+    })
+    const event = await replacementReader.read()
+    assert.match(new TextDecoder().decode(event.value), /^id: 1\n/m)
   } finally {
     for (const reader of readers) {
       await reader.cancel().catch(() => {})

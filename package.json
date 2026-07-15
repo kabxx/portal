@@ -1,8 +1,8 @@
 {
   "name": "portal",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
+  "description": "A browser-backed terminal agent for web AI products and local tools.",
   "scripts": {
     "dev": "tsx src/index.ts",
     "test": "npm run test:type && npm run test:unit",
@@ -11,10 +11,17 @@
     "fmt": "prettier . --write",
     "fmt:check": "prettier . --check"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "browser-automation",
+    "cli",
+    "playwright",
+    "web-ai"
+  ],
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "devDependencies": {
     "@types/node": "^25.9.1",
     "prettier": "3.8.3",

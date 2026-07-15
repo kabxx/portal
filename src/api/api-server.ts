@@ -77,6 +77,8 @@ export interface ApiEvent {
 interface Subscriber {
   response: ServerResponse
   heartbeat: ReturnType<typeof setInterval>
+  onClose: () => void
+  removed: boolean
 }
 
 export class ApiEventHub {
@@ -108,8 +110,10 @@ export class ApiEventHub {
   }
 
   public subscribe(threadId: string, response: ServerResponse): () => void {
-    const subscriber: Subscriber = {
+    const subscriber = {
       response,
+      onClose: () => this.remove(threadId, subscriber),
+      removed: false,
       heartbeat: setInterval(() => {
         try {
           response.write(': heartbeat\n\n')
@@ -117,35 +121,50 @@ export class ApiEventHub {
           this.remove(threadId, subscriber)
         }
       }, this.heartbeatMs),
-    }
+    } satisfies Subscriber
     let subscribers = this.subscribers.get(threadId)
     if (subscribers === undefined) {
       subscribers = new Set()
       this.subscribers.set(threadId, subscribers)
     }
     subscribers.add(subscriber)
-    response.write(': connected\n\n')
-    return () => this.remove(threadId, subscriber)
+    response.once('close', subscriber.onClose)
+    try {
+      response.write(': connected\n\n')
+    } catch {
+      this.remove(threadId, subscriber)
+    }
+    return subscriber.onClose
   }
 
   public close(): void {
     for (const [threadId, subscribers] of this.subscribers) {
-      for (const subscriber of subscribers) {
-        clearInterval(subscriber.heartbeat)
-        subscriber.response.end()
+      for (const subscriber of [...subscribers]) {
+        this.remove(threadId, subscriber)
       }
-      this.subscribers.delete(threadId)
     }
+    this.sequences.clear()
   }
 
   private remove(threadId: string, subscriber: Subscriber): void {
-    clearInterval(subscriber.heartbeat)
-    this.subscribers.get(threadId)?.delete(subscriber)
-    if (this.subscribers.get(threadId)?.size === 0) {
-      this.subscribers.delete(threadId)
+    if (subscriber.removed) {
+      return
     }
-    if (!subscriber.response.writableEnded) {
-      subscriber.response.end()
+    subscriber.removed = true
+    clearInterval(subscriber.heartbeat)
+    subscriber.response.off('close', subscriber.onClose)
+    const subscribers = this.subscribers.get(threadId)
+    subscribers?.delete(subscriber)
+    if (subscribers?.size === 0) {
+      this.subscribers.delete(threadId)
+      this.sequences.delete(threadId)
+    }
+    if (!subscriber.response.writableEnded && !subscriber.response.destroyed) {
+      try {
+        subscriber.response.end()
+      } catch {
+        // The response may already be disconnected.
+      }
     }
   }
 }
