@@ -18,7 +18,10 @@ import {
   Tool,
   defineToolMetadata,
 } from '../../src/tools/core/tool-definition.ts'
-import type { ToolExecutionOptions } from '../../src/tools/core/tool-definition.ts'
+import type {
+  ToolExecutionOptions,
+  ToolOutput,
+} from '../../src/tools/core/tool-definition.ts'
 import {
   abortable,
   PortalAbortError,
@@ -149,15 +152,15 @@ class RetryRestoreAdapter extends FakeAdapter {
   name: 'slow_tool',
   description: 'A slow test tool.',
 })
-class SlowTool extends Tool<Record<string, unknown>, string> {
+class SlowTool extends Tool<Record<string, unknown>, ToolOutput> {
   public started = false
 
   public async call(
     _input: Record<string, unknown>,
     options: AbortOptions = {}
-  ): Promise<string> {
+  ): Promise<ToolOutput> {
     this.started = true
-    return await abortable(new Promise<string>(() => {}), options.signal)
+    return await abortable(new Promise<ToolOutput>(() => {}), options.signal)
   }
 }
 
@@ -181,24 +184,14 @@ class StructuredTool extends Tool<
 }
 
 @defineToolMetadata({
-  name: 'legacy_tool',
-  description: 'A legacy string output test tool.',
-})
-class LegacyTool extends Tool<Record<string, unknown>, string> {
-  public async call(): Promise<string> {
-    return 'LEGACY STRING RESULT'
-  }
-}
-
-@defineToolMetadata({
   name: 'progress_tool',
   description: 'A progress forwarding test tool.',
 })
-class ProgressTool extends Tool<Record<string, unknown>, string> {
+class ProgressTool extends Tool<Record<string, unknown>, ToolOutput> {
   public async call(
     _input: Record<string, unknown>,
     options: ToolExecutionOptions = {}
-  ): Promise<string> {
+  ): Promise<ToolOutput> {
     options.onProgress?.({ type: 'start', startedAt: 100 })
     options.onProgress?.({
       type: 'output',
@@ -210,7 +203,7 @@ class ProgressTool extends Tool<Record<string, unknown>, string> {
       stream: 'stderr',
       text: 'warning line\n',
     })
-    return 'done'
+    return { result: { content: 'done' }, displayText: 'done' }
   }
 }
 
@@ -219,9 +212,10 @@ class ProgressTool extends Tool<Record<string, unknown>, string> {
   inputFormat: 'freeform',
   description: 'A freeform test tool.',
 })
-class FreeformTool extends Tool<string, string> {
-  public async call(input: string): Promise<string> {
-    return `received:${input}`
+class FreeformTool extends Tool<string, ToolOutput> {
+  public async call(input: string): Promise<ToolOutput> {
+    const content = `received:${input}`
+    return { result: { content }, displayText: content }
   }
 }
 
@@ -231,10 +225,16 @@ let instructionRunCommandCalls = 0
   name: 'run_command',
   description: 'A project-instruction preflight test tool.',
 })
-class InstructionRunCommandTool extends Tool<Record<string, unknown>, string> {
-  public async call(): Promise<string> {
+class InstructionRunCommandTool extends Tool<
+  Record<string, unknown>,
+  ToolOutput
+> {
+  public async call(): Promise<ToolOutput> {
     instructionRunCommandCalls += 1
-    return 'command completed'
+    return {
+      result: { content: 'command completed' },
+      displayText: 'command completed',
+    }
   }
 }
 
@@ -244,10 +244,13 @@ let hookTargetInputs: Array<Record<string, unknown> | string> = []
   name: 'hook_target',
   description: 'A Hook integration test tool.',
 })
-class HookTargetTool extends Tool<Record<string, unknown>, string> {
-  public async call(input: Record<string, unknown>): Promise<string> {
+class HookTargetTool extends Tool<Record<string, unknown>, ToolOutput> {
+  public async call(input: Record<string, unknown>): Promise<ToolOutput> {
     hookTargetInputs.push(input)
-    return 'hook target completed'
+    return {
+      result: { content: 'hook target completed' },
+      displayText: 'hook target completed',
+    }
   }
 }
 
@@ -914,54 +917,6 @@ test('RuntimeCore sends full structured tool content to the model and forwards d
       '  "outcome": "success",',
       '  "result": {',
       '    "content": "FULL MODEL CONTENT"',
-      '  }',
-      '}',
-    ].join('\n')
-  )
-})
-
-test('RuntimeCore keeps legacy string tool results compatible', async () => {
-  const adapter = new FakeAdapter([
-    '<tool>{"tool":"legacy_tool","params":{}}</tool>',
-    'Done.',
-  ])
-  const runtime = new RuntimeCore(
-    adapter,
-    new ToolRegistry(adapter, [LegacyTool])
-  )
-  const results: Array<{
-    outcome: string
-    result: Record<string, unknown>
-    displayText?: string
-  }> = []
-
-  await runtime.submitUserInput('Run the legacy tool.', {
-    onToolResult: async (toolResult) => {
-      results.push({
-        outcome: toolResult.outcome,
-        result: toolResult.result,
-        ...(toolResult.displayText !== undefined
-          ? { displayText: toolResult.displayText }
-          : {}),
-      })
-    },
-  })
-
-  assert.deepEqual(results, [
-    {
-      outcome: 'success',
-      result: { content: 'LEGACY STRING RESULT' },
-    },
-  ])
-  assert.equal(
-    adapter.attachedTexts[1],
-    [
-      '### Tool Result ###',
-      '{',
-      '  "tool": "legacy_tool",',
-      '  "outcome": "success",',
-      '  "result": {',
-      '    "content": "LEGACY STRING RESULT"',
       '  }',
       '}',
     ].join('\n')
