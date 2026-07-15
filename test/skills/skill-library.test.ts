@@ -14,7 +14,11 @@ import path from 'path'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
 import { createDefaultPortalConfig } from '../../src/config/portal-config.ts'
-import { SkillLibrary } from '../../src/skills/skill-library.ts'
+import {
+  commitSkillBatch,
+  SkillBatchCommitError,
+  SkillLibrary,
+} from '../../src/skills/skill-library.ts'
 import { DEFAULT_SKILL_POLICY } from '../../src/skills/skill-policy.ts'
 import { createTestSkill } from '../helpers/skills.ts'
 
@@ -56,7 +60,9 @@ test('SkillLibrary installs, catalogs, disables, enables, and removes skills', a
   })
 
   try {
-    const installed = await library.add(source)
+    const { skills } = await library.add(source)
+    const installed = skills[0]
+    assert.ok(installed)
     assert.equal(installed.name, 'test-skill')
     assert.equal(installed.directory, path.resolve(source))
     assert.match(
@@ -140,6 +146,204 @@ test('SkillLibrary installs, catalogs, disables, enables, and removes skills', a
   }
 })
 
+test('SkillLibrary registers a recursive local skill collection in place', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-collection-'))
+  const collection = path.join(root, 'collection')
+  const alpha = await createTestSkill(collection, 'alpha-skill')
+  const beta = await createTestSkill(
+    path.join(collection, 'nested'),
+    'beta-skill'
+  )
+  await createTestSkill(path.join(alpha, 'references'), 'embedded-skill')
+  const library = new SkillLibrary({
+    skillsDirectory: path.join(root, 'data', 'skills'),
+    tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
+    registryPath: path.join(root, 'data', 'config.yaml'),
+  })
+
+  try {
+    const result = await library.add(collection)
+    assert.deepEqual(
+      result.skills.map(({ name }) => name),
+      ['alpha-skill', 'beta-skill']
+    )
+    assert.deepEqual(
+      result.skills.map(({ directory }) => directory),
+      [path.resolve(alpha), path.resolve(beta)]
+    )
+    assert.deepEqual(result.warnings, [])
+    assert.deepEqual(
+      (await library.list()).skills.map(({ name }) => name),
+      ['alpha-skill', 'beta-skill']
+    )
+    assert.equal(await library.remove('alpha-skill'), true)
+    await access(path.join(alpha, 'SKILL.md'))
+    assert.deepEqual(await readdir(path.join(root, 'data', 'skills')), [])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('SkillLibrary treats a source root with SKILL.md as one skill', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-root-'))
+  const source = await createTestSkill(path.join(root, 'source'), 'root-skill')
+  await createTestSkill(path.join(source, 'references'), 'nested-skill')
+  const library = new SkillLibrary({
+    skillsDirectory: path.join(root, 'data', 'skills'),
+    tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
+    registryPath: path.join(root, 'data', 'config.yaml'),
+  })
+
+  try {
+    const result = await library.add(source)
+    assert.deepEqual(
+      result.skills.map(({ name }) => name),
+      ['root-skill']
+    )
+    assert.deepEqual(
+      (await library.list()).skills.map(({ name }) => name),
+      ['root-skill']
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('SkillLibrary rejects an invalid local collection without registering part of it', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-atomic-'))
+  const collection = path.join(root, 'collection')
+  await createTestSkill(collection, 'valid-skill')
+  const invalid = path.join(collection, 'invalid-skill')
+  await mkdir(invalid, { recursive: true })
+  await writeFile(path.join(invalid, 'SKILL.md'), 'not frontmatter', 'utf8')
+  const library = new SkillLibrary({
+    skillsDirectory: path.join(root, 'data', 'skills'),
+    tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
+    registryPath: path.join(root, 'data', 'config.yaml'),
+  })
+
+  try {
+    await assert.rejects(library.add(collection), /frontmatter/i)
+    assert.deepEqual((await library.list()).skills, [])
+    assert.deepEqual(await readdir(path.join(root, 'data', 'skills')), [])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('SkillLibrary rejects duplicate names across a skill collection', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-duplicate-'))
+  const collection = path.join(root, 'collection')
+  await createTestSkill(path.join(collection, 'group-a'), 'shared-skill')
+  await createTestSkill(path.join(collection, 'group-b'), 'shared-skill')
+  const library = new SkillLibrary({
+    skillsDirectory: path.join(root, 'data', 'skills'),
+    tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
+    registryPath: path.join(root, 'data', 'config.yaml'),
+  })
+
+  try {
+    await assert.rejects(library.add(collection), /duplicate skill name/)
+    assert.deepEqual((await library.list()).skills, [])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('commitSkillBatch keeps a committed batch when post-commit cleanup fails', async () => {
+  const entries = new Map<string, { directory: string; enabled: boolean }>()
+  const batch = [
+    {
+      name: 'committed-skill',
+      description: 'Committed skill.',
+      directory: 'C:\\skills\\committed-skill',
+      registryDirectory: 'skills/committed-skill',
+      managed: true,
+    },
+  ]
+
+  const result = await commitSkillBatch('config.yaml', batch, {
+    update: async (_registryPath, update) => {
+      update({ entries, issues: [] })
+      throw new Error('lock cleanup failed')
+    },
+    read: async () => ({ entries, issues: [] }),
+  })
+
+  assert.match(result.warnings[0] ?? '', /lock cleanup failed/)
+  assert.deepEqual(entries.get('committed-skill'), {
+    directory: 'skills/committed-skill',
+    enabled: true,
+  })
+})
+
+test('commitSkillBatch preserves a pre-commit conflict with an identical local entry', async () => {
+  const directory = path.resolve('existing-skill')
+  const entries = new Map([['existing-skill', { directory, enabled: true }]])
+  let readCalled = false
+
+  await assert.rejects(
+    commitSkillBatch(
+      'config.yaml',
+      [
+        {
+          name: 'existing-skill',
+          description: 'Existing skill.',
+          directory,
+          registryDirectory: directory,
+          managed: false,
+        },
+      ],
+      {
+        update: async (_registryPath, update) => {
+          update({ entries, issues: [] })
+        },
+        read: async () => {
+          readCalled = true
+          return { entries, issues: [] }
+        },
+      }
+    ),
+    (error: unknown) =>
+      error instanceof SkillBatchCommitError &&
+      error.rollbackManaged &&
+      /already added/.test(error.message)
+  )
+  assert.equal(readCalled, false)
+})
+
+test('commitSkillBatch never rolls back directories still referenced by mismatched entries', async () => {
+  const entries = new Map([
+    ['managed-skill', { directory: 'skills/managed-skill', enabled: false }],
+  ])
+
+  await assert.rejects(
+    commitSkillBatch(
+      'config.yaml',
+      [
+        {
+          name: 'managed-skill',
+          description: 'Managed skill.',
+          directory: 'C:\\skills\\managed-skill',
+          registryDirectory: 'skills/managed-skill',
+          managed: true,
+        },
+      ],
+      {
+        update: async (_registryPath, update) => {
+          update({ entries: new Map(), issues: [] })
+          throw new Error('post-commit failure')
+        },
+        read: async () => ({ entries, issues: [] }),
+      }
+    ),
+    (error: unknown) =>
+      error instanceof SkillBatchCommitError &&
+      !error.rollbackManaged &&
+      /partial batch commit/.test(error.message)
+  )
+})
+
 test('SkillLibrary applies the configured resource file limit', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-policy-'))
   const source = await createTestSkill(path.join(root, 'sources'), 'limited', {
@@ -153,10 +357,10 @@ test('SkillLibrary applies the configured resource file limit', async () => {
   })
 
   try {
-    await library.add(source)
+    await assert.rejects(library.add(source), /more than 0 resource files/)
     const result = await library.list()
     assert.deepEqual(result.skills, [])
-    assert.match(result.issues[0]?.message ?? '', /more than 0 resource files/)
+    assert.deepEqual(result.issues, [])
   } finally {
     await rm(root, { recursive: true, force: true })
   }

@@ -16,11 +16,11 @@ const SKILL_SUBCOMMANDS = [
 const SKILL_ADD_HELP = [
   {
     usage: 'add <local-directory>',
-    description: 'Register a skill from an existing local directory.',
+    description: 'Register a skill or skill collection from a local directory.',
   },
   {
     usage: 'add <url>',
-    description: 'Download and install a skill from a direct URL.',
+    description: 'Download and install a skill or skill collection.',
   },
   {
     usage: 'add <name> --registry <url>',
@@ -121,16 +121,16 @@ async function addSkill(
     describeSkillInstall(parsed.source, parsed.registryUrl)
   )
   try {
-    const installed = await context.addSkill(
+    const result = await context.addSkill(
       parsed.source,
       parsed.registryUrl === null
         ? undefined
         : { registryUrl: parsed.registryUrl }
     )
-    context.ui.renderSuccess('/skill add', [
-      `Added and enabled ${installed.name}.`,
-      `Path: ${installed.directory}`,
-    ])
+    context.ui.renderSuccess('/skill add', describeAddedSkills(result.skills))
+    if (result.warnings.length > 0) {
+      context.ui.renderWarning('/skill add', result.warnings)
+    }
   } catch (error) {
     if (isAbortError(error)) {
       context.ui.renderWarning('/skill add', 'Skill installation cancelled.')
@@ -144,6 +144,21 @@ async function addSkill(
     context.ui.setBusy(false)
   }
   return { continue: true }
+}
+
+function describeAddedSkills(
+  skills: readonly { name: string; directory: string }[]
+): string[] {
+  if (skills.length === 1) {
+    return [
+      `Added and enabled ${skills[0]!.name}.`,
+      `Path: ${skills[0]!.directory}`,
+    ]
+  }
+  return [
+    `Added and enabled ${skills.length} skills.`,
+    ...skills.map(({ name, directory }) => `- ${name}: ${directory}`),
+  ]
 }
 
 interface ParsedSkillAddArgs {

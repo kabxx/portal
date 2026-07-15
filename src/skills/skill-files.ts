@@ -1,7 +1,6 @@
 import { lstat, open, readdir, stat } from 'fs/promises'
 import path from 'path'
 import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
-import { readSkillManifest } from './skill-manifest.ts'
 import { DEFAULT_SKILL_POLICY, type SkillPolicy } from './skill-policy.ts'
 
 export const MAX_SKILL_FILES = DEFAULT_SKILL_POLICY.maxFiles
@@ -53,11 +52,13 @@ export async function inspectSkillTree(
   await visit(root)
 }
 
-export async function findSkillCandidate(
+export async function findSkillCandidates(
   extractedDirectory: string,
   requestedSubdirectory: string | null,
-  policy: SkillPolicy = DEFAULT_SKILL_POLICY
-): Promise<string> {
+  signal?: AbortSignal
+): Promise<string[]> {
+  throwIfAborted(signal)
+  let searchRoot = extractedDirectory
   if (requestedSubdirectory !== null) {
     assertSafeRelativePath(requestedSubdirectory)
     const archiveRoot = await unwrapSingleDirectory(extractedDirectory)
@@ -68,32 +69,18 @@ export async function findSkillCandidate(
         `GitHub skill directory not found: ${requestedSubdirectory}`
       )
     }
-    await readSkillManifest(candidate, policy.maxManifestBytes)
-    return candidate
+    searchRoot = candidate
+  } else {
+    searchRoot = await unwrapSingleDirectory(extractedDirectory)
   }
 
-  if (await pathExists(path.join(extractedDirectory, 'SKILL.md'))) {
-    return extractedDirectory
-  }
-  const unwrapped = await unwrapSingleDirectory(extractedDirectory)
-  if (await pathExists(path.join(unwrapped, 'SKILL.md'))) {
-    return unwrapped
-  }
-
-  const manifests = await findFilesNamed(extractedDirectory, 'SKILL.md')
-  if (manifests.length === 0) {
-    throw new SkillInstallError('Downloaded archive does not contain SKILL.md')
-  }
-  if (manifests.length > 1) {
+  const candidates = await discoverSkillRoots(searchRoot, signal)
+  if (candidates.length === 0) {
     throw new SkillInstallError(
-      `Downloaded archive contains multiple skills: ${manifests
-        .map((manifest) =>
-          path.relative(extractedDirectory, path.dirname(manifest))
-        )
-        .join(', ')}`
+      'Skill source does not contain a SKILL.md manifest'
     )
   }
-  return path.dirname(manifests[0]!)
+  return candidates
 }
 
 export async function containsSkillManifest(
@@ -181,6 +168,76 @@ async function findFilesNamed(
   }
   await visit(directory)
   return matches
+}
+
+export async function listSkillResources(
+  skillDirectory: string,
+  maxResourceFiles: number,
+  signal?: AbortSignal
+): Promise<string[]> {
+  const resources: string[] = []
+  const visit = async (directory: string): Promise<void> => {
+    throwIfAborted(signal)
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      throwIfAborted(signal)
+      const absolutePath = path.join(directory, entry.name)
+      if (entry.isSymbolicLink()) {
+        throw new Error(`Symbolic links are not allowed: ${absolutePath}`)
+      }
+      if (entry.isDirectory()) {
+        await visit(absolutePath)
+        continue
+      }
+      if (!entry.isFile()) {
+        continue
+      }
+      const relativePath = path.relative(skillDirectory, absolutePath)
+      if (relativePath.toLowerCase() === 'skill.md') {
+        continue
+      }
+      resources.push(relativePath.replace(/\\/g, '/'))
+      if (resources.length > maxResourceFiles) {
+        throw new Error(
+          `Skill contains more than ${maxResourceFiles} resource files`
+        )
+      }
+    }
+  }
+  await visit(skillDirectory)
+  return resources.sort()
+}
+
+async function discoverSkillRoots(
+  directory: string,
+  signal?: AbortSignal
+): Promise<string[]> {
+  const candidates: string[] = []
+  const visit = async (current: string): Promise<void> => {
+    throwIfAborted(signal)
+    if (await pathExists(path.join(current, 'SKILL.md'))) {
+      candidates.push(current)
+      return
+    }
+
+    const entries = (await readdir(current, { withFileTypes: true })).sort(
+      (left, right) => left.name.localeCompare(right.name)
+    )
+    for (const entry of entries) {
+      throwIfAborted(signal)
+      const entryPath = path.join(current, entry.name)
+      if (entry.isSymbolicLink()) {
+        throw new SkillInstallError(
+          `Symbolic links are not allowed: ${entryPath}`
+        )
+      }
+      if (entry.isDirectory()) {
+        await visit(entryPath)
+      }
+    }
+  }
+
+  await visit(directory)
+  return candidates
 }
 
 async function unwrapSingleDirectory(directory: string): Promise<string> {

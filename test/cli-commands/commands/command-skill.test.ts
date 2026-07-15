@@ -119,9 +119,14 @@ test('SkillCommand passes a named Hub registry source separately and hides URL s
       receivedOptions = options
       infoAtInstall = latestTimelineEntry(ui)
       return {
-        name: source,
-        description: 'Hub skill.',
-        directory: `C:\\skills\\${source}`,
+        skills: [
+          {
+            name: source,
+            description: 'Hub skill.',
+            directory: `C:\\skills\\${source}`,
+          },
+        ],
+        warnings: [],
       }
     },
   } as unknown as CliCommandContext
@@ -169,9 +174,14 @@ test('SkillCommand reports remote installation before starting and hides URL sec
     addSkill: async () => {
       infoAtInstall = latestTimelineEntry(ui)
       return {
-        name: 'remote-skill',
-        description: 'Remote skill.',
-        directory: 'C:\\skills\\remote-skill',
+        skills: [
+          {
+            name: 'remote-skill',
+            description: 'Remote skill.',
+            directory: 'C:\\skills\\remote-skill',
+          },
+        ],
+        warnings: [],
       }
     },
   } as unknown as CliCommandContext
@@ -186,4 +196,33 @@ test('SkillCommand reports remote installation before starting and hides URL sec
   assert.match(infoAtInstall?.body ?? '', /https:\/\/example\.com\/skill\.zip/)
   assert.doesNotMatch(infoAtInstall?.body ?? '', /password|secret|fragment/)
   assert.match(latestTimelineEntry(ui)?.body ?? '', /Added and enabled/)
+})
+
+test('SkillCommand reports every installed skill in a collection', async () => {
+  const ui = new TerminalController()
+  const context = {
+    ui,
+    addSkill: async () => ({
+      skills: [
+        {
+          name: 'alpha-skill',
+          description: 'Alpha skill.',
+          directory: 'C:\\skills\\alpha-skill',
+        },
+        {
+          name: 'beta-skill',
+          description: 'Beta skill.',
+          directory: 'C:\\skills\\beta-skill',
+        },
+      ],
+      warnings: [],
+    }),
+  } as unknown as CliCommandContext
+
+  await SkillCommand.execute(context, ['add', 'C:\\skill-collection'])
+
+  const message = latestTimelineEntry(ui)?.body ?? ''
+  assert.match(message, /Added and enabled 2 skills/)
+  assert.match(message, /alpha-skill: C:\\skills\\alpha-skill/)
+  assert.match(message, /beta-skill: C:\\skills\\beta-skill/)
 })
