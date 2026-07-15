@@ -36,12 +36,16 @@ test('LoadSkillTool loads an exact runtime skill catalog entry', async () => {
 test('LoadSkillTool validates names and runtime availability', async () => {
   const tool = new LoadSkillTool({} as any)
 
-  assert.equal(
-    await tool.call({ name: '' }),
-    '[ERROR] load_skill requires a non-empty string params.name'
-  )
-  assert.equal(
-    await tool.call({ name: 'missing' }),
-    '[ERROR] load_skill is not configured in this runtime'
-  )
+  assert.deepEqual(await tool.call({ name: '' }), {
+    outcome: 'error',
+    result: {
+      message: 'load_skill requires a non-empty string params.name',
+    },
+    displayText: 'load_skill requires a non-empty string params.name',
+  })
+  assert.deepEqual(await tool.call({ name: 'missing' }), {
+    outcome: 'error',
+    result: { message: 'load_skill is not configured in this runtime' },
+    displayText: 'load_skill is not configured in this runtime',
+  })
 })

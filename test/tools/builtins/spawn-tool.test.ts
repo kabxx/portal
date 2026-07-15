@@ -22,9 +22,11 @@ test('SpawnTool delegates prompt to the configured synchronous runner', async ()
   const tool = new SpawnTool({} as any, {
     spawnTask: async (input) => {
       calls.push(input)
-      return JSON.stringify({
+      return {
+        provider: 'gemini',
+        conversationUrl: 'https://gemini.google.com/app/worker',
         output: 'worker result',
-      })
+      }
     },
   })
 
@@ -32,7 +34,6 @@ test('SpawnTool delegates prompt to the configured synchronous runner', async ()
     provider: 'gemini',
     prompt: 'Summarize the test fixture.',
   })
-  if (typeof output === 'string') assert.fail('expected structured output')
   const result = output.result as {
     output: string
   }
@@ -44,13 +45,24 @@ test('SpawnTool delegates prompt to the configured synchronous runner', async ()
     },
   ])
   assert.equal(result.output, 'worker result')
-  assert.equal(output.displayText, 'Spawn completed.')
+  assert.equal(
+    output.displayText,
+    [
+      'Spawn completed.',
+      'provider: gemini',
+      'conversation: https://gemini.google.com/app/worker',
+    ].join('\n')
+  )
 })
 
 test('SpawnTool emits a start progress event before running the child task', async () => {
   const events: string[] = []
   const tool = new SpawnTool({} as any, {
-    spawnTask: async () => JSON.stringify({ provider: 'gemini' }),
+    spawnTask: async () => ({
+      provider: 'gemini',
+      conversationUrl: 'https://gemini.google.com/app/worker',
+      output: 'done',
+    }),
   })
 
   await tool.call(
@@ -70,17 +82,34 @@ test('SpawnTool rejects missing prompt before invoking the runner', async () => 
     },
   })
 
-  assert.equal(
-    await tool.call({ prompt: '' }),
-    '[ERROR] spawn requires a non-empty string params.prompt'
-  )
+  assert.deepEqual(await tool.call({ prompt: '' }), {
+    outcome: 'error',
+    result: { message: 'spawn requires a non-empty string params.prompt' },
+    displayText: 'spawn requires a non-empty string params.prompt',
+  })
 })
 
 test('SpawnTool reports when spawn is unavailable', async () => {
   const tool = new SpawnTool({} as any)
 
-  assert.equal(
-    await tool.call({ prompt: 'Inspect the repo.' }),
-    '[ERROR] spawn is not configured in this runtime'
-  )
+  assert.deepEqual(await tool.call({ prompt: 'Inspect the repo.' }), {
+    outcome: 'error',
+    result: { message: 'spawn is not configured in this runtime' },
+    displayText: 'spawn is not configured in this runtime',
+  })
+})
+
+test('SpawnTool maps runner errors to structured tool errors', async () => {
+  const tool = new SpawnTool({} as any, {
+    spawnTask: async () => ({
+      kind: 'error',
+      message: 'Unsupported spawn provider: legacy',
+    }),
+  })
+
+  assert.deepEqual(await tool.call({ prompt: 'Inspect the repo.' }), {
+    outcome: 'error',
+    result: { message: 'Unsupported spawn provider: legacy' },
+    displayText: 'Unsupported spawn provider: legacy',
+  })
 })

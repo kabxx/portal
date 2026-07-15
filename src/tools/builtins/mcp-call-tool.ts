@@ -1,5 +1,9 @@
 import type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
-import { Tool, defineToolMetadata } from '../core/tool-definition.ts'
+import {
+  createToolError,
+  Tool,
+  defineToolMetadata,
+} from '../core/tool-definition.ts'
 import type { ToolOutput } from '../core/tool-definition.ts'
 
 interface McpCallToolInput {
@@ -40,16 +44,22 @@ class McpCallTool extends Tool<McpCallToolInput, ToolOutput> {
     options: AbortOptions = {}
   ): Promise<ToolOutput> {
     if (typeof input.server !== 'string' || input.server.trim() === '') {
-      return '[ERROR] mcp_call_tool requires a non-empty string params.server'
+      return createToolError(
+        'mcp_call_tool requires a non-empty string params.server'
+      )
     }
     if (typeof input.tool !== 'string' || input.tool.trim() === '') {
-      return '[ERROR] mcp_call_tool requires a non-empty string params.tool'
+      return createToolError(
+        'mcp_call_tool requires a non-empty string params.tool'
+      )
     }
     if (!isRecord(input.arguments)) {
-      return '[ERROR] mcp_call_tool requires an object params.arguments'
+      return createToolError(
+        'mcp_call_tool requires an object params.arguments'
+      )
     }
     if (this.services.mcpCallTool === undefined) {
-      return '[ERROR] mcp_call_tool is not configured in this runtime'
+      return createToolError('mcp_call_tool is not configured in this runtime')
     }
     return await this.services.mcpCallTool(input, options)
   }

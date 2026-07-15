@@ -1,6 +1,10 @@
 import { lstat, mkdir, readFile, unlink, writeFile } from 'fs/promises'
 import path from 'path'
-import { Tool, defineToolMetadata } from '../core/tool-definition.ts'
+import {
+  createToolError,
+  Tool,
+  defineToolMetadata,
+} from '../core/tool-definition.ts'
 import type { ToolOutput } from '../core/tool-definition.ts'
 import { applyDiff } from '../patch/openai-apply-diff.ts'
 import { buildV4aPreview } from '../patch/v4a-preview.ts'
@@ -333,7 +337,9 @@ async function commitPatch(files: PlannedFile[]): Promise<void> {
 class ApplyPatchTool extends Tool<string, ToolOutput> {
   public async call(input: string): Promise<ToolOutput> {
     if (typeof input !== 'string' || !input.trim()) {
-      return '[ERROR] apply_patch input must be non-empty freeform Patch text'
+      return createToolError(
+        'apply_patch input must be non-empty freeform Patch text'
+      )
     }
 
     try {
@@ -348,7 +354,7 @@ class ApplyPatchTool extends Tool<string, ToolOutput> {
         displayText: buildV4aPreview(files),
       }
     } catch (error) {
-      return `[ERROR] ${errorMessage(error)}`
+      return createToolError(errorMessage(error))
     }
   }
 }

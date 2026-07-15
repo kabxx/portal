@@ -11,8 +11,14 @@ import {
 import type { ToolOutput } from '../../../src/tools/core/tool-definition.ts'
 
 function expectSuccess(output: ToolOutput) {
-  if (typeof output === 'string') assert.fail(output)
+  assert.notEqual(output.outcome, 'error')
   return output
+}
+
+function expectError(output: ToolOutput): string {
+  assert.equal(output.outcome, 'error')
+  assert.equal(typeof output.result.message, 'string')
+  return output.result.message as string
 }
 
 async function exists(filePath: string): Promise<boolean> {
@@ -43,6 +49,13 @@ test('ApplyPatchTool prompt teaches distinct Add and Update V4A syntax', () => {
     prompt,
     /export function first\(\)[\s\S]*@@\n export function second\(\)/
   )
+})
+
+test('ApplyPatchTool returns a structured error for empty input', async () => {
+  const output = await new ApplyPatchTool({} as any).call('')
+
+  assert.match(expectError(output), /input must be non-empty/)
+  assert.equal(output.displayText, output.result.message)
 })
 
 test('parsePatch extracts multiple V4A Add and Update operations', () => {
@@ -122,8 +135,8 @@ test('ApplyPatchTool explains malformed Add File lines to the model', async () =
         '*** End Patch',
       ].join('\n')
     )
-    assert.match(String(hunkHeader), /must not contain "@@"/)
-    assert.match(String(hunkHeader), /content line must start with "\+"/)
+    assert.match(expectError(hunkHeader), /must not contain "@@"/)
+    assert.match(expectError(hunkHeader), /content line must start with "\+"/)
 
     const missingPrefix = await tool.call(
       [
@@ -133,8 +146,11 @@ test('ApplyPatchTool explains malformed Add File lines to the model', async () =
         '*** End Patch',
       ].join('\n')
     )
-    assert.match(String(missingPrefix), /Invalid Add File line "# hello"/)
-    assert.match(String(missingPrefix), /empty content line as a single "\+"/)
+    assert.match(expectError(missingPrefix), /Invalid Add File line "# hello"/)
+    assert.match(
+      expectError(missingPrefix),
+      /empty content line as a single "\+"/
+    )
     assert.equal(await exists(filePath), false)
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -162,10 +178,11 @@ test('ApplyPatchTool explains forward-only Update File context failures', async 
       ].join('\n')
     )
 
-    assert.match(String(result), /matcher never moves backward/)
-    assert.match(String(result), /same top-to-bottom order/)
-    assert.match(String(result), /unprefixed blank separator lines/)
-    assert.match(String(result), /Re-read the file and retry/)
+    const message = expectError(result)
+    assert.match(message, /matcher never moves backward/)
+    assert.match(message, /same top-to-bottom order/)
+    assert.match(message, /unprefixed blank separator lines/)
+    assert.match(message, /Re-read the file and retry/)
     assert.equal(await readFile(filePath, 'utf8'), 'top\nmiddle\nbottom')
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -184,7 +201,7 @@ test('ApplyPatchTool rejects move and delete operations without changing files',
         '\n'
       )
     )
-    assert.match(String(deleteResult), /use run_command instead/i)
+    assert.match(expectError(deleteResult), /use run_command instead/i)
     assert.equal(await exists(filePath), true)
 
     const moveResult = await tool.call(
@@ -195,7 +212,7 @@ test('ApplyPatchTool rejects move and delete operations without changing files',
         '*** End Patch',
       ].join('\n')
     )
-    assert.match(String(moveResult), /use run_command instead/i)
+    assert.match(expectError(moveResult), /use run_command instead/i)
     assert.equal(await readFile(filePath, 'utf8'), 'keep')
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -224,7 +241,7 @@ test('ApplyPatchTool rejects a conflicting update before writing any file', asyn
         '*** End Patch',
       ].join('\n')
     )
-    assert.match(String(result), /missing file/i)
+    assert.match(expectError(result), /missing file/i)
     assert.equal(await readFile(firstPath, 'utf8'), 'old')
     assert.equal(await exists(missingPath), false)
   } finally {

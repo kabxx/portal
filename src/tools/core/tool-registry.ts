@@ -8,7 +8,7 @@ import type {
   ToolOutcome,
   ToolServices,
 } from './tool-definition.ts'
-import type { ToolOutput } from './tool-definition.ts'
+import { createToolError, type ToolOutput } from './tool-definition.ts'
 
 export interface ExtractedToolCall {
   leadingText: string
@@ -256,15 +256,6 @@ class ToolRegistry {
 }
 
 function normalizeToolOutput(output: ToolOutput): ToolResult {
-  if (typeof output === 'string') {
-    if (output.startsWith('[ERROR]')) {
-      return asErrorResult(output.slice('[ERROR]'.length).trimStart())
-    }
-    return {
-      outcome: 'success',
-      result: { content: output },
-    }
-  }
   if (
     typeof output === 'object' &&
     output !== null &&
@@ -285,11 +276,7 @@ function normalizeToolOutput(output: ToolOutput): ToolResult {
 }
 
 function asErrorResult(message: string): ToolResult {
-  return {
-    outcome: 'error',
-    result: { message },
-    displayText: message,
-  }
+  return createToolError(message)
 }
 
 function normalizeResult(
