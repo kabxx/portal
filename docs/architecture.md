@@ -48,6 +48,8 @@ Provider-specific website behavior stays behind adapters. The runtime understand
 
 On Windows, the launched browser is assigned to a Job Object. Closing the Job Object terminates the browser process tree even when ordinary child-process cleanup is insufficient. Other platforms use the generic Node child-process path.
 
+The browser and portal share one lifecycle. Playwright's browser-level `disconnected` event covers browser process exit, crash, and CDP loss. An unexpected disconnect requests the same controlled shutdown used by `/exit`; portal-initiated browser closure is marked internally and does not trigger a second shutdown. Closing an individual page does not end the portal process.
+
 ## New runtime creation
 
 A new thread uses this sequence:
