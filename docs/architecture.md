@@ -15,6 +15,8 @@ Provider-specific website behavior stays behind adapters. The runtime understand
 | Area              | Main files                              | Responsibility                                                                                      |
 | ----------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Process entry     | `src/index.ts`, `src/app.ts`            | Parse options, build services, run input dispatch, coordinate cancellation, and shut down           |
+| Configuration     | `src/config/`                           | Create, validate, comment, lock, and atomically update `data/config.yaml`                           |
+| HTTP API          | `src/api/`                              | Serve authenticated routes, thread operations, and per-thread SSE event streams                     |
 | Browser platform  | `src/platform/`                         | Launch Chromium, connect over CDP, and manage Windows process lifetime                              |
 | Provider adapters | `src/providers/adapters/`               | Navigate pages, detect login/readiness, submit, stream, upload, select models, and stop output      |
 | History parsing   | `src/providers/conversation-history.ts` | Convert six provider history formats into visible user/assistant messages                           |
@@ -22,7 +24,9 @@ Provider-specific website behavior stays behind adapters. The runtime understand
 | Threads           | `src/threads/`                          | Track open threads and local turns in memory; persist URL history metadata in SQLite                |
 | Commands          | `src/cli-commands/`                     | Tokenize and dispatch slash commands                                                                |
 | Tools             | `src/tools/`                            | Define schemas, render the tool protocol, validate calls, execute tools, and report progress        |
+| Command processes | `src/processes/`                        | Track command jobs, bound output, and terminate process trees                                       |
 | Terminal UI       | `src/terminal-ui/`                      | Manage home/thread timelines, live assistant/command bubbles, input history, wrapping, and keys     |
+| Instructions      | `src/instructions/`                     | Discover optional Codex/Claude files, enforce read limits, and activate path-scoped rules           |
 | Skills            | `src/skills/`                           | Validate manifests, install sources, maintain the registry, snapshot catalogs, and load content     |
 | MCP               | `src/mcp/`                              | Parse config, connect per-thread clients, cache tools, call tools, and render attachments           |
 | Hooks             | `src/hooks/`                            | Load immutable snapshots, run command/model handlers, gate Tool calls, and publish execution events |
@@ -76,6 +80,7 @@ The setup prompt is composed from:
 - enabled Skill names and descriptions, when the catalog is non-empty;
 - successfully connected MCP Server and Tool names;
 - the current working directory;
+- enabled always-on project instructions;
 - optional provider rules, currently used for Grok;
 - an exact `READY` handshake requirement.
 
@@ -87,7 +92,7 @@ Resume accepts a normalized provider URL or a `#history-id` resolved through `Th
 
 1. Reject unsupported URLs and duplicate open conversations.
 2. Create an adapter directly on the existing provider URL and wait for login/readiness.
-3. Read the current Skills registry and reconnect the current enabled MCP configuration with fresh transports.
+3. Read the current Skills, MCP, and project-instruction configuration.
 4. Build the runtime with `skipSetup: true`; no new setup/catalog turn is sent.
 5. Register the thread and switch to its empty timeline.
 6. Render the existing ready status bubble.
@@ -101,7 +106,7 @@ Resume creates one-time page/CDP history capture before navigation. The base ada
 
 Gemini follows its continuation cursor, Doubao follows `has_more`, and GLM accumulates `messages/batch` pages until the selected chain reaches the root, all under bounded progress and timeout loops. ChatGPT, GLM, and Grok do not report complete when a parent/root, active leaf, or visible response body is missing.
 
-A resumed conversation skips the setup handshake. It therefore assumes that the original conversation already contains a compatible portal tool protocol. Current Skill and MCP connections exist locally, but newly configured names are not injected as a new catalog turn.
+A resumed conversation skips the setup handshake. It therefore assumes that the original conversation already contains a compatible portal tool protocol. Current Skill and MCP connections exist locally, but newly configured names are not injected as a new catalog turn. The resume path also does not attach the freshly read project-instruction snapshot to the resumed `RuntimeCore`, so it neither resends always-on instructions nor performs target-aware instruction activation for later tool calls in that thread.
 
 ## Turn and tool lifecycle
 
@@ -209,7 +214,7 @@ Cancellation is propagated through provider submit, runtime retries, tools, Skil
 
 ## Spawned runtimes
 
-`spawn` creates a temporary child provider conversation in the existing browser context. It selects the requested provider or defaults to the parent provider, creates the normal Skill snapshot and independent MCP connections, runs the standard setup handshake, executes one focused prompt synchronously, returns JSON containing provider, conversation URL, and output, then closes the child runtime.
+`spawn` creates a temporary child provider conversation in the existing browser context. It selects the requested provider or defaults to the parent provider, creates the normal Skill snapshot and independent MCP connections, forks the parent project-instruction snapshot, runs the standard setup handshake, executes one focused prompt synchronously, returns JSON containing provider, conversation URL, and output, then closes the child runtime.
 
 Spawned conversations are not added to the normal thread list or SQLite history.
 
@@ -218,6 +223,15 @@ Spawned conversations are not added to the normal thread list or SQLite history.
 The `skills` section of `data/config.yaml` is read for every Skill command and runtime creation. A valid enabled snapshot contributes a name/description catalog to new setup prompts and defines which names `load_skill` can resolve.
 
 Catalog membership is immutable for an open runtime. The actual `SKILL.md` and resource list are read and validated on demand, so edits are visible to later loads while deleted or invalid files return errors. See [Skills](skills.md).
+
+## Project instructions
+
+The `agentInstructions` section is disabled by default. When enabled, new
+runtimes load reviewed Codex and Claude Code files from configured global roots
+and the current workspace. Always-on text joins the setup prompt; supported
+file-targeting tool calls can activate nested instructions and path rules before
+execution. Loader membership is snapshotted per runtime, while a child `spawn`
+forks the parent's active state. See [Project Instructions](instructions.md).
 
 ## MCP
 
@@ -239,3 +253,6 @@ data/
 ```
 
 The repository's top-level `temp/` directory is separate. It contains provider fixtures, probes, screenshots, and other adapter-development artifacts and may include sensitive conversation data.
+
+See [Configuration](configuration.md) for the ownership and reload behavior of
+each `config.yaml` section.

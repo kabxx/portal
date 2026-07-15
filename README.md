@@ -2,7 +2,7 @@
 
 **Turn web AI products into local, tool-using terminal agents.**
 
-[简体中文](docs/README.zh-CN.md) | [API](docs/api.md) | [Providers](docs/providers.md) | [Architecture](docs/architecture.md) | [Security](docs/security.md) | [Skills](docs/skills.md) | [MCP](docs/mcp.md) | [Hooks](docs/hooks.md) | [Contributing](docs/contributing.md)
+[简体中文](docs/README.zh-CN.md) | [Configuration](docs/configuration.md) | [Project Instructions](docs/instructions.md) | [API](docs/api.md) | [Providers](docs/providers.md) | [Architecture](docs/architecture.md) | [Security](docs/security.md) | [Skills](docs/skills.md) | [MCP](docs/mcp.md) | [Hooks](docs/hooks.md) | [Contributing](docs/contributing.md)
 
 > [!IMPORTANT]
 > portal is an early-stage development project. Provider websites can change without notice, so passing tests do not guarantee that every real browser workflow still works.
@@ -18,6 +18,7 @@ portal does **not** call provider model APIs. It does not bypass provider accoun
 - **Local tools.** Models can inspect a workspace, run commands, edit files, attach images, and delegate focused tasks.
 - **Resumable conversations.** portal stores conversation URLs and reloads visible provider history when a conversation is resumed.
 - **Isolated timelines.** Home and every open thread keep separate in-memory terminal timelines; switching restores cached output without reloading the provider.
+- **Project instructions.** Optional Codex and Claude Code files can provide reviewed workspace guidance to new runtimes.
 - **Skills and MCP.** Runtimes can load registered instruction packages and connect to stdio or Streamable HTTP MCP servers.
 - **Lifecycle Hooks.** Command, prompt, and isolated agent handlers can observe lifecycle events or allow, deny, and rewrite Tool parameters.
 
@@ -71,7 +72,7 @@ npm install
 npm run dev
 ```
 
-On first run, portal creates `data/config.yaml`. The generated `browser.profilePath` is an absolute path under `data/profiles/<browser.name>`; with the default `edge` browser, it points to `data/profiles/edge`.
+On first run, portal creates a commented `data/config.yaml` covering the browser, project instructions, HTTP API, MCP, Skills, Hooks, and advanced runtime limits. Project instruction sources are disabled by default. See [Configuration](docs/configuration.md). The generated `browser.profilePath` is an absolute path under `data/profiles/<browser.name>`; with the default `edge` browser, it points to `data/profiles/edge`.
 
 Override the browser name, executable, or port when needed:
 
@@ -192,13 +193,15 @@ Skills are local instruction packages with a `SKILL.md` manifest and optional re
 
 ```text
 /skill add <local-directory-or-url>
+/skill add <name> --registry <url>
 /skill list
 /skill enable <name>
 /skill disable <name>
 /skill remove <name>
+$<name> [task]
 ```
 
-Local directories are referenced in place. Direct `SKILL.md` URLs, GitHub locations, and supported archives are downloaded under `data/skills/`. See [Skills](docs/skills.md) for validation, source types, runtime snapshots, storage, and trust boundaries.
+Local directories are referenced in place. Direct `SKILL.md` URLs, GitHub locations, supported archives, and Hub registry packages are downloaded under `data/skills/`. A `$<name> [task]` prefix selects one enabled Skill for the current turn. See [Skills](docs/skills.md) for validation, source types, manual selection, runtime snapshots, storage, and trust boundaries.
 
 ## MCP
 
@@ -225,7 +228,7 @@ Only successfully connected server and tool names are included under `# MCP Serv
 data/
 ├── profiles/<browserName>/   # Dedicated browser profile and login state
 ├── threads.db                # Conversation URL metadata, not transcripts
-├── config.yaml               # User-editable browser, MCP, and Skill configuration
+├── config.yaml               # Browser, instructions, API, MCP, Skills, Hooks, and limits
 ├── skills/                   # portal-managed remote Skills
 └── temp/skill-install/       # Temporary Skill installation workspace
 ```
@@ -252,6 +255,7 @@ See [Contributing](docs/contributing.md) before modifying provider selectors, hi
 - Resume history displays the provider's current visible user/assistant branch, not every tool, reasoning, file, image, or alternate branch node.
 - Home and thread timelines are in memory only.
 - A resumed conversation skips the setup handshake and assumes the original conversation already contains portal's tool protocol.
+- A resumed thread does not resend current project instructions into the existing provider conversation.
 - portal is not packaged as a stable globally installed CLI, and automated real-browser CI is not yet available.
 
 ## License

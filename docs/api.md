@@ -29,7 +29,10 @@ api:
 When `token` is a string, every `/v1/*` request must include
 `Authorization: Bearer <token>`. `/health` is always unauthenticated. A
 non-loopback host requires a non-null token. Use an SSH tunnel for remote
-access instead of exposing the browser session directly.
+access instead of exposing the browser session directly. Listener and token
+changes require restarting portal; `/serve stop` followed by `/serve start`
+reuses the configuration loaded by the current process. See
+[Configuration](configuration.md).
 
 ## Threads
 
@@ -59,30 +62,54 @@ provider page without creating a turn or changing the local title/history.
 Subscribe to the SSE endpoint before sending the reload request when the
 `thread.action` `started` event must not be missed.
 
-## Skills and MCP
+## Skills
 
 `POST /v1/threads/:threadId/skill` with `{ "name": "skill-name" }` starts the
 same activation-only form as typing `$skill-name` in the TUI. The combined
 `$skill-name task` form is intentionally not synthesized by this API.
 
-Skills are managed with `GET/POST /v1/skills`, `PUT /v1/skills/:name` with
-`{ "enabled": true|false }`, and `DELETE /v1/skills/:name`.
+| Method   | Path                          | Body or purpose                                                                       |
+| -------- | ----------------------------- | ------------------------------------------------------------------------------------- |
+| `POST`   | `/v1/threads/:threadId/skill` | `{ "name": "skill-name" }`; starts one activation-only turn and returns `202`         |
+| `GET`    | `/v1/skills`                  | List registered Skills and validation issues                                          |
+| `POST`   | `/v1/skills`                  | `{ "source": "...", "registryUrl": "..." }`; `registryUrl` is optional; returns `201` |
+| `PUT`    | `/v1/skills/:name`            | `{ "enabled": true }` or `{ "enabled": false }`                                       |
+| `DELETE` | `/v1/skills/:name`            | Remove the registration and any portal-managed download                               |
 
-MCP servers are managed with `GET/POST /v1/mcp/servers`,
-`PUT /v1/mcp/servers/:name` (enable/disable or replace `config`), and
-`DELETE /v1/mcp/servers/:name`. Runtime resource and prompt catalogs can be
-queried with:
+For a Hub install, `source` is the Skill name and `registryUrl` is the HTTP(S)
+registry root. For local directories and direct URLs, omit `registryUrl`. See
+[Skills](skills.md).
+
+## MCP
+
+| Method   | Path                                              | Body or purpose                                                           |
+| -------- | ------------------------------------------------- | ------------------------------------------------------------------------- |
+| `GET`    | `/v1/mcp/servers`                                 | List configured servers with secrets redacted                             |
+| `POST`   | `/v1/mcp/servers`                                 | `{ "name": "server", ...config }`; adds a server; returns `201`           |
+| `PUT`    | `/v1/mcp/servers/:name`                           | `{ "enabled": true }`, `{ "enabled": false }`, or `{ "config": { ... } }` |
+| `DELETE` | `/v1/mcp/servers/:name`                           | Remove a configured server                                                |
+| `GET`    | `/v1/threads/:threadId/mcp/resources?server=name` | List Resources in the active runtime; `server` is optional                |
+| `GET`    | `/v1/threads/:threadId/mcp/prompts?server=name`   | List Prompts in the active runtime; `server` is optional                  |
+
+The POST config is the same server object accepted under `mcp.servers` after
+removing `name`; PUT replacement wraps that object in `config`. Runtime
+Resource and Prompt endpoints are read-only and do not attach content to a
+thread. See [MCP](mcp.md).
 
 The server list redacts HTTP headers and stdio environment values. It reports
 only `hasHeaders`/`hasEnv`; credentials are never returned by the API.
 
-```text
-GET /v1/threads/:threadId/mcp/resources?server=name
-GET /v1/threads/:threadId/mcp/prompts?server=name
-```
+## Provider capabilities
 
-Provider-specific web capabilities are exposed through
-`GET/PUT/DELETE /v1/threads/:threadId/capabilities/:name`.
+| Method   | Path                                       | Body or purpose                                                                                                 |
+| -------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/v1/threads/:threadId/capabilities`       | List controls exposed by the active provider page                                                               |
+| `PUT`    | `/v1/threads/:threadId/capabilities/:name` | `{ "state": "on" }`/`{ "state": "off" }` for toggles; `{ "state": "selected" }`/`{ "state": "on" }` for actions |
+| `DELETE` | `/v1/threads/:threadId/capabilities/:name` | Set a toggle to `off`, or clear the selected action                                                             |
+
+Toggle states and dynamic action names follow the same provider-specific rules
+as `/thread capability`. Unsupported states and unavailable controls return
+`400`. See [Providers](providers.md).
 
 ## SSE events
 
