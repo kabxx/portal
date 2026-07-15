@@ -231,6 +231,61 @@ test('canonicalizes an aliased home without allowing nested symlink escapes', as
   }
 })
 
+test('canonicalizes aliased tool targets and blocks targets linked outside', async () => {
+  const container = await mkdtemp(
+    path.join(os.tmpdir(), 'portal-instructions-target-alias-')
+  )
+  const root = path.join(container, 'workspace')
+  const rootAlias = path.join(container, 'workspace-alias')
+  const outside = path.join(container, 'outside')
+  try {
+    await mkdir(path.join(root, '.git'), { recursive: true })
+    await writeText(path.join(root, 'src', 'AGENTS.md'), 'scoped source rule')
+    await writeText(
+      path.join(root, '.claude', 'rules', 'source.md'),
+      ['---', 'paths:', '  - "src/**"', '---', 'source path rule'].join('\n')
+    )
+    await writeText(
+      path.join(root, '.claude', 'rules', 'escape.md'),
+      ['---', 'paths:', '  - "escape/**"', '---', 'escaped path rule'].join(
+        '\n'
+      )
+    )
+    await writeText(path.join(outside, 'AGENTS.md'), 'outside rule')
+    await symlink(
+      root,
+      rootAlias,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    await symlink(
+      outside,
+      path.join(root, 'escape'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    const { instructions } = await loadProjectInstructions({
+      cwd: rootAlias,
+      config: createConfig({ claudeLocal: true, codexLocal: true }),
+    })
+    const escaped = await instructions.activateForToolCall({
+      tool: 'run_command',
+      params: { command: 'test', cwd: path.join(root, 'escape', 'missing') },
+    })
+    assert.equal(escaped.prompt, null)
+
+    const activation = await instructions.activateForToolCall({
+      tool: 'run_command',
+      params: { command: 'test', cwd: path.join(rootAlias, 'src', 'missing') },
+    })
+
+    assert.match(activation.prompt ?? '', /scoped source rule/)
+    assert.match(activation.prompt ?? '', /source path rule/)
+    assert.doesNotMatch(activation.prompt ?? '', /escaped path rule/)
+  } finally {
+    await rm(container, { recursive: true, force: true })
+  }
+})
+
 test('global and local instruction switches are independent', async () => {
   const root = await createWorkspace()
   const home = await mkdtemp(
