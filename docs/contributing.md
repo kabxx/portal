@@ -32,6 +32,21 @@ npm run fmt:check
 
 Use `npm run fmt` only when you intend to rewrite formatting. Before submitting a change, review the final diff and make sure unrelated files were not modified.
 
+Every pull request runs the type check, unit tests, and formatting check in GitHub Actions on Node.js 22. Unit tests also run on Windows because process and browser support have platform-specific behavior.
+
+## Manual browser smoke check
+
+The CI jobs do not open a provider website. Run this checklist locally when a change affects the CLI lifecycle, a provider adapter, browser startup, or real tool execution:
+
+1. Run `npm run dev` with a dedicated browser profile.
+2. Confirm the browser connects, then run `/providers`.
+3. Run `/thread open <provider>` and submit a short prompt.
+4. Confirm the assistant response streams and the thread remains usable afterward.
+5. Run `/thread status`, then `/thread detach` (or `/thread close <thread-id>`) and `/exit`.
+6. When a provider adapter changed, repeat the relevant login, resume, upload, capability, or cancellation flow for that provider.
+
+Do not include browser profiles, cookies, screenshots, conversation URLs, or provider response captures in a change.
+
 ## Repository layout
 
 ```text
