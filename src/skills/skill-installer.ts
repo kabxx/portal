@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { cp, mkdir, rm, stat } from 'fs/promises'
+import { cp, mkdir, readdir, rm, stat } from 'fs/promises'
 import path from 'path'
 import type { AbortOptions } from '../runtime/runtime-cancellation.ts'
 import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
@@ -365,11 +365,7 @@ export class SkillInstaller {
       }
       for (const item of staged) {
         throwIfAborted(signal)
-        await cp(item.directory, item.destination, {
-          recursive: true,
-          force: false,
-          errorOnExist: true,
-        })
+        await copyDirectoryContents(item.directory, item.destination)
         await inspectSkillTree(item.destination, signal, this.policy)
         await assertManifestMatchesDirectory(
           item.destination,
@@ -396,6 +392,19 @@ export class SkillInstaller {
       directory: destination,
       managed: true,
     }))
+  }
+}
+
+async function copyDirectoryContents(
+  source: string,
+  destination: string
+): Promise<void> {
+  for (const entry of await readdir(source)) {
+    await cp(path.join(source, entry), path.join(destination, entry), {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+    })
   }
 }
 
