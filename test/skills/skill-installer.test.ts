@@ -2,7 +2,15 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'child_process'
 import { createReadStream } from 'fs'
-import { access, mkdtemp, readdir, readFile, rm, writeFile } from 'fs/promises'
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'fs/promises'
 import { createServer } from 'http'
 import os from 'os'
 import path from 'path'
@@ -17,6 +25,26 @@ import { resolveGitHubDirectoryTarget } from '../../src/skills/skill-github-down
 import { createTestSkill } from '../helpers/skills.ts'
 
 const execFileAsync = promisify(execFile)
+
+async function serveFile(filePath: string): Promise<{
+  url: string
+  close: () => Promise<void>
+}> {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'Content-Type': 'application/zip' })
+    createReadStream(filePath).pipe(response)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  assert.ok(address && typeof address === 'object')
+  return {
+    url: `http://127.0.0.1:${address.port}/skills.zip`,
+    close: async () =>
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      ),
+  }
+}
 
 test('isSupportedArchive recognizes RAR 4 and RAR 5 signatures', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-rar-signature-'))
@@ -162,9 +190,11 @@ test('SkillLibrary downloads only the requested GitHub tree directory and retrie
     registryPath: path.join(root, 'data', 'config.yaml'),
   })
   try {
-    const installed = await library.add(
+    const result = await library.add(
       'https://github.com/example/skills/tree/main/skills/github-tree-skill'
     )
+    const installed = result.skills[0]
+    assert.ok(installed)
     assert.equal(installed.name, 'github-tree-skill')
     assert.equal(
       await readFile(
@@ -225,9 +255,11 @@ for (const archiveType of ['zip', '7z', 'tar.gz'] as const) {
       registryPath: path.join(root, 'data', 'config.yaml'),
     })
     try {
-      const installed = await library.add(
+      const result = await library.add(
         `http://127.0.0.1:${address.port}/ordinary-page`
       )
+      const installed = result.skills[0]
+      assert.ok(installed)
       assert.equal(installed.name, skillName)
       assert.match(
         await readFile(path.join(installed.directory, 'SKILL.md'), 'utf8'),
@@ -245,6 +277,79 @@ for (const archiveType of ['zip', '7z', 'tar.gz'] as const) {
     }
   })
 }
+
+test('SkillLibrary installs every skill in an ordinary archive collection', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-bundle-'))
+  const source = path.join(root, 'source', 'collection')
+  await createTestSkill(source, 'alpha-skill')
+  await createTestSkill(path.join(source, 'nested'), 'beta-skill')
+  const archivePath = path.join(root, 'collection.zip')
+  await execFileAsync(path7za, ['a', '-tzip', archivePath, 'collection'], {
+    cwd: path.join(root, 'source'),
+  })
+  const server = await serveFile(archivePath)
+  const library = new SkillLibrary({
+    skillsDirectory: path.join(root, 'data', 'skills'),
+    tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
+    registryPath: path.join(root, 'data', 'config.yaml'),
+  })
+
+  try {
+    const result = await library.add(server.url)
+    assert.deepEqual(
+      result.skills.map(({ name }) => name),
+      ['alpha-skill', 'beta-skill']
+    )
+    for (const skill of result.skills) {
+      assert.equal(
+        skill.directory,
+        path.join(root, 'data', 'skills', skill.name)
+      )
+      await access(path.join(skill.directory, 'SKILL.md'))
+    }
+    assert.deepEqual(
+      (await library.list()).skills.map(({ name }) => name),
+      ['alpha-skill', 'beta-skill']
+    )
+  } finally {
+    await server.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('SkillLibrary rejects an archive collection conflict before moving any skill', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-conflict-'))
+  const source = path.join(root, 'source', 'collection')
+  await createTestSkill(source, 'alpha-skill')
+  await createTestSkill(source, 'beta-skill')
+  const archivePath = path.join(root, 'collection.zip')
+  await execFileAsync(path7za, ['a', '-tzip', archivePath, 'collection'], {
+    cwd: path.join(root, 'source'),
+  })
+  const server = await serveFile(archivePath)
+  const skillsDirectory = path.join(root, 'data', 'skills')
+  const conflictingDirectory = path.join(skillsDirectory, 'beta-skill')
+  await mkdir(conflictingDirectory, { recursive: true })
+  await writeFile(path.join(conflictingDirectory, 'keep.txt'), 'keep', 'utf8')
+  const library = new SkillLibrary({
+    skillsDirectory,
+    tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
+    registryPath: path.join(root, 'data', 'config.yaml'),
+  })
+
+  try {
+    await assert.rejects(library.add(server.url), /already exists/)
+    await assert.rejects(access(path.join(skillsDirectory, 'alpha-skill')))
+    assert.equal(
+      await readFile(path.join(conflictingDirectory, 'keep.txt'), 'utf8'),
+      'keep'
+    )
+    assert.deepEqual((await library.list()).skills, [])
+  } finally {
+    await server.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 test('SkillLibrary installs a named skill through a Hub registry protocol', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-hub-'))
@@ -297,9 +402,11 @@ test('SkillLibrary installs a named skill through a Hub registry protocol', asyn
     registryPath: path.join(root, 'data', 'config.yaml'),
   })
   try {
-    const installed = await library.add(skillName, {
+    const result = await library.add(skillName, {
       registryUrl: `http://127.0.0.1:${address.port}`,
     })
+    const installed = result.skills[0]
+    assert.ok(installed)
     assert.equal(installed.name, skillName)
     assert.match(
       await readFile(path.join(installed.directory, 'SKILL.md'), 'utf8'),
@@ -348,9 +455,11 @@ test('SkillLibrary installs a directly downloaded SKILL.md', async () => {
     registryPath: path.join(root, 'data', 'config.yaml'),
   })
   try {
-    const installed = await library.add(
+    const result = await library.add(
       `http://127.0.0.1:${address.port}/download`
     )
+    const installed = result.skills[0]
+    assert.ok(installed)
     assert.equal(installed.name, 'direct-skill')
     const registry = parseYaml(
       await readFile(path.join(root, 'data', 'config.yaml'), 'utf8')

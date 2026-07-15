@@ -1,13 +1,19 @@
 import { lstat, mkdir, readdir, rm } from 'fs/promises'
 import path from 'path'
+import {
+  isAbortError,
+  throwIfAborted,
+} from '../runtime/runtime-cancellation.ts'
 import { joinPromptSections } from '../shared/prompt-sections.ts'
 import {
   SkillInstallError,
+  type InstalledSkill,
   SkillInstaller,
   type AddedSkill,
   type SkillInstallOptions,
 } from './skill-installer.ts'
 import { readSkillManifest, validateSkillName } from './skill-manifest.ts'
+import { listSkillResources } from './skill-files.ts'
 import { DEFAULT_SKILL_POLICY, type SkillPolicy } from './skill-policy.ts'
 import {
   readSkillRegistry,
@@ -33,6 +39,39 @@ export interface SkillIssue {
 export interface SkillListResult {
   skills: readonly SkillSummary[]
   issues: readonly SkillIssue[]
+}
+
+export interface SkillAddResult {
+  skills: readonly AddedSkill[]
+  warnings: readonly string[]
+}
+
+interface SkillBatchRecord extends InstalledSkill {
+  registryDirectory: string
+}
+
+interface SkillRegistryOperations {
+  read: typeof readSkillRegistry
+  update: (
+    registryPath: string,
+    update: (registry: SkillRegistryData) => void
+  ) => Promise<unknown>
+}
+
+const defaultSkillRegistryOperations: SkillRegistryOperations = {
+  read: readSkillRegistry,
+  update: async (registryPath, update) =>
+    await updateSkillRegistry(registryPath, update),
+}
+
+export class SkillBatchCommitError extends SkillInstallError {
+  public constructor(
+    message: string,
+    public readonly rollbackManaged: boolean
+  ) {
+    super(message)
+    this.name = 'SkillBatchCommitError'
+  }
 }
 
 interface SkillCatalogEntry {
@@ -181,34 +220,42 @@ export class SkillLibrary {
   public async add(
     source: string,
     options: SkillInstallOptions = {}
-  ): Promise<AddedSkill> {
-    await this.readRegistryForUpdate()
+  ): Promise<SkillAddResult> {
+    const registry = await this.loadRegistry()
+    this.assertRegistryWritable(registry)
     const installed = await this.installer.install(source, options)
+    const batch = installed.map((skill) => ({
+      ...skill,
+      registryDirectory: skill.managed
+        ? this.formatManagedDirectory(skill.directory)
+        : path.resolve(skill.directory),
+    }))
     try {
-      await updateSkillRegistry(this.options.registryPath, (registry) => {
-        this.assertRegistryWritable(registry)
-        if (registry.entries.has(installed.name)) {
-          throw new SkillInstallError(`Skill already added: ${installed.name}`)
-        }
-        registry.entries.set(installed.name, {
-          directory: installed.managed
-            ? this.formatManagedDirectory(installed.directory)
-            : path.resolve(installed.directory),
-          enabled: true,
-        })
-      })
+      throwIfAborted(options.signal)
+      const commit = await commitSkillBatch(this.options.registryPath, batch)
+      return {
+        skills: installed.map(({ name, description, directory }) => ({
+          name,
+          description,
+          directory,
+        })),
+        warnings: commit.warnings,
+      }
     } catch (error) {
-      if (installed.managed) {
-        await rm(installed.directory, { recursive: true, force: true }).catch(
-          () => {}
-        )
+      if (
+        isAbortError(error) ||
+        (error instanceof SkillBatchCommitError && error.rollbackManaged)
+      ) {
+        const residuals = await removeManagedSkills(installed)
+        if (residuals.length > 0) {
+          throw new SkillInstallError(
+            `${error.message}\nFailed to roll back managed skill directories:\n${residuals
+              .map((directory) => `- ${directory}`)
+              .join('\n')}`
+          )
+        }
       }
       throw error
-    }
-    return {
-      name: installed.name,
-      description: installed.description,
-      directory: installed.directory,
     }
   }
 
@@ -217,7 +264,7 @@ export class SkillLibrary {
     const entry = await updateSkillRegistry(
       this.options.registryPath,
       (registry) => {
-        this.assertRegistryWritable(registry)
+        assertSkillRegistryWritable(registry)
         const current = registry.entries.get(name)
         if (current !== undefined) {
           registry.entries.delete(name)
@@ -281,7 +328,7 @@ export class SkillLibrary {
   private async setEnabled(name: string, enabled: boolean): Promise<boolean> {
     validateSkillName(name)
     return await updateSkillRegistry(this.options.registryPath, (registry) => {
-      this.assertRegistryWritable(registry)
+      assertSkillRegistryWritable(registry)
       const entry = registry.entries.get(name)
       if (entry === undefined) {
         return false
@@ -302,25 +349,8 @@ export class SkillLibrary {
     return { entries, issues: [] }
   }
 
-  private async readRegistryForUpdate(): Promise<
-    Map<string, SkillRegistryEntry>
-  > {
-    const registry = await this.loadRegistry()
-    this.assertRegistryWritable(registry)
-    return new Map(registry.entries)
-  }
-
   private assertRegistryWritable(registry: SkillRegistryData): void {
-    if (registry.issues.length > 0) {
-      throw new Error(
-        [
-          'Skill registry contains invalid entries. Fix config.yaml before modifying it.',
-          ...registry.issues.map(
-            ({ name, message }) => `- ${name}: ${message}`
-          ),
-        ].join('\n')
-      )
-    }
+    assertSkillRegistryWritable(registry)
   }
 
   private async importManagedSkills(): Promise<
@@ -419,38 +449,118 @@ export class SkillLibrary {
   }
 }
 
-async function listSkillResources(
-  skillDirectory: string,
-  maxResourceFiles: number
-): Promise<string[]> {
-  const resources: string[] = []
-  const visit = async (directory: string): Promise<void> => {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const absolutePath = path.join(directory, entry.name)
-      if (entry.isSymbolicLink()) {
-        throw new Error(`Symbolic links are not allowed: ${absolutePath}`)
+export type SkillBatchRegistryState = 'all' | 'none' | 'mixed'
+
+export function classifySkillBatchRegistryState(
+  registry: SkillRegistryData,
+  batch: readonly SkillBatchRecord[]
+): SkillBatchRegistryState {
+  const matched = batch.filter((skill) => {
+    const entry = registry.entries.get(skill.name)
+    return (
+      entry?.directory === skill.registryDirectory && entry.enabled === true
+    )
+  }).length
+  const present = batch.filter((skill) => registry.entries.has(skill.name))
+  if (matched === batch.length) {
+    return 'all'
+  }
+  if (present.length === 0) {
+    return 'none'
+  }
+  return 'mixed'
+}
+
+export async function commitSkillBatch(
+  registryPath: string,
+  batch: readonly SkillBatchRecord[],
+  operations: SkillRegistryOperations = defaultSkillRegistryOperations
+): Promise<{ warnings: readonly string[] }> {
+  let batchApplied = false
+  try {
+    await operations.update(registryPath, (registry) => {
+      assertSkillRegistryWritable(registry)
+      for (const skill of batch) {
+        if (registry.entries.has(skill.name)) {
+          throw new SkillInstallError(`Skill already added: ${skill.name}`)
+        }
       }
-      if (entry.isDirectory()) {
-        await visit(absolutePath)
-        continue
+      for (const skill of batch) {
+        registry.entries.set(skill.name, {
+          directory: skill.registryDirectory,
+          enabled: true,
+        })
       }
-      if (!entry.isFile()) {
-        continue
-      }
-      const relativePath = path.relative(skillDirectory, absolutePath)
-      if (relativePath.toLowerCase() === 'skill.md') {
-        continue
-      }
-      resources.push(relativePath.replace(/\\/g, '/'))
-      if (resources.length > maxResourceFiles) {
-        throw new Error(
-          `Skill contains more than ${maxResourceFiles} resource files`
-        )
+      batchApplied = true
+    })
+    return { warnings: [] }
+  } catch (error) {
+    if (!batchApplied) {
+      throw new SkillBatchCommitError(getErrorMessage(error), true)
+    }
+
+    let registry: SkillRegistryData | null
+    try {
+      registry = await operations.read(registryPath)
+    } catch (readError) {
+      throw new SkillBatchCommitError(
+        `${getErrorMessage(error)}\nUnable to determine whether the skill registry commit succeeded: ${getErrorMessage(readError)}`,
+        false
+      )
+    }
+    if (registry === null) {
+      throw new SkillBatchCommitError(
+        `${getErrorMessage(error)}\nSkill registry disappeared after the commit attempt.`,
+        false
+      )
+    }
+
+    const state = classifySkillBatchRegistryState(registry, batch)
+    if (state === 'all') {
+      return {
+        warnings: [
+          `Skills were committed, but registry cleanup failed: ${getErrorMessage(error)}`,
+        ],
       }
     }
+    if (state === 'none') {
+      throw new SkillBatchCommitError(getErrorMessage(error), true)
+    }
+    throw new SkillBatchCommitError(
+      `${getErrorMessage(error)}\nSkill registry has a partial batch commit; inspect these skills manually: ${batch
+        .map(({ name }) => name)
+        .join(', ')}`,
+      false
+    )
   }
-  await visit(skillDirectory)
-  return resources.sort()
+}
+
+async function removeManagedSkills(
+  installed: readonly InstalledSkill[]
+): Promise<string[]> {
+  const residuals: string[] = []
+  for (const skill of installed) {
+    if (!skill.managed) {
+      continue
+    }
+    try {
+      await rm(skill.directory, { recursive: true, force: true })
+    } catch {
+      residuals.push(skill.directory)
+    }
+  }
+  return residuals
+}
+
+function assertSkillRegistryWritable(registry: SkillRegistryData): void {
+  if (registry.issues.length > 0) {
+    throw new Error(
+      [
+        'Skill registry contains invalid entries. Fix config.yaml before modifying it.',
+        ...registry.issues.map(({ name, message }) => `- ${name}: ${message}`),
+      ].join('\n')
+    )
+  }
 }
 
 function getErrorMessage(error: unknown): string {
