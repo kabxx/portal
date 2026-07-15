@@ -79,10 +79,16 @@ test('ThreadManager submitThreadInput throws on failure', async () => {
     createdAt: 1,
   })
 
+  const items: string[] = []
   await assert.rejects(
-    manager.submitThreadInput(thread.id, 'Trigger a failure.'),
+    manager.submitThreadInput(thread.id, 'Trigger a failure.', {
+      onTurnItem: (item) => {
+        items.push(item.kind === 'error' ? item.text : item.kind)
+      },
+    }),
     /submit failed/
   )
+  assert.deepEqual(items, ['Error: submit failed'])
 })
 
 test('ThreadManager submitThreadInput records cancelled turns without error items', async () => {

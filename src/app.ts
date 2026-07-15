@@ -247,6 +247,16 @@ export function canRunCommandWhileThreadBusy(input: string): boolean {
   return false
 }
 
+export function shouldRenderFallbackThreadError({
+  turnErrorRendered,
+  canRetry,
+}: {
+  turnErrorRendered: boolean
+  canRetry: boolean
+}): boolean {
+  return !turnErrorRendered && !canRetry
+}
+
 export const GROK_PROVIDER_PROMPT = [
   `# Grok Tool Boundary (Strict Enforcement)`,
   `- These rules remain active after the READY handshake and apply to every later assistant response in this conversation.`,
@@ -1155,6 +1165,7 @@ export async function run(argv = process.argv): Promise<void> {
       async ({ signal }) => {
         try {
           while (true) {
+            let turnErrorRendered = false
             try {
               await threadManager.submitThreadInput(activeThread.id, input, {
                 signal,
@@ -1227,6 +1238,7 @@ export async function run(argv = process.argv): Promise<void> {
                   }
                   if (item.kind === 'error') {
                     ui.renderThreadError(activeThread, 'thread', item.text)
+                    turnErrorRendered = true
                   }
                 },
               })
@@ -1262,8 +1274,15 @@ export async function run(argv = process.argv): Promise<void> {
                 threadId: activeThread.id,
               })
               ui.renderThreadWarning(activeThread, plan.title, plan.lines)
-              if (!plan.canRetry) {
+              if (
+                shouldRenderFallbackThreadError({
+                  turnErrorRendered,
+                  canRetry: plan.canRetry,
+                })
+              ) {
                 ui.renderThreadError(activeThread, 'error', String(error))
+              }
+              if (!plan.canRetry) {
                 break
               }
               await tryRestoreRuntimeForRecovery(error, async () => {
