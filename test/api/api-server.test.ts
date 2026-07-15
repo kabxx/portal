@@ -471,6 +471,7 @@ test('ApiEventHub cleans up closed subscribers and releases thread sequences', (
   remove()
   remove()
   hub.close()
+  hub.close()
 })
 
 test('ApiEventHub rolls back a subscriber when the connected write fails', () => {
