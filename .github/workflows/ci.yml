@@ -13,14 +13,14 @@ concurrency:
 
 jobs:
   quality:
-    name: Quality checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: Windows quality checks
+    runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -33,15 +33,15 @@ jobs:
       - name: Run tests with coverage
         run: npm run test:coverage
 
-  windows-unit:
-    name: Windows unit tests
-    runs-on: windows-latest
-    timeout-minutes: 20
+  linux-unit:
+    name: Linux unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -56,9 +56,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
