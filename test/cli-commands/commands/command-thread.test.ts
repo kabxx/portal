@@ -85,6 +85,7 @@ test('ThreadCommand shows subcommand help when no subcommand is provided', async
   assert.match(entry.body, /open <provider> \[model-number\]/)
   assert.match(entry.body, /resume <conversation-url\|#history-id>/)
   assert.match(entry.body, /reload/)
+  assert.match(entry.body, /close \[thread-id\]/)
   assert.match(entry.body, /detach/)
   assert.match(entry.body, /capability \[name\] \[action\]/)
 })
@@ -360,6 +361,70 @@ test('ThreadCommand manages live thread state', async () => {
     tone: 'success',
     label: '/thread close',
     body: `Closed ${secondThread.id}.`,
+    format: 'plain',
+  })
+})
+
+test('ThreadCommand close defaults to the active thread', async () => {
+  const { context, threadManager, ui } = await createCommandContext()
+  const thread = threadManager.addThread({
+    id: threadManager.createThreadId(),
+    provider: 'deepseek',
+    runtime: createFakeRuntime(),
+    createdAt: 1,
+  })
+  ui.renderInfo('home', 'Home timeline marker.')
+  ui.showThreadTimeline(thread.id)
+
+  await ThreadCommand.execute(context, ['close'])
+
+  assert.equal(threadManager.getThread(thread.id), null)
+  assert.equal(threadManager.getActiveThread(), null)
+  assert.equal(getLatestTimelineEntry(ui).body, 'Home timeline marker.')
+})
+
+test('ThreadCommand close without a target requires an active thread', async () => {
+  const { context, threadManager, ui } = await createCommandContext()
+  let closeCallCount = 0
+  context.closeThread = async () => {
+    closeCallCount += 1
+    return false
+  }
+
+  await ThreadCommand.execute(context, ['close'])
+
+  assert.equal(closeCallCount, 0)
+  assert.equal(threadManager.listThreads().length, 0)
+  assert.deepEqual(getLatestTimelineEntry(ui), {
+    tone: 'warning',
+    label: '/thread close',
+    body: 'No active thread.',
+    format: 'plain',
+  })
+})
+
+test('ThreadCommand close rejects an explicitly empty thread id', async () => {
+  const { context, threadManager, ui } = await createCommandContext()
+  const thread = threadManager.addThread({
+    id: threadManager.createThreadId(),
+    provider: 'deepseek',
+    runtime: createFakeRuntime(),
+    createdAt: 1,
+  })
+  let closeCallCount = 0
+  context.closeThread = async () => {
+    closeCallCount += 1
+    return false
+  }
+
+  await ThreadCommand.execute(context, ['close', ''])
+
+  assert.equal(closeCallCount, 0)
+  assert.equal(threadManager.getActiveThread()?.id, thread.id)
+  assert.deepEqual(getLatestTimelineEntry(ui), {
+    tone: 'warning',
+    label: '/thread close',
+    body: 'Usage: /thread close [thread-id]',
     format: 'plain',
   })
 })

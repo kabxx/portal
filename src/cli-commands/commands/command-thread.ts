@@ -45,7 +45,7 @@ const THREAD_SUBCOMMANDS = [
   },
   {
     name: 'close',
-    usage: 'close <thread-id>',
+    usage: 'close [thread-id]',
     description: 'Close a thread.',
   },
   {
@@ -315,11 +315,17 @@ async function closeThread(
   context: CliCommandContext,
   args: readonly string[]
 ): Promise<CommandResult> {
-  const targetId = args[0] ?? ''
+  const requestedId = args[0]
+  const targetId =
+    requestedId === undefined ? getActiveThread(context)?.id : requestedId
+  if (targetId === undefined) {
+    context.ui.renderWarning('/thread close', 'No active thread.')
+    return { continue: true }
+  }
   if (!targetId) {
     context.ui.renderWarning(
       '/thread close',
-      'Usage: /thread close <thread-id>'
+      'Usage: /thread close [thread-id]'
     )
     return { continue: true }
   }
