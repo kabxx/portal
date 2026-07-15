@@ -55,7 +55,7 @@ See [Providers](docs/providers.md) for accepted conversation URLs, model-number 
 
 ## Requirements
 
-- Node.js 22 or newer
+- Node.js 24 or newer
 - npm
 - Git
 - Google Chrome or another supported Chromium-based browser
