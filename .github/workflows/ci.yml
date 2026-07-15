@@ -30,8 +30,8 @@ jobs:
         run: npm run fmt:check
       - name: Type check
         run: npm run test:type
-      - name: Run unit tests
-        run: npm run test:unit
+      - name: Run tests with coverage
+        run: npm run test:coverage
 
   windows-unit:
     name: Windows unit tests

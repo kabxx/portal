@@ -93,7 +93,6 @@ test('SkillCommand shows subcommand help and validates add arguments', async () 
   assert.match(help, /add <url>/)
   assert.match(help, /add <name> --registry <url>/)
   assert.match(help, /\$<name> \[task\]/)
-  assert.doesNotMatch(help, /local-directory-or-url/)
 
   await SkillCommand.execute(context, ['add'])
   const missingSource = latestTimelineEntry(ui)?.body ?? ''

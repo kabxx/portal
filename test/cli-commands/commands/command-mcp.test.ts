@@ -92,6 +92,153 @@ test('McpCommand adds minimal HTTP and stdio server configs', async () => {
   }
 })
 
+test('McpCommand manages configured servers and renders list state', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-mcp-manage-'))
+  const { context, mcpLibrary, registry } = await createMcpCommandContext(root)
+
+  try {
+    await registry.execute('/mcp list', context)
+    assert.equal(
+      latestTimelineEntry(context.ui)?.body,
+      'No MCP servers configured.'
+    )
+
+    await registry.execute('/mcp add remote https://example.com/mcp', context)
+    await registry.execute('/mcp disable remote', context)
+    assert.match(
+      latestTimelineEntry(context.ui)?.body ?? '',
+      /Disabled remote for new threads/
+    )
+    assert.equal((await mcpLibrary.list()).servers[0]?.enabled, false)
+
+    await registry.execute('/mcp list', context)
+    assert.match(
+      latestTimelineEntry(context.ui)?.body ?? '',
+      /remote\s+streamable-http/
+    )
+
+    await registry.execute('/mcp enable remote', context)
+    assert.match(
+      latestTimelineEntry(context.ui)?.body ?? '',
+      /Enabled remote for new threads/
+    )
+    assert.equal((await mcpLibrary.list()).servers[0]?.enabled, true)
+
+    await registry.execute('/mcp remove remote', context)
+    assert.match(latestTimelineEntry(context.ui)?.body ?? '', /Removed remote/)
+    assert.deepEqual((await mcpLibrary.list()).servers, [])
+  } finally {
+    context.threadStore.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('McpCommand validates management arguments and HTTP headers', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-mcp-validation-'))
+  const { context, registry } = await createMcpCommandContext(root)
+
+  async function expectMessage(input: string, pattern: RegExp) {
+    await registry.execute(input, context)
+    assert.match(latestTimelineEntry(context.ui)?.body ?? '', pattern)
+  }
+
+  try {
+    await expectMessage('/mcp', /Subcommands:/)
+    await expectMessage('/mcp unknown', /Unknown MCP subcommand/)
+    await expectMessage('/mcp add', /Usage: \/mcp add/)
+    await expectMessage('/mcp add remote', /Missing HTTP MCP URL/)
+    await expectMessage('/mcp add local --', /Missing stdio command/)
+    await expectMessage(
+      '/mcp add remote https://example.com --unknown',
+      /Unknown HTTP MCP option/
+    )
+    await expectMessage(
+      '/mcp add remote https://example.com --header invalid',
+      /--header requires "Name: value"/
+    )
+    await expectMessage(
+      '/mcp add remote https://example.com --header "X-Test: one" --header "x-test: two"',
+      /Duplicate HTTP header/
+    )
+    await expectMessage('/mcp enable', /Usage: \/mcp enable/)
+    await expectMessage('/mcp disable missing', /Unknown MCP server/)
+    await expectMessage('/mcp remove', /Usage: \/mcp remove/)
+    await expectMessage('/mcp remove missing', /Unknown MCP server/)
+  } finally {
+    context.threadStore.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('McpCommand requires an active thread and configured MCP session', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-mcp-session-'))
+  const { context, registry, threadManager } =
+    await createMcpCommandContext(root)
+
+  try {
+    await registry.execute('/mcp resource list', context)
+    assert.equal(latestTimelineEntry(context.ui)?.body, 'No active thread.')
+
+    threadManager.addThread({
+      id: threadManager.createThreadId(),
+      provider: 'chatgpt',
+      runtime: createFakeRuntime(),
+      createdAt: Date.now(),
+    })
+
+    await registry.execute('/mcp prompt list', context)
+    assert.equal(
+      latestTimelineEntry(context.ui)?.body,
+      'MCP is not configured in this runtime.'
+    )
+  } finally {
+    context.threadStore.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('McpCommand validates resource and prompt attachment arguments', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-mcp-arguments-'))
+  const { context, registry, threadManager } =
+    await createMcpCommandContext(root)
+  const session = new ThreadMcpSession(new Map())
+  threadManager.addThread({
+    id: threadManager.createThreadId(),
+    provider: 'chatgpt',
+    runtime: createFakeRuntime({ mcpSession: session }),
+    createdAt: Date.now(),
+  })
+
+  async function expectMessage(input: string, pattern: RegExp) {
+    await registry.execute(input, context)
+    assert.match(latestTimelineEntry(context.ui)?.body ?? '', pattern)
+  }
+
+  try {
+    await expectMessage('/mcp resource', /Usage: \/mcp resource/)
+    await expectMessage('/mcp resource attach server', /Usage:/)
+    await expectMessage('/mcp prompt', /Usage: \/mcp prompt/)
+    await expectMessage('/mcp prompt attach server', /Usage:/)
+    await expectMessage(
+      '/mcp prompt attach server review not-json',
+      /Unexpected token/
+    )
+    await expectMessage(
+      '/mcp prompt attach server review []',
+      /Prompt arguments must be a JSON object/
+    )
+    await expectMessage(
+      '/mcp prompt attach server review {"focus":1}',
+      /Prompt argument focus must be a string/
+    )
+    await expectMessage('/mcp resource list', /No MCP resources found/)
+    await expectMessage('/mcp prompt list', /No MCP prompts found/)
+  } finally {
+    context.threadStore.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('McpCommand attaches prompt and resource content as separate thread inputs', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-mcp-attach-'))
   const { context, registry, submitted, threadManager } =
@@ -136,6 +283,7 @@ test('McpCommand attaches prompt and resource content as separate thread inputs'
     assert.equal(submitted[0]?.displayInput, '/mcp prompt attach server review')
     assert.match(submitted[1]?.input ?? '', /^# MCP Resource Attachment/)
     assert.match(submitted[1]?.input ?? '', /RESOURCE TEXT/)
+    assert.equal(context.ui.getState().busy, false)
   } finally {
     context.threadStore.close()
     await rm(root, { recursive: true, force: true })
