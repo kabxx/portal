@@ -161,7 +161,7 @@ Top-level commands and first-level subcommands support unique-prefix completion 
 | `Ctrl+Enter` or `Ctrl+J` | Insert a newline                                             |
 | Paste                    | Preserve multiline layout and normalize Windows line endings |
 | `Up` / `Down`            | Move vertically to input boundaries, or browse input history |
-| `Tab`                    | Complete a unique command, subcommand, or `$skill` prefix    |
+| `Tab`                    | Complete a unique command, subcommand, provider, or `$skill` |
 | `Ctrl+W`                 | Delete the previous word                                     |
 | `Ctrl+U` or `Esc`        | Clear the current input                                      |
 | `Ctrl+C`                 | Cancel busy work; while idle with input, clear that input    |

@@ -1305,6 +1305,7 @@ export async function run(argv = process.argv): Promise<void> {
     createElement(TerminalScreen, {
       ui,
       commands: commandRegistry.list(),
+      providers: PROVIDERS,
       onInterrupt: () => {
         const state = ui.getState()
         if (
