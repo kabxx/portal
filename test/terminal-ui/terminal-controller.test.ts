@@ -247,7 +247,7 @@ test('TerminalController caches home and thread timelines independently', () => 
   )
 })
 
-test('TerminalController keeps running state and live tools isolated by thread', () => {
+test('TerminalController discards live tools when switching timelines', () => {
   const manager = new ThreadManager()
   const first = manager.addThread({
     id: 't-a',
@@ -267,15 +267,20 @@ test('TerminalController keeps running state and live tools isolated by thread',
   manager.switchThread(first.id)
   ui.showThreadTimeline(first.id)
   ui.setThreadBusy(first.id, true)
-  ui.renderToolProgress(first, 'run_command', {
-    type: 'start',
-    startedAt: 1000,
-  })
-  ui.renderToolProgress(first, 'run_command', {
-    type: 'output',
-    stream: 'stdout',
-    text: 'output from a',
-  })
+  ui.renderToolCall(first, 'run_command', '{}', 'call-a')
+  ui.renderToolProgress(
+    first,
+    'run_command',
+    { type: 'start', startedAt: 1000 },
+    'call-a'
+  )
+  ui.renderToolProgress(
+    first,
+    'run_command',
+    { type: 'output', stream: 'stdout', text: 'output from a' },
+    'call-a'
+  )
+  assert.equal(ui.getState().liveCommand?.body, 'output from a')
 
   manager.switchThread(second.id)
   ui.showThreadTimeline(second.id)
@@ -294,7 +299,7 @@ test('TerminalController keeps running state and live tools isolated by thread',
   manager.switchThread(first.id)
   ui.showThreadTimeline(first.id)
   assert.equal(ui.getState().busy, true)
-  assert.equal(ui.getState().liveCommand?.body, 'output from a')
+  assert.equal(ui.getState().liveCommand, null)
   assert.equal(ui.getState().timeline.at(-1)?.body, 'failure from a')
 })
 
@@ -664,6 +669,209 @@ test('TerminalController keeps a two-line live run_command tail and reuses its i
   assert.equal(state.timeline.at(-1)?.tone, 'tool_result')
 })
 
+test('TerminalController isolates stale live events by tool call id', () => {
+  for (const toolName of ['run_command', 'spawn'] as const) {
+    const manager = new ThreadManager()
+    const thread = manager.addThread({
+      id: manager.createThreadId(),
+      provider: 'gemini',
+      runtime: createFakeRuntime(),
+      createdAt: 1,
+    })
+    const ui = new TerminalController()
+
+    ui.renderToolCall(thread, toolName, '{}', 'old-call')
+    ui.renderToolCall(thread, toolName, '{}', 'current-call')
+    ui.renderToolProgress(
+      thread,
+      toolName,
+      { type: 'start', startedAt: 1000 },
+      'old-call'
+    )
+    assert.equal(ui.getState().liveCommand, null)
+
+    ui.renderToolProgress(
+      thread,
+      toolName,
+      { type: 'start', startedAt: 2000 },
+      'current-call'
+    )
+    const currentId = ui.getState().liveCommand?.id
+    assert.ok(currentId !== undefined)
+    assert.equal(ui.getState().liveCommand?.toolCallId, 'current-call')
+
+    ui.renderToolProgress(
+      thread,
+      toolName,
+      { type: 'output', stream: 'stdout', text: 'stale output' },
+      'old-call'
+    )
+    assert.doesNotMatch(ui.getState().liveCommand?.body ?? '', /stale output/)
+
+    ui.renderToolResult(
+      thread,
+      toolName,
+      'success',
+      toolName === 'run_command'
+        ? { exitCode: 0, timedOut: false, truncated: false }
+        : { provider: 'gemini' },
+      'old result',
+      'old-call'
+    )
+    assert.equal(ui.getState().liveCommand?.id, currentId)
+
+    ui.renderToolResult(
+      thread,
+      toolName,
+      'success',
+      toolName === 'run_command'
+        ? { exitCode: 0, timedOut: false, truncated: false }
+        : { provider: 'gemini' },
+      'current result',
+      'current-call'
+    )
+    assert.equal(ui.getState().liveCommand, null)
+    assert.equal(ui.getState().timeline.at(-1)?.id, currentId)
+  }
+})
+
+test('stale command timers cannot mutate a replacement live bubble', () => {
+  const originalNow = Date.now
+  const originalSetTimeout = globalThis.setTimeout
+  const originalClearTimeout = globalThis.clearTimeout
+  const callbacks = new Map<number, () => void>()
+  let nextTimerId = 1
+  let emitted = 0
+
+  Date.now = () => 1000
+  globalThis.setTimeout = ((callback: () => void) => {
+    const id = nextTimerId++
+    callbacks.set(id, callback)
+    return id
+  }) as typeof setTimeout
+  globalThis.clearTimeout = (() => {}) as typeof clearTimeout
+
+  try {
+    const manager = new ThreadManager()
+    const thread = manager.addThread({
+      id: manager.createThreadId(),
+      provider: 'gemini',
+      runtime: createFakeRuntime(),
+      createdAt: 1,
+    })
+    const ui = new TerminalController()
+    ui.subscribe(() => {
+      emitted += 1
+    })
+
+    ui.renderToolCall(thread, 'run_command', '{}', 'first-call')
+    ui.renderToolProgress(
+      thread,
+      'run_command',
+      { type: 'start', startedAt: 1000 },
+      'first-call'
+    )
+    ui.renderToolProgress(
+      thread,
+      'run_command',
+      { type: 'output', stream: 'stdout', text: 'first output' },
+      'first-call'
+    )
+    const staleTimer = callbacks.get(1)
+    assert.ok(staleTimer)
+
+    ui.renderToolCall(thread, 'run_command', '{}', 'second-call')
+    ui.renderToolProgress(
+      thread,
+      'run_command',
+      { type: 'start', startedAt: 1000 },
+      'second-call'
+    )
+    ui.renderToolProgress(
+      thread,
+      'run_command',
+      { type: 'output', stream: 'stdout', text: 'second output' },
+      'second-call'
+    )
+    const currentTimer = callbacks.get(2)
+    assert.ok(currentTimer)
+
+    const beforeStaleTimer = emitted
+    staleTimer()
+    assert.equal(emitted, beforeStaleTimer)
+    assert.equal(ui.getState().liveCommand?.body, 'second output')
+
+    currentTimer()
+    assert.equal(emitted, beforeStaleTimer + 1)
+    assert.equal(ui.getState().liveCommand?.toolCallId, 'second-call')
+  } finally {
+    Date.now = originalNow
+    globalThis.setTimeout = originalSetTimeout
+    globalThis.clearTimeout = originalClearTimeout
+  }
+})
+
+test('stale spawn heartbeats cannot reschedule after replacement', () => {
+  const originalSetTimeout = globalThis.setTimeout
+  const originalClearTimeout = globalThis.clearTimeout
+  const callbacks = new Map<number, () => void>()
+  let nextTimerId = 1
+  let emitted = 0
+
+  globalThis.setTimeout = ((callback: () => void) => {
+    const id = nextTimerId++
+    callbacks.set(id, callback)
+    return id
+  }) as typeof setTimeout
+  globalThis.clearTimeout = (() => {}) as typeof clearTimeout
+
+  try {
+    const manager = new ThreadManager()
+    const thread = manager.addThread({
+      id: manager.createThreadId(),
+      provider: 'gemini',
+      runtime: createFakeRuntime(),
+      createdAt: 1,
+    })
+    const ui = new TerminalController()
+    ui.subscribe(() => {
+      emitted += 1
+    })
+
+    ui.renderToolCall(thread, 'spawn', '{}', 'first-spawn')
+    ui.renderToolProgress(
+      thread,
+      'spawn',
+      { type: 'start', startedAt: 1000 },
+      'first-spawn'
+    )
+    const staleHeartbeat = callbacks.get(1)
+    assert.ok(staleHeartbeat)
+
+    ui.renderToolCall(thread, 'spawn', '{}', 'second-spawn')
+    ui.renderToolProgress(
+      thread,
+      'spawn',
+      { type: 'start', startedAt: 2000 },
+      'second-spawn'
+    )
+    const currentHeartbeat = callbacks.get(2)
+    assert.ok(currentHeartbeat)
+
+    const beforeStaleHeartbeat = emitted
+    staleHeartbeat()
+    assert.equal(emitted, beforeStaleHeartbeat)
+    assert.equal(ui.getState().liveCommand?.toolCallId, 'second-spawn')
+
+    currentHeartbeat()
+    assert.equal(emitted, beforeStaleHeartbeat + 1)
+    assert.ok(callbacks.has(3))
+  } finally {
+    globalThis.setTimeout = originalSetTimeout
+    globalThis.clearTimeout = originalClearTimeout
+  }
+})
+
 test('TerminalController clears a live run_command bubble when cancelled', () => {
   const manager = new ThreadManager()
   const thread = manager.addThread({
@@ -674,10 +882,16 @@ test('TerminalController clears a live run_command bubble when cancelled', () =>
   })
   const ui = new TerminalController()
 
-  ui.renderToolProgress(thread, 'run_command', {
-    type: 'start',
-    startedAt: Date.now(),
-  })
+  ui.renderToolCall(thread, 'run_command', '{}', 'cancelled-call')
+  ui.renderToolProgress(
+    thread,
+    'run_command',
+    { type: 'start', startedAt: Date.now() },
+    'cancelled-call'
+  )
+  assert.equal(ui.getState().liveCommand?.toolCallId, 'cancelled-call')
+  ui.clearLiveCommand(thread, 'different-call')
+  assert.equal(ui.getState().liveCommand?.toolCallId, 'cancelled-call')
   ui.clearLiveCommand(thread)
 
   assert.equal(ui.getState().liveCommand, null)

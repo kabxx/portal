@@ -108,6 +108,11 @@ The provider adapters internally report full snapshots, so a client should
 append `text` from this event and treat `assistant.message` as the completed
 assistant message for that model response.
 
+`tool.started`, `tool.output`, and `tool.completed` include `toolCallId` so a
+client can correlate progress and completion for one invocation. `tool.output`
+also includes `turnId`; delayed progress from an earlier invocation must not be
+applied to a newer tool call with the same name.
+
 Example:
 
 ```bash
