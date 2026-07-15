@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { access, mkdtemp, rm } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
 import {
   buildBrowserLaunchArguments,
@@ -23,4 +26,20 @@ test('launchBrowser rejects unsupported browser engines before launch', async ()
     launchBrowser('firefox' as never, 'missing-browser', 9222, 'profile'),
     /Unsupported browser engine: firefox/
   )
+})
+
+test('launchBrowser rejects a missing executable before creating a profile', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-browser-launch-'))
+  const executable = path.join(root, 'missing-browser')
+  const profile = path.join(root, 'profile')
+
+  try {
+    await assert.rejects(
+      launchBrowser('chromium', executable, 9222, profile),
+      /Browser executable not found at path:/
+    )
+    await assert.rejects(access(profile), { code: 'ENOENT' })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })

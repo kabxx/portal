@@ -7,8 +7,14 @@ import { DoubaoAdapter } from '../../../src/providers/adapters/adapter-doubao.ts
 const DOUBAO_DESKTOP_PROMOTION_CLOSE_SELECTOR =
   'xpath=//img[contains(@src, "/obj/flow-doubao/samantha/jianti.png")]/preceding-sibling::button[@type="button"][1]'
 
-test('DoubaoAdapter.submit reads final text from browser-captured response instead of response.body()', async () => {
+function createTestDoubaoAdapter() {
   const adapter = Object.create(DoubaoAdapter.prototype) as any
+  adapter.getSubmitRequestStartGraceMs = () => 5
+  return adapter
+}
+
+test('DoubaoAdapter.submit reads final text from browser-captured response instead of response.body()', async () => {
+  const adapter = createTestDoubaoAdapter()
   const correctText = 'response received successfully.'
   const raw = `id: 0
 event: STREAM_MSG_NOTIFY
@@ -53,7 +59,7 @@ data: {"end_type":1}`
 })
 
 test('DoubaoAdapter.submit emits periodic warnings while waiting for a request to start and still accepts a later response', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const warnings: string[] = []
   const correctText = 'response received successfully.'
   const raw = `id: 0
@@ -111,7 +117,7 @@ data: {"end_type":1}`
 })
 
 test('DoubaoAdapter.submit emits assistant stream snapshots while the response is growing', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const streamedTexts: string[] = []
   let currentStreamText = 'partial stream'
   adapter.readCurrentStreamedResponseText = async () => currentStreamText
@@ -168,7 +174,7 @@ data: {"end_type":1}`
 })
 
 test('DoubaoAdapter.submit fails instead of returning an unfinished response without finish markers', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
 
   const raw = `id: 0
 event: STREAM_MSG_NOTIFY
@@ -211,7 +217,7 @@ data: {"content":{"content_block":[{"block_type":10000,"content":{"text_block":{
 })
 
 test('DoubaoAdapter.submit waits for the ready container to become visible again before returning', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const correctText = 'response received successfully.'
   const raw = `id: 0
 event: STREAM_MSG_NOTIFY
@@ -266,7 +272,7 @@ data: {"end_type":1}`
 })
 
 test('DoubaoAdapter.submit dismisses the desktop promotion before and after sending', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const events: string[] = []
   const promotion = createDesktopPromotion(events)
   const correctText = 'response received successfully.'
@@ -317,7 +323,7 @@ data: {"end_type":1}`
 })
 
 test('DoubaoAdapter.attachFile clicks the current plus trigger and writes files into the hidden input', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const calls: string[] = []
   let recordedPaths: string[] | null = null
 
@@ -356,7 +362,7 @@ test('DoubaoAdapter.attachFile clicks the current plus trigger and writes files 
 })
 
 test('DoubaoAdapter.attachText prefers the textarea input', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const events: string[] = []
   adapter.page = createDoubaoTextInputPage({
     textareaVisible: true,
@@ -369,7 +375,7 @@ test('DoubaoAdapter.attachText prefers the textarea input', async () => {
 })
 
 test('DoubaoAdapter.attachText dismisses the desktop promotion before editing', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const events: string[] = []
   adapter.page = createDoubaoTextInputPage({
     textareaVisible: true,
@@ -387,7 +393,7 @@ test('DoubaoAdapter.attachText dismisses the desktop promotion before editing', 
 })
 
 test('DoubaoAdapter reports a visible desktop promotion that cannot be dismissed', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const events: string[] = []
   adapter.page = createDoubaoTextInputPage({
     textareaVisible: true,
@@ -409,7 +415,7 @@ test('DoubaoAdapter reports a visible desktop promotion that cannot be dismissed
 })
 
 test('DoubaoAdapter.attachText falls back to the textbox role input', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const events: string[] = []
   adapter.page = createDoubaoTextInputPage({
     textareaVisible: false,
@@ -422,7 +428,7 @@ test('DoubaoAdapter.attachText falls back to the textbox role input', async () =
 })
 
 test('DoubaoAdapter selects visible one-shot capabilities by config key order', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const page = createDoubaoCapabilityPage()
   adapter.page = page
 
@@ -441,7 +447,7 @@ test('DoubaoAdapter selects visible one-shot capabilities by config key order', 
 })
 
 test('DoubaoAdapter cancels the selected one-shot capability before selecting another', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const page = createDoubaoCapabilityPage({ selected: 'ppt_generation' })
   adapter.page = page
 
@@ -455,7 +461,7 @@ test('DoubaoAdapter cancels the selected one-shot capability before selecting an
 })
 
 test('DoubaoAdapter cancels the selected one-shot capability before opening overflow', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const page = createDoubaoCapabilityPage({ selected: 'ppt_generation' })
   adapter.page = page
 
@@ -469,7 +475,7 @@ test('DoubaoAdapter cancels the selected one-shot capability before opening over
 })
 
 test('DoubaoAdapter clears selected one-shot capabilities', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const page = createDoubaoCapabilityPage({ selected: 'ppt_generation' })
   adapter.page = page
 
@@ -479,7 +485,7 @@ test('DoubaoAdapter clears selected one-shot capabilities', async () => {
 })
 
 test('DoubaoAdapter clearActionCapability is a no-op without a selected capability', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const page = createDoubaoCapabilityPage()
   adapter.page = page
 
@@ -489,7 +495,7 @@ test('DoubaoAdapter clearActionCapability is a no-op without a selected capabili
 })
 
 test('DoubaoAdapter selects overflow one-shot capabilities without text lookup', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const page = createDoubaoCapabilityPage()
   adapter.page = page
 
@@ -502,7 +508,7 @@ test('DoubaoAdapter selects overflow one-shot capabilities without text lookup',
 })
 
 test('DoubaoAdapter selects overflow one-shot capabilities by runtime visible count offset', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const page = createDoubaoCapabilityPage()
   adapter.page = page
 
@@ -521,7 +527,7 @@ test('DoubaoAdapter selects overflow one-shot capabilities by runtime visible co
 })
 
 test('DoubaoAdapter recalculates overflow offset when visible count changes', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const page = createDoubaoCapabilityPage({ visibleCount: 6 })
   adapter.page = page
 
@@ -531,7 +537,7 @@ test('DoubaoAdapter recalculates overflow offset when visible count changes', as
 })
 
 test('DoubaoAdapter marks meeting_record as disabled', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   adapter.page = createDoubaoCapabilityPage()
 
   assert.equal(
@@ -545,7 +551,7 @@ test('DoubaoAdapter marks meeting_record as disabled', async () => {
 })
 
 test('DoubaoAdapter lists capabilities from action bar store config keys', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   adapter.page = createDoubaoCapabilityPage({
     capabilities: ['deep_research', 'translate', 'ppt_generation'],
   })
@@ -558,7 +564,7 @@ test('DoubaoAdapter lists capabilities from action bar store config keys', async
 })
 
 test('DoubaoAdapter ignores action bar store skills without config keys', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   adapter.page = createDoubaoCapabilityPage({
     capabilities: ['ai_sheet'],
     missingConfigSkillTypes: [5005, 5006, 5007],
@@ -570,7 +576,7 @@ test('DoubaoAdapter ignores action bar store skills without config keys', async 
 })
 
 test('DoubaoAdapter rejects capability reads when action bar store is missing', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   adapter.page = createDoubaoCapabilityPage({ storeAvailable: false })
 
   await assert.rejects(
@@ -580,7 +586,7 @@ test('DoubaoAdapter rejects capability reads when action bar store is missing', 
 })
 
 test('DoubaoAdapter changes model through the dropdown menu content', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const modelMenu = createModelMenu()
   adapter.page = createDoubaoPage(createSendButton(), undefined, undefined, {
     modelMenu,
@@ -600,7 +606,7 @@ test('DoubaoAdapter changes model through the dropdown menu content', async () =
 })
 
 test('DoubaoAdapter rejects unsupported model names', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   adapter.page = createDoubaoPage(createSendButton())
 
   await assert.rejects(
@@ -627,7 +633,7 @@ test('DoubaoAdapter rejects unsupported model names', async () => {
 })
 
 test('DoubaoAdapter.stopGeneration clicks the visible stop icon button when present', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const stopButton = createStopButton()
   adapter.page = createDoubaoPage(createSendButton(), undefined, stopButton)
 
@@ -637,7 +643,7 @@ test('DoubaoAdapter.stopGeneration clicks the visible stop icon button when pres
 })
 
 test('DoubaoAdapter.stopGeneration clicks a visible stop div even when it is not enabled', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const stopButton = createStopButton({ enabled: false })
   adapter.page = createDoubaoPage(createSendButton(), undefined, stopButton)
 
@@ -647,7 +653,7 @@ test('DoubaoAdapter.stopGeneration clicks a visible stop div even when it is not
 })
 
 test('DoubaoAdapter.stopGeneration falls back to the stop button class when the primary icon selector misses', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   const stopButton = createStopButton()
   adapter.page = createDoubaoPage(createSendButton(), undefined, stopButton, {
     primaryStopSelectorAvailable: false,
@@ -659,7 +665,7 @@ test('DoubaoAdapter.stopGeneration falls back to the stop button class when the 
 })
 
 test('DoubaoAdapter.stopGeneration is a no-op when the stop icon is missing', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createTestDoubaoAdapter()
   adapter.page = createDoubaoPage(createSendButton())
 
   await adapter.stopGeneration()

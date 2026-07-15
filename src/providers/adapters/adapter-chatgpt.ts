@@ -802,6 +802,10 @@ export class ChatGPTAdapter extends ProviderAdapter {
     return CHATGPT_RESPONSE_IDLE_TIMEOUT_MS
   }
 
+  protected getFinishedResponseSettleMs(): number {
+    return CHATGPT_FINISHED_RESPONSE_SETTLE_MS
+  }
+
   private getComposerSpeechButton() {
     return this.page
       .locator('button[style*="--vt-composer-speech-button"]')
@@ -1160,7 +1164,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
                   current.isFinished &&
                   stablePolls >= CHATGPT_RESPONSE_STABLE_POLLS &&
                   Date.now() - lastProgressAt >=
-                    CHATGPT_FINISHED_RESPONSE_SETTLE_MS
+                    this.getFinishedResponseSettleMs()
                 ) {
                   return true
                 }

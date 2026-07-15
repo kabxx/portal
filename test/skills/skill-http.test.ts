@@ -10,6 +10,7 @@ import {
   fetchSkillHttp,
   writeSkillHttpResponse,
 } from '../../src/skills/skill-http.ts'
+import { PortalAbortError } from '../../src/runtime/runtime-cancellation.ts'
 
 async function withServer(
   handler: RequestListener,
@@ -121,10 +122,38 @@ test('fetchSkillHttp reports request timeouts without leaking URL secrets', asyn
   )
 })
 
+test('fetchSkillHttp honors pre-abort and redacts failed credential URLs', async () => {
+  const controller = new AbortController()
+  const cancellation = new PortalAbortError('installation cancelled')
+  controller.abort(cancellation)
+
+  await assert.rejects(
+    fetchSkillHttp(new URL('https://example.com/skill.zip'), {
+      signal: controller.signal,
+    }),
+    (error) => error === cancellation
+  )
+
+  const source = new URL(
+    'http://user:password@127.0.0.1/skill.zip?token=secret#fragment'
+  )
+  await assert.rejects(
+    fetchSkillHttp(source, { retryDelays: [0] }),
+    (error: Error) => {
+      assert.match(error.message, /failed after 2 attempts/)
+      assert.match(error.message, /http:\/\/127\.0\.0\.1\/skill\.zip/)
+      assert.doesNotMatch(error.message, /user|password|token|secret|fragment/)
+      return true
+    }
+  )
+})
+
 test('writeSkillHttpResponse enforces limits and removes partial files', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-http-'))
   const declaredPath = path.join(root, 'declared.zip')
   const streamedPath = path.join(root, 'streamed.zip')
+  const abortedPath = path.join(root, 'aborted.zip')
+  const failedPath = path.join(root, 'failed.zip')
   const successPath = path.join(root, 'success.zip')
 
   try {
@@ -153,6 +182,43 @@ test('writeSkillHttpResponse enforces limits and removes partial files', async (
       /custom limit/
     )
     await assert.rejects(access(streamedPath), { code: 'ENOENT' })
+
+    await assert.rejects(
+      writeSkillHttpResponse(new Response(null), failedPath, { maxBytes: 3 }),
+      /empty response body/
+    )
+    await assert.rejects(access(failedPath), { code: 'ENOENT' })
+
+    const controller = new AbortController()
+    const cancellation = new PortalAbortError('installation cancelled')
+    controller.abort(cancellation)
+    await assert.rejects(
+      writeSkillHttpResponse(new Response('ok'), abortedPath, {
+        signal: controller.signal,
+        maxBytes: 3,
+      }),
+      (error) => error === cancellation
+    )
+    await assert.rejects(access(abortedPath), { code: 'ENOENT' })
+
+    let pulls = 0
+    const failingStream = new ReadableStream<Uint8Array>({
+      pull(streamController) {
+        pulls += 1
+        if (pulls === 1) {
+          streamController.enqueue(Buffer.from('a'))
+          return
+        }
+        streamController.error(new Error('stream failed'))
+      },
+    })
+    await assert.rejects(
+      writeSkillHttpResponse(new Response(failingStream), failedPath, {
+        maxBytes: 3,
+      }),
+      /Skill download failed while reading the response: stream failed/
+    )
+    await assert.rejects(access(failedPath), { code: 'ENOENT' })
 
     const bytes = await writeSkillHttpResponse(
       new Response('ok'),
