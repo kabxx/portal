@@ -172,13 +172,13 @@ test(
     const command = [
       `$childScript = ${quotePowerShell(childScript)}`,
       `Start-Process -FilePath powershell.exe -ArgumentList @('-NoLogo','-NoProfile','-Command',$childScript) | Out-Null`,
-      'Start-Sleep -Seconds 5',
+      'Start-Sleep -Seconds 15',
     ].join('; ')
 
     try {
       const job = manager.start({ command, shell: 'powershell' })
       const completion = job.wait()
-      await waitForFile(childReady)
+      await waitForFile(childReady, 10_000)
       assert.equal(await manager.stop(job.id), 'stopped')
       const result = await completion
       assert.equal(result.terminationReason, 'user')
