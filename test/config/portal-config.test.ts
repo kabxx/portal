@@ -43,8 +43,8 @@ test('ensurePortalConfig creates one YAML file with concrete defaults', async ()
     )
     assert.equal(defaults.browser.remoteDebuggingPort, 9222)
     assert.deepEqual(defaults.agentInstructions, {
-      claude: { global: false, local: true },
-      codex: { global: false, local: true },
+      claude: { global: false, local: false },
+      codex: { global: false, local: false },
     })
     assert.deepEqual(defaults.api, {
       host: '127.0.0.1',
@@ -89,8 +89,8 @@ test('readPortalConfig parses YAML and strips a UTF-8 BOM', async () => {
         remoteDebuggingPort: 9222,
       },
       agentInstructions: {
-        claude: { global: false, local: true },
-        codex: { global: false, local: true },
+        claude: { global: false, local: false },
+        codex: { global: false, local: false },
       },
       api: { host: '127.0.0.1', port: 8787, token: null },
       mcp: { connectionStrategy: 'per-thread', servers: {} },
@@ -236,6 +236,22 @@ test('parsePortalConfig normalizes API tokens', () => {
     }).api.token,
     null
   )
+})
+
+test('parsePortalConfig defaults missing instruction scope fields to false', () => {
+  const defaults = createDefaultPortalConfig()
+  const parsed = parsePortalConfig({
+    ...defaults,
+    agentInstructions: {
+      claude: {},
+      codex: { global: false, local: true },
+    },
+  })
+
+  assert.deepEqual(parsed.agentInstructions, {
+    claude: { global: false, local: false },
+    codex: { global: false, local: true },
+  })
 })
 
 test('ensurePortalConfig writes normalized API tokens back to disk', async () => {

@@ -1135,7 +1135,7 @@ function commentMap(
 }
 
 function createDefaultInstructionScope(): PortalInstructionScopeConfig {
-  return { global: false, local: true }
+  return { global: false, local: false }
 }
 
 function parseInstructionScope(
@@ -1158,9 +1158,10 @@ function parseInstructionScope(
   if (local !== undefined && typeof local !== 'boolean') {
     throw new PortalConfigError(`${label}.local must be a boolean`)
   }
+  const defaults = createDefaultInstructionScope()
   return {
-    global: global === undefined ? false : global,
-    local: local === undefined ? true : local,
+    global: global === undefined ? defaults.global : global,
+    local: local === undefined ? defaults.local : local,
   }
 }
 
