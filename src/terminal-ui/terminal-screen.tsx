@@ -385,14 +385,14 @@ export function moveCursorVertical(
   let targetEnd: number
   if (direction < 0) {
     if (lineStart === 0) {
-      return safeCursor
+      return 0
     }
     targetEnd = lineStart - 1
     targetStart = value.lastIndexOf('\n', targetEnd - 1) + 1
   } else {
     const lineEnd = value.indexOf('\n', safeCursor)
     if (lineEnd < 0) {
-      return safeCursor
+      return value.length
     }
     targetStart = lineEnd + 1
     const nextLineEnd = value.indexOf('\n', targetStart)
