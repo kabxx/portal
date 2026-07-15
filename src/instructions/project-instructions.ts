@@ -97,7 +97,9 @@ export async function loadProjectInstructions(options: {
   } catch (error) {
     rootWarning = error
   }
-  const homeDirectory = path.resolve(options.homeDirectory ?? homedir())
+  const homeDirectory = await resolveDirectoryAlias(
+    options.homeDirectory ?? homedir()
+  )
   const globalRoots = [
     ...(options.config.claude.global
       ? [path.join(homeDirectory, '.claude')]
@@ -1027,6 +1029,15 @@ async function resolveDirectory(candidate: string): Promise<string> {
     throw new Error(`Workspace path is not a directory: ${resolved}`)
   }
   return await realpath(resolved)
+}
+
+async function resolveDirectoryAlias(candidate: string): Promise<string> {
+  const resolved = path.resolve(candidate)
+  try {
+    return await realpath(resolved)
+  } catch {
+    return resolved
+  }
 }
 
 async function findWorkspaceRoot(cwd: string): Promise<string> {
