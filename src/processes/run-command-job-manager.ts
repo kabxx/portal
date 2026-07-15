@@ -126,7 +126,7 @@ export class RunCommandJobManager implements RunCommandJobService {
       )
     }
 
-    const id = `job-${this.nextId}`
+    const id = `j-${this.nextId}`
     this.nextId += 1
     const job = new ManagedRunCommandJob(id, input, this.options, onProgress)
     this.jobs.set(id, job)

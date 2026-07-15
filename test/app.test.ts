@@ -183,7 +183,7 @@ test('busy threads allow navigation and queries but reject runtime mutations', (
     '/mcp resource list',
     '/skill list',
     '/job',
-    '/job stop job-1',
+    '/job stop j-1',
     '/exit',
   ]) {
     assert.equal(canRunCommandWhileThreadBusy(input), true, input)
