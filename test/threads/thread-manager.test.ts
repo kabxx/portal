@@ -251,11 +251,13 @@ test('ThreadManager forwards tool progress without persisting it as a turn item'
       submitUserInput: async (_input, handlers) => {
         handlers?.onToolProgress?.(
           { type: 'start', startedAt: 1 },
-          { tool: 'run_command', params: {} }
+          { tool: 'run_command', params: {} },
+          'tool-call-1'
         )
         handlers?.onToolProgress?.(
           { type: 'output', stream: 'stdout', text: 'working\n' },
-          { tool: 'run_command', params: {} }
+          { tool: 'run_command', params: {} },
+          'tool-call-1'
         )
         await handlers?.onToolResult?.(
           {
@@ -273,12 +275,12 @@ test('ThreadManager forwards tool progress without persisting it as a turn item'
   const progress: string[] = []
 
   await manager.submitThreadInput(thread.id, 'run command', {
-    onToolProgress: (event) => {
-      progress.push(event.type)
+    onToolProgress: (event, _toolCall, toolCallId) => {
+      progress.push(`${toolCallId}:${event.type}`)
     },
   })
 
-  assert.deepEqual(progress, ['start', 'output'])
+  assert.deepEqual(progress, ['tool-call-1:start', 'tool-call-1:output'])
   const turn = (manager as any).threads.getTurn(thread.id, 'turn1')
   assert.deepEqual(
     turn.items.map((item: { kind: string }) => item.kind),
