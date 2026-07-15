@@ -76,6 +76,8 @@ test('RunCommandJobManager lists active jobs and removes completed jobs', async 
       : nodeCommand('setTimeout(()=>{},200)')
   const job = manager.start(input)
 
+  assert.equal(job.id, 'j-1')
+
   assert.deepEqual(
     manager.list().map(({ id, state }) => ({ id, state })),
     [{ id: job.id, state: 'running' }]

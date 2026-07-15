@@ -43,7 +43,7 @@ test('JobCommand lists active jobs with sanitized command text', async () => {
   const { context, ui } = createContext({
     jobs: [
       {
-        id: 'job-1',
+        id: 'j-1',
         pid: 42,
         command: 'first\n\u001b[31msecond',
         cwd: 'C:\\project',
@@ -60,7 +60,7 @@ test('JobCommand lists active jobs with sanitized command text', async () => {
   assert.ok(entry)
   assert.equal(entry.label, '/job')
   assert.equal(entry.tone, 'info')
-  assert.match(entry.body, /job-1  pid=42  running/)
+  assert.match(entry.body, /j-1  pid=42  running/)
   assert.match(entry.body, /command: first \[31msecond/)
   assert.doesNotMatch(entry.body, /\u001b/)
 })
@@ -79,13 +79,13 @@ test('JobCommand reports an empty active list', async () => {
 test('JobCommand stops an exact job id', async () => {
   const { context, stoppedIds, ui } = createContext({ stopResult: 'stopped' })
 
-  await JobCommand.execute(context, ['stop', 'job-7'])
+  await JobCommand.execute(context, ['stop', 'j-7'])
 
-  assert.deepEqual(stoppedIds, ['job-7'])
+  assert.deepEqual(stoppedIds, ['j-7'])
   assert.deepEqual(latestTimelineEntry(ui), {
     tone: 'success',
     label: '/job stop',
-    body: 'Stopped job-7.',
+    body: 'Stopped j-7.',
     format: 'plain',
   })
 })
@@ -97,6 +97,6 @@ test('JobCommand validates stop arguments and unknown jobs', async () => {
   assert.equal(latestTimelineEntry(ui)?.body, 'Usage: /job stop <job-id>')
   assert.deepEqual(stoppedIds, [])
 
-  await JobCommand.execute(context, ['stop', 'job-9'])
-  assert.equal(latestTimelineEntry(ui)?.body, 'Unknown or finished job: job-9')
+  await JobCommand.execute(context, ['stop', 'j-9'])
+  assert.equal(latestTimelineEntry(ui)?.body, 'Unknown or finished job: j-9')
 })
