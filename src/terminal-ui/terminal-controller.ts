@@ -63,7 +63,14 @@ export interface LiveCommandEntry {
   fixedLineCount?: number
   toolName: string
   threadId: string
+  toolCallId: string | null
   startedAt: number
+}
+
+interface PendingLiveCommand {
+  toolName: string
+  threadId: string
+  toolCallId: string | null
 }
 
 export interface PromptState {
@@ -94,6 +101,7 @@ interface TimelineViewState {
   lastAction: string
   liveAssistant: LiveAssistantEntry | null
   liveCommand: LiveCommandEntry | null
+  pendingLiveCommand: PendingLiveCommand | null
   timeline: TimelineEntry[]
   commandOutputTail: CommandOutputTail | null
   liveAssistantEmitTimer: ReturnType<typeof setTimeout> | null
@@ -101,6 +109,7 @@ interface TimelineViewState {
   liveCommandEmitTimer: ReturnType<typeof setTimeout> | null
   lastLiveCommandEmitAt: number
   liveToolHeartbeatTimer: ReturnType<typeof setTimeout> | null
+  liveCommandGeneration: number
 }
 
 type Listener = () => void
@@ -728,12 +737,21 @@ export class TerminalController {
   public renderToolCall(
     thread: ThreadHandle,
     toolName: string,
-    rawPayload: string
+    rawPayload: string,
+    toolCallId?: string
   ) {
     const view = this.getThreadTimelineView(thread.id)
     const lines = this.summarizeToolCall(thread, toolName, rawPayload)
     view.lastAction = `Calling ${toolName}.`
     this.clearLiveAssistant(thread)
+    this.discardLiveCommand(view)
+    view.pendingLiveCommand = isLiveCommandTool(toolName)
+      ? {
+          toolName,
+          threadId: thread.id,
+          toolCallId: toolCallId ?? null,
+        }
+      : null
 
     this.addTimelineEntry(
       'tool_call',
@@ -748,7 +766,8 @@ export class TerminalController {
   public renderToolProgress(
     thread: ThreadHandle,
     toolName: string,
-    event: ToolProgressEvent
+    event: ToolProgressEvent,
+    toolCallId?: string
   ) {
     const view = this.getThreadTimelineView(thread.id)
     if (toolName !== 'run_command') {
@@ -758,6 +777,16 @@ export class TerminalController {
     }
 
     if (event.type === 'start') {
+      const pending = view.pendingLiveCommand
+      const expectedToolCallId = toolCallId ?? null
+      if (
+        pending === null ||
+        pending.threadId !== thread.id ||
+        pending.toolName !== toolName ||
+        pending.toolCallId !== expectedToolCallId
+      ) {
+        return
+      }
       this.discardLiveCommand(view)
       view.commandOutputTail =
         toolName === 'run_command' ? new CommandOutputTail() : null
@@ -772,6 +801,7 @@ export class TerminalController {
         format: 'plain',
         toolName,
         threadId: thread.id,
+        toolCallId: expectedToolCallId,
         startedAt: event.startedAt,
       }
       view.lastAction = `Running ${toolName}.`
@@ -785,12 +815,14 @@ export class TerminalController {
 
     const liveCommand = view.liveCommand
     const tail = view.commandOutputTail
+    const expectedToolCallId = toolCallId ?? null
     if (
       toolName !== 'run_command' ||
       liveCommand === null ||
       tail === null ||
       liveCommand.threadId !== thread.id ||
-      liveCommand.toolName !== toolName
+      liveCommand.toolName !== toolName ||
+      liveCommand.toolCallId !== expectedToolCallId
     ) {
       return
     }
@@ -817,14 +849,16 @@ export class TerminalController {
     toolName: string,
     outcome: ToolOutcome,
     result: Record<string, unknown>,
-    displayText?: string
+    displayText?: string,
+    toolCallId?: string
   ) {
     const view = this.getThreadTimelineView(thread.id)
     const lines =
       displayText === undefined
         ? this.summarizeToolResult(toolName, outcome, result)
         : toLines(displayText)
-    const liveCommand = this.takeLiveCommand(thread, toolName)
+    const liveCommand = this.takeLiveCommand(thread, toolName, toolCallId)
+    this.clearPendingLiveCommand(thread, toolName, toolCallId)
     view.lastAction = lines[0] ?? `${toolName} ${outcome}.`
     this.clearLiveAssistant(thread)
 
@@ -841,12 +875,34 @@ export class TerminalController {
     this.addTimelineEntry(tone, label, lines, format, liveCommand?.id, view)
   }
 
-  public clearLiveCommand(thread: ThreadHandle): void {
+  public clearLiveCommand(thread: ThreadHandle, toolCallId?: string): void {
     const view = this.getThreadTimelineView(thread.id)
-    if (view.liveCommand?.threadId !== thread.id) {
+    const hadLiveState =
+      view.liveCommand?.threadId === thread.id ||
+      view.pendingLiveCommand?.threadId === thread.id
+    if (!hadLiveState) return
+
+    if (toolCallId === undefined) {
+      this.discardLiveCommand(view)
+      this.emitView(view)
       return
     }
-    if (this.takeLiveCommand(thread, view.liveCommand.toolName) !== null) {
+
+    const toolName =
+      view.liveCommand?.toolCallId === toolCallId
+        ? view.liveCommand.toolName
+        : view.pendingLiveCommand?.toolCallId === toolCallId
+          ? view.pendingLiveCommand.toolName
+          : null
+    if (toolName === null) return
+
+    const removedLive = this.takeLiveCommand(thread, toolName, toolCallId)
+    const removedPending = this.clearPendingLiveCommand(
+      thread,
+      toolName,
+      toolCallId
+    )
+    if (removedLive !== null || removedPending) {
       this.emitView(view)
     }
   }
@@ -896,9 +952,12 @@ export class TerminalController {
   }
 
   private scheduleLiveCommandEmit(view: TimelineViewState): void {
-    if (view.key !== this.activeTimelineKey) {
+    const liveCommand = view.liveCommand
+    if (view.key !== this.activeTimelineKey || liveCommand === null) {
       return
     }
+    const generation = view.liveCommandGeneration
+    const entryId = liveCommand.id
     const now = Date.now()
     const elapsed = now - view.lastLiveCommandEmitAt
     if (elapsed >= LIVE_COMMAND_EMIT_INTERVAL_MS) {
@@ -912,10 +971,16 @@ export class TerminalController {
       return
     }
 
-    view.liveCommandEmitTimer = setTimeout(
+    const timer = setTimeout(
       () => {
+        if (view.liveCommandEmitTimer !== timer) {
+          return
+        }
         view.liveCommandEmitTimer = null
-        if (view.liveCommand === null) {
+        if (
+          view.liveCommandGeneration !== generation ||
+          view.liveCommand?.id !== entryId
+        ) {
           return
         }
         view.lastLiveCommandEmitAt = Date.now()
@@ -923,6 +988,7 @@ export class TerminalController {
       },
       Math.max(1, LIVE_COMMAND_EMIT_INTERVAL_MS - elapsed)
     )
+    view.liveCommandEmitTimer = timer
   }
 
   private cancelLiveCommandEmit(view: TimelineViewState): void {
@@ -936,27 +1002,41 @@ export class TerminalController {
   private discardLiveCommand(view: TimelineViewState): void {
     this.cancelLiveCommandEmit(view)
     this.cancelLiveToolHeartbeat(view)
+    view.liveCommandGeneration += 1
     view.commandOutputTail = null
     view.liveCommand = null
+    view.pendingLiveCommand = null
   }
 
   private scheduleLiveToolHeartbeat(view: TimelineViewState): void {
+    const liveCommand = view.liveCommand
     if (
       view.key !== this.activeTimelineKey ||
-      view.liveToolHeartbeatTimer !== null
+      view.liveToolHeartbeatTimer !== null ||
+      liveCommand?.toolName !== 'spawn'
     ) {
       return
     }
+    const generation = view.liveCommandGeneration
+    const entryId = liveCommand.id
 
-    view.liveToolHeartbeatTimer = setTimeout(() => {
+    const timer = setTimeout(() => {
+      if (view.liveToolHeartbeatTimer !== timer) {
+        return
+      }
       view.liveToolHeartbeatTimer = null
-      if (view.liveCommand?.toolName !== 'spawn') {
+      if (
+        view.liveCommandGeneration !== generation ||
+        view.liveCommand?.id !== entryId ||
+        view.liveCommand.toolName !== 'spawn'
+      ) {
         return
       }
 
       this.emitView(view)
       this.scheduleLiveToolHeartbeat(view)
     }, LIVE_TOOL_HEARTBEAT_INTERVAL_MS)
+    view.liveToolHeartbeatTimer = timer
   }
 
   private cancelLiveToolHeartbeat(view: TimelineViewState): void {
@@ -986,7 +1066,9 @@ export class TerminalController {
 
   private switchTimeline(nextKey: string, lastAction: string): void {
     const previousView = this.activeTimelineView()
-    this.cancelLiveToolHeartbeat(previousView)
+    if (previousView.key !== nextKey) {
+      this.discardLiveCommand(previousView)
+    }
     this.activeTimelineKey = nextKey
     const nextView = this.getTimelineView(nextKey)
     this.state.timelineVersion += 1
@@ -1126,23 +1208,45 @@ export class TerminalController {
 
   private takeLiveCommand(
     thread: ThreadHandle,
-    toolName: string
+    toolName: string,
+    toolCallId?: string
   ): LiveCommandEntry | null {
     const view = this.getThreadTimelineView(thread.id)
     const liveCommand = view.liveCommand
     if (
       liveCommand === null ||
       liveCommand.threadId !== thread.id ||
-      liveCommand.toolName !== toolName
+      liveCommand.toolName !== toolName ||
+      liveCommand.toolCallId !== (toolCallId ?? null)
     ) {
       return null
     }
 
     this.cancelLiveCommandEmit(view)
     this.cancelLiveToolHeartbeat(view)
+    view.liveCommandGeneration += 1
     view.commandOutputTail = null
     view.liveCommand = null
     return liveCommand
+  }
+
+  private clearPendingLiveCommand(
+    thread: ThreadHandle,
+    toolName: string,
+    toolCallId?: string
+  ): boolean {
+    const view = this.getThreadTimelineView(thread.id)
+    const pending = view.pendingLiveCommand
+    if (
+      pending === null ||
+      pending.threadId !== thread.id ||
+      pending.toolName !== toolName ||
+      pending.toolCallId !== (toolCallId ?? null)
+    ) {
+      return false
+    }
+    view.pendingLiveCommand = null
+    return true
   }
 
   private takeLiveAssistant(thread: ThreadHandle): LiveAssistantEntry | null {
@@ -1214,6 +1318,7 @@ function createTimelineView(key: string): TimelineViewState {
     lastAction: 'Ready.',
     liveAssistant: null,
     liveCommand: null,
+    pendingLiveCommand: null,
     timeline: [],
     commandOutputTail: null,
     liveAssistantEmitTimer: null,
@@ -1221,7 +1326,12 @@ function createTimelineView(key: string): TimelineViewState {
     liveCommandEmitTimer: null,
     lastLiveCommandEmitAt: 0,
     liveToolHeartbeatTimer: null,
+    liveCommandGeneration: 0,
   }
+}
+
+function isLiveCommandTool(toolName: string): boolean {
+  return toolName === 'run_command' || toolName === 'spawn'
 }
 
 function isInitialSetupMessage(

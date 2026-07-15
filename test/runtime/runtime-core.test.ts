@@ -507,10 +507,12 @@ test('RuntimeCore forwards transient tool progress without changing tool results
     new ToolRegistry(adapter, [ProgressTool])
   )
   const progress: string[] = []
+  const toolCallIds: string[] = []
 
   await runtime.submitUserInput('Run the progress tool.', {
-    onToolProgress: (event, toolCall) => {
+    onToolProgress: (event, toolCall, toolCallId) => {
       progress.push(`${event.type}:${toolCall?.tool ?? 'none'}`)
+      toolCallIds.push(toolCallId)
     },
   })
 
@@ -519,6 +521,8 @@ test('RuntimeCore forwards transient tool progress without changing tool results
     'output:progress_tool',
     'output:progress_tool',
   ])
+  assert.equal(new Set(toolCallIds).size, 1)
+  assert.ok(toolCallIds[0])
   assert.equal(
     adapter.attachedTexts[1],
     [

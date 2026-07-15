@@ -54,7 +54,11 @@ export interface RuntimeCoreHandlers {
     toolCall: ToolCall | null,
     metadata?: ToolCallMetadata
   ) => void | Promise<void>
-  onToolProgress?: (event: ToolProgressEvent, toolCall: ToolCall | null) => void
+  onToolProgress?: (
+    event: ToolProgressEvent,
+    toolCall: ToolCall | null,
+    toolCallId: string
+  ) => void
   signal?: AbortSignal
   executionScope?: HookExecutionScope
   maxToolCalls?: number
@@ -458,7 +462,8 @@ export class RuntimeCore {
   ): Promise<ToolResult> {
     return await prepared.execute({
       ...(handlers.signal === undefined ? {} : { signal: handlers.signal }),
-      onProgress: (event) => handlers.onToolProgress?.(event, toolCall),
+      onProgress: (event) =>
+        handlers.onToolProgress?.(event, toolCall, toolCallId),
       ...(handlers.executionScope === undefined
         ? {}
         : { executionScope: handlers.executionScope }),
