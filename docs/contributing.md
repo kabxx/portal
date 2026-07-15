@@ -32,7 +32,7 @@ npm run fmt:check
 
 Use `npm run fmt` only when you intend to rewrite formatting. Before submitting a change, review the final diff and make sure unrelated files were not modified.
 
-Every pull request runs the type check, unit tests, and formatting check in GitHub Actions on Node.js 22. Unit tests also run on Windows because process and browser support have platform-specific behavior.
+Every pull request runs the type check, unit tests, and formatting check in GitHub Actions on Node.js 22. Unit tests run on Ubuntu, Windows, and macOS because browser discovery and process support have platform-specific behavior.
 
 ## Manual browser smoke check
 

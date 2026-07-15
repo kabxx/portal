@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { RunCommandTool } from '../../../src/tools/builtins/run-command-tool.ts'
+import { getDefaultShell } from '../../../src/platform/platform-defaults.ts'
 import { RunCommandJobManager } from '../../../src/processes/run-command-job-manager.ts'
 import { PortalAbortError } from '../../../src/runtime/runtime-cancellation.ts'
 import type { ToolProgressEvent } from '../../../src/tools/core/tool-definition.ts'
@@ -98,7 +99,11 @@ test('RunCommandTool does not advertise a default timeout', () => {
 
   assert.equal(schema.properties?.timeoutMs?.default, undefined)
   assert.match(tool.prompt, /valid UTF-8 text/i)
-  assert.match(tool.prompt, /-Encoding UTF8/)
+  if (getDefaultShell() === 'powershell') {
+    assert.match(tool.prompt, /-Encoding UTF8/)
+  } else {
+    assert.doesNotMatch(tool.prompt, /Get-Content|C:\\/)
+  }
 })
 
 test('RunCommandTool requires the portal shared job manager', async () => {

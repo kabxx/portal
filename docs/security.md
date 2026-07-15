@@ -14,14 +14,14 @@ Provider output, repository-owned project instructions, loaded Skill instruction
 
 ## Powerful operations
 
-| Tool            | Security impact                                                                                                  |
-| --------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `run_command`   | Runs arbitrary commands through PowerShell, `cmd`, Bash, or `sh`; an omitted timeout means no tool-level timeout |
-| `apply_patch`   | Creates or modifies UTF-8 files with V4A patches; paths are not confined to the repository                       |
-| `attach_image`  | Sends a selected local image and its contents to the active provider website                                     |
-| `spawn`         | Starts another provider conversation with local tools, a Skill snapshot, and fresh MCP connections               |
-| `load_skill`    | Adds third-party instructions and local resource paths to the provider conversation                              |
-| `mcp_call_tool` | Invokes operations exposed by a configured MCP server with that server's effective permissions                   |
+| Tool            | Security impact                                                                                                |
+| --------------- | -------------------------------------------------------------------------------------------------------------- |
+| `run_command`   | Runs arbitrary commands through the platform's available shell; an omitted timeout means no tool-level timeout |
+| `apply_patch`   | Creates or modifies UTF-8 files with V4A patches; paths are not confined to the repository                     |
+| `attach_image`  | Sends a selected local image and its contents to the active provider website                                   |
+| `spawn`         | Starts another provider conversation with local tools, a Skill snapshot, and fresh MCP connections             |
+| `load_skill`    | Adds third-party instructions and local resource paths to the provider conversation                            |
+| `mcp_call_tool` | Invokes operations exposed by a configured MCP server with that server's effective permissions                 |
 
 `mcp_search_tool` only returns a cached Tool definition, but the definition itself is untrusted text. User-selected MCP Resources and Prompts are submitted as complete user turns and can also influence later tool use.
 
