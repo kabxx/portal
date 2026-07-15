@@ -213,6 +213,66 @@ test('parsePortalConfig completes partial advanced settings from defaults', () =
   })
 })
 
+test('parsePortalConfig normalizes API tokens', () => {
+  const valid = createDefaultPortalConfig()
+  assert.equal(
+    parsePortalConfig({
+      ...valid,
+      api: { ...valid.api, token: '  secret  ' },
+    }).api.token,
+    'secret'
+  )
+  assert.equal(
+    parsePortalConfig({
+      ...valid,
+      api: { ...valid.api, token: '   ' },
+    }).api.token,
+    null
+  )
+  assert.equal(
+    parsePortalConfig({
+      ...valid,
+      api: { ...valid.api, token: '' },
+    }).api.token,
+    null
+  )
+})
+
+test('ensurePortalConfig writes normalized API tokens back to disk', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-token-'))
+  const configPath = path.join(root, 'config.yaml')
+  const defaults = createDefaultPortalConfig(root)
+
+  try {
+    await writeFile(
+      configPath,
+      stringifyYaml({
+        ...defaults,
+        api: { ...defaults.api, token: '  secret  ' },
+      }),
+      'utf8'
+    )
+    await ensurePortalConfig(configPath, defaults)
+    assert.equal(
+      parseYaml(await readFile(configPath, 'utf8')).api.token,
+      'secret'
+    )
+
+    await writeFile(
+      configPath,
+      stringifyYaml({
+        ...defaults,
+        api: { ...defaults.api, token: '   ' },
+      }),
+      'utf8'
+    )
+    await ensurePortalConfig(configPath, defaults)
+    assert.equal(parseYaml(await readFile(configPath, 'utf8')).api.token, null)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('parsePortalConfig migrates the legacy provider response timeout', () => {
   const legacy = structuredClone(createDefaultPortalConfig('data')) as any
   delete legacy.advanced.provider.responseStartTimeoutSeconds

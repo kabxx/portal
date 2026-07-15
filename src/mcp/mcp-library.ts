@@ -1,6 +1,6 @@
 import { lstat } from 'fs/promises'
 import {
-  McpConfigError,
+  McpDuplicateNameError,
   parseMcpServerConfig,
   readMcpConfig,
   updateMcpConfig,
@@ -81,7 +81,7 @@ export class McpLibrary {
     const normalized = parseMcpServerConfig(config)
     await updateMcpConfig(this.configPath, (servers) => {
       if (servers.has(name)) {
-        throw new McpConfigError(`MCP server already exists: ${name}`)
+        throw new McpDuplicateNameError(name)
       }
       servers.set(name, normalized)
     })

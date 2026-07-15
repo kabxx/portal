@@ -1,5 +1,13 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import type { ServerResponse } from 'node:http'
+import {
+  ApiHttpError,
+  mapApiError,
+  parseBearerToken,
+  requireRecordBody,
+} from './api-errors.ts'
+
+export { ApiHttpError } from './api-errors.ts'
 
 export interface ApiThreadSummary {
   id: string
@@ -69,18 +77,6 @@ export interface ApiEvent {
 interface Subscriber {
   response: ServerResponse
   heartbeat: ReturnType<typeof setInterval>
-}
-
-export class ApiHttpError extends Error {
-  public readonly statusCode: number
-  public readonly code: string
-
-  public constructor(statusCode: number, code: string, message: string) {
-    super(message)
-    this.name = 'ApiHttpError'
-    this.statusCode = statusCode
-    this.code = code
-  }
 }
 
 export class ApiEventHub {
@@ -251,23 +247,17 @@ export class PortalApiServer {
       ) {
         return
       }
-      const expected = `Bearer ${this.options.token}`
-      if (request.headers.authorization !== expected) {
+      const provided = parseBearerToken(request.headers.authorization)
+      if (provided !== this.options.token) {
         throw new ApiHttpError(401, 'AUTH_INVALID', 'Invalid API token.')
       }
     })
 
     fastify.setErrorHandler((error, _request, reply) => {
-      const apiError = error as Partial<ApiHttpError>
-      const statusCode = apiError.statusCode ?? 500
-      const code = apiError.code ?? 'INTERNAL_ERROR'
-      const message =
-        statusCode >= 500
-          ? 'Internal server error.'
-          : error instanceof Error
-            ? error.message
-            : String(error)
-      void reply.code(statusCode).send({ error: { code, message } })
+      const mapped = mapApiError(error)
+      void reply
+        .code(mapped.statusCode)
+        .send({ error: { code: mapped.code, message: mapped.message } })
     })
 
     fastify.get('/health', async () => ({
@@ -289,19 +279,20 @@ export class PortalApiServer {
       async (request) =>
         await this.options.handlers.getThread(request.params.threadId)
     )
-    fastify.post<{ Body: Record<string, unknown> }>(
-      '/v1/threads',
-      async (request, reply) =>
-        await reply
-          .code(201)
-          .send(await this.options.handlers.createThread(request.body))
-    )
-    fastify.post<{ Body: Record<string, unknown> }>(
+    fastify.post<{ Body: unknown }>('/v1/threads', async (request, reply) => {
+      const body = requireRecordBody(request.body)
+      return await reply
+        .code(201)
+        .send(await this.options.handlers.createThread(body))
+    })
+    fastify.post<{ Body: unknown }>(
       '/v1/threads/resume',
-      async (request, reply) =>
-        await reply
+      async (request, reply) => {
+        const body = requireRecordBody(request.body)
+        return await reply
           .code(201)
-          .send(await this.options.handlers.resumeThread(request.body))
+          .send(await this.options.handlers.resumeThread(body))
+      }
     )
     fastify.delete<{ Params: { threadId: string } }>(
       '/v1/threads/:threadId',
@@ -312,10 +303,8 @@ export class PortalApiServer {
       Params: { threadId: string }
       Body: { input?: unknown }
     }>('/v1/threads/:threadId/messages', async (request, reply) => {
-      if (
-        typeof request.body?.input !== 'string' ||
-        request.body.input.trim() === ''
-      ) {
+      const body = requireRecordBody(request.body)
+      if (typeof body.input !== 'string' || body.input.trim() === '') {
         throw new ApiHttpError(
           400,
           'INVALID_REQUEST',
@@ -324,7 +313,7 @@ export class PortalApiServer {
       }
       const result = await this.options.handlers.submitMessage(
         request.params.threadId,
-        request.body.input
+        body.input
       )
       return await reply.code(202).send(result)
     })
@@ -369,10 +358,8 @@ export class PortalApiServer {
       Params: { threadId: string }
       Body: { name?: unknown }
     }>('/v1/threads/:threadId/skill', async (request, reply) => {
-      if (
-        typeof request.body?.name !== 'string' ||
-        request.body.name.trim() === ''
-      ) {
+      const body = requireRecordBody(request.body)
+      if (typeof body.name !== 'string' || body.name.trim() === '') {
         throw new ApiHttpError(
           400,
           'INVALID_REQUEST',
@@ -381,7 +368,7 @@ export class PortalApiServer {
       }
       const result = await this.options.handlers.activateSkill(
         request.params.threadId,
-        request.body.name
+        body.name
       )
       return await reply.code(202).send(result)
     })
@@ -394,13 +381,14 @@ export class PortalApiServer {
       Params: { threadId: string; name: string }
       Body: { state?: unknown }
     }>('/v1/threads/:threadId/capabilities/:name', async (request) => {
-      if (typeof request.body?.state !== 'string') {
+      const body = requireRecordBody(request.body)
+      if (typeof body.state !== 'string') {
         throw new ApiHttpError(400, 'INVALID_REQUEST', 'state is required.')
       }
       return await this.options.handlers.setCapability(
         request.params.threadId,
         request.params.name,
-        request.body.state
+        body.state
       )
     })
     fastify.delete<{ Params: { threadId: string; name: string } }>(
@@ -415,39 +403,35 @@ export class PortalApiServer {
       '/v1/skills',
       async () => await this.options.handlers.listSkills()
     )
-    fastify.post<{ Body: Record<string, unknown> }>(
-      '/v1/skills',
-      async (request, reply) => {
-        if (
-          typeof request.body?.source !== 'string' ||
-          request.body.source.trim() === ''
-        ) {
-          throw new ApiHttpError(400, 'INVALID_REQUEST', 'source is required.')
-        }
-        if (
-          request.body.registryUrl !== undefined &&
-          typeof request.body.registryUrl !== 'string'
-        ) {
-          throw new ApiHttpError(
-            400,
-            'INVALID_REQUEST',
-            'registryUrl must be a string.'
-          )
-        }
-        return await reply
-          .code(201)
-          .send(await this.options.handlers.addSkill(request.body))
+    fastify.post<{ Body: unknown }>('/v1/skills', async (request, reply) => {
+      const body = requireRecordBody(request.body)
+      if (typeof body.source !== 'string' || body.source.trim() === '') {
+        throw new ApiHttpError(400, 'INVALID_REQUEST', 'source is required.')
       }
-    )
+      if (
+        body.registryUrl !== undefined &&
+        typeof body.registryUrl !== 'string'
+      ) {
+        throw new ApiHttpError(
+          400,
+          'INVALID_REQUEST',
+          'registryUrl must be a string.'
+        )
+      }
+      return await reply
+        .code(201)
+        .send(await this.options.handlers.addSkill(body))
+    })
     fastify.put<{ Params: { name: string }; Body: { enabled?: unknown } }>(
       '/v1/skills/:name',
       async (request) => {
-        if (typeof request.body?.enabled !== 'boolean') {
+        const body = requireRecordBody(request.body)
+        if (typeof body.enabled !== 'boolean') {
           throw new ApiHttpError(400, 'INVALID_REQUEST', 'enabled is required.')
         }
         return await this.options.handlers.setSkillEnabled(
           request.params.name,
-          request.body.enabled
+          body.enabled
         )
       }
     )
@@ -460,14 +444,15 @@ export class PortalApiServer {
       '/v1/mcp/servers',
       async () => await this.options.handlers.listMcpServers()
     )
-    fastify.post<{ Body: Record<string, unknown> }>(
+    fastify.post<{ Body: unknown }>(
       '/v1/mcp/servers',
       async (request, reply) => {
-        const name = request.body?.name
+        const body = requireRecordBody(request.body)
+        const name = body.name
         if (typeof name !== 'string' || name.trim() === '') {
           throw new ApiHttpError(400, 'INVALID_REQUEST', 'name is required.')
         }
-        const { name: _ignored, ...config } = request.body
+        const { name: _ignored, ...config } = body
         return await reply
           .code(201)
           .send(await this.options.handlers.addMcpServer(name, config))
@@ -477,13 +462,14 @@ export class PortalApiServer {
       Params: { name: string }
       Body: { enabled?: unknown; config?: unknown }
     }>('/v1/mcp/servers/:name', async (request) => {
-      if (typeof request.body?.enabled === 'boolean') {
+      const body = requireRecordBody(request.body)
+      if (typeof body.enabled === 'boolean') {
         return await this.options.handlers.setMcpServerEnabled(
           request.params.name,
-          request.body.enabled
+          body.enabled
         )
       }
-      if (request.body?.config === undefined) {
+      if (body.config === undefined) {
         throw new ApiHttpError(
           400,
           'INVALID_REQUEST',
@@ -492,7 +478,7 @@ export class PortalApiServer {
       }
       return await this.options.handlers.setMcpServer(
         request.params.name,
-        request.body.config
+        body.config
       )
     })
     fastify.delete<{ Params: { name: string } }>(
