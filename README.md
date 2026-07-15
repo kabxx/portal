@@ -103,6 +103,7 @@ Open and manage local threads:
 /thread status
 /thread reload
 /thread detach
+/thread close
 /thread close t-1
 ```
 
@@ -129,7 +130,7 @@ On a successful open or resume, the new thread timeline starts with the existing
 | `/thread switch <thread-id>`                  | Restore another open thread's in-memory timeline             |
 | `/thread status`                              | Show the active thread                                       |
 | `/thread reload`                              | Reload the active provider page without creating a turn      |
-| `/thread close <thread-id>`                   | Close its page, runtime, and MCP connections                 |
+| `/thread close [thread-id]`                   | Close the selected thread, or the active thread by default   |
 | `/thread detach`                              | Return to the home timeline without closing the thread       |
 | `/thread capability [name] [on\|off\|status]` | Inspect or change provider-specific web controls             |
 
