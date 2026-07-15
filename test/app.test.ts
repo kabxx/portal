@@ -9,6 +9,7 @@ import {
   closeWithTimeout,
   createPortalRuntimeSettings,
   showPendingThreadTimeline,
+  shouldRenderFallbackThreadError,
   transitionLoginWaitWarning,
 } from '../src/app.ts'
 import { createDefaultAdvancedConfig } from '../src/config/portal-config.ts'
@@ -198,6 +199,37 @@ test('busy threads allow navigation and queries but reject runtime mutations', (
   ]) {
     assert.equal(canRunCommandWhileThreadBusy(input), false, input)
   }
+})
+
+test('shouldRenderFallbackThreadError avoids duplicate turn errors', () => {
+  assert.equal(
+    shouldRenderFallbackThreadError({
+      turnErrorRendered: false,
+      canRetry: false,
+    }),
+    true
+  )
+  assert.equal(
+    shouldRenderFallbackThreadError({
+      turnErrorRendered: true,
+      canRetry: false,
+    }),
+    false
+  )
+  assert.equal(
+    shouldRenderFallbackThreadError({
+      turnErrorRendered: false,
+      canRetry: true,
+    }),
+    false
+  )
+  assert.equal(
+    shouldRenderFallbackThreadError({
+      turnErrorRendered: true,
+      canRetry: true,
+    }),
+    false
+  )
 })
 
 test('pending thread initialization uses its own timeline and restores the previous thread on failure', () => {
