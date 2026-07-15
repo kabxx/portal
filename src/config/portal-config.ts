@@ -9,10 +9,13 @@ import {
   parseHooksConfig,
 } from '../hooks/hook-config.ts'
 import type { HooksConfig } from '../hooks/hook-types.ts'
-import { getDefaultBrowserExecutableCandidates } from '../platform/platform-defaults.ts'
+import {
+  getDefaultBrowserExecutableCandidates,
+  type BrowserEngine,
+} from '../platform/platform-defaults.ts'
 
 export interface PortalBrowserConfig {
-  name: string
+  engine: BrowserEngine
   executablePath: string
   profilePath: string
   remoteDebuggingPort: number
@@ -130,7 +133,7 @@ const CONFIG_FIELDS = new Set([
   'advanced',
 ])
 const BROWSER_FIELDS = new Set([
-  'name',
+  'engine',
   'executablePath',
   'profilePath',
   'remoteDebuggingPort',
@@ -277,14 +280,14 @@ export function createDefaultAdvancedConfig(): PortalAdvancedConfig {
 export function createDefaultBrowserConfig(
   dataDirectory: string = path.resolve('data')
 ): PortalBrowserConfig {
-  const name = 'edge'
+  const engine = 'chromium'
   const candidates = getDefaultBrowserExecutableCandidates()
 
   return {
-    name,
+    engine,
     executablePath:
       candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!,
-    profilePath: path.join(path.resolve(dataDirectory), 'profiles', name),
+    profilePath: path.join(path.resolve(dataDirectory), 'profiles', engine),
     remoteDebuggingPort: 9222,
   }
 }
@@ -322,8 +325,8 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
     throw new PortalConfigError('browser must be an object')
   }
   assertSupportedFields(browser, BROWSER_FIELDS, 'browser')
-  if (typeof browser.name !== 'string' || browser.name.trim() === '') {
-    throw new PortalConfigError('browser.name must be a non-empty string')
+  if (browser.engine !== 'chromium') {
+    throw new PortalConfigError('browser.engine must be "chromium"')
   }
   if (
     typeof browser.executablePath !== 'string' ||
@@ -420,7 +423,7 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
 
   return {
     browser: {
-      name: browser.name,
+      engine: browser.engine,
       executablePath: browser.executablePath,
       profilePath: browser.profilePath,
       remoteDebuggingPort: browser.remoteDebuggingPort as number,
@@ -861,7 +864,7 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
     document,
     ['browser'],
     [
-      ['name', 'Chromium-based browser type to launch.'],
+      ['engine', 'Browser automation engine. Currently only chromium.'],
       ['executablePath', 'Path to the browser executable.'],
       ['profilePath', 'Directory that stores the dedicated browser profile.'],
       ['remoteDebuggingPort', 'Local CDP port used to control the browser.'],

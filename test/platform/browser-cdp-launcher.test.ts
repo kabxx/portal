@@ -1,7 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { buildBrowserLaunchArguments } from '../../src/platform/browser-cdp-launcher.ts'
+import {
+  buildBrowserLaunchArguments,
+  launchBrowser,
+} from '../../src/platform/browser-cdp-launcher.ts'
 
 test('buildBrowserLaunchArguments keeps the expected browser flags', () => {
   assert.deepEqual(buildBrowserLaunchArguments('C:\\profiles\\chrome', 9222), [
@@ -13,4 +16,11 @@ test('buildBrowserLaunchArguments keeps the expected browser flags', () => {
     '--disable-default-apps',
     '--disable-popup-blocking',
   ])
+})
+
+test('launchBrowser rejects unsupported browser engines before launch', async () => {
+  await assert.rejects(
+    launchBrowser('firefox' as never, 'missing-browser', 9222, 'profile'),
+    /Unsupported browser engine: firefox/
+  )
 })
