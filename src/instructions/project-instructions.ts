@@ -261,17 +261,14 @@ export class ProjectInstructions {
     target: string,
     added: InstructionDocument[]
   ): Promise<void> {
-    const targetDirectory = await resolveTargetDirectory(
-      target,
-      this.state.context
-    )
-    if (targetDirectory === null) {
+    const resolvedTarget = await resolveTarget(target, this.state.context)
+    if (resolvedTarget === null) {
       return
     }
 
     const directories = ancestorDirectories(
       this.state.context.root,
-      targetDirectory
+      resolvedTarget.directory
     )
     for (const directory of directories) {
       const directoryKey = normalizeKey(directory)
@@ -284,7 +281,7 @@ export class ProjectInstructions {
 
     const relativeTarget = toRelativePath(
       this.state.context.root,
-      path.resolve(target)
+      resolvedTarget.path
     )
     for (const rule of this.state.rules) {
       if (
@@ -1351,29 +1348,55 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-async function resolveTargetDirectory(
+async function resolveTarget(
   target: string,
   context: LoaderContext
-): Promise<string | null> {
-  const absolute = path.resolve(target)
-  if (!isWithin(context.root, absolute)) {
-    return null
-  }
-  try {
-    const metadata = await lstat(absolute)
-    if (metadata.isSymbolicLink()) {
-      const actual = await realpath(absolute)
-      if (!isWithin(context.root, actual)) {
+): Promise<{ path: string; directory: string } | null> {
+  let cursor = path.resolve(target)
+  const missing: string[] = []
+  while (true) {
+    try {
+      await lstat(cursor)
+    } catch (error) {
+      if (!isNotFound(error)) {
         return null
       }
-      return (await stat(actual)).isDirectory() ? actual : path.dirname(actual)
+      const parent = path.dirname(cursor)
+      if (parent === cursor) {
+        return null
+      }
+      missing.unshift(path.basename(cursor))
+      cursor = parent
+      continue
     }
-    return metadata.isDirectory() ? absolute : path.dirname(absolute)
-  } catch (error) {
-    if (isNotFound(error)) {
-      return path.dirname(absolute)
+
+    let actual: string
+    try {
+      actual = await realpath(cursor)
+    } catch {
+      return null
     }
-    return null
+    let actualMetadata
+    try {
+      actualMetadata = await stat(actual)
+    } catch {
+      return null
+    }
+    if (missing.length > 0 && !actualMetadata.isDirectory()) {
+      return null
+    }
+
+    const canonicalTarget = path.join(actual, ...missing)
+    if (!isWithin(context.root, canonicalTarget)) {
+      return null
+    }
+    return {
+      path: canonicalTarget,
+      directory:
+        missing.length > 0 || !actualMetadata.isDirectory()
+          ? path.dirname(canonicalTarget)
+          : canonicalTarget,
+    }
   }
 }
 
