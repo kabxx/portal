@@ -51,6 +51,11 @@ test('ensurePortalConfig creates one YAML file with concrete defaults', async ()
       port: 8787,
       token: null,
     })
+    assert.deepEqual(defaults.mcpServer, {
+      host: '127.0.0.1',
+      port: 8788,
+      token: null,
+    })
     assert.deepEqual(defaults.advanced, createDefaultAdvancedConfig())
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -93,6 +98,7 @@ test('readPortalConfig parses YAML and strips a UTF-8 BOM', async () => {
         codex: { global: false, local: false },
       },
       api: { host: '127.0.0.1', port: 8787, token: null },
+      mcpServer: { host: '127.0.0.1', port: 8788, token: null },
       mcp: { connectionStrategy: 'per-thread', servers: {} },
       skills: [],
       hooks: { enabled: false, maxDepth: 1, handlers: [] },
@@ -239,29 +245,17 @@ test('parsePortalConfig completes partial advanced settings from defaults', () =
   })
 })
 
-test('parsePortalConfig normalizes API tokens', () => {
+test('parsePortalConfig preserves API and MCP Server tokens exactly', () => {
   const valid = createDefaultPortalConfig()
-  assert.equal(
-    parsePortalConfig({
+  for (const token of [null, '', '   ', '  secret  ']) {
+    const parsed = parsePortalConfig({
       ...valid,
-      api: { ...valid.api, token: '  secret  ' },
-    }).api.token,
-    'secret'
-  )
-  assert.equal(
-    parsePortalConfig({
-      ...valid,
-      api: { ...valid.api, token: '   ' },
-    }).api.token,
-    null
-  )
-  assert.equal(
-    parsePortalConfig({
-      ...valid,
-      api: { ...valid.api, token: '' },
-    }).api.token,
-    null
-  )
+      api: { ...valid.api, token },
+      mcpServer: { ...valid.mcpServer, token },
+    })
+    assert.equal(parsed.api.token, token)
+    assert.equal(parsed.mcpServer.token, token)
+  }
 })
 
 test('parsePortalConfig defaults missing instruction scope fields to false', () => {
@@ -280,7 +274,7 @@ test('parsePortalConfig defaults missing instruction scope fields to false', () 
   })
 })
 
-test('ensurePortalConfig writes normalized API tokens back to disk', async () => {
+test('ensurePortalConfig preserves API and MCP Server tokens on disk', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-token-'))
   const configPath = path.join(root, 'config.yaml')
   const defaults = createDefaultPortalConfig(root)
@@ -291,25 +285,28 @@ test('ensurePortalConfig writes normalized API tokens back to disk', async () =>
       stringifyYaml({
         ...defaults,
         api: { ...defaults.api, token: '  secret  ' },
+        mcpServer: { ...defaults.mcpServer, token: '   ' },
       }),
       'utf8'
     )
     await ensurePortalConfig(configPath, defaults)
-    assert.equal(
-      parseYaml(await readFile(configPath, 'utf8')).api.token,
-      'secret'
-    )
+    let document = parseYaml(await readFile(configPath, 'utf8'))
+    assert.equal(document.api.token, '  secret  ')
+    assert.equal(document.mcpServer.token, '   ')
 
     await writeFile(
       configPath,
       stringifyYaml({
         ...defaults,
-        api: { ...defaults.api, token: '   ' },
+        api: { ...defaults.api, token: '' },
+        mcpServer: { ...defaults.mcpServer, token: '' },
       }),
       'utf8'
     )
     await ensurePortalConfig(configPath, defaults)
-    assert.equal(parseYaml(await readFile(configPath, 'utf8')).api.token, null)
+    document = parseYaml(await readFile(configPath, 'utf8'))
+    assert.equal(document.api.token, '')
+    assert.equal(document.mcpServer.token, '')
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -416,6 +413,27 @@ test('ensurePortalConfig completes a partial API section without replacing its v
       port: 8787,
       token: null,
     })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('ensurePortalConfig writes a missing MCP Server section', async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), 'portal-config-mcp-server-migration-')
+  )
+  const configPath = path.join(root, 'config.yaml')
+  const defaults = createDefaultPortalConfig(root)
+
+  try {
+    const { mcpServer: _mcpServer, ...legacyConfig } = defaults
+    await writeFile(configPath, stringifyYaml(legacyConfig), 'utf8')
+
+    const config = await ensurePortalConfig(configPath, defaults)
+    const document = parseYaml(await readFile(configPath, 'utf8'))
+
+    assert.deepEqual(config.mcpServer, defaults.mcpServer)
+    assert.deepEqual(document.mcpServer, defaults.mcpServer)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -543,6 +561,35 @@ test('parsePortalConfig rejects invalid browser, MCP, and Skill sections', () =>
   assert.throws(
     () => parsePortalConfig({ ...valid, ui: {} }),
     /Unsupported config root fields: ui/
+  )
+})
+
+test('parsePortalConfig rejects invalid MCP Server settings', () => {
+  const valid = createDefaultPortalConfig()
+
+  assert.throws(
+    () =>
+      parsePortalConfig({
+        ...valid,
+        mcpServer: { ...valid.mcpServer, host: '' },
+      }),
+    /mcpServer\.host must be a non-empty string/
+  )
+  assert.throws(
+    () =>
+      parsePortalConfig({
+        ...valid,
+        mcpServer: { ...valid.mcpServer, port: 0 },
+      }),
+    /mcpServer\.port must be an integer from 1 to 65535/
+  )
+  assert.throws(
+    () =>
+      parsePortalConfig({
+        ...valid,
+        mcpServer: { ...valid.mcpServer, token: 123 },
+      }),
+    /mcpServer\.token must be a string or null/
   )
 })
 

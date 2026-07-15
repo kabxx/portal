@@ -89,6 +89,12 @@ import { HookDispatcher } from './hooks/hook-dispatcher.ts'
 import { HookEventBus } from './hooks/hook-event-sink.ts'
 import { ChildRuntimeFactory } from './runtime/child-runtime-factory.ts'
 import type { SkillPolicy } from './skills/skill-policy.ts'
+import { PortalMcpServer } from './mcp-server/mcp-server.ts'
+import { McpMessageOperationStore } from './mcp-server/mcp-message-operations.ts'
+import type {
+  PortalMcpHandlers,
+  PortalMcpThreadSummary,
+} from './mcp-server/mcp-server-types.ts'
 
 const LOGIN_CHECK_INTERVAL_MS = 1000
 const CLEAR_TERMINAL_ESCAPE = '\u001B[2J\u001B[3J\u001B[H'
@@ -241,6 +247,9 @@ export function canRunCommandWhileThreadBusy(input: string): boolean {
         action === 'list')
     )
   }
+  if (command === '/mcp-server') {
+    return true
+  }
   if (command === '/hook') {
     return true
   }
@@ -299,7 +308,15 @@ interface StopTarget {
   stopGeneration(): Promise<void>
 }
 
+export interface McpForegroundOperation {
+  controller: AbortController
+  stopTarget: StopTarget | null
+  done: Promise<unknown>
+  cancellation: Promise<void> | null
+}
+
 interface PendingThreadHistoryEntry {
+  threadId: string
   provider: ProviderId
   conversationUrl: string
   createdAt: number
@@ -330,6 +347,20 @@ export async function closeWithTimeout(
       clearTimeout(timer)
     }
   }
+}
+
+export async function stopMcpForegroundOperation(
+  operation: McpForegroundOperation,
+  timeoutMs: number
+): Promise<void> {
+  operation.controller.abort()
+  operation.cancellation ??= Promise.allSettled([
+    Promise.resolve().then(
+      async () => await operation.stopTarget?.stopGeneration()
+    ),
+    operation.done,
+  ]).then(() => {})
+  await closeWithTimeout(async () => await operation.cancellation!, timeoutMs)
 }
 
 export function transitionLoginWaitWarning(
@@ -685,7 +716,8 @@ async function openThread(
   model: string | null,
   browserProfileDir: string,
   signal?: AbortSignal,
-  onStopTarget?: (target: StopTarget | null) => void
+  onStopTarget?: (target: StopTarget | null) => void,
+  source: import('./hooks/hook-types.ts').HookExecutionScope['source'] = 'system'
 ): Promise<PendingThreadHistoryEntry | null> {
   const threadId = threadManager.createThreadId()
   const pendingTimeline = showPendingThreadTimeline(ui, threadManager, threadId)
@@ -780,6 +812,7 @@ async function openThread(
       provider,
       runtime,
       createdAt: Date.now(),
+      source,
     })
     pendingTimeline.keep()
     waitingForLogin = false
@@ -789,6 +822,7 @@ async function openThread(
       `Conversation URL: ${runtime.conversationUrl}`,
     ])
     return {
+      threadId,
       provider,
       conversationUrl: runtime.conversationUrl,
       createdAt: thread.createdAt,
@@ -797,6 +831,9 @@ async function openThread(
     if (isAbortError(error)) {
       pendingTimeline.discard()
       ui.renderWarning('/thread open', `Cancelled opening ${provider}.`)
+      if (source === 'mcp') {
+        throw error
+      }
       return null
     }
     throw error
@@ -819,7 +856,9 @@ async function resumeThread(
   conversationUrl: string,
   browserProfileDir: string,
   signal?: AbortSignal,
-  onStopTarget?: (target: StopTarget | null) => void
+  onStopTarget?: (target: StopTarget | null) => void,
+  source: import('./hooks/hook-types.ts').HookExecutionScope['source'] = 'system',
+  closeAddedThread?: (threadId: string) => Promise<void>
 ): Promise<PendingThreadHistoryEntry | null> {
   const resolved = resolveConversationUrl(conversationUrl)
   if (resolved === null) {
@@ -833,6 +872,7 @@ async function resumeThread(
   const threadId = threadManager.createThreadId()
   const pendingTimeline = showPendingThreadTimeline(ui, threadManager, threadId)
   const provider = resolved.provider
+  let addedThread = false
   let waitingForLogin = false
   ui.setBusy(true)
 
@@ -925,7 +965,9 @@ async function resumeThread(
       runtime,
       createdAt: Date.now(),
       origin: 'resumed',
+      source,
     })
+    addedThread = true
     pendingTimeline.keep()
     waitingForLogin = false
     ui.showThreadTimeline(thread.id)
@@ -955,14 +997,23 @@ async function resumeThread(
       ui.renderWarning('/thread resume', history.warning, 'markdown')
     }
     return {
+      threadId,
       provider,
       conversationUrl: runtime.conversationUrl,
       createdAt: thread.createdAt,
     }
   } catch (error) {
     if (isAbortError(error)) {
+      if (source === 'mcp' && addedThread) {
+        await closeWithTimeout(async () => {
+          await closeAddedThread?.(threadId)
+        }, settings.shutdownCloseTimeoutMs)
+      }
       pendingTimeline.discard()
       ui.renderWarning('/thread resume', 'Cancelled resuming conversation.')
+      if (source === 'mcp') {
+        throw error
+      }
       return null
     }
     throw error
@@ -1040,6 +1091,8 @@ export async function run(argv = process.argv): Promise<void> {
   const threadOperations = new ThreadOperationCoordinator(
     settings.cancelWaitTimeoutMs
   )
+  const mcpMessageOperations = new McpMessageOperationStore()
+  const mcpForegroundOperations = new Set<McpForegroundOperation>()
   const runCommandJobs = new RunCommandJobManager(settings.runCommand)
   const commandRegistry = new CommandRegistry(DEFAULT_COMMANDS)
   const ui = new TerminalController()
@@ -1051,6 +1104,7 @@ export async function run(argv = process.argv): Promise<void> {
   } | null = null
   let browserLaunch: Awaited<ReturnType<typeof launchBrowser>> | null = null
   let apiServer: PortalApiServer | null = null
+  let mcpServer: PortalMcpServer | null = null
   let exitRequested = false
   let shuttingDown = false
   let shutdownPromise: Promise<void> | null = null
@@ -1067,18 +1121,23 @@ export async function run(argv = process.argv): Promise<void> {
       shuttingDown = true
       try {
         runCommandJobs.beginShutdown()
+        const hasMcpForegroundOperation = mcpForegroundOperations.size > 0
+        const mcpStop = mcpServer?.stop().catch(() => {})
         if (apiServer !== null) {
           await apiServer.stop().catch(() => {})
         }
         const foregroundOperation = currentOperation
-        if (foregroundOperation !== null) {
+        if (foregroundOperation !== null && !hasMcpForegroundOperation) {
           foregroundOperation.controller.abort()
-          const stopGeneration = Promise.resolve().then(
-            async () => await foregroundOperation.stopTarget?.stopGeneration()
-          )
-          await Promise.allSettled([stopGeneration, foregroundOperation.done])
+          await closeWithTimeout(async () => {
+            const stopGeneration = Promise.resolve().then(
+              async () => await foregroundOperation.stopTarget?.stopGeneration()
+            )
+            await Promise.allSettled([stopGeneration, foregroundOperation.done])
+          }, settings.shutdownCloseTimeoutMs)
         }
         await threadOperations.cancelAll()
+        await mcpStop
         await runCommandJobs.stopAll()
 
         for (const thread of threadManager.listThreads()) {
@@ -1323,6 +1382,58 @@ export async function run(argv = process.argv): Promise<void> {
     })
   }
 
+  const withMcpForegroundOperation = async <T>(
+    requestSignal: AbortSignal,
+    runOperation: (
+      signal: AbortSignal,
+      setStopTarget: (target: StopTarget | null) => void
+    ) => Promise<T>
+  ): Promise<T> => {
+    if (currentOperation !== null) {
+      throw new Error('Another foreground operation is already running.')
+    }
+    throwIfAborted(requestSignal)
+    const controller = new AbortController()
+    const operation: McpForegroundOperation = {
+      controller,
+      stopTarget: null,
+      done: Promise.resolve(),
+      cancellation: null,
+    }
+    mcpForegroundOperations.add(operation)
+    const stopAfterRequestAbort = () => {
+      void stopMcpForegroundOperation(
+        operation,
+        settings.shutdownCloseTimeoutMs
+      )
+    }
+    requestSignal.addEventListener('abort', stopAfterRequestAbort, {
+      once: true,
+    })
+    try {
+      const done = withCancellableOperation(
+        null,
+        async (operationSignal, setStopTarget) =>
+          await runOperation(
+            AbortSignal.any([
+              requestSignal,
+              controller.signal,
+              operationSignal,
+            ]),
+            (target) => {
+              operation.stopTarget = target
+              setStopTarget(target)
+            }
+          )
+      )
+      operation.done = done
+      return await done
+    } finally {
+      requestSignal.removeEventListener('abort', stopAfterRequestAbort)
+      mcpForegroundOperations.delete(operation)
+    }
+  }
+
   ui.renderWelcome({
     browserStatus: 'connecting',
     directory: process.cwd(),
@@ -1337,6 +1448,16 @@ export async function run(argv = process.argv): Promise<void> {
       providers: PROVIDERS,
       onInterrupt: () => {
         const state = ui.getState()
+        const mcpForegroundOperation = mcpForegroundOperations
+          .values()
+          .next().value
+        if (mcpForegroundOperation !== undefined) {
+          void stopMcpForegroundOperation(
+            mcpForegroundOperation,
+            settings.shutdownCloseTimeoutMs
+          )
+          return
+        }
         if (
           currentOperation !== null &&
           !currentOperation.controller.signal.aborted
@@ -1491,6 +1612,28 @@ export async function run(argv = process.argv): Promise<void> {
         conversationUrl: thread.runtime.conversationUrl,
         busy: threadOperations.get(thread.id) !== null,
         active: threadManager.getActiveThread()?.id === thread.id,
+        turnCount: thread.turnCount,
+        createdAt: thread.createdAt,
+        updatedAt: thread.updatedAt,
+      }
+    }
+
+    const getMcpThread = (threadId: string) => {
+      const thread = threadManager.getThread(threadId)
+      if (thread === null) {
+        throw new Error(`Unknown thread: ${threadId}`)
+      }
+      return thread
+    }
+
+    const toMcpThread = (threadId: string): PortalMcpThreadSummary => {
+      const thread = getMcpThread(threadId)
+      return {
+        id: thread.id,
+        provider: thread.provider,
+        title: thread.title,
+        conversationUrl: thread.runtime.conversationUrl,
+        busy: threadOperations.get(thread.id) !== null,
         turnCount: thread.turnCount,
         createdAt: thread.createdAt,
         updatedAt: thread.updatedAt,
@@ -1760,46 +1903,42 @@ export async function run(argv = process.argv): Promise<void> {
             'model must be a string or null.'
           )
         }
-        await withCancellableOperation(null, async (signal, setStopTarget) => {
-          const historyEntry = await openThread(
-            ui,
-            threadManager,
-            skillLibrary,
-            mcpLibrary,
-            runCommandJobs,
-            hookDispatcher,
-            settings,
-            portalConfig.agentInstructions,
-            context,
-            provider,
-            model === undefined ? null : model,
-            browserProfileDir,
-            signal,
-            setStopTarget
-          )
-          if (historyEntry === null) {
-            throw new ApiHttpError(
-              502,
-              'THREAD_OPEN_FAILED',
-              'Could not open the provider thread.'
+        const historyEntry = await withCancellableOperation(
+          null,
+          async (signal, setStopTarget) => {
+            const historyEntry = await openThread(
+              ui,
+              threadManager,
+              skillLibrary,
+              mcpLibrary,
+              runCommandJobs,
+              hookDispatcher,
+              settings,
+              portalConfig.agentInstructions,
+              context,
+              provider,
+              model === undefined ? null : model,
+              browserProfileDir,
+              signal,
+              setStopTarget
             )
+            if (historyEntry === null) {
+              throw new ApiHttpError(
+                502,
+                'THREAD_OPEN_FAILED',
+                'Could not open the provider thread.'
+              )
+            }
+            await threadStore.touch({
+              provider: historyEntry.provider,
+              conversationUrl: historyEntry.conversationUrl,
+              title: null,
+              createdAt: historyEntry.createdAt,
+            })
+            return historyEntry
           }
-          await threadStore.touch({
-            provider: historyEntry.provider,
-            conversationUrl: historyEntry.conversationUrl,
-            title: null,
-            createdAt: historyEntry.createdAt,
-          })
-        })
-        const active = threadManager.getActiveThread()
-        if (active === null) {
-          throw new ApiHttpError(
-            500,
-            'INTERNAL_ERROR',
-            'Thread was created but is unavailable.'
-          )
-        }
-        return toApiThread(active.id)
+        )
+        return toApiThread(historyEntry.threadId)
       },
       resumeThread: async (input) => {
         if (currentOperation !== null) {
@@ -1828,45 +1967,41 @@ export async function run(argv = process.argv): Promise<void> {
             'conversationUrl is invalid or unsupported.'
           )
         }
-        await withCancellableOperation(null, async (signal, setStopTarget) => {
-          const historyEntry = await resumeThread(
-            ui,
-            threadManager,
-            skillLibrary,
-            mcpLibrary,
-            runCommandJobs,
-            hookDispatcher,
-            settings,
-            portalConfig.agentInstructions,
-            context,
-            resolvedConversation.conversationUrl,
-            browserProfileDir,
-            signal,
-            setStopTarget
-          )
-          if (historyEntry === null) {
-            throw new ApiHttpError(
-              502,
-              'THREAD_RESUME_FAILED',
-              'Could not resume the conversation.'
+        const historyEntry = await withCancellableOperation(
+          null,
+          async (signal, setStopTarget) => {
+            const historyEntry = await resumeThread(
+              ui,
+              threadManager,
+              skillLibrary,
+              mcpLibrary,
+              runCommandJobs,
+              hookDispatcher,
+              settings,
+              portalConfig.agentInstructions,
+              context,
+              resolvedConversation.conversationUrl,
+              browserProfileDir,
+              signal,
+              setStopTarget
             )
+            if (historyEntry === null) {
+              throw new ApiHttpError(
+                502,
+                'THREAD_RESUME_FAILED',
+                'Could not resume the conversation.'
+              )
+            }
+            await threadStore.touch({
+              provider: historyEntry.provider,
+              conversationUrl: historyEntry.conversationUrl,
+              title: null,
+              createdAt: historyEntry.createdAt,
+            })
+            return historyEntry
           }
-          await threadStore.touch({
-            provider: historyEntry.provider,
-            conversationUrl: historyEntry.conversationUrl,
-            title: null,
-            createdAt: historyEntry.createdAt,
-          })
-        })
-        const active = threadManager.getActiveThread()
-        if (active === null) {
-          throw new ApiHttpError(
-            500,
-            'INTERNAL_ERROR',
-            'Thread was resumed but is unavailable.'
-          )
-        }
-        return toApiThread(active.id)
+        )
+        return toApiThread(historyEntry.threadId)
       },
       closeThread: async (threadId) => {
         getApiThread(threadId)
@@ -2093,6 +2228,243 @@ export async function run(argv = process.argv): Promise<void> {
       },
     }
 
+    const mcpHandlers: PortalMcpHandlers = {
+      listProviders: () => ({ providers: [...PROVIDERS] }),
+      listThreads: () => ({
+        threads: threadManager.listThreads().map(({ id }) => toMcpThread(id)),
+      }),
+      getThread: async (threadId) => toMcpThread(threadId),
+      openThread: async ({ provider: providerValue, model }, signal) => {
+        const provider = normalizeProviderId(providerValue)
+        if (provider === null) {
+          throw new Error(`Unsupported provider: ${providerValue}`)
+        }
+        const historyEntry = await withMcpForegroundOperation(
+          signal,
+          async (operationSignal, setStopTarget) => {
+            const opened = await openThread(
+              ui,
+              threadManager,
+              skillLibrary,
+              mcpLibrary,
+              runCommandJobs,
+              hookDispatcher,
+              settings,
+              portalConfig.agentInstructions,
+              context,
+              provider,
+              model,
+              browserProfileDir,
+              operationSignal,
+              setStopTarget,
+              'mcp'
+            )
+            if (opened === null) {
+              throw new Error('Could not open the provider thread.')
+            }
+            await threadStore.touch({
+              provider: opened.provider,
+              conversationUrl: opened.conversationUrl,
+              title: null,
+              createdAt: opened.createdAt,
+            })
+            return opened
+          }
+        )
+        return toMcpThread(historyEntry.threadId)
+      },
+      resumeThread: async (conversationUrl, signal) => {
+        const resolved = resolveConversationUrl(conversationUrl)
+        if (resolved === null) {
+          throw new Error('Conversation URL is invalid or unsupported.')
+        }
+        const historyEntry = await withMcpForegroundOperation(
+          signal,
+          async (operationSignal, setStopTarget) => {
+            const resumed = await resumeThread(
+              ui,
+              threadManager,
+              skillLibrary,
+              mcpLibrary,
+              runCommandJobs,
+              hookDispatcher,
+              settings,
+              portalConfig.agentInstructions,
+              context,
+              resolved.conversationUrl,
+              browserProfileDir,
+              operationSignal,
+              setStopTarget,
+              'mcp',
+              async (threadId) => {
+                await threadOperations.close(
+                  threadId,
+                  async () => await threadManager.closeThread(threadId, 'mcp')
+                )
+              }
+            )
+            if (resumed === null) {
+              throw new Error('Could not resume the provider thread.')
+            }
+            await threadStore.touch({
+              provider: resumed.provider,
+              conversationUrl: resumed.conversationUrl,
+              title: null,
+              createdAt: resumed.createdAt,
+            })
+            return resumed
+          }
+        )
+        return toMcpThread(historyEntry.threadId)
+      },
+      closeThread: async (threadId) => {
+        getMcpThread(threadId)
+        ui.setThreadBusy(threadId, true)
+        try {
+          const closed = await threadOperations.close(
+            threadId,
+            async () => await threadManager.closeThread(threadId, 'mcp')
+          )
+          if (!closed) {
+            throw new Error(`Unknown thread: ${threadId}`)
+          }
+          return { closed: true, threadId }
+        } finally {
+          if (threadOperations.get(threadId) === null) {
+            ui.setThreadBusy(threadId, false)
+          }
+        }
+      },
+      sendMessage: async (threadId, input) => {
+        const thread = getMcpThread(threadId)
+        const operation = mcpMessageOperations.begin(threadId)
+        const startResult = threadOperations.tryStart(
+          threadId,
+          thread.runtime,
+          async ({ signal }) => {
+            try {
+              const result = await threadManager.submitThreadInput(
+                threadId,
+                input,
+                {
+                  signal,
+                  source: 'mcp',
+                  onAssistantStream: async (message) => {
+                    throwIfAborted(signal)
+                    ui.renderAssistantStream(thread, message)
+                  },
+                  onManualSkill: async (name) => {
+                    throwIfAborted(signal)
+                    ui.renderThreadInfo(thread, 'skill', `Using skill: ${name}`)
+                  },
+                  onInstructionWarning: async (warning) => {
+                    throwIfAborted(signal)
+                    ui.renderThreadWarning(
+                      thread,
+                      'instructions',
+                      formatInstructionWarning(warning)
+                    )
+                  },
+                  onToolProgress: (event, toolCall, toolCallId) => {
+                    if (
+                      signal.aborted ||
+                      (toolCall?.tool !== 'run_command' &&
+                        toolCall?.tool !== 'spawn')
+                    ) {
+                      return
+                    }
+                    ui.renderToolProgress(
+                      thread,
+                      toolCall.tool,
+                      event,
+                      toolCallId
+                    )
+                  },
+                  onTurnItem: async (item) => {
+                    throwIfAborted(signal)
+                    if (item.kind === 'assistant_text') {
+                      ui.renderAssistantMessage(thread, item.text)
+                    } else if (item.kind === 'tool_call') {
+                      ui.setThreadLastToolName(thread.id, item.toolName)
+                      ui.renderToolCall(
+                        thread,
+                        item.toolName,
+                        item.rawPayload,
+                        item.toolCallId
+                      )
+                    } else if (item.kind === 'tool_result') {
+                      ui.setThreadLastToolName(thread.id, item.toolName)
+                      ui.renderToolResult(
+                        thread,
+                        item.toolName,
+                        item.outcome,
+                        item.result,
+                        item.displayText,
+                        item.toolCallId
+                      )
+                    } else if (item.kind === 'status') {
+                      ui.renderThreadWarning(thread, 'thread', item.text)
+                    } else if (item.kind === 'error') {
+                      ui.renderThreadError(thread, 'thread', item.text)
+                    }
+                  },
+                }
+              )
+              if (result === null) {
+                throw new Error(`Unknown thread: ${threadId}`)
+              }
+              await threadStore.touch({
+                provider: thread.provider,
+                conversationUrl: thread.runtime.conversationUrl,
+                title: null,
+              })
+              await threadStore.setTitleIfEmpty({
+                conversationUrl: thread.runtime.conversationUrl,
+                title: buildThreadHistoryTitle(input),
+              })
+              mcpMessageOperations.complete(
+                operation.operationId,
+                result.assistant
+              )
+            } catch (error) {
+              if (isAbortError(error)) {
+                mcpMessageOperations.cancelled(operation.operationId)
+              } else {
+                mcpMessageOperations.fail(
+                  operation.operationId,
+                  error instanceof Error ? error.message : String(error)
+                )
+              }
+              throw error
+            } finally {
+              ui.clearLiveCommand(thread)
+              ui.setThreadBusy(thread.id, false)
+            }
+          }
+        )
+
+        if (!startResult.accepted) {
+          mcpMessageOperations.remove(operation.operationId)
+          throw new Error(
+            startResult.reason === 'closing'
+              ? `Thread ${threadId} is closing.`
+              : `Thread ${threadId} already has an active operation.`
+          )
+        }
+        mcpMessageOperations.attachHandle(
+          operation.operationId,
+          startResult.operation
+        )
+        ui.renderUserMessage(thread, input)
+        ui.setThreadBusy(thread.id, true)
+        return mcpMessageOperations.get(operation.operationId)
+      },
+      waitMessage: async (operationId, timeoutMs, signal) =>
+        await mcpMessageOperations.wait(operationId, timeoutMs, signal),
+      cancelMessage: async (operationId) =>
+        await mcpMessageOperations.cancel(operationId),
+    }
+
     apiServer = new PortalApiServer({
       host: portalConfig.api.host,
       port: portalConfig.api.port,
@@ -2101,6 +2473,26 @@ export async function run(argv = process.argv): Promise<void> {
       bodyLimitBytes: settings.api.bodyLimitBytes,
       requestTimeoutMs: settings.api.requestTimeoutMs,
       sseHeartbeatMs: settings.api.sseHeartbeatMs,
+    })
+    mcpServer = new PortalMcpServer({
+      host: portalConfig.mcpServer.host,
+      port: portalConfig.mcpServer.port,
+      token: portalConfig.mcpServer.token,
+      handlers: mcpHandlers,
+      closeTimeoutMs: settings.shutdownCloseTimeoutMs,
+      onStop: async () => {
+        const foregroundOperations = [...mcpForegroundOperations]
+        await Promise.all(
+          foregroundOperations.map(
+            async (operation) =>
+              await stopMcpForegroundOperation(
+                operation,
+                settings.shutdownCloseTimeoutMs
+              )
+          )
+        )
+        await mcpMessageOperations.stopAll()
+      },
     })
     hookEvents.subscribe((event) => {
       if (event.threadId !== undefined) {
@@ -2131,6 +2523,7 @@ export async function run(argv = process.argv): Promise<void> {
       runCommandJobs,
       hookCatalog,
       api: apiServer,
+      mcpServer,
       ui,
       browserProfileDir,
       providers: PROVIDERS,

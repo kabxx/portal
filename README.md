@@ -72,7 +72,7 @@ npm install
 npm run dev
 ```
 
-On first run, portal creates a commented `data/config.yaml` covering the browser, project instructions, HTTP API, MCP, Skills, Hooks, and advanced runtime limits. Project instruction sources are disabled by default. See [Configuration](docs/configuration.md). The generated `browser.profilePath` is the absolute path `data/profiles/chromium`.
+On first run, portal creates a commented `data/config.yaml` covering the browser, project instructions, HTTP API, Portal MCP Server, outbound MCP connections, Skills, Hooks, and advanced runtime limits. Project instruction sources are disabled by default. See [Configuration](docs/configuration.md). The generated `browser.profilePath` is the absolute path `data/profiles/chromium`.
 
 Override the browser engine, executable, or port when needed:
 
@@ -139,18 +139,19 @@ Remote messages loaded by resume are display-only and do not increase the local 
 
 ## Commands
 
-| Command         | Purpose                                             |
-| --------------- | --------------------------------------------------- |
-| `/help`         | Show top-level command help                         |
-| `/providers`    | List supported provider ids                         |
-| `/thread ...`   | Open, resume, switch, inspect, detach, and close    |
-| `/skill ...`    | Add, list, enable, disable, and remove Skills       |
-| `/mcp ...`      | Manage MCP servers and attach Resources or Prompts  |
-| `/serve ...`    | Start and manage the local HTTP API                 |
-| `/job`          | List running `run_command` jobs                     |
-| `/job stop ...` | Stop one running `run_command` job                  |
-| `/hook ...`     | Inspect, reload, enable, or disable lifecycle Hooks |
-| `/exit`         | Shut down portal                                    |
+| Command           | Purpose                                             |
+| ----------------- | --------------------------------------------------- |
+| `/help`           | Show top-level command help                         |
+| `/providers`      | List supported provider ids                         |
+| `/thread ...`     | Open, resume, switch, inspect, detach, and close    |
+| `/skill ...`      | Add, list, enable, disable, and remove Skills       |
+| `/mcp ...`        | Manage MCP servers and attach Resources or Prompts  |
+| `/serve ...`      | Start and manage the local HTTP API                 |
+| `/mcp-server ...` | Start and manage the independent Portal MCP Server  |
+| `/job`            | List running `run_command` jobs                     |
+| `/job stop ...`   | Stop one running `run_command` job                  |
+| `/hook ...`       | Inspect, reload, enable, or disable lifecycle Hooks |
+| `/exit`           | Shut down portal                                    |
 
 Top-level commands and first-level subcommands support unique-prefix completion with `Tab`.
 
@@ -206,6 +207,19 @@ Local directories are referenced in place. A local directory, GitHub location, o
 ## MCP
 
 portal supports stdio and Streamable HTTP MCP servers. The current `per-thread` strategy gives every new, resumed, or spawned runtime fresh independent connections from the `mcp.servers` section of `data/config.yaml`.
+
+This is Portal's outbound MCP client capability. Portal can also expose selected
+thread operations through its independent Streamable HTTP MCP Server:
+
+```text
+/mcp-server start
+/mcp-server status
+/mcp-server token
+/mcp-server stop
+```
+
+See [Portal MCP Server](docs/mcp-server.md) for configuration, tools,
+authentication, and security boundaries.
 
 ```text
 /mcp add <name> <url> [--header "Name: value"]...

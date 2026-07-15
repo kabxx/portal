@@ -69,8 +69,11 @@ test('parseBearerToken ignores scheme case but preserves credentials', () => {
   assert.equal(parseBearerToken('Bearer secret'), 'secret')
   assert.equal(parseBearerToken('bearer secret'), 'secret')
   assert.equal(parseBearerToken('BEARER secret'), 'secret')
+  assert.equal(parseBearerToken('Bearer    '), '   ')
+  assert.equal(parseBearerToken('Bearer   secret  '), '  secret  ')
   assert.equal(parseBearerToken('Basic secret'), null)
   assert.equal(parseBearerToken('Bearer'), null)
+  assert.equal(parseBearerToken('Bearer\tsecret'), null)
   assert.equal(parseBearerToken(undefined), null)
 })
 
