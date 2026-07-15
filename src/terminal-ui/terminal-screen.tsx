@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Box, Static, Text, useInput, usePaste, useWindowSize } from 'ink'
 import type { CliCommand } from '../cli-commands/core/command-types.ts'
+import type { ProviderId } from '../providers/provider-id.ts'
 import {
   type TerminalState,
   type TimelineEntry,
@@ -13,6 +14,7 @@ import { render as renderMarkdown } from 'markdansi'
 interface TerminalScreenProps {
   ui: TerminalController
   commands: readonly CliCommand[]
+  providers: readonly ProviderId[]
   onInterrupt: () => void
 }
 
@@ -514,6 +516,22 @@ export function completeSlashCommand(
   return `/${commandPrefix} ${matches[0]} `
 }
 
+export function completeThreadProvider(
+  value: string,
+  providers: readonly ProviderId[]
+): string {
+  const match = value.match(/^\/thread +open +(\S*)$/)
+  if (match === null) {
+    return value
+  }
+
+  const providerPrefix = match[1] ?? ''
+  const matches = providers.filter((provider) =>
+    provider.startsWith(providerPrefix)
+  )
+  return matches.length === 1 ? `/thread open ${matches[0]} ` : value
+}
+
 export function completeManualSkill(
   value: string,
   cursor: number,
@@ -746,6 +764,7 @@ export function describeInputPanel(
 export function TerminalScreen({
   ui,
   commands,
+  providers,
   onInterrupt,
 }: TerminalScreenProps) {
   const [state, setState] = useState<TerminalState>(ui.getState())
@@ -864,6 +883,15 @@ export function TerminalScreen({
           return {
             value: commandValue,
             cursor: commandValue.length,
+            preferredColumn: null,
+          }
+        }
+
+        const providerValue = completeThreadProvider(current.value, providers)
+        if (providerValue !== current.value) {
+          return {
+            value: providerValue,
+            cursor: providerValue.length,
             preferredColumn: null,
           }
         }

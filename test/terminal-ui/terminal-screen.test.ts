@@ -9,6 +9,7 @@ import {
   clearInput,
   completeManualSkill,
   completeSlashCommand,
+  completeThreadProvider,
   deleteBackwardAtCursor,
   deleteForwardAtCursor,
   deletePreviousWord,
@@ -233,6 +234,50 @@ test('completeSlashCommand completes unique command and subcommand prefixes', ()
   )
   assert.equal(completeSlashCommand('/', commands as any), '/')
   assert.equal(completeSlashCommand('hello /op', commands as any), 'hello /op')
+})
+
+test('completeThreadProvider completes only unique provider prefixes', () => {
+  const providers = [
+    'chatgpt',
+    'gemini',
+    'deepseek',
+    'doubao',
+    'grok',
+    'glm',
+  ] as const
+
+  assert.equal(
+    completeThreadProvider('/thread open gem', providers),
+    '/thread open gemini '
+  )
+  assert.equal(
+    completeThreadProvider('/thread open gemini', providers),
+    '/thread open gemini '
+  )
+  assert.equal(
+    completeThreadProvider('/thread open d', providers),
+    '/thread open d'
+  )
+  assert.equal(
+    completeThreadProvider('/thread open ', providers),
+    '/thread open '
+  )
+  assert.equal(
+    completeThreadProvider('/thread open unknown', providers),
+    '/thread open unknown'
+  )
+  assert.equal(
+    completeThreadProvider('/thread open gem model', providers),
+    '/thread open gem model'
+  )
+  assert.equal(
+    completeThreadProvider('/thread OPEN gem', providers),
+    '/thread OPEN gem'
+  )
+  assert.equal(
+    completeThreadProvider(' /thread open gem', providers),
+    ' /thread open gem'
+  )
 })
 
 test('completeManualSkill completes only a unique skill prefix at the cursor', () => {
