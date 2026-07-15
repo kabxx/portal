@@ -421,10 +421,11 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
   ) {
     throw new PortalConfigError('api.port must be an integer from 1 to 65535')
   }
-  const token = apiRecord.token ?? null
-  if (token !== null && typeof token !== 'string') {
+  const rawToken = apiRecord.token ?? null
+  if (rawToken !== null && typeof rawToken !== 'string') {
     throw new PortalConfigError('api.token must be a string or null')
   }
+  const token = typeof rawToken === 'string' ? rawToken.trim() || null : null
 
   const mcp = document.mcp
   if (!isRecord(mcp)) {
@@ -727,6 +728,12 @@ async function hasCompleteManagedSections(
   const apiComplete = ['host', 'port', 'token'].every((field) =>
     Object.hasOwn(document.api as Record<string, unknown>, field)
   )
+  const rawToken = (document.api as Record<string, unknown>).token
+  const tokenNormalized =
+    rawToken === null ||
+    (typeof rawToken === 'string' &&
+      rawToken !== '' &&
+      rawToken.trim() === rawToken)
   const advancedSections: Array<
     readonly [name: string, fields: ReadonlySet<string>]
   > = [
@@ -749,7 +756,7 @@ async function hasCompleteManagedSections(
       [...fields].every((field) => Object.hasOwn(section, field))
     )
   })
-  return apiComplete && advancedComplete
+  return apiComplete && tokenNormalized && advancedComplete
 }
 
 export async function updatePortalConfig(

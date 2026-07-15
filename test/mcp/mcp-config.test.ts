@@ -5,7 +5,12 @@ import os from 'os'
 import path from 'path'
 import { parse as parseYaml } from 'yaml'
 
-import { McpConfigError, parseMcpConfig } from '../../src/mcp/mcp-config.ts'
+import {
+  McpConfigError,
+  McpDuplicateNameError,
+  McpStoredConfigError,
+  parseMcpConfig,
+} from '../../src/mcp/mcp-config.ts'
 import {
   redactMcpError,
   resolveMcpServerEnvironment,
@@ -33,6 +38,13 @@ test('McpLibrary writes a root config object with servers keyed by name', async 
         },
       },
     })
+    await assert.rejects(
+      library.add('example', {
+        transport: 'stdio',
+        command: 'node',
+      }),
+      McpDuplicateNameError
+    )
 
     await library.disable('example')
     assert.equal((await library.list()).servers[0]?.enabled, false)
@@ -60,6 +72,13 @@ test('McpLibrary initializes a missing config without overwriting it later', asy
     await writeFile(configPath, 'browser: [', 'utf8')
     await library.initialize()
     assert.equal(await readFile(configPath, 'utf8'), 'browser: [')
+    await assert.rejects(
+      library.set('example', {
+        transport: 'stdio',
+        command: 'node',
+      }),
+      McpStoredConfigError
+    )
   } finally {
     await rm(root, { recursive: true, force: true })
   }

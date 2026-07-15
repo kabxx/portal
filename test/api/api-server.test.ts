@@ -6,6 +6,10 @@ import {
   PortalApiServer,
   type ApiHandlers,
 } from '../../src/api/api-server.ts'
+import {
+  McpConfigError,
+  McpDuplicateNameError,
+} from '../../src/mcp/mcp-config.ts'
 
 function createHandlers(calls: string[], includeReload = true): ApiHandlers {
   return {
@@ -104,6 +108,11 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
       error: { code: 'AUTH_INVALID', message: 'Invalid API token.' },
     })
 
+    const lowercaseBearer = await fetch(`${address}/v1/status`, {
+      headers: { Authorization: 'bearer secret' },
+    })
+    assert.equal(lowercaseBearer.status, 200)
+
     const headers = {
       Authorization: 'Bearer secret',
       'Content-Type': 'application/json',
@@ -178,6 +187,12 @@ test('PortalApiServer enforces the configured request body limit', async () => {
       body: JSON.stringify({ provider: 'deepseek', padding: 'x'.repeat(32) }),
     })
     assert.equal(response.status, 413)
+    assert.deepEqual(await response.json(), {
+      error: {
+        code: 'REQUEST_TOO_LARGE',
+        message: 'Request body is too large.',
+      },
+    })
   } finally {
     await server.stop()
   }
@@ -257,9 +272,90 @@ test('PortalApiServer rejects an empty MCP server request as invalid', async () 
     })
     assert.equal(response.status, 400)
     assert.deepEqual(await response.json(), {
-      error: { code: 'INVALID_REQUEST', message: 'name is required.' },
+      error: {
+        code: 'INVALID_REQUEST',
+        message: 'Request body must be an object.',
+      },
     })
     assert.deepEqual(calls, [])
+  } finally {
+    await server.stop()
+  }
+})
+
+test('PortalApiServer rejects empty thread create and resume bodies', async () => {
+  const server = new PortalApiServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: null,
+    handlers: createHandlers([]),
+  })
+
+  await server.start()
+  try {
+    for (const route of ['/v1/threads', '/v1/threads/resume']) {
+      const response = await fetch(`${server.address()}${route}`, {
+        method: 'POST',
+      })
+      assert.equal(response.status, 400)
+      assert.deepEqual(await response.json(), {
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'Request body must be an object.',
+        },
+      })
+    }
+  } finally {
+    await server.stop()
+  }
+})
+
+test('PortalApiServer maps invalid and duplicate MCP configurations', async () => {
+  const server = new PortalApiServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: null,
+    handlers: {
+      ...createHandlers([]),
+      addMcpServer: async () => {
+        throw new McpConfigError('transport is required')
+      },
+      setMcpServer: async () => {
+        throw new McpDuplicateNameError('local')
+      },
+    },
+  })
+
+  await server.start()
+  try {
+    const address = server.address()
+    const invalid = await fetch(`${address}/v1/mcp/servers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'local' }),
+    })
+    assert.equal(invalid.status, 400)
+    assert.deepEqual(await invalid.json(), {
+      error: {
+        code: 'INVALID_MCP_CONFIG',
+        message: 'transport is required',
+      },
+    })
+
+    const duplicate = await fetch(`${address}/v1/mcp/servers/local`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        config: { transport: 'streamable-http', url: 'https://example.com' },
+      }),
+    })
+    assert.equal(duplicate.status, 409)
+    assert.deepEqual(await duplicate.json(), {
+      error: {
+        code: 'MCP_ALREADY_EXISTS',
+        message: 'MCP server already exists: local',
+      },
+    })
   } finally {
     await server.stop()
   }

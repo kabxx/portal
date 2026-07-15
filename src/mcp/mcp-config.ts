@@ -46,10 +46,32 @@ export interface McpConfigData {
   issues: readonly McpConfigIssue[]
 }
 
+export type McpConfigErrorKind =
+  | 'invalid-input'
+  | 'duplicate-name'
+  | 'stored-config-invalid'
+
 export class McpConfigError extends Error {
-  public constructor(message: string) {
+  public constructor(
+    message: string,
+    public readonly kind: McpConfigErrorKind = 'invalid-input'
+  ) {
     super(message)
     this.name = 'McpConfigError'
+  }
+}
+
+export class McpDuplicateNameError extends McpConfigError {
+  public constructor(name: string) {
+    super(`MCP server already exists: ${name}`, 'duplicate-name')
+    this.name = 'McpDuplicateNameError'
+  }
+}
+
+export class McpStoredConfigError extends McpConfigError {
+  public constructor(message: string) {
+    super(message, 'stored-config-invalid')
+    this.name = 'McpStoredConfigError'
   }
 }
 
@@ -74,16 +96,15 @@ const MCP_SERVER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 export async function readMcpConfig(
   configPath: string
 ): Promise<McpConfigData | null> {
-  let config
   try {
-    config = await readPortalConfig(configPath)
+    const config = await readPortalConfig(configPath)
+    return config === null ? null : parseMcpConfig(config.mcp)
   } catch (error) {
-    if (error instanceof PortalConfigError) {
-      throw new McpConfigError(error.message)
+    if (error instanceof PortalConfigError || error instanceof McpConfigError) {
+      throw new McpStoredConfigError(getErrorMessage(error))
     }
     throw error
   }
-  return config === null ? null : parseMcpConfig(config.mcp)
 }
 
 export function parseMcpConfig(document: unknown): McpConfigData {
@@ -183,9 +204,17 @@ export async function updateMcpConfig<T>(
     await updatePortalConfig(
       configPath,
       (config) => {
-        const current = parseMcpConfig(config.mcp)
+        let current: McpConfigData
+        try {
+          current = parseMcpConfig(config.mcp)
+        } catch (error) {
+          if (error instanceof McpConfigError) {
+            throw new McpStoredConfigError(error.message)
+          }
+          throw error
+        }
         if (current.issues.length > 0) {
-          throw new McpConfigError(
+          throw new McpStoredConfigError(
             [
               'config.yaml contains invalid MCP servers. Fix them before modifying it.',
               ...current.issues.map(
@@ -202,7 +231,7 @@ export async function updateMcpConfig<T>(
     )
   } catch (error) {
     if (error instanceof PortalConfigError) {
-      throw new McpConfigError(error.message)
+      throw new McpStoredConfigError(error.message)
     }
     throw error
   }
