@@ -9,6 +9,7 @@ import {
   parseHooksConfig,
 } from '../hooks/hook-config.ts'
 import type { HooksConfig } from '../hooks/hook-types.ts'
+import { getDefaultBrowserExecutableCandidates } from '../platform/platform-defaults.ts'
 
 export interface PortalBrowserConfig {
   name: string
@@ -277,26 +278,7 @@ export function createDefaultBrowserConfig(
   dataDirectory: string = path.resolve('data')
 ): PortalBrowserConfig {
   const name = 'edge'
-  const candidates =
-    process.platform === 'win32'
-      ? [
-          'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-          'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-          path.join(
-            path.resolve(
-              process.env.LOCALAPPDATA ?? 'C:\\Users\\Default\\AppData\\Local'
-            ),
-            'Microsoft',
-            'Edge',
-            'Application',
-            'msedge.exe'
-          ),
-        ]
-      : [
-          '/usr/bin/microsoft-edge',
-          '/usr/bin/google-chrome',
-          '/usr/bin/chromium',
-        ]
+  const candidates = getDefaultBrowserExecutableCandidates()
 
   return {
     name,
