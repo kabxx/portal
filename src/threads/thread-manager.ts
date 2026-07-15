@@ -33,6 +33,7 @@ interface CreateThreadInput {
   runtime: RuntimeCore
   createdAt: number
   origin?: 'new' | 'resumed'
+  source?: HookExecutionScope['source']
 }
 
 export interface ThreadInputHandlers {
@@ -95,7 +96,7 @@ export class ThreadManager {
       const scope = this.createHookScope(
         handle,
         this.hookCatalog.snapshot(),
-        'system'
+        thread.source ?? 'system'
       )
       this.ready.set(
         thread.id,
@@ -149,7 +150,10 @@ export class ThreadManager {
     return this.switchThread(latestThread.id)
   }
 
-  public async closeThread(id: string): Promise<boolean> {
+  public async closeThread(
+    id: string,
+    source: HookExecutionScope['source'] = 'system'
+  ): Promise<boolean> {
     const thread = this.threads.getThread(id)
     if (thread === null) {
       return false
@@ -163,7 +167,7 @@ export class ThreadManager {
       const scope = this.createHookScope(
         thread,
         this.hookCatalog.snapshot(),
-        'system'
+        source
       )
       await this.hookDispatcher.dispatch(
         this.hookDispatcher.createEvent('thread.closed', scope),

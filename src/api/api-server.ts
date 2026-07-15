@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import type { ServerResponse } from 'node:http'
+import { isBearerAuthenticationEnabled } from '../shared/http-auth.ts'
 import {
   ApiHttpError,
   mapApiError,
@@ -195,20 +196,13 @@ export class PortalApiServer {
     return {
       running: this.started,
       address: this.address(),
-      auth: this.options.token !== null,
+      auth: isBearerAuthenticationEnabled(this.options.token),
     }
   }
 
   public async start(): Promise<void> {
     if (this.started) {
       return
-    }
-    if (this.options.token === null && !isLoopbackHost(this.options.host)) {
-      throw new ApiHttpError(
-        400,
-        'AUTH_REQUIRED',
-        'An API token is required for non-loopback hosts.'
-      )
     }
     const fastify = this.fastify ?? this.createFastify()
     this.fastify = fastify
@@ -262,7 +256,7 @@ export class PortalApiServer {
     fastify.addHook('onRequest', async (request, reply) => {
       if (
         request.routeOptions.url === '/health' ||
-        this.options.token === null
+        !isBearerAuthenticationEnabled(this.options.token)
       ) {
         return
       }
@@ -528,10 +522,6 @@ export class PortalApiServer {
         )
     )
   }
-}
-
-function isLoopbackHost(host: string): boolean {
-  return host === '127.0.0.1' || host === 'localhost' || host === '::1'
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

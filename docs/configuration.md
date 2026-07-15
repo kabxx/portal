@@ -15,17 +15,17 @@ The configuration document has these top-level sections:
 | `browser`           | Chromium executable, profile, and CDP port                 | Read at portal startup; command-line options can override it for that run    |
 | `agentInstructions` | Optional Codex and Claude Code instruction sources         | Startup snapshot used when runtimes are created; disabled by default         |
 | `api`               | Local HTTP listener and bearer authentication              | Read when the API server is created                                          |
+| `mcpServer`         | Portal MCP Server listener and bearer authentication       | Read when the MCP Server is created                                          |
 | `mcp`               | MCP connection strategy and server definitions             | Re-read for MCP commands and new runtimes                                    |
 | `skills`            | Registered Skill directories and enabled states            | Re-read for Skill commands and new runtimes                                  |
 | `hooks`             | Lifecycle handlers and global Hook switch                  | `/hook reload`, `/hook enable`, and `/hook disable` update the active policy |
 | `advanced`          | Timeouts, retry limits, output limits, and resource limits | Converted into runtime settings during portal startup                        |
 
-Changes to startup-owned sections (`browser`, `agentInstructions`, `api`, and
-`advanced`) require restarting portal. The `api` section does not enable the
-server by itself; use `/serve start`. A `null` API token disables authentication
-for the local listener, not the listener itself, and a non-loopback host still
-requires a non-null token. MCP, Skills, and Hooks have the narrower reload and
-new-runtime behavior described in their dedicated documents.
+Changes to startup-owned sections (`browser`, `agentInstructions`, `api`,
+`mcpServer`, and `advanced`) require restarting portal. Listener sections do
+not enable their services by themselves; use `/serve start` or
+`/mcp-server start`. MCP client connections, Skills, and Hooks have the narrower
+reload and new-runtime behavior described in their dedicated documents.
 
 ## Browser
 
@@ -75,9 +75,24 @@ api:
   token: null
 ```
 
-The default listener is loopback-only. `token` is either `null` or a non-empty
-string; empty or whitespace-only strings are normalized to `null`. API routes
-and authentication behavior are documented in [HTTP API](api.md).
+The default listener is loopback-only. `null` and the exact empty string `""`
+disable authentication. Every other string is an exact Bearer Token, including
+whitespace-only values; Portal does not trim it. Host and authentication are
+independent. API routes and authentication behavior are documented in
+[HTTP API](api.md).
+
+## Portal MCP Server
+
+```yaml
+mcpServer:
+  host: 127.0.0.1
+  port: 8788
+  token: null
+```
+
+This listener is independent from the HTTP API and from the outbound MCP client
+configuration under `mcp`. Token values use the same exact semantics as the API.
+See [Portal MCP Server](mcp-server.md).
 
 ## MCP, Skills, and Hooks
 

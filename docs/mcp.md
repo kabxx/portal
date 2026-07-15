@@ -4,6 +4,9 @@
 
 portal is an MCP client for stdio and Streamable HTTP servers. The only connection strategy currently implemented is `per-thread`: each new, resumed, or spawned runtime creates and owns fresh independent MCP connections.
 
+This document covers outbound client connections. To expose Portal itself as an
+independent MCP service, see [Portal MCP Server](mcp-server.md).
+
 ## Configuration
 
 The user-editable file is `data/config.yaml`. MCP settings live under its top-level `mcp` section. Server names are object keys and must be unique.

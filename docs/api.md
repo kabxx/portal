@@ -26,13 +26,17 @@ api:
   token: null
 ```
 
-When `token` is a string, every `/v1/*` request must include
-`Authorization: Bearer <token>`. `/health` is always unauthenticated. A
-non-loopback host requires a non-null token. Use an SSH tunnel for remote
-access instead of exposing the browser session directly. Listener and token
-changes require restarting portal; `/serve stop` followed by `/serve start`
-reuses the configuration loaded by the current process. See
-[Configuration](configuration.md).
+When `token` is neither `null` nor the exact empty string `""`, every `/v1/*`
+request must include `Authorization: Bearer <token>`. Portal preserves Token
+strings exactly and does not trim whitespace. `/health` is always
+unauthenticated. Host and authentication are independent; an unauthenticated
+non-loopback listener is allowed. Use an SSH tunnel or TLS reverse proxy for
+remote access. Listener and Token changes require restarting portal;
+`/serve stop` followed by `/serve start` reuses the configuration loaded by the
+current process. See [Configuration](configuration.md).
+
+The [Portal MCP Server](mcp-server.md) is a separate native MCP service. It does
+not add MCP routes to the HTTP API or call the API internally.
 
 ## Threads
 

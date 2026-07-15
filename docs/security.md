@@ -50,6 +50,7 @@ Provider output, repository-owned project instructions, loaded Skill instruction
 - Review a skill's `SKILL.md` and resources before registering, downloading, or enabling it.
 - Review an MCP server and its configuration before adding or enabling it.
 - Prefer environment placeholders over literal secrets in the `mcp` section of `data/config.yaml`.
+- Keep API and Portal MCP Server listeners on loopback unless remote access is intentional; use a tunnel or TLS proxy when crossing an untrusted network.
 
 ## Browser and account data
 
@@ -97,6 +98,26 @@ Stdio MCP servers run as local child processes with the portal user's permission
 Environment placeholders reduce the need to store literal secrets in `config.yaml`, and portal redacts resolved values from known MCP error paths. Redaction is defense in depth, not a guarantee: a server can return secrets as ordinary Tool content, and a command or provider page can expose them through another path.
 
 Review the server implementation, pin the executable or endpoint where practical, grant only the credentials it needs, and treat Resources, Prompts, schemas, and Tool results as untrusted content.
+
+## Inbound API and MCP listeners
+
+The HTTP API and Portal MCP Server each have independent `host`, `port`, and
+`token` settings. `null` and the exact empty string disable authentication;
+every other Token string is preserved exactly. Portal does not force
+authentication for non-loopback listeners.
+
+An unauthenticated listener bound to `0.0.0.0` is available to every reachable
+network client. API access includes thread, Skill, capability, and outbound MCP
+configuration operations. Portal MCP Server access can send instructions to a
+logged-in provider conversation, whose model can invoke local Portal tools.
+Either listener therefore exposes high-privilege local and browser-account
+capabilities.
+
+Bearer authentication does not encrypt HTTP traffic. On an untrusted network,
+an observer may capture Tokens, prompts, assistant output, and conversation
+URLs. Use loopback with an SSH tunnel, a TLS reverse proxy, or a trusted isolated
+network. The MCP Server rejects requests carrying an `Origin` header, but this
+DNS-rebinding control is not authentication.
 
 ## Provider policies
 
