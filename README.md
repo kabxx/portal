@@ -201,7 +201,7 @@ Skills are local instruction packages with a `SKILL.md` manifest and optional re
 $<name> [task]
 ```
 
-Local directories are referenced in place. Direct `SKILL.md` URLs, GitHub locations, supported archives, and Hub registry packages are downloaded under `data/skills/`. A `$<name> [task]` prefix selects one enabled Skill for the current turn. See [Skills](docs/skills.md) for validation, source types, manual selection, runtime snapshots, storage, and trust boundaries.
+Local directories are referenced in place. A local directory, GitHub location, or supported archive may contain one Skill or a collection of Skill directories. Direct `SKILL.md` URLs, GitHub locations, supported archives, and Hub registry packages are downloaded under `data/skills/`. A `$<name> [task]` prefix selects one enabled Skill for the current turn. See [Skills](docs/skills.md) for discovery rules, validation, source types, manual selection, runtime snapshots, storage, and trust boundaries.
 
 ## MCP
 

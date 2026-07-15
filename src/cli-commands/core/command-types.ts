@@ -6,11 +6,11 @@ import type {
 import type { ThreadStore } from '../../threads/thread-store.ts'
 import type { ProviderId } from '../../providers/provider-id.ts'
 import type { TerminalController } from '../../terminal-ui/terminal-controller.ts'
-import type { SkillLibrary } from '../../skills/skill-library.ts'
 import type {
-  AddedSkill,
-  SkillAddOptions,
-} from '../../skills/skill-installer.ts'
+  SkillAddResult,
+  SkillLibrary,
+} from '../../skills/skill-library.ts'
+import type { SkillAddOptions } from '../../skills/skill-installer.ts'
 import type { McpLibrary } from '../../mcp/mcp-library.ts'
 import type { HookCatalog } from '../../hooks/hook-catalog.ts'
 import type { RunCommandJobService } from '../../processes/run-command-job-manager.ts'
@@ -43,7 +43,7 @@ export interface CliCommandContext {
   resumeThread(conversationUrl: string): Promise<void>
   reloadThread?: (threadId: string) => Promise<void>
   closeThread(threadId: string): Promise<boolean>
-  addSkill(source: string, options?: SkillAddOptions): Promise<AddedSkill>
+  addSkill(source: string, options?: SkillAddOptions): Promise<SkillAddResult>
   submitThreadInput(input: string, displayInput?: string): Promise<void>
   listCommands(): readonly CliCommand[]
 }
