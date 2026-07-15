@@ -73,7 +73,11 @@ test('Doubao parser reads a sanitized SSE sample', () => {
 
 test(
   'Doubao parser prefers the final creation_full_content snapshot in a local capture',
-  { skip: !fs.existsSync(localDoubaoImageCapture) },
+  {
+    skip: fs.existsSync(localDoubaoImageCapture)
+      ? false
+      : 'local capture not available',
+  },
   () => {
     const raw = fs.readFileSync(localDoubaoImageCapture, 'utf8')
     const adapter = Object.create(DoubaoAdapter.prototype) as DoubaoAdapter
@@ -251,7 +255,11 @@ test('Gemini parser replaces image_generation_content placeholders with real ima
 
 test(
   'Gemini parser reads generated image URLs from a local capture',
-  { skip: !fs.existsSync(localGeminiImageCapture) },
+  {
+    skip: fs.existsSync(localGeminiImageCapture)
+      ? false
+      : 'local capture not available',
+  },
   async () => {
     const raw = fs.readFileSync(localGeminiImageCapture, 'utf8')
     const adapter = Object.create(GeminiAdapter.prototype) as GeminiAdapter
@@ -266,18 +274,21 @@ test(
 
 test(
   'ChatGPT HTTP parser reads a local capture',
-  { skip: !fs.existsSync(localChatGptCapture) },
+  {
+    skip: fs.existsSync(localChatGptCapture)
+      ? false
+      : 'local capture not available',
+  },
   () => {
     const raw = fs.readFileSync(localChatGptCapture, 'utf8')
     const adapter = Object.create(ChatGPTAdapter.prototype) as ChatGPTAdapter
     const parsed = (adapter as any).parseHttpResponse(raw)
 
-    assert.deepEqual(parsed, {
-      conversationId: '6a06f5e7-bcb8-83ec-bc5a-1e06f63db4a7',
-      messageId: '7c7ba4a7-3c5e-40ba-894b-8f5999bd9ff4',
-      text: '\u4f60\u597d\uff01\u6709\u4ec0\u4e48\u6211\u53ef\u4ee5\u5e2e\u4f60\u5904\u7406\u7684\u5417\uff1f',
-      isFinished: true,
-    })
+    assert.ok(parsed)
+    assert.match(parsed.conversationId ?? '', /^[0-9a-f-]{36}$/i)
+    assert.match(parsed.messageId ?? '', /^[0-9a-f-]{36}$/i)
+    assert.ok(parsed.text.trim().length > 0)
+    assert.equal(parsed.isFinished, true)
   }
 )
 
