@@ -7,6 +7,7 @@ import {
   buildWelcomeRows,
   canSubmitInput,
   clearInput,
+  completeManualSkill,
   completeSlashCommand,
   deleteBackwardAtCursor,
   deleteForwardAtCursor,
@@ -214,6 +215,39 @@ test('completeSlashCommand completes unique command and subcommand prefixes', ()
   )
   assert.equal(completeSlashCommand('/', commands as any), '/')
   assert.equal(completeSlashCommand('hello /op', commands as any), 'hello /op')
+})
+
+test('completeManualSkill completes only a unique skill prefix at the cursor', () => {
+  const skills = ['chrome-automation', 'code-review']
+
+  assert.deepEqual(completeManualSkill('$chr', 4, skills), {
+    value: '$chrome-automation ',
+    cursor: 19,
+  })
+  assert.deepEqual(completeManualSkill('$chr inspect the page', 4, skills), {
+    value: '$chrome-automation inspect the page',
+    cursor: 18,
+  })
+  assert.deepEqual(completeManualSkill('$chr  inspect the page', 4, skills), {
+    value: '$chrome-automation  inspect the page',
+    cursor: 18,
+  })
+  assert.deepEqual(completeManualSkill('$c', 2, skills), {
+    value: '$c',
+    cursor: 2,
+  })
+  assert.deepEqual(completeManualSkill('$unknown', 8, skills), {
+    value: '$unknown',
+    cursor: 8,
+  })
+  assert.deepEqual(completeManualSkill('$chrdo', 4, skills), {
+    value: '$chrdo',
+    cursor: 4,
+  })
+  assert.deepEqual(completeManualSkill('  $chr', 6, skills), {
+    value: '  $chr',
+    cursor: 6,
+  })
 })
 
 test('resolveInputSyntaxHighlight only marks recognized commands and skills', () => {
