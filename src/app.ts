@@ -349,6 +349,27 @@ export async function closeWithTimeout(
   }
 }
 
+export function createIdempotentAsyncTask(
+  task: () => Promise<void>
+): () => Promise<void> {
+  let taskPromise: Promise<void> | null = null
+  return async () => {
+    taskPromise ??= task()
+    await taskPromise
+  }
+}
+
+export async function closeLateBrowserLaunchAfterShutdown(
+  browserLaunch: { close(): Promise<void> } | null,
+  shutdown: () => Promise<void>,
+  timeoutMs: number
+): Promise<void> {
+  await shutdown()
+  if (browserLaunch !== null) {
+    await closeWithTimeout(async () => await browserLaunch.close(), timeoutMs)
+  }
+}
+
 export async function stopMcpForegroundOperation(
   operation: McpForegroundOperation,
   timeoutMs: number
@@ -1106,64 +1127,44 @@ export async function run(argv = process.argv): Promise<void> {
   let apiServer: PortalApiServer | null = null
   let mcpServer: PortalMcpServer | null = null
   let exitRequested = false
-  let shuttingDown = false
-  let shutdownPromise: Promise<void> | null = null
-  const shutdown = async () => {
-    if (shutdownPromise !== null) {
-      return await shutdownPromise
+  const shutdown = createIdempotentAsyncTask(async () => {
+    runCommandJobs.beginShutdown()
+    const hasMcpForegroundOperation = mcpForegroundOperations.size > 0
+    const mcpStop = mcpServer?.stop().catch(() => {})
+    if (apiServer !== null) {
+      await apiServer.stop().catch(() => {})
+    }
+    const foregroundOperation = currentOperation
+    if (foregroundOperation !== null && !hasMcpForegroundOperation) {
+      foregroundOperation.controller.abort()
+      await closeWithTimeout(async () => {
+        const stopGeneration = Promise.resolve().then(
+          async () => await foregroundOperation.stopTarget?.stopGeneration()
+        )
+        await Promise.allSettled([stopGeneration, foregroundOperation.done])
+      }, settings.shutdownCloseTimeoutMs)
+    }
+    await threadOperations.cancelAll()
+    await mcpStop
+    await runCommandJobs.stopAll()
+
+    for (const thread of threadManager.listThreads()) {
+      await closeWithTimeout(async () => {
+        await threadManager.closeThread(thread.id)
+      }, settings.shutdownCloseTimeoutMs)
     }
 
-    shutdownPromise = (async () => {
-      if (shuttingDown) {
-        return
-      }
+    if (browserLaunch !== null) {
+      const activeBrowserLaunch = browserLaunch
+      browserLaunch = null
+      await closeWithTimeout(
+        async () => await activeBrowserLaunch.close(),
+        settings.shutdownCloseTimeoutMs
+      )
+    }
 
-      shuttingDown = true
-      try {
-        runCommandJobs.beginShutdown()
-        const hasMcpForegroundOperation = mcpForegroundOperations.size > 0
-        const mcpStop = mcpServer?.stop().catch(() => {})
-        if (apiServer !== null) {
-          await apiServer.stop().catch(() => {})
-        }
-        const foregroundOperation = currentOperation
-        if (foregroundOperation !== null && !hasMcpForegroundOperation) {
-          foregroundOperation.controller.abort()
-          await closeWithTimeout(async () => {
-            const stopGeneration = Promise.resolve().then(
-              async () => await foregroundOperation.stopTarget?.stopGeneration()
-            )
-            await Promise.allSettled([stopGeneration, foregroundOperation.done])
-          }, settings.shutdownCloseTimeoutMs)
-        }
-        await threadOperations.cancelAll()
-        await mcpStop
-        await runCommandJobs.stopAll()
-
-        for (const thread of threadManager.listThreads()) {
-          await closeWithTimeout(async () => {
-            await threadManager.closeThread(thread.id)
-          }, settings.shutdownCloseTimeoutMs)
-        }
-
-        if (browserLaunch !== null) {
-          const activeBrowserLaunch = browserLaunch
-          browserLaunch = null
-          await closeWithTimeout(
-            async () => await activeBrowserLaunch.close(),
-            settings.shutdownCloseTimeoutMs
-          )
-        }
-
-        threadStore.close()
-      } finally {
-        shuttingDown = false
-        shutdownPromise = null
-      }
-    })()
-
-    return await shutdownPromise
-  }
+    threadStore.close()
+  })
 
   const requestExit = async () => {
     if (exitRequested) {
@@ -1510,6 +1511,28 @@ export async function run(argv = process.argv): Promise<void> {
         browserProfileDir,
         settings.browserLaunch
       )
+      const activeBrowserLaunch = browserLaunch
+      void activeBrowserLaunch.disconnected
+        .then(async () => {
+          if (browserLaunch !== activeBrowserLaunch || exitRequested) {
+            return
+          }
+          try {
+            ui.setBrowserConnected(false)
+            ui.renderWarning(
+              'browser',
+              'Browser disconnected. Portal is shutting down.'
+            )
+          } finally {
+            await requestExit()
+          }
+        })
+        .catch((error) => {
+          process.exitCode = 1
+          try {
+            ui.renderError('browser', String(error))
+          } catch {}
+        })
     } catch (error) {
       ui.setBrowserConnected(false)
       ui.renderError('error', String(error))
@@ -1517,7 +1540,12 @@ export async function run(argv = process.argv): Promise<void> {
       return
     }
     if (exitRequested) {
-      await shutdown()
+      const lateBrowserLaunch = browserLaunch
+      await closeLateBrowserLaunchAfterShutdown(
+        lateBrowserLaunch,
+        shutdown,
+        settings.shutdownCloseTimeoutMs
+      )
       return
     }
     const context = browserLaunch.context
@@ -2617,7 +2645,7 @@ export async function run(argv = process.argv): Promise<void> {
       listCommands: () => commandRegistry.list(),
     }
 
-    while (true) {
+    while (!exitRequested) {
       const input = (
         await ui.requestInput(
           ui.promptLabel(threadManager),
