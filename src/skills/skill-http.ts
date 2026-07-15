@@ -172,7 +172,7 @@ async function fetchWithRetries(
   }
 
   throw new SkillInstallError(
-    `Network request failed after ${attempts} attempts: ${formatSafeUrl(sourceUrl)} (${describeError(lastError)})`
+    `Network request failed after ${attempts} attempts: ${formatSafeUrl(sourceUrl)} (${describeRequestError(lastError, sourceUrl)})`
   )
 }
 
@@ -236,4 +236,10 @@ function describeError(error: unknown): string {
   return cause instanceof Error
     ? `${error.message}: ${cause.message}`
     : error.message
+}
+
+function describeRequestError(error: unknown, sourceUrl: URL): string {
+  return describeError(error)
+    .split(sourceUrl.href)
+    .join(formatSafeUrl(sourceUrl))
 }

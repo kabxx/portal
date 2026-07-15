@@ -3,6 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { ChatGPTAdapter } from '../../../src/providers/adapters/adapter-chatgpt.ts'
+import { createDeferred } from '../../../src/providers/adapters/adapter-base.ts'
 
 type MockButton = {
   first: () => unknown
@@ -10,8 +11,15 @@ type MockButton = {
   isEnabled: () => Promise<boolean>
 }
 
-test('ChatGPTAdapter target conversation request ignores prepare requests', () => {
+function createTestChatGPTAdapter() {
   const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  adapter.getFinishedResponseSettleMs = () => 50
+  adapter.getSubmitRequestStartGraceMs = () => 5
+  return adapter
+}
+
+test('ChatGPTAdapter target conversation request ignores prepare requests', () => {
+  const adapter = createTestChatGPTAdapter()
 
   assert.equal(
     adapter.isTargetConversationRequest({
@@ -30,7 +38,7 @@ test('ChatGPTAdapter target conversation request ignores prepare requests', () =
 })
 
 test('ChatGPTAdapter.submit waits past empty target responses for the real HTTP response', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   const parsedBodies: string[] = []
 
   adapter.websocketFrames = []
@@ -91,7 +99,7 @@ test('ChatGPTAdapter.submit waits past empty target responses for the real HTTP 
 })
 
 test('ChatGPTAdapter.submit keeps accepting later HTTP text after the first non-empty response', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
 
   adapter.websocketFrames = []
   adapter.parseHttpResponse = (raw: string) => ({
@@ -144,9 +152,11 @@ test('ChatGPTAdapter.submit keeps accepting later HTTP text after the first non-
 })
 
 test('ChatGPTAdapter.submit streams captured HTTP text before response.text completes', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   const streamedTexts: string[] = []
   const responseTextCompletedByEmission: boolean[] = []
+  const releaseResponseText = createDeferred<void>()
+  const responseTextFinished = createDeferred<void>()
   let captureCalls = 0
   let responseTextCompleted = false
 
@@ -187,8 +197,9 @@ test('ChatGPTAdapter.submit streams captured HTTP text before response.text comp
       page.emit('response', {
         request: () => request,
         text: async () => {
-          await new Promise((resolve) => setTimeout(resolve, 1500))
+          await releaseResponseText.promise
           responseTextCompleted = true
+          responseTextFinished.resolve()
           return 'First sentence. Second sentence.'
         },
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
@@ -214,12 +225,14 @@ test('ChatGPTAdapter.submit streams captured HTTP text before response.text comp
     'First sentence. Second sentence.',
   ])
   assert.deepEqual(responseTextCompletedByEmission, [false, false])
+  releaseResponseText.resolve()
+  await responseTextFinished.promise
 })
 
 test('ChatGPTAdapter.submit waits for websocket text to stabilize after the HTTP response settles', async () => {
   let websocketParseCalls = 0
 
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   adapter.websocketFrames = ['frame-1', 'frame-2', 'frame-3']
   adapter.parseHttpResponse = () => ({
     text: 'half tool payload',
@@ -274,7 +287,7 @@ test('ChatGPTAdapter.submit waits for websocket text to stabilize after the HTTP
 })
 
 test('ChatGPTAdapter.submit emits assistant stream snapshots while websocket text is growing', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   const streamedTexts: string[] = []
   let websocketParseCalls = 0
 
@@ -327,7 +340,7 @@ test('ChatGPTAdapter.submit emits assistant stream snapshots while websocket tex
 })
 
 test('ChatGPTAdapter.submit emits periodic warnings while waiting for the request to start and still accepts a later response', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   const warnings: string[] = []
   adapter.websocketFrames = []
   adapter.parseHttpResponse = () => ({
@@ -380,7 +393,7 @@ test('ChatGPTAdapter.submit emits periodic warnings while waiting for the reques
 test('ChatGPTAdapter.submit waits for finished websocket text to stabilize before returning', async () => {
   let websocketParseCalls = 0
 
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   adapter.websocketFrames = ['frame-1']
   adapter.parseHttpResponse = () => null
   adapter.parseWebsocketResponse = () => {
@@ -432,7 +445,7 @@ test('ChatGPTAdapter.submit waits for finished websocket text to stabilize befor
 })
 
 test('ChatGPTAdapter.submit keeps streaming after an early finished chunk until later websocket text completes', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   const streamedTexts: string[] = []
   adapter.websocketFrames = []
   adapter.parseHttpResponse = () => null
@@ -469,7 +482,7 @@ test('ChatGPTAdapter.submit keeps streaming after an early finished chunk until 
       adapter.websocketFrames.push('frame-1')
       setTimeout(() => {
         adapter.websocketFrames.push('frame-2')
-      }, 600)
+      }, 20)
     },
   }
   const page = createChatGPTPage(sendButton)
@@ -489,7 +502,7 @@ test('ChatGPTAdapter.submit keeps streaming after an early finished chunk until 
 })
 
 test('ChatGPTAdapter.submit does not accept a stable unfinished tool call before a later websocket frame completes it', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   adapter.websocketFrames = []
   adapter.parseHttpResponse = () => ({
     text: 'half tool payload',
@@ -528,7 +541,7 @@ test('ChatGPTAdapter.submit does not accept a stable unfinished tool call before
       adapter.websocketFrames.push('frame-1')
       setTimeout(() => {
         adapter.websocketFrames.push('frame-2')
-      }, 350)
+      }, 20)
     },
   }
   const page = createChatGPTPage(sendButton)
@@ -546,7 +559,7 @@ test('ChatGPTAdapter.submit does not accept a stable unfinished tool call before
 })
 
 test('ChatGPTAdapter.submit fails instead of returning an unfinished response without finish', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   adapter.websocketFrames = []
   adapter.parseHttpResponse = () => ({
     text: 'still streaming',
@@ -589,7 +602,7 @@ test('ChatGPTAdapter.submit fails instead of returning an unfinished response wi
 })
 
 test('ChatGPTAdapter.submit waits for the real speech button selector to become usable again before returning', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   adapter.websocketFrames = ['frame-1']
   adapter.parseHttpResponse = () => ({
     text: 'done',
@@ -641,7 +654,7 @@ test('ChatGPTAdapter.submit waits for the real speech button selector to become 
 })
 
 test('ChatGPTAdapter.submit accepts the data-testid send button as composer ready fallback', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   adapter.websocketFrames = ['frame-1']
   adapter.parseHttpResponse = () => ({
     text: 'done',
@@ -701,7 +714,7 @@ test('ChatGPTAdapter.submit accepts the data-testid send button as composer read
 })
 
 test('ChatGPTAdapter lists fixed action capabilities when the capability group exists', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   const page = createChatGPTCapabilityPage()
   adapter.page = page
 
@@ -715,14 +728,14 @@ test('ChatGPTAdapter lists fixed action capabilities when the capability group e
 })
 
 test('ChatGPTAdapter returns no action capabilities when the capability group is missing', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   adapter.page = createChatGPTCapabilityPage({ hasCapabilityGroup: false })
 
   assert.deepEqual(await adapter.listActionCapabilities(), [])
 })
 
 test('ChatGPTAdapter selects fixed action capabilities by index', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   const page = createChatGPTCapabilityPage()
   adapter.page = page
 
@@ -740,7 +753,7 @@ test('ChatGPTAdapter selects fixed action capabilities by index', async () => {
 })
 
 test('ChatGPTAdapter changes model and mode through the intelligence picker', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   const page = createChatGPTModelPage()
   adapter.page = page
 
@@ -756,7 +769,7 @@ test('ChatGPTAdapter changes model and mode through the intelligence picker', as
 })
 
 test('ChatGPTAdapter changes model without changing mode', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   const page = createChatGPTModelPage()
   adapter.page = page
 
@@ -770,7 +783,7 @@ test('ChatGPTAdapter changes model without changing mode', async () => {
 })
 
 test('ChatGPTAdapter rejects unsupported model and mode numbers', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   adapter.page = createChatGPTModelPage({ modelCount: 2, modeCount: 1 })
 
   await assert.rejects(
@@ -788,7 +801,7 @@ test('ChatGPTAdapter rejects unsupported model and mode numbers', async () => {
 })
 
 test('ChatGPTAdapter.stopGeneration clicks the visible stop button when present', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   const stopButton = createStopButton()
   adapter.page = createChatGPTStopPage(stopButton)
 
@@ -798,7 +811,7 @@ test('ChatGPTAdapter.stopGeneration clicks the visible stop button when present'
 })
 
 test('ChatGPTAdapter.stopGeneration is a no-op when the stop button is missing', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createTestChatGPTAdapter()
   adapter.page = createChatGPTStopPage(null)
 
   await adapter.stopGeneration()

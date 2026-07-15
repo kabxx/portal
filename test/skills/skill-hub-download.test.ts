@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, type RequestListener } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -62,6 +62,90 @@ test('downloadSkillFromHub validates the requested slug before fetching', async 
     ),
     /Invalid skill name/
   )
+})
+
+test('downloadSkillFromHub downloads the selected version archive', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-hub-'))
+  const requests: string[] = []
+  try {
+    await withServer(
+      (request, response) => {
+        requests.push(request.url ?? '')
+        if (request.url === '/registry/.well-known/clawhub.json') {
+          writeJson(response, { apiBase: '/api/' })
+          return
+        }
+        if (request.url === '/api/skills/example-skill') {
+          writeJson(response, {
+            skill: { slug: 'example-skill' },
+            latestVersion: { version: '1.2.3' },
+          })
+          return
+        }
+        response.writeHead(200, { 'Content-Type': 'application/zip' })
+        response.end(Buffer.from('PK archive'))
+      },
+      async (registryUrl) => {
+        const destination = await downloadSkillFromHub(
+          'example-skill',
+          registryUrl,
+          root,
+          {}
+        )
+        assert.equal(destination, path.join(root, 'skill.zip'))
+        assert.equal(await readFile(destination, 'utf8'), 'PK archive')
+      }
+    )
+
+    assert.deepEqual(requests, [
+      '/registry/.well-known/clawhub.json',
+      '/api/skills/example-skill',
+      '/api/download?slug=example-skill&version=1.2.3',
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('downloadSkillFromHub rejects unsafe discovery and version metadata', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-hub-'))
+  const scenarios = [
+    {
+      discovery: { apiBase: 'file:///tmp/api/' },
+      metadata: null,
+      expected: /Unsupported skill registry API protocol: file:/,
+    },
+    {
+      discovery: { apiBase: '/api/' },
+      metadata: {
+        skill: { slug: 'example-skill' },
+        latestVersion: { version: 'invalid\nversion' },
+      },
+      expected: /Skill registry returned an invalid version/,
+    },
+  ] as const
+
+  try {
+    for (const scenario of scenarios) {
+      await withServer(
+        (request, response) => {
+          if (request.url === '/registry/.well-known/clawhub.json') {
+            writeJson(response, scenario.discovery)
+            return
+          }
+          writeJson(response, scenario.metadata)
+        },
+        async (registryUrl) => {
+          await assert.rejects(
+            downloadSkillFromHub('example-skill', registryUrl, root, {}),
+            scenario.expected
+          )
+        }
+      )
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test('downloadSkillFromHub rejects metadata for another skill', async () => {

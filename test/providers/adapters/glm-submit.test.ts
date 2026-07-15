@@ -10,8 +10,14 @@ import { GlmAdapter } from '../../../src/providers/adapters/adapter-glm.ts'
 
 const GLM_COMPLETION_URL = 'https://chat.z.ai/api/v2/chat/completions'
 
-test('GlmAdapter parser keeps answer deltas and hides thinking deltas', () => {
+function createTestGlmAdapter() {
   const adapter = Object.create(GlmAdapter.prototype) as any
+  adapter.getSubmitRequestStartGraceMs = () => 5
+  return adapter
+}
+
+test('GlmAdapter parser keeps answer deltas and hides thinking deltas', () => {
+  const adapter = createTestGlmAdapter()
   const raw = [
     'data: {"type":"chat:completion","data":{"delta_content":"hidden","phase":"thinking"}}',
     'data: {"type":"chat:completion","data":{"delta_content":"Hello ","phase":"answer"}}',
@@ -28,7 +34,7 @@ test('GlmAdapter parser keeps answer deltas and hides thinking deltas', () => {
 })
 
 test('GlmAdapter parser reads concurrency errors and the DONE sentinel', () => {
-  const adapter = Object.create(GlmAdapter.prototype) as any
+  const adapter = createTestGlmAdapter()
   const raw = [
     'data: {"type":"chat:completion","data":{"content":"","done":true,"error":{"code":"MODEL_CONCURRENCY_LIMIT","detail":"busy"}}}',
     'data: {"data":"[DONE]"}',
@@ -45,7 +51,7 @@ test('GlmAdapter parser reads concurrency errors and the DONE sentinel', () => {
 })
 
 test('GlmAdapter parser accepts the JSON DONE sentinel without an event type', () => {
-  const adapter = Object.create(GlmAdapter.prototype) as any
+  const adapter = createTestGlmAdapter()
   const raw = [
     'data: {"type":"chat:completion","data":{"delta_content":"done","phase":"answer"}}',
     'data: {"data":"[DONE]"}',
@@ -59,7 +65,7 @@ test('GlmAdapter parser accepts the JSON DONE sentinel without an event type', (
 })
 
 test('GlmAdapter matches captured completion URLs with query parameters', async () => {
-  const adapter = Object.create(GlmAdapter.prototype) as any
+  const adapter = createTestGlmAdapter()
   const raw =
     'data: {"type":"chat:completion","data":{"delta_content":"partial","phase":"answer"}}'
   adapter.getLatestCapturedFetchBody = async (
@@ -112,7 +118,7 @@ test('GlmAdapter matches captured completion URLs with query parameters', async 
 })
 
 test('GlmAdapter.submit returns answer text when the visible send button is disabled after completion', async () => {
-  const adapter = Object.create(GlmAdapter.prototype) as any
+  const adapter = createTestGlmAdapter()
   adapter.conversationIdVal = null
   const raw = [
     'data: {"type":"chat:completion","data":{"delta_content":"Hello ","phase":"answer"}}',
@@ -142,7 +148,8 @@ test('GlmAdapter.submit returns answer text when the visible send button is disa
 })
 
 test('GlmAdapter.submit emits answer snapshots before the final response', async () => {
-  const adapter = Object.create(GlmAdapter.prototype) as any
+  const adapter = createTestGlmAdapter()
+  adapter.getSubmitRequestStartGraceMs = () => 50
   adapter.conversationIdVal = null
   const snapshots: string[] = []
   let currentText = 'partial answer'
@@ -181,7 +188,7 @@ test('GlmAdapter.submit emits answer snapshots before the final response', async
 })
 
 test('GlmAdapter.submit reports concurrency errors as rate limits', async () => {
-  const adapter = Object.create(GlmAdapter.prototype) as any
+  const adapter = createTestGlmAdapter()
   adapter.conversationIdVal = null
   const raw =
     'data: {"type":"chat:completion","data":{"content":"","done":true,"error":{"code":"MODEL_CONCURRENCY_LIMIT","detail":"busy"}}}'
@@ -209,7 +216,7 @@ test('GlmAdapter.submit reports concurrency errors as rate limits', async () => 
 })
 
 test('GlmAdapter changes model through data-value menu items', async () => {
-  const adapter = Object.create(GlmAdapter.prototype) as any
+  const adapter = createTestGlmAdapter()
   const modelItems = [createButton(), createButton(), createButton()]
   const page = createGlmPage({ modelItems })
   adapter.page = page
@@ -229,7 +236,7 @@ test('GlmAdapter changes model through data-value menu items', async () => {
 })
 
 test('GlmAdapter reads and sets thinking/search toggle states', async () => {
-  const adapter = Object.create(GlmAdapter.prototype) as any
+  const adapter = createTestGlmAdapter()
   const thinkingButton = createToggleButton('data-autothink', 'false')
   const searchButton = createToggleButton('data-active', 'true')
   adapter.page = createGlmPage({ thinkingButton, searchButton })
@@ -246,7 +253,7 @@ test('GlmAdapter reads and sets thinking/search toggle states', async () => {
 })
 
 test('GlmAdapter enables advanced search dependencies and only disables advanced search', async () => {
-  const adapter = Object.create(GlmAdapter.prototype) as any
+  const adapter = createTestGlmAdapter()
   const thinkingButton = createToggleButton('data-autothink', 'false')
   const searchButton = createToggleButton('data-active', 'false')
   const advancedSearchSwitch = createAdvancedSearchSwitch('false')
@@ -276,7 +283,7 @@ test('GlmAdapter enables advanced search dependencies and only disables advanced
 })
 
 test('GlmAdapter attaches text and files through stable composer controls', async () => {
-  const adapter = Object.create(GlmAdapter.prototype) as any
+  const adapter = createTestGlmAdapter()
   const uploadButton = createButton()
   const page = createGlmPage({ uploadButton })
   adapter.page = page
@@ -290,7 +297,7 @@ test('GlmAdapter attaches text and files through stable composer controls', asyn
 })
 
 test('GlmAdapter reports unavailable file upload and clicks the visible stop button', async () => {
-  const adapter = Object.create(GlmAdapter.prototype) as any
+  const adapter = createTestGlmAdapter()
   const stopButton = createButton()
   adapter.page = createGlmPage({ stopButton })
 
