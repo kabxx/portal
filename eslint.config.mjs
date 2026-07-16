@@ -13,6 +13,8 @@ export default tseslint.config(
       '**/output/**',
       '**/captures/**',
     ],
+  },
+  {
     linterOptions: {
       reportUnusedDisableDirectives: 'error',
     },
