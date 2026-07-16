@@ -44,7 +44,7 @@ This command uses a temporary profile to verify browser startup, connection, and
 
 See [Testing](testing.md) for the current coverage inventory, audit decisions, and known gaps.
 
-Use `npm run fmt` only when you intend to rewrite formatting. Before submitting a change, review the final diff and make sure unrelated files were not modified.
+Use `npm run fmt` only when you intend to rewrite formatting. The pre-commit hook runs Prettier on staged files only and updates their staged contents automatically. Before submitting a change, review the final diff and make sure unrelated files were not modified.
 
 Every pull request uses Windows as the primary Node.js 24 quality gate for the formatting check, type check, and coverage run (which includes the full unit suite). Linux and macOS run the unit suite as compatibility checks because browser discovery and process support have platform-specific behavior.
 
