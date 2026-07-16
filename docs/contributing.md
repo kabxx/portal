@@ -25,13 +25,14 @@ npm run dev
 
 ```bash
 npm test
+npm run lint
 npm run test:type
 npm run test:unit
 npm run test:coverage
 npm run fmt:check
 ```
 
-`test:unit` includes deterministic local integration tests such as the MCP stdio and HTTP connection checks. `test:coverage` runs the same suite and reports line, branch, and function coverage for source modules loaded by the tests. It does not replace the manual browser checks below and must not be interpreted as coverage of provider websites or modules that the suite never imports.
+`lint` applies the same type-aware rules to production code and tests, and fails on warnings. `test:unit` includes deterministic local integration tests such as the MCP stdio and HTTP connection checks. `test:coverage` runs the same suite and reports line, branch, and function coverage for source modules loaded by the tests. It does not replace the manual browser checks below and must not be interpreted as coverage of provider websites or modules that the suite never imports.
 
 Browser launcher changes also have an opt-in real CDP lifecycle check. It is not part of `npm test` or CI:
 
@@ -46,7 +47,7 @@ See [Testing](testing.md) for the current coverage inventory, audit decisions, a
 
 Use `npm run fmt` only when you intend to rewrite formatting. Before submitting a change, review the final diff and make sure unrelated files were not modified.
 
-Every pull request uses Windows as the primary Node.js 24 quality gate for the formatting check, type check, and coverage run (which includes the full unit suite). Linux and macOS run the unit suite as compatibility checks because browser discovery and process support have platform-specific behavior.
+Every pull request uses Windows as the primary Node.js 24 quality gate for formatting, lint, type checking, and the coverage run (which includes the full unit suite). Linux and macOS run the unit suite as compatibility checks because browser discovery and process support have platform-specific behavior.
 
 Tests should protect current observable behavior, failure handling, cleanup, and security boundaries. Do not keep migration-only assertions whose sole purpose is proving that a removed command, field, or wording is still absent. Negative tests remain valuable when they define a current invalid-input or safety contract.
 
@@ -153,7 +154,7 @@ link to it from the other pages. Configuration defaults must be checked against
 ## Pull request checklist
 
 - [ ] The change has one clear purpose.
-- [ ] Relevant type checks and unit tests pass.
+- [ ] Relevant lint, type checks, and unit tests pass.
 - [ ] New behavior has focused tests.
 - [ ] Real browser behavior was checked when provider UI code changed, or the limitation is stated.
 - [ ] Documentation reflects user-visible and security-relevant changes.
