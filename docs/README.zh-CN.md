@@ -72,7 +72,7 @@ npm install
 npm run dev
 ```
 
-首次运行时，portal 会创建带注释的 `data/config.yaml`，覆盖浏览器、项目指令、HTTP API、Portal MCP Server、出站 MCP 连接、Skills、Hooks 和高级 runtime 限制。项目指令来源默认关闭，完整字段请参阅[配置文档](configuration.md)。自动生成的 `browser.profilePath` 是绝对路径 `data/profiles/chromium`。
+首次运行时，portal 会创建带注释的 `data/config.yaml`，覆盖浏览器、项目指令、HTTP API、Portal MCP Server、出站 MCP 连接、Skills、Hooks、终端快捷键和高级 runtime 限制。项目指令来源默认关闭，完整字段请参阅[配置文档](configuration.md)。自动生成的 `browser.profilePath` 是绝对路径 `data/profiles/chromium`。
 
 需要时可以覆盖浏览器引擎、可执行文件或端口：
 
@@ -141,37 +141,39 @@ resume 加载的远程消息只用于显示，不会增加 `/thread list` 中的
 
 ## 命令
 
-| 命令              | 用途                                          |
-| ----------------- | --------------------------------------------- |
-| `/help`           | 显示顶级命令帮助                              |
-| `/providers`      | 列出支持的 Provider id                        |
-| `/thread ...`     | 创建、恢复、切换、查看、detach 和关闭         |
-| `/skill ...`      | 添加、列出、启用、禁用和删除 Skill            |
-| `/mcp ...`        | 管理 MCP Server，并 attach Resource 或 Prompt |
-| `/serve ...`      | 启动和管理本地 HTTP API                       |
-| `/mcp-server ...` | 启动和管理独立的 Portal MCP Server            |
-| `/job`            | 列出仍在运行的 `run_command` job              |
-| `/job stop ...`   | 停止一个仍在运行的 `run_command` job          |
-| `/hook ...`       | 查看、reload、启用或禁用生命周期 Hooks        |
-| `/exit`           | 关闭 portal                                   |
+| 命令                | 用途                                          |
+| ------------------- | --------------------------------------------- |
+| `/help`             | 显示顶级命令帮助                              |
+| `/providers`        | 列出支持的 Provider id                        |
+| `/thread ...`       | 创建、恢复、切换、查看、detach 和关闭         |
+| `/skill ...`        | 添加、列出、启用、禁用和删除 Skill            |
+| `/mcp ...`          | 管理 MCP Server，并 attach Resource 或 Prompt |
+| `/serve ...`        | 启动和管理本地 HTTP API                       |
+| `/mcp-server ...`   | 启动和管理独立的 Portal MCP Server            |
+| `/job`              | 列出仍在运行的 `run_command` job              |
+| `/job stop ...`     | 停止一个仍在运行的 `run_command` job          |
+| `/hook ...`         | 查看、reload、启用或禁用生命周期 Hooks        |
+| `/keybinding reset` | 恢复并保存当前平台的默认终端快捷键            |
+| `/exit`             | 关闭 portal                                   |
 
 顶级命令和一级子命令支持用 `Tab` 进行唯一前缀补全。
 
 ## 输入控制
 
-| 按键                     | 行为                                                  |
-| ------------------------ | ----------------------------------------------------- |
-| `Enter`                  | 在空闲状态提交当前输入                                |
-| `Ctrl+Enter` 或 `Ctrl+J` | 插入换行                                              |
-| 粘贴                     | 保留多行布局，并统一 Windows 换行符                   |
-| `Up` / `Down`            | 垂直移动至输入边界，或浏览输入历史                    |
-| `Tab`                    | 补全唯一的命令、一级子命令、Provider 或 `$skill` 前缀 |
-| `Ctrl+W`                 | 删除上一个单词                                        |
-| `Ctrl+U` 或 `Esc`        | 清空当前输入                                          |
-| `Ctrl+C`                 | 取消 busy 操作；空闲且有输入时清空输入                |
-| `Ctrl+D`                 | 空闲且输入为空时退出                                  |
+| 按键                                                      | 行为                                                  |
+| --------------------------------------------------------- | ----------------------------------------------------- |
+| `Enter`                                                   | 在空闲状态提交当前输入                                |
+| Windows/Linux 的 `Shift+Enter` 或 macOS 的 `Option+Enter` | 终端支持时插入换行                                    |
+| `Ctrl+J`                                                  | 插入换行；所有平台的可靠 fallback                     |
+| 粘贴                                                      | 保留多行布局，并统一 Windows 换行符                   |
+| `Up` / `Down`                                             | 垂直移动至输入边界，或浏览输入历史                    |
+| `Tab`                                                     | 补全唯一的命令、一级子命令、Provider 或 `$skill` 前缀 |
+| `Ctrl+W`                                                  | 删除上一个单词                                        |
+| `Ctrl+U` 或 `Esc`                                         | 清空当前输入                                          |
+| `Ctrl+C`                                                  | 取消 busy 操作；空闲且有输入时清空输入                |
+| `Ctrl+D`                                                  | 空闲且输入为空时退出                                  |
 
-portal busy 时仍可编辑输入，但必须等当前操作结束或取消后才能提交。
+portal busy 时仍可编辑输入，但必须等当前操作结束或取消后才能提交。可在 `data/config.yaml` 的完整 `keybindings` 表中修改快捷键；有效修改保存后自动生效。详见[配置文档](configuration.md#keybindings)。
 
 ## 内置工具
 

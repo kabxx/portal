@@ -19,6 +19,7 @@ The configuration document has these top-level sections:
 | `mcp`               | MCP connection strategy and server definitions             | Re-read for MCP commands and new runtimes                                    |
 | `skills`            | Registered Skill directories and enabled states            | Re-read for Skill commands and new runtimes                                  |
 | `hooks`             | Lifecycle handlers and global Hook switch                  | `/hook reload`, `/hook enable`, and `/hook disable` update the active policy |
+| `keybindings`       | Terminal input shortcuts                                   | Valid file edits apply automatically; invalid edits keep the last valid set  |
 | `advanced`          | Timeouts, retry limits, output limits, and resource limits | Converted into runtime settings during portal startup                        |
 
 Changes to startup-owned sections (`browser`, `agentInstructions`, `api`,
@@ -26,6 +27,7 @@ Changes to startup-owned sections (`browser`, `agentInstructions`, `api`,
 not enable their services by themselves; use `/serve start` or
 `/mcp-server start`. MCP client connections, Skills, and Hooks have the narrower
 reload and new-runtime behavior described in their dedicated documents.
+Keybindings are watched independently and do not require a restart.
 
 ## Browser
 
@@ -105,6 +107,53 @@ These sections have their own configuration formats and lifecycle rules:
 Keep secrets out of the file. Use MCP environment placeholders such as
 `${env:MCP_TOKEN}` and review external Skills and MCP servers before enabling
 them. See [Security](security.md).
+
+## Keybindings
+
+The generated `keybindings` section is the complete effective shortcut table
+and appears immediately before `advanced`:
+
+```yaml
+keybindings:
+  app.interrupt: [ctrl+c]
+  app.exit: [ctrl+d]
+  input.submit: [enter]
+  input.newline: [shift+enter, ctrl+j] # macOS uses alt+enter, ctrl+j
+  input.complete: [tab]
+  input.clear: [ctrl+u, escape]
+  input.deleteWordBackward: [ctrl+w]
+  input.deleteBackward: [backspace]
+  input.deleteForward: [delete]
+  input.lineStart: [home, ctrl+a]
+  input.lineEnd: [end, ctrl+e]
+  input.moveLeft: [left]
+  input.moveRight: [right]
+  input.moveUp: [up]
+  input.moveDown: [down]
+```
+
+Windows and Linux default to `shift+enter` plus `ctrl+j` for a newline. macOS
+defaults to `alt+enter` (the terminal representation of Option+Enter) plus
+`ctrl+j`. Modified Enter support depends on the terminal and its keyboard
+protocol; `ctrl+j` is the reliable fallback on every platform.
+
+Keys are case-insensitive. Supported modifiers are `ctrl`, `alt`, `shift`, and
+`super`; portal stores them in canonical order. Named keys are `enter`,
+`escape`, `tab`, `backspace`, `delete`, `home`, `end`, `left`, `right`, `up`,
+`down`, and `space`. A modified single character is also valid; `space`, as a
+printable character, also requires a modifier. Chords,
+function keys, unmodified printable characters, duplicate keys, and keys shared
+by multiple actions are rejected.
+
+Editing and saving a valid section applies it automatically. Invalid edits show
+an error in the TUI and leave the last valid snapshot active. `[]` explicitly
+unbinds an action, except `input.submit`, which must keep at least one binding.
+Missing known actions use current-platform defaults and are written into the
+complete table during the next startup migration. Unknown actions are errors.
+
+Run `/keybinding reset` to replace only this section with the complete
+current-platform defaults. The command writes the file and applies the result
+immediately; it is also available while a thread is busy.
 
 ## Advanced settings
 

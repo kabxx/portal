@@ -60,6 +60,7 @@ import {
 } from './cli-commands/commands/command-thread-capability.ts'
 import { resolveConversationUrl } from './providers/provider-conversation-url.ts'
 import { TerminalScreen } from './terminal-ui/terminal-screen.tsx'
+import { KeybindingCatalog } from './keybindings/keybinding-catalog.ts'
 import { TerminalController } from './terminal-ui/terminal-controller.ts'
 import { SkillLibrary } from './skills/skill-library.ts'
 import { McpLibrary } from './mcp/mcp-library.ts'
@@ -217,6 +218,7 @@ export function canRunCommandWhileThreadBusy(input: string): boolean {
     command === '/help' ||
     command === '/providers' ||
     command === '/job' ||
+    command === '/keybinding' ||
     command === '/exit'
   ) {
     return true
@@ -1118,6 +1120,18 @@ export async function run(argv = process.argv): Promise<void> {
   const commandRegistry = new CommandRegistry(DEFAULT_COMMANDS)
   const ui = new TerminalController()
   ui.bindThreadManager(threadManager)
+  const keybindingCatalog = new KeybindingCatalog(
+    configPath,
+    portalConfig.keybindings,
+    (level, message) => {
+      if (level === 'warning') {
+        ui.renderWarning('/keybinding', message)
+      } else {
+        ui.renderError('/keybinding', message)
+      }
+    }
+  )
+  keybindingCatalog.start()
   let currentOperation: {
     controller: AbortController
     stopTarget: StopTarget | null
@@ -1128,6 +1142,7 @@ export async function run(argv = process.argv): Promise<void> {
   let mcpServer: PortalMcpServer | null = null
   let exitRequested = false
   const shutdown = createIdempotentAsyncTask(async () => {
+    keybindingCatalog.stop()
     runCommandJobs.beginShutdown()
     const hasMcpForegroundOperation = mcpForegroundOperations.size > 0
     const mcpStop = mcpServer?.stop().catch(() => {})
@@ -1447,6 +1462,7 @@ export async function run(argv = process.argv): Promise<void> {
       ui,
       commands: commandRegistry.list(),
       providers: PROVIDERS,
+      keybindings: keybindingCatalog,
       onInterrupt: () => {
         const state = ui.getState()
         const mcpForegroundOperation = mcpForegroundOperations
@@ -2550,6 +2566,7 @@ export async function run(argv = process.argv): Promise<void> {
       mcpLibrary,
       runCommandJobs,
       hookCatalog,
+      keybindingCatalog,
       api: apiServer,
       mcpServer,
       ui,

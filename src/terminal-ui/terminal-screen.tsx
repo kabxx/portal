@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Box, Static, Text, useInput, usePaste, useWindowSize } from 'ink'
 import type { CliCommand } from '../cli-commands/core/command-types.ts'
+import type { KeybindingCatalog } from '../keybindings/keybinding-catalog.ts'
 import type { ProviderId } from '../providers/provider-id.ts'
 import {
   type TerminalState,
@@ -15,6 +16,7 @@ interface TerminalScreenProps {
   ui: TerminalController
   commands: readonly CliCommand[]
   providers: readonly ProviderId[]
+  keybindings: KeybindingCatalog
   onInterrupt: () => void
 }
 
@@ -765,6 +767,7 @@ export function TerminalScreen({
   ui,
   commands,
   providers,
+  keybindings,
   onInterrupt,
 }: TerminalScreenProps) {
   const [state, setState] = useState<TerminalState>(ui.getState())
@@ -807,40 +810,29 @@ export function TerminalScreen({
   }, [state.busy])
 
   useInput((input, key) => {
-    if (
-      shouldInterruptForKey({
-        busy: state.busy,
-        input,
-        inputValue,
-        key,
-      })
-    ) {
-      onInterrupt()
+    if (key.eventType === 'release') {
+      return
+    }
+    const action = keybindings.resolve(input, key)
+
+    if (action === 'app.interrupt') {
+      if (state.busy) {
+        onInterrupt()
+      } else if (inputValue.length > 0) {
+        setInputState({
+          value: clearInput(),
+          cursor: 0,
+          preferredColumn: null,
+        })
+        historyRef.current.resetCursor()
+      }
       return
     }
 
-    if (
-      shouldClearInputForCtrlC({
-        busy: state.busy,
-        input,
-        inputValue,
-        key,
-      })
-    ) {
-      setInputState({
-        value: clearInput(),
-        cursor: 0,
-        preferredColumn: null,
-      })
-      historyRef.current.resetCursor()
-      return
-    }
-
-    if (key.ctrl && input === 'c') {
-      return
-    }
-
-    if (key.ctrl && input === 'd') {
+    if (action === 'app.exit') {
+      if (!state.busy && inputValue.length === 0) {
+        onInterrupt()
+      }
       return
     }
 
@@ -848,7 +840,7 @@ export function TerminalScreen({
       return
     }
 
-    if (key.ctrl && input === 'u') {
+    if (action === 'input.clear') {
       setInputState({
         value: clearInput(),
         cursor: 0,
@@ -858,7 +850,7 @@ export function TerminalScreen({
       return
     }
 
-    if (key.ctrl && input === 'w') {
+    if (action === 'input.deleteWordBackward') {
       historyRef.current.resetCursor()
       setInputState((current) => ({
         ...deletePreviousWordAtCursor(current.value, current.cursor),
@@ -867,7 +859,7 @@ export function TerminalScreen({
       return
     }
 
-    if (key.tab || input === '\t') {
+    if (action === 'input.complete') {
       const trimmedInput = inputValue.trimStart()
       if (
         state.busy &&
@@ -906,7 +898,7 @@ export function TerminalScreen({
       return
     }
 
-    if (isNewlineKey(key)) {
+    if (action === 'input.newline') {
       historyRef.current.resetCursor()
       setInputState((current) => ({
         ...insertAtCursor(current.value, current.cursor, '\n'),
@@ -915,7 +907,7 @@ export function TerminalScreen({
       return
     }
 
-    if (isSubmitKey(key)) {
+    if (action === 'input.submit') {
       const currentState = ui.getState()
       if (
         !currentState.prompt.active ||
@@ -929,10 +921,10 @@ export function TerminalScreen({
       return
     }
 
-    if (key.backspace || key.delete) {
+    if (action === 'input.deleteBackward' || action === 'input.deleteForward') {
       historyRef.current.resetCursor()
       setInputState((current) => ({
-        ...(key.backspace
+        ...(action === 'input.deleteBackward'
           ? deleteBackwardAtCursor(current.value, current.cursor)
           : deleteForwardAtCursor(current.value, current.cursor)),
         preferredColumn: null,
@@ -940,7 +932,7 @@ export function TerminalScreen({
       return
     }
 
-    if (key.home || (key.ctrl && input === 'a')) {
+    if (action === 'input.lineStart') {
       setInputState((current) => ({
         ...current,
         cursor: moveCursorToLineBoundary(
@@ -953,7 +945,7 @@ export function TerminalScreen({
       return
     }
 
-    if (key.end || (key.ctrl && input === 'e')) {
+    if (action === 'input.lineEnd') {
       setInputState((current) => ({
         ...current,
         cursor: moveCursorToLineBoundary(current.value, current.cursor, 'end'),
@@ -962,7 +954,7 @@ export function TerminalScreen({
       return
     }
 
-    if (key.leftArrow && !key.ctrl && !key.meta) {
+    if (action === 'input.moveLeft') {
       setInputState((current) => ({
         ...current,
         cursor: moveCursorHorizontal(current.value, current.cursor, -1),
@@ -971,7 +963,7 @@ export function TerminalScreen({
       return
     }
 
-    if (key.rightArrow && !key.ctrl && !key.meta) {
+    if (action === 'input.moveRight') {
       setInputState((current) => ({
         ...current,
         cursor: moveCursorHorizontal(current.value, current.cursor, 1),
@@ -980,7 +972,7 @@ export function TerminalScreen({
       return
     }
 
-    if (key.upArrow && !key.ctrl && !key.meta) {
+    if (action === 'input.moveUp') {
       if (
         shouldNavigateInputHistory(inputValue, historyRef.current.isBrowsing())
       ) {
@@ -1012,7 +1004,7 @@ export function TerminalScreen({
       return
     }
 
-    if (key.downArrow && !key.ctrl && !key.meta) {
+    if (action === 'input.moveDown') {
       if (
         shouldNavigateInputHistory(inputValue, historyRef.current.isBrowsing())
       ) {
@@ -1042,13 +1034,25 @@ export function TerminalScreen({
       return
     }
 
-    if (key.escape) {
-      setInputState({ value: '', cursor: 0, preferredColumn: null })
-      historyRef.current.resetCursor()
-      return
-    }
-
-    if (key.ctrl || key.meta) {
+    if (
+      key.return ||
+      key.escape ||
+      key.tab ||
+      key.backspace ||
+      key.delete ||
+      key.home ||
+      key.end ||
+      key.leftArrow ||
+      key.rightArrow ||
+      key.upArrow ||
+      key.downArrow ||
+      key.ctrl ||
+      key.meta ||
+      key.super ||
+      input === '\n' ||
+      input === '\r' ||
+      input === '\t'
+    ) {
       return
     }
 

@@ -2,13 +2,27 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { Document, isMap, isScalar, parse, stringify } from 'yaml'
+import {
+  Document,
+  isMap,
+  isScalar,
+  parse,
+  parseDocument,
+  stringify,
+} from 'yaml'
 import {
   createDefaultHooksConfig,
   HookConfigError,
   parseHooksConfig,
 } from '../hooks/hook-config.ts'
 import type { HooksConfig } from '../hooks/hook-types.ts'
+import {
+  KEYBINDING_ACTIONS,
+  KeybindingConfigError,
+  createDefaultKeybindings,
+  parseKeybindingConfig,
+  type KeybindingConfig,
+} from '../keybindings/keybinding-config.ts'
 import {
   getDefaultBrowserExecutableCandidates,
   type BrowserEngine,
@@ -118,6 +132,7 @@ export interface PortalConfigDocument {
   mcp: Record<string, unknown>
   skills: unknown[]
   hooks: HooksConfig
+  keybindings: KeybindingConfig
   advanced: PortalAdvancedConfig
 }
 
@@ -138,6 +153,7 @@ const CONFIG_FIELDS = new Set([
   'mcp',
   'skills',
   'hooks',
+  'keybindings',
   'advanced',
 ])
 const BROWSER_FIELDS = new Set([
@@ -234,6 +250,7 @@ export function createDefaultPortalConfig(
     },
     skills: [],
     hooks: createDefaultHooksConfig(),
+    keybindings: createDefaultKeybindings(),
     advanced: createDefaultAdvancedConfig(),
   }
 }
@@ -460,6 +477,15 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
     }
     throw error
   }
+  let keybindings: KeybindingConfig
+  try {
+    keybindings = parseKeybindingConfig(document.keybindings)
+  } catch (error) {
+    if (error instanceof KeybindingConfigError) {
+      throw new PortalConfigError(error.message)
+    }
+    throw error
+  }
   const advanced = parseAdvancedConfig(document.advanced)
 
   return {
@@ -479,6 +505,7 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
     mcp: { ...mcp },
     skills: [...skills],
     hooks,
+    keybindings,
     advanced,
   }
 }
@@ -730,6 +757,7 @@ async function hasCompleteManagedSections(
     !isRecord(document.api) ||
     !isRecord(document.mcpServer) ||
     !isRecord(document.hooks) ||
+    !isRecord(document.keybindings) ||
     !isRecord(document.advanced)
   ) {
     return false
@@ -739,6 +767,9 @@ async function hasCompleteManagedSections(
   )
   const mcpServerComplete = ['host', 'port', 'token'].every((field) =>
     Object.hasOwn(document.mcpServer as Record<string, unknown>, field)
+  )
+  const keybindingsComplete = KEYBINDING_ACTIONS.every((action) =>
+    Object.hasOwn(document.keybindings as Record<string, unknown>, action)
   )
   const advancedSections: Array<
     readonly [name: string, fields: ReadonlySet<string>]
@@ -759,7 +790,77 @@ async function hasCompleteManagedSections(
       [...fields].every((field) => Object.hasOwn(section, field))
     )
   })
-  return apiComplete && mcpServerComplete && advancedComplete
+  return (
+    apiComplete && mcpServerComplete && keybindingsComplete && advancedComplete
+  )
+}
+
+export async function readPortalKeybindings(
+  configPath: string
+): Promise<KeybindingConfig> {
+  let contents: string
+  try {
+    contents = await readFile(configPath, 'utf8')
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') {
+      throw new PortalConfigError(`Portal config does not exist: ${configPath}`)
+    }
+    throw error
+  }
+
+  const document = parseConfigDocument(contents)
+  const value = document.toJS()
+  if (!isRecord(value)) {
+    throw new PortalConfigError('Config root must be an object')
+  }
+  try {
+    return parseKeybindingConfig(value.keybindings)
+  } catch (error) {
+    if (error instanceof KeybindingConfigError) {
+      throw new PortalConfigError(error.message)
+    }
+    throw error
+  }
+}
+
+export async function resetPortalKeybindings(
+  configPath: string,
+  keybindings: KeybindingConfig
+): Promise<KeybindingConfig> {
+  return await withConfigLock(configPath, async () => {
+    const contents = await readFile(configPath, 'utf8')
+    const document = parseConfigDocument(contents)
+    if (!isMap(document.contents)) {
+      throw new PortalConfigError('Config root must be an object')
+    }
+
+    const root = document.contents
+    const existingIndex = root.items.findIndex(
+      (pair) => isScalar(pair.key) && pair.key.value === 'keybindings'
+    )
+    if (existingIndex >= 0) {
+      root.items.splice(existingIndex, 1)
+    }
+    const pair = document.createPair('keybindings', keybindings)
+    if (isScalar(pair.key)) {
+      pair.key.commentBefore =
+        ' Terminal input shortcuts. Changes apply automatically.'
+      pair.key.spaceBefore = true
+    }
+    const advancedIndex = root.items.findIndex(
+      (item) => isScalar(item.key) && item.key.value === 'advanced'
+    )
+    if (advancedIndex >= 0) {
+      const [advancedPair] = root.items.splice(advancedIndex, 1)
+      root.items.push(pair, advancedPair!)
+    } else {
+      root.items.push(pair)
+    }
+
+    const candidate = parsePortalConfig(document.toJS())
+    await writePortalConfigContentsUnlocked(configPath, String(document))
+    return candidate.keybindings
+  })
 }
 
 export async function updatePortalConfig(
@@ -781,6 +882,16 @@ async function writePortalConfigUnlocked(
   config: PortalConfigDocument,
   includeComments = false
 ): Promise<void> {
+  await writePortalConfigContentsUnlocked(
+    configPath,
+    includeComments ? stringifyInitialPortalConfig(config) : stringify(config)
+  )
+}
+
+async function writePortalConfigContentsUnlocked(
+  configPath: string,
+  contents: string
+): Promise<void> {
   const directory = path.dirname(configPath)
   const temporaryPath = path.join(
     directory,
@@ -788,16 +899,10 @@ async function writePortalConfigUnlocked(
   )
   await mkdir(directory, { recursive: true })
   try {
-    await writeFile(
-      temporaryPath,
-      includeComments
-        ? stringifyInitialPortalConfig(config)
-        : stringify(config),
-      {
-        encoding: 'utf8',
-        flag: 'wx',
-      }
-    )
+    await writeFile(temporaryPath, contents, {
+      encoding: 'utf8',
+      flag: 'wx',
+    })
     await rename(temporaryPath, configPath)
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => {})
@@ -882,6 +987,7 @@ function cloneConfig(config: PortalConfigDocument): PortalConfigDocument {
     mcp: structuredClone(config.mcp),
     skills: structuredClone(config.skills),
     hooks: structuredClone(config.hooks),
+    keybindings: structuredClone(config.keybindings),
     advanced: structuredClone(config.advanced),
   }
 }
@@ -902,6 +1008,7 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
       ['mcp', 'Outbound Model Context Protocol client connections.'],
       ['skills', 'Registered Skill directories and enabled states.'],
       ['hooks', 'Lifecycle hook handlers and execution policy.'],
+      ['keybindings', 'Terminal input shortcuts. Changes apply automatically.'],
       ['advanced', 'Low-frequency runtime tuning and resource limits.'],
     ],
     true
@@ -974,6 +1081,11 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
       ['maxDepth', 'Maximum nested hook dispatch depth.'],
       ['handlers', 'Hook handlers evaluated for lifecycle events.'],
     ]
+  )
+  commentMap(
+    document,
+    ['keybindings'],
+    KEYBINDING_ACTIONS.map((action) => [action, `Shortcuts for ${action}.`])
   )
   commentMap(
     document,
@@ -1222,6 +1334,16 @@ function parseOptionalRecord(
     throw new PortalConfigError(`${label} must be an object`)
   }
   return value
+}
+
+function parseConfigDocument(contents: string): Document {
+  const document = parseDocument(contents.replace(/^\uFEFF/, ''))
+  if (document.errors.length > 0) {
+    throw new PortalConfigError(
+      `Invalid YAML: ${document.errors.map((error) => error.message).join('; ')}`
+    )
+  }
+  return document
 }
 
 function parsePositiveInteger(
