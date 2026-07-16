@@ -5,6 +5,7 @@ import { createContext, runInContext } from 'node:vm'
 
 import {
   type CapturedFetchEntry,
+  createDeferred,
   ProviderAdapter,
   ProviderAdapterError,
   ProviderResponseTimeoutError,
@@ -15,6 +16,15 @@ import {
   PortalAbortError,
 } from '../../../src/runtime/runtime-cancellation.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
+
+test('createDeferred preserves an early rejection for a later consumer', async () => {
+  const deferred = createDeferred<void>()
+
+  deferred.reject(new Error('early deferred failure'))
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  await assert.rejects(deferred.promise, /early deferred failure/)
+})
 
 class ThrowingInitAdapter extends ProviderAdapter {
   protected override async init() {

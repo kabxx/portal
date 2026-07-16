@@ -184,6 +184,9 @@ export function createDeferred<T>() {
     resolve = innerResolve
     reject = innerReject
   })
+  // Deferred producers may reject before consumers attach; observe immediately
+  // while preserving the original promise for later consumption.
+  void promise.catch(() => {})
   return { promise, resolve, reject }
 }
 
