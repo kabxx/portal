@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { ThreadCommand } from '../../../src/cli-commands/commands/command-thread.ts'
+import { isToggleCapabilityProvider } from '../../../src/cli-commands/commands/command-thread-capability.ts'
 import type { CliCommandContext } from '../../../src/cli-commands/core/command-types.ts'
 import { ThreadManager } from '../../../src/threads/thread-manager.ts'
 import type { ProviderId } from '../../../src/providers/provider-id.ts'
@@ -36,7 +37,15 @@ function createCommandContext() {
     mcpLibrary: {} as McpLibrary,
     ui,
     browserProfileDir: 'C:\\profiles\\chrome',
-    providers: ['chatgpt', 'gemini', 'deepseek', 'doubao', 'grok', 'glm'],
+    providers: [
+      'chatgpt',
+      'claude',
+      'gemini',
+      'deepseek',
+      'doubao',
+      'grok',
+      'glm',
+    ],
     resolveProvider: (value) => {
       const normalized = value.trim().toLowerCase()
       return context.providers.includes(normalized as ProviderId)
@@ -228,6 +237,87 @@ test('ThreadCommand capability executes DeepSeek toggle capabilities', async () 
     body: 'deepseek.thinking: on',
     format: 'plain',
   })
+})
+
+test('ThreadCommand capability lists and executes Claude web_search toggle', async () => {
+  const { context, threadManager, ui } = createCommandContext()
+  let state: 'on' | 'off' = 'off'
+  const setCalls: string[] = []
+  const adapter = {
+    hasToggleCapability: async (name: string) => name === 'web_search',
+    getToggleState: async () => state,
+    setToggleState: async (_name: string, target: 'on' | 'off') => {
+      setCalls.push(target)
+      state = target
+      return state
+    },
+  }
+  threadManager.addThread({
+    id: threadManager.createThreadId(),
+    provider: 'claude',
+    runtime: createFakeRuntime({ adapter: adapter as any }),
+    createdAt: 1,
+  })
+
+  assert.equal(isToggleCapabilityProvider('claude'), true)
+  await executeCapability(context, [])
+  assert.deepEqual(latestTimelineEntry(ui), {
+    tone: 'info',
+    label: '/thread capability',
+    body: [
+      'Provider: claude',
+      '',
+      'Capabilities:',
+      '  web_search  off',
+      '',
+      'Usage:',
+      '  /thread capability <capability> <on|off|status>',
+    ].join('\n'),
+    format: 'plain',
+  })
+
+  await executeCapability(context, ['web_search', 'status'])
+  assert.equal(latestTimelineEntry(ui)?.body, 'claude.web_search: off')
+  await executeCapability(context, ['web_search', 'on'])
+  assert.equal(latestTimelineEntry(ui)?.body, 'claude.web_search: on')
+  await executeCapability(context, ['web_search', 'off'])
+  assert.equal(latestTimelineEntry(ui)?.body, 'claude.web_search: off')
+  assert.deepEqual(setCalls, ['on', 'off'])
+})
+
+test('ThreadCommand capability handles unavailable Claude web_search adapters', async () => {
+  const unavailable = createCommandContext()
+  unavailable.threadManager.addThread({
+    id: unavailable.threadManager.createThreadId(),
+    provider: 'claude',
+    runtime: createFakeRuntime({
+      adapter: {
+        hasToggleCapability: async () => false,
+        getToggleState: async () => 'off',
+        setToggleState: async () => 'off',
+      } as any,
+    }),
+    createdAt: 1,
+  })
+
+  await executeCapability(unavailable.context, ['web_search', 'status'])
+  assert.equal(
+    latestTimelineEntry(unavailable.ui)?.body,
+    'Capability not available for claude: web_search'
+  )
+
+  const missing = createCommandContext()
+  missing.threadManager.addThread({
+    id: missing.threadManager.createThreadId(),
+    provider: 'claude',
+    runtime: createFakeRuntime({ adapter: {} as any }),
+    createdAt: 1,
+  })
+  await executeCapability(missing.context, ['web_search', 'status'])
+  assert.equal(
+    latestTimelineEntry(missing.ui)?.body,
+    'The active Claude runtime does not support this capability.'
+  )
 })
 
 test('ThreadCommand capability lists and executes GLM toggle capabilities', async () => {

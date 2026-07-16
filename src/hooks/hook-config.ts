@@ -220,6 +220,7 @@ function parseProvider(value: unknown, label: string) {
 function normalizeProviderId(value: string): ProviderId | null {
   switch (value.trim().toLowerCase()) {
     case 'chatgpt':
+    case 'claude':
     case 'gemini':
     case 'deepseek':
     case 'doubao':
