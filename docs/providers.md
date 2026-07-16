@@ -40,6 +40,8 @@ When the model argument is omitted, portal leaves the provider's current/default
 
 If login is required, portal keeps the same adapter page open and waits for the user to complete authentication in the browser.
 
+Claude treats the unique, available Voice Mode control as page readiness. An editable Composer alone is not sufficient because it can appear briefly before Claude redirects a signed-out session to authentication.
+
 ## Conversation URLs
 
 `/thread resume` accepts HTTPS URLs with these forms and normalizes supported aliases:
