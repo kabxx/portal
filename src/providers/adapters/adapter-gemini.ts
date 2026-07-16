@@ -876,7 +876,9 @@ export class GeminiAdapter extends ProviderAdapter {
           })
         }
 
-        const onResponse = async (response: import('playwright').Response) => {
+        const handleResponse = async (
+          response: import('playwright').Response
+        ) => {
           if (!this.isTargetStreamRequest(response.request())) {
             return
           }
@@ -900,6 +902,11 @@ export class GeminiAdapter extends ProviderAdapter {
 
           this.lastParsedResponse = parsedResponse
           settleTargetResponse({ kind: 'resolve', response })
+        }
+        const onResponse = (response: import('playwright').Response) => {
+          void handleResponse(response).catch((error) => {
+            settleTargetResponse({ kind: 'reject', error })
+          })
         }
 
         const onClose = () => {
