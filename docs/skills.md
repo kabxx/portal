@@ -55,11 +55,23 @@ Examples:
 /skill list
 ```
 
-Local Skill directories are validated and registered in place; portal does not copy them. For a local collection, each discovered Skill keeps its original absolute directory. HTTP(S) sources are downloaded into `data/skills/<name>` and then registered.
+Local Skill directories are validated and registered in place; portal does not copy them. For a local collection, each discovered Skill keeps its original absolute directory. HTTP(S) sources are downloaded and validated in a unique directory under `data/temp/skill-install/`. After validation, portal acquires the configuration lock, rechecks the registry and destination names, renames the prepared directories into `data/skills/<name>`, and commits the registry update.
 
 A source root containing `SKILL.md` is one Skill, even if its resource tree contains another file with that name. If the source root has no `SKILL.md`, portal recursively discovers Skill directories and stops descending whenever it finds one. Discovery order is deterministic. The complete source tree and every discovered Skill are validated before any registration or managed directory is committed. An invalid manifest, duplicate name, existing registry entry, or managed-directory conflict rejects the entire collection.
 
-Removing an external absolute directory only removes its registry entry. Removing a portal-managed relative `skills/<name>` entry also deletes that directory.
+Removing an external absolute directory only removes its registry entry. Removing a portal-managed relative `skills/<name>` entry first renames that directory into `data/temp/skill-remove/`, commits the registry removal, and then deletes the temporary directory. A configuration write failure restores a directory moved by the current operation.
+
+If registry removal commits but the configuration lock or temporary directory
+cleanup reports an error afterward, the removal remains successful and portal
+returns a warning with the residual path instead of asking the user to retry.
+
+Directory renames and `config.yaml` replacement are separate filesystem
+operations, not one cross-resource atomic transaction. portal serializes
+cooperating writers and rolls back ordinary failures while it is running. If
+the process is forcibly terminated between a directory rename and the config
+commit, an unregistered managed directory or a temporary removal directory may
+remain under `data/`; portal does not automatically recover those crash
+orphans.
 
 The HTTP API accepts the same install inputs through `POST /v1/skills` with
 `{ "source": "...", "registryUrl": "..." }`. Omit `registryUrl` for a local

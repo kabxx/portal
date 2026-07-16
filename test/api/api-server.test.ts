@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import type { ServerResponse } from 'node:http'
+import { createServer, type Server } from 'node:net'
 
 import {
   ApiEventHub,
@@ -9,6 +10,7 @@ import {
   PortalApiServer,
   type ApiHandlers,
 } from '../../src/api/api-server.ts'
+import { normalizeListenerStartError } from '../../src/shared/listener-errors.ts'
 import {
   McpConfigError,
   McpDuplicateNameError,
@@ -94,7 +96,11 @@ function createHandlers(calls: string[], includeReload = true): ApiHandlers {
       warnings: [],
     }),
     setSkillEnabled: async (name, enabled) => ({ name, enabled }),
-    removeSkill: async (name) => ({ name, removed: true }),
+    removeSkill: async (name) => ({
+      name,
+      removed: true,
+      warnings: ['cleanup warning'],
+    }),
     listMcpServers: async () => ({ servers: [], issues: [] }),
     addMcpServer: async (name) => {
       calls.push(`add:${name}`)
@@ -202,6 +208,17 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
         },
       ],
       warnings: [],
+    })
+
+    const removedSkill = await fetch(`${address}/v1/skills/beta-skill`, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer secret' },
+    })
+    assert.equal(removedSkill.status, 200)
+    assert.deepEqual(await removedSkill.json(), {
+      name: 'beta-skill',
+      removed: true,
+      warnings: ['cleanup warning'],
     })
 
     const reload = await fetch(`${address}/v1/threads/t-1/reload`, {
@@ -352,6 +369,118 @@ test('PortalApiServer can restart after stopping', async () => {
     const secondHealth = await fetch(`${secondAddress}/health`)
     assert.equal(secondHealth.status, 200)
   } finally {
+    await server.stop()
+  }
+})
+
+test('PortalApiServer serializes concurrent lifecycle operations', async () => {
+  const server = new PortalApiServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: null,
+    handlers: createHandlers([]),
+  })
+
+  await Promise.all([server.start(), server.start(), server.start()])
+  assert.equal(server.status().running, true)
+
+  await Promise.all([server.stop(), server.stop()])
+  assert.deepEqual(server.status(), {
+    running: false,
+    address: null,
+    auth: false,
+  })
+
+  await Promise.all([server.start(), server.stop()])
+  assert.equal(server.status().running, false)
+
+  await server.start()
+  await Promise.all([server.stop(), server.start()])
+  try {
+    assert.equal(server.status().running, true)
+    assert.equal((await fetch(`${server.address()}/health`)).status, 200)
+  } finally {
+    await server.stop()
+  }
+})
+
+test('PortalApiServer reports an occupied port and can retry after failure', async () => {
+  const blocker = await occupyTcpPort()
+  const server = new PortalApiServer({
+    host: '127.0.0.1',
+    port: blocker.port,
+    token: null,
+    handlers: createHandlers([]),
+  })
+
+  try {
+    await assert.rejects(server.start(), (error: unknown) => {
+      assert.ok(error instanceof Error)
+      assert.equal((error as NodeJS.ErrnoException).code, 'EADDRINUSE')
+      assert.equal(
+        error.message,
+        `HTTP API could not listen on 127.0.0.1:${blocker.port}: address is already in use.`
+      )
+      assert.ok(error.cause instanceof Error)
+      return true
+    })
+    assert.equal(server.status().running, false)
+    assert.equal(server.address(), null)
+  } finally {
+    await closeTcpServer(blocker.server)
+  }
+
+  await server.start()
+  try {
+    assert.equal((await fetch(`${server.address()}/health`)).status, 200)
+  } finally {
+    await server.stop()
+  }
+})
+
+test('listener errors format IPv6 endpoints and preserve unrecognized errors', () => {
+  const cause = Object.assign(new Error('denied'), { code: 'EACCES' })
+  const normalized = normalizeListenerStartError(cause, 'HTTP API', '::1', 8787)
+  assert.ok(normalized instanceof Error)
+  assert.equal(
+    normalized.message,
+    'HTTP API could not listen on [::1]:8787: permission denied.'
+  )
+  assert.equal((normalized as NodeJS.ErrnoException).code, 'EACCES')
+  assert.equal(normalized.cause, cause)
+
+  const other = Object.assign(new Error('network failed'), { code: 'EIO' })
+  assert.equal(
+    normalizeListenerStartError(other, 'HTTP API', '::1', 8787),
+    other
+  )
+})
+
+test('PortalApiServer supports SSE after a stop and restart', async () => {
+  const server = new PortalApiServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: null,
+    handlers: createHandlers([]),
+    sseHeartbeatMs: 60_000,
+  })
+
+  await server.start()
+  let reader = await connectSse(server)
+  await reader.cancel()
+  await server.stop()
+
+  await server.start()
+  try {
+    reader = await connectSse(server)
+    server.eventHub.publish('t-1', {
+      type: 'status',
+      data: { phase: 'restarted' },
+    })
+    const event = await reader.read()
+    assert.match(new TextDecoder().decode(event.value), /"phase":"restarted"/)
+  } finally {
+    await reader.cancel().catch(() => {})
     await server.stop()
   }
 })
@@ -672,3 +801,32 @@ test('PortalApiServer removes an SSE subscriber after HTTP cancellation', async 
     await server.stop()
   }
 })
+
+async function connectSse(
+  server: PortalApiServer
+): Promise<ReadableStreamDefaultReader<Uint8Array>> {
+  const response = await fetch(`${server.address()}/v1/threads/t-1/events`)
+  assert.equal(response.status, 200)
+  assert.notEqual(response.body, null)
+  const reader = response.body!.getReader()
+  const connected = await reader.read()
+  assert.match(new TextDecoder().decode(connected.value), /: connected/)
+  return reader
+}
+
+async function occupyTcpPort(): Promise<{ server: Server; port: number }> {
+  const server = createServer()
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  assert.ok(address !== null && typeof address !== 'string')
+  return { server, port: address.port }
+}
+
+async function closeTcpServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error === undefined ? resolve() : reject(error)))
+  })
+}

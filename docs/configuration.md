@@ -9,6 +9,13 @@ rewritten to add missing managed defaults and comments while preserving its
 existing values; malformed or unsupported configuration is rejected without
 being overwritten.
 
+Configuration writers are serialized across portal processes with the native
+file lock at `data/.locks/config.lock`. The lock file is persistent; its
+presence does not mean the lock is currently held. The operating system
+releases the lock when the owning file descriptor closes, including after a
+process is terminated. Configuration contents are still replaced through a
+temporary file and atomic rename.
+
 The configuration document has these top-level sections:
 
 | Section             | Purpose                                                    | Typical effect                                                               |

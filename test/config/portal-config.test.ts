@@ -1,16 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import {
   access,
-  mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
-  utimes,
   writeFile,
 } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
 import {
@@ -20,6 +21,7 @@ import {
   parsePortalConfig,
   readPortalConfig,
   updatePortalConfig,
+  withPortalConfigTransaction,
 } from '../../src/config/portal-config.ts'
 import { createDefaultKeybindings } from '../../src/keybindings/keybinding-config.ts'
 
@@ -749,7 +751,7 @@ test('parsePortalConfig rejects invalid listener settings', () => {
   )
 })
 
-test('concurrent section updates preserve both MCP and Skill changes', async () => {
+test('concurrent aliased config updates preserve both section changes', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-update-'))
   const configPath = path.join(root, 'config.yaml')
   const defaults = createDefaultPortalConfig()
@@ -770,7 +772,7 @@ test('concurrent section updates preserve both MCP and Skill changes', async () 
         defaults
       ),
       updatePortalConfig(
-        configPath,
+        path.relative(process.cwd(), configPath),
         (config) => {
           config.skills = {
             'example-skill': {
@@ -805,7 +807,7 @@ test('concurrent section updates preserve both MCP and Skill changes', async () 
 test('updatePortalConfig releases its lock after an update error', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-lock-'))
   const configPath = path.join(root, 'config.yaml')
-  const lockPath = `${configPath}.lock`
+  const lockPath = path.join(root, '.locks', 'config.lock')
   const defaults = createDefaultPortalConfig()
 
   try {
@@ -819,28 +821,273 @@ test('updatePortalConfig releases its lock after an update error', async () => {
       ),
       /update failed/
     )
-    await assert.rejects(access(lockPath), { code: 'ENOENT' })
+    await access(lockPath)
+    await updatePortalConfig(
+      configPath,
+      (config) => {
+        config.listeners.api.port = 9001
+      },
+      defaults
+    )
+    assert.equal((await readPortalConfig(configPath))?.listeners.api.port, 9001)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
 
-test('ensurePortalConfig reclaims a stale lock directory', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-stale-'))
+test('a cross-process config lock times out without deleting the lock file', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-timeout-'))
   const configPath = path.join(root, 'config.yaml')
-  const lockPath = `${configPath}.lock`
+  const lockPath = path.join(root, '.locks', 'config.lock')
+  const defaults = createDefaultPortalConfig()
+  let holder: ChildProcessWithoutNullStreams | undefined
+
+  try {
+    await ensurePortalConfig(configPath, defaults)
+    holder = await startConfigLockHolder(configPath)
+
+    await assert.rejects(
+      updatePortalConfig(
+        configPath,
+        (config) => {
+          config.listeners.api.port = 9002
+        },
+        defaults
+      ),
+      /Timed out waiting for config lock/
+    )
+
+    await access(lockPath)
+    holder.stdin.end('release\n')
+    await waitForChildExit(holder)
+    holder = undefined
+
+    await updatePortalConfig(
+      configPath,
+      (config) => {
+        config.listeners.api.port = 9002
+      },
+      defaults
+    )
+    assert.equal((await readPortalConfig(configPath))?.listeners.api.port, 9002)
+  } finally {
+    await terminateChild(holder)
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('terminating a config lock holder releases the native lock', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-kill-'))
+  const configPath = path.join(root, 'config.yaml')
+  const defaults = createDefaultPortalConfig()
+  let holder: ChildProcessWithoutNullStreams | undefined
+
+  try {
+    await ensurePortalConfig(configPath, defaults)
+    holder = await startConfigLockHolder(configPath)
+    holder.kill('SIGKILL')
+    await waitForChildExit(holder)
+    holder = undefined
+
+    await updatePortalConfig(
+      configPath,
+      (config) => {
+        config.listeners.api.port = 9003
+      },
+      defaults
+    )
+    assert.equal((await readPortalConfig(configPath))?.listeners.api.port, 9003)
+  } finally {
+    await terminateChild(holder)
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('config transactions require an explicit commit or noChange', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-tx-'))
+  const configPath = path.join(root, 'config.yaml')
   const defaults = createDefaultPortalConfig()
 
   try {
-    await mkdir(lockPath, { recursive: true })
-    const staleTime = new Date(Date.now() - 31_000)
-    await utimes(lockPath, staleTime, staleTime)
+    await assert.rejects(
+      withPortalConfigTransaction(configPath, () => {}, defaults),
+      /must call commit\(\) or noChange\(\)/
+    )
+    assert.equal(await readPortalConfig(configPath), null)
 
-    await ensurePortalConfig(configPath, defaults)
-
-    assert.deepEqual(await readPortalConfig(configPath), defaults)
-    await assert.rejects(access(lockPath), { code: 'ENOENT' })
+    await withPortalConfigTransaction(
+      configPath,
+      (transaction) => transaction.noChange(),
+      defaults
+    )
+    assert.equal(await readPortalConfig(configPath), null)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('config transactions can only be completed once', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-tx-once-'))
+  const configPath = path.join(root, 'config.yaml')
+  const defaults = createDefaultPortalConfig()
+
+  try {
+    await withPortalConfigTransaction(
+      configPath,
+      async (transaction) => {
+        await transaction.commit()
+        await assert.rejects(
+          transaction.commit(),
+          /Config transaction has already been completed/
+        )
+        assert.throws(
+          () => transaction.noChange(),
+          /Config transaction has already been completed/
+        )
+      },
+      defaults
+    )
+    assert.deepEqual(await readPortalConfig(configPath), defaults)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('config updates keep the atomic write path free of temporary files', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-atomic-'))
+  const configPath = path.join(root, 'config.yaml')
+  const defaults = createDefaultPortalConfig()
+
+  try {
+    await ensurePortalConfig(configPath, defaults)
+    await updatePortalConfig(
+      configPath,
+      (config) => {
+        config.listeners.api.port = 9004
+      },
+      defaults
+    )
+
+    assert.equal((await readPortalConfig(configPath))?.listeners.api.port, 9004)
+    assert.deepEqual(
+      (await readdir(root)).filter((name) => name.endsWith('.tmp')),
+      []
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+const LOCK_HOLDER_FIXTURE = fileURLToPath(
+  new URL('../fixtures/config-lock-holder.ts', import.meta.url)
+)
+const CHILD_TIMEOUT_MS = 10_000
+
+async function startConfigLockHolder(
+  configPath: string
+): Promise<ChildProcessWithoutNullStreams> {
+  const child = spawn(
+    process.execPath,
+    ['--import', 'tsx', LOCK_HOLDER_FIXTURE, configPath],
+    { stdio: ['pipe', 'pipe', 'pipe'] }
+  )
+  let stdout = ''
+  let stderr = ''
+  child.stdout.setEncoding('utf8')
+  child.stderr.setEncoding('utf8')
+  child.stdout.on('data', (chunk: string) => {
+    stdout += chunk
+  })
+  child.stderr.on('data', (chunk: string) => {
+    stderr += chunk
+  })
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup()
+        reject(
+          new Error(
+            `Config lock holder did not become ready. stdout=${JSON.stringify(stdout)} stderr=${JSON.stringify(stderr)}`
+          )
+        )
+      }, CHILD_TIMEOUT_MS)
+      const onData = () => {
+        if (stdout.includes('ready\n')) {
+          cleanup()
+          resolve()
+        }
+      }
+      const onExit = () => {
+        cleanup()
+        reject(
+          new Error(
+            `Config lock holder exited before ready. stdout=${JSON.stringify(stdout)} stderr=${JSON.stringify(stderr)}`
+          )
+        )
+      }
+      const onError = (error: Error) => {
+        cleanup()
+        reject(error)
+      }
+      const cleanup = () => {
+        clearTimeout(timeout)
+        child.stdout.off('data', onData)
+        child.off('exit', onExit)
+        child.off('error', onError)
+      }
+      child.stdout.on('data', onData)
+      child.once('exit', onExit)
+      child.once('error', onError)
+      onData()
+    })
+    return child
+  } catch (error) {
+    await terminateChild(child)
+    throw error
+  }
+}
+
+async function waitForChildExit(
+  child: ChildProcessWithoutNullStreams
+): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return
+  }
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup()
+      reject(new Error('Timed out waiting for config lock holder to exit'))
+    }, CHILD_TIMEOUT_MS)
+    const onExit = () => {
+      cleanup()
+      resolve()
+    }
+    const onError = (error: Error) => {
+      cleanup()
+      reject(error)
+    }
+    const cleanup = () => {
+      clearTimeout(timeout)
+      child.off('exit', onExit)
+      child.off('error', onError)
+    }
+    child.once('exit', onExit)
+    child.once('error', onError)
+    if (child.exitCode !== null || child.signalCode !== null) {
+      onExit()
+    }
+  })
+}
+
+async function terminateChild(
+  child: ChildProcessWithoutNullStreams | undefined
+): Promise<void> {
+  if (child === undefined) {
+    return
+  }
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill('SIGKILL')
+  }
+  await waitForChildExit(child)
+}

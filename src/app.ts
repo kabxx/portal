@@ -2234,14 +2234,15 @@ export async function run(argv = process.argv): Promise<void> {
         return { name, enabled }
       },
       removeSkill: async (name) => {
-        if (!(await skillLibrary.remove(name))) {
+        const result = await skillLibrary.remove(name)
+        if (!result.removed) {
           throw new ApiHttpError(
             404,
             'SKILL_NOT_FOUND',
             `Unknown skill: ${name}`
           )
         }
-        return { removed: true, name }
+        return { removed: true, name, warnings: result.warnings }
       },
       listMcpServers: async () => {
         const result = await mcpLibrary.list()

@@ -6,6 +6,7 @@ import {
   isBearerAuthenticationEnabled,
   parseBearerToken,
 } from '../shared/http-auth.ts'
+import { normalizeListenerStartError } from '../shared/listener-errors.ts'
 import type { PortalMcpHandlers } from './mcp-server-types.ts'
 import { createPortalMcpProtocolServer } from './mcp-tools.ts'
 
@@ -28,9 +29,9 @@ interface ActiveRequest {
 export class PortalMcpServer {
   private fastify: FastifyInstance | null = null
   private readonly activeRequests = new Set<ActiveRequest>()
+  private lifecycleTail: Promise<void> = Promise.resolve()
   private started = false
   private stopping = false
-  private stopPromise: Promise<void> | null = null
 
   public constructor(private readonly options: PortalMcpServerOptions) {}
 
@@ -46,54 +47,62 @@ export class PortalMcpServer {
     }
   }
 
-  public async start(): Promise<void> {
-    if (this.started) {
-      return
-    }
-    if (this.stopPromise !== null) {
-      await this.stopPromise
-    }
-    const fastify = this.createFastify()
-    await fastify.listen({ host: this.options.host, port: this.options.port })
-    this.fastify = fastify
-    this.stopping = false
-    this.started = true
+  public start(): Promise<void> {
+    return this.enqueueLifecycle(async () => {
+      if (this.started) {
+        return
+      }
+      const candidate = this.createFastify()
+      try {
+        await candidate.listen({
+          host: this.options.host,
+          port: this.options.port,
+        })
+      } catch (error) {
+        await candidate.close().catch(() => {})
+        throw normalizeListenerStartError(
+          error,
+          'MCP Server',
+          this.options.host,
+          this.options.port
+        )
+      }
+      this.fastify = candidate
+      this.started = true
+    })
   }
 
-  public async stop(): Promise<void> {
-    if (this.stopPromise !== null) {
-      return await this.stopPromise
-    }
-    if (!this.started || this.fastify === null) {
-      return
-    }
-
-    this.stopping = true
-    this.started = false
-    const fastify = this.fastify
-    this.fastify = null
-    this.stopPromise = (async () => {
-      const closeTimeoutMs = this.options.closeTimeoutMs ?? 3_000
-      for (const request of this.activeRequests) {
-        request.controller.abort()
+  public stop(): Promise<void> {
+    return this.enqueueLifecycle(async () => {
+      if (!this.started || this.fastify === null) {
+        return
       }
-      await settleWithin(
-        Promise.allSettled([
-          Promise.resolve().then(async () => await this.options.onStop?.()),
-          ...[...this.activeRequests].flatMap((request) => [
-            request.transport.close(),
-            request.server.close(),
-          ]),
-        ]).then(() => {}),
-        closeTimeoutMs
-      )
-      await closeFastify(fastify, closeTimeoutMs)
-      this.activeRequests.clear()
-    })().finally(() => {
-      this.stopping = false
-      this.stopPromise = null
+
+      this.stopping = true
+      const fastify = this.fastify
+      const closeTimeoutMs = this.options.closeTimeoutMs ?? 3_000
+      try {
+        for (const request of this.activeRequests) {
+          request.controller.abort()
+        }
+        await settleWithin(
+          Promise.allSettled([
+            Promise.resolve().then(async () => await this.options.onStop?.()),
+            ...[...this.activeRequests].flatMap((request) => [
+              request.transport.close(),
+              request.server.close(),
+            ]),
+          ]).then(() => {}),
+          closeTimeoutMs
+        )
+        await closeFastify(fastify, closeTimeoutMs)
+      } finally {
+        this.activeRequests.clear()
+        this.fastify = null
+        this.started = false
+        this.stopping = false
+      }
     })
-    return await this.stopPromise
   }
 
   public address(): string | null {
@@ -180,6 +189,12 @@ export class PortalMcpServer {
       sendJsonRpcError(reply, mapped.statusCode, mapped.code, mapped.message)
     })
     return fastify
+  }
+
+  private enqueueLifecycle(operation: () => Promise<void>): Promise<void> {
+    const result = this.lifecycleTail.then(operation)
+    this.lifecycleTail = result.catch(() => {})
+    return result
   }
 }
 
