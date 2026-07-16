@@ -23,7 +23,7 @@ type ActionCapabilityState =
   | 'disabled'
   | 'unavailable'
 
-type ToggleCapability = 'thinking' | 'search' | 'advanced_search'
+type ToggleCapability = 'thinking' | 'search' | 'advanced_search' | 'web_search'
 type ToggleState = 'on' | 'off'
 
 interface ActionCapabilityInfo {
@@ -51,6 +51,13 @@ export interface ProviderCapabilityExecution {
 const PROVIDER_CAPABILITIES: Record<ProviderId, readonly ProviderCapability[]> =
   {
     chatgpt: [],
+    claude: [
+      {
+        name: 'web_search',
+        description: 'Web search mode.',
+        kind: 'toggle',
+      },
+    ],
     gemini: [],
     deepseek: [
       {
@@ -156,7 +163,7 @@ function formatCapabilityList(
     ),
     '',
     'Usage:',
-    provider === 'deepseek' || provider === 'glm'
+    isToggleCapabilityProvider(provider as ProviderId)
       ? '  /thread capability <capability> <on|off|status>'
       : '  /thread capability <capability>',
   ].join('\n')
@@ -166,7 +173,7 @@ export async function listProviderCapabilityStates(
   provider: ProviderId,
   runtime: RuntimeCore
 ): Promise<readonly ProviderCapabilityState[]> {
-  if (provider === 'deepseek' || provider === 'glm') {
+  if (isToggleCapabilityProvider(provider)) {
     const adapter = runtime.getAdapter()
     if (!isToggleCapabilityAdapter(adapter)) {
       return []
@@ -216,7 +223,7 @@ export async function executeProviderCapability(
     return await executeActionCapability(provider, runtime, name, args)
   }
 
-  if (provider !== 'deepseek' && provider !== 'glm') {
+  if (!isToggleCapabilityProvider(provider)) {
     return {
       status: 'unsupported_provider',
       result: {
@@ -261,7 +268,7 @@ export async function executeProviderCapability(
       status: 'unsupported_provider',
       result: {
         title: THREAD_CAPABILITY_LABEL,
-        body: `The active ${provider === 'deepseek' ? 'DeepSeek' : 'GLM'} runtime does not support this capability.`,
+        body: `The active ${formatProviderName(provider)} runtime does not support this capability.`,
         format: 'plain',
       },
     }
@@ -399,14 +406,17 @@ async function executeActionCapability(
   }
 }
 
-function formatProviderName(provider: 'doubao' | 'gemini' | 'chatgpt'): string {
-  if (provider === 'doubao') {
-    return 'Doubao'
+function formatProviderName(provider: ProviderId): string {
+  const names: Record<ProviderId, string> = {
+    chatgpt: 'ChatGPT',
+    claude: 'Claude',
+    gemini: 'Gemini',
+    deepseek: 'DeepSeek',
+    doubao: 'Doubao',
+    grok: 'Grok',
+    glm: 'GLM',
   }
-  if (provider === 'gemini') {
-    return 'Gemini'
-  }
-  return 'ChatGPT'
+  return names[provider]
 }
 
 function isToggleCapabilityAdapter(adapter: unknown): adapter is {
@@ -431,8 +441,17 @@ function isToggleCapabilityAdapter(adapter: unknown): adapter is {
 
 function isToggleCapability(value: string): value is ToggleCapability {
   return (
-    value === 'thinking' || value === 'search' || value === 'advanced_search'
+    value === 'thinking' ||
+    value === 'search' ||
+    value === 'advanced_search' ||
+    value === 'web_search'
   )
+}
+
+export function isToggleCapabilityProvider(
+  provider: ProviderId
+): provider is 'claude' | 'deepseek' | 'glm' {
+  return provider === 'claude' || provider === 'deepseek' || provider === 'glm'
 }
 
 function isActionCapabilityAdapter(adapter: unknown): adapter is {

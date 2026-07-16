@@ -231,6 +231,74 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
   }
 })
 
+test('PortalApiServer routes capability list, toggle updates, and clears', async () => {
+  const calls: string[] = []
+  const handlers = createHandlers([])
+  handlers.listCapabilities = async (threadId) => {
+    calls.push(`list:${threadId}`)
+    return {
+      provider: 'claude',
+      capabilities: [{ name: 'web_search', state: 'off' }],
+    }
+  }
+  handlers.setCapability = async (threadId, name, state) => {
+    calls.push(`set:${threadId}:${name}:${state}`)
+    return { name, state }
+  }
+  handlers.clearCapability = async (threadId, name) => {
+    calls.push(`clear:${threadId}:${name}`)
+    return { name, cleared: true }
+  }
+  const server = new PortalApiServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: null,
+    handlers,
+  })
+
+  await server.start()
+  try {
+    const address = server.address()
+    const listed = await fetch(`${address}/v1/threads/t-1/capabilities`)
+    assert.equal(listed.status, 200)
+    assert.deepEqual(await listed.json(), {
+      provider: 'claude',
+      capabilities: [{ name: 'web_search', state: 'off' }],
+    })
+
+    const updated = await fetch(
+      `${address}/v1/threads/t-1/capabilities/web_search`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: 'off' }),
+      }
+    )
+    assert.equal(updated.status, 200)
+    assert.deepEqual(await updated.json(), {
+      name: 'web_search',
+      state: 'off',
+    })
+
+    const cleared = await fetch(
+      `${address}/v1/threads/t-1/capabilities/web_search`,
+      { method: 'DELETE' }
+    )
+    assert.equal(cleared.status, 200)
+    assert.deepEqual(await cleared.json(), {
+      name: 'web_search',
+      cleared: true,
+    })
+    assert.deepEqual(calls, [
+      'list:t-1',
+      'set:t-1:web_search:off',
+      'clear:t-1:web_search',
+    ])
+  } finally {
+    await server.stop()
+  }
+})
+
 test('PortalApiServer enforces the configured request body limit', async () => {
   const server = new PortalApiServer({
     host: '127.0.0.1',
