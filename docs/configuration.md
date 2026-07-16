@@ -4,9 +4,10 @@
 
 portal creates `data/config.yaml` on first start. The generated file contains
 comments for every managed section. The configuration parser rejects unknown
-fields and invalid values. A valid older file may be rewritten to add missing
-managed defaults and comments while preserving its existing values; malformed
-configuration is rejected without being overwritten.
+fields and invalid values. A valid partial file using the current schema may be
+rewritten to add missing managed defaults and comments while preserving its
+existing values; malformed or unsupported configuration is rejected without
+being overwritten.
 
 The configuration document has these top-level sections:
 
@@ -14,18 +15,17 @@ The configuration document has these top-level sections:
 | ------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `browser`           | Chromium executable, profile, and CDP port                 | Read at portal startup; command-line options can override it for that run    |
 | `agentInstructions` | Optional Codex and Claude Code instruction sources         | Startup snapshot used when runtimes are created; disabled by default         |
-| `api`               | Local HTTP listener and bearer authentication              | Read when the API server is created                                          |
-| `mcpServer`         | Portal MCP Server listener and bearer authentication       | Read when the MCP Server is created                                          |
-| `mcp`               | MCP connection strategy and server definitions             | Re-read for MCP commands and new runtimes                                    |
+| `listeners`         | API and Portal MCP Server listeners and authentication     | Read when either inbound listener is created                                 |
+| `mcpServers`        | Outbound MCP client server definitions                     | Re-read for MCP commands and new runtimes                                    |
 | `skills`            | Registered Skill directories and enabled states            | Re-read for Skill commands and new runtimes                                  |
 | `hooks`             | Lifecycle handlers and global Hook switch                  | `/hook reload`, `/hook enable`, and `/hook disable` update the active policy |
 | `keybindings`       | Terminal input shortcuts                                   | Valid file edits apply automatically; invalid edits keep the last valid set  |
 | `advanced`          | Timeouts, retry limits, output limits, and resource limits | Converted into runtime settings during portal startup                        |
 
-Changes to startup-owned sections (`browser`, `agentInstructions`, `api`,
-`mcpServer`, and `advanced`) require restarting portal. Listener sections do
-not enable their services by themselves; use `/serve start` or
-`/mcp-server start`. MCP client connections, Skills, and Hooks have the narrower
+Changes to startup-owned sections (`browser`, `agentInstructions`, `listeners`,
+and `advanced`) require restarting portal. Listener sections do not enable
+their services by themselves; use `/serve api start` or `/serve mcp start`.
+MCP client connections, Skills, and Hooks have the narrower
 reload and new-runtime behavior described in their dedicated documents.
 Keybindings are watched independently and do not require a restart.
 
@@ -71,10 +71,11 @@ for discovery, activation, limits, and the security boundary.
 ## HTTP API
 
 ```yaml
-api:
-  host: 127.0.0.1
-  port: 8787
-  token: null
+listeners:
+  api:
+    host: 127.0.0.1
+    port: 8787
+    token: null
 ```
 
 The default listener is loopback-only. `null` and the exact empty string `""`
@@ -86,14 +87,16 @@ independent. API routes and authentication behavior are documented in
 ## Portal MCP Server
 
 ```yaml
-mcpServer:
-  host: 127.0.0.1
-  port: 8788
-  token: null
+listeners:
+  mcp:
+    host: 127.0.0.1
+    port: 8788
+    token: null
 ```
 
 This listener is independent from the HTTP API and from the outbound MCP client
-configuration under `mcp`. Token values use the same exact semantics as the API.
+configuration under `mcpServers`. Token values use the same exact semantics as
+the API.
 See [Portal MCP Server](mcp-server.md).
 
 ## MCP, Skills, and Hooks

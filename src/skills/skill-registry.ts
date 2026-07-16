@@ -48,32 +48,20 @@ export async function readSkillRegistry(
 }
 
 export function parseSkillRegistry(document: unknown): SkillRegistryData {
-  if (!Array.isArray(document)) {
-    throw new SkillRegistryError('skills must be an array')
+  if (!isRecord(document)) {
+    throw new SkillRegistryError('skills must be an object keyed by name')
   }
 
   const entries = new Map<string, SkillRegistryEntry>()
   const issues: SkillRegistryIssue[] = []
-  const seenNames = new Set<string>()
-  for (const [index, value] of document.entries()) {
-    let issueName = `entry[${index}]`
+  for (const [name, value] of Object.entries(document)) {
     try {
+      validateSkillName(name)
       if (!isRecord(value)) {
         throw new SkillRegistryError('Entry must be an object')
       }
-      if (typeof value.name !== 'string' || value.name.trim() === '') {
-        throw new SkillRegistryError('Entry requires a non-empty name')
-      }
-      validateSkillName(value.name)
-      issueName = value.name
-      if (seenNames.has(value.name)) {
-        entries.delete(value.name)
-        throw new SkillRegistryError('Duplicate skill name')
-      }
-      seenNames.add(value.name)
       const unsupportedEntryFields = Object.keys(value).filter(
-        (field) =>
-          field !== 'name' && field !== 'directory' && field !== 'enabled'
+        (field) => field !== 'directory' && field !== 'enabled'
       )
       if (unsupportedEntryFields.length > 0) {
         throw new SkillRegistryError(
@@ -89,12 +77,12 @@ export function parseSkillRegistry(document: unknown): SkillRegistryData {
       if (typeof value.enabled !== 'boolean') {
         throw new SkillRegistryError('Entry requires a boolean enabled value')
       }
-      entries.set(value.name, {
+      entries.set(name, {
         directory: value.directory,
         enabled: value.enabled,
       })
     } catch (error) {
-      issues.push({ name: issueName, message: getErrorMessage(error) })
+      issues.push({ name, message: getErrorMessage(error) })
     }
   }
 
@@ -147,10 +135,10 @@ export function resolveSkillDirectory(
 
 function serializeSkillRegistry(
   entries: ReadonlyMap<string, SkillRegistryEntry>
-): unknown[] {
-  return [...entries.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, entry]) => ({ name, ...entry }))
+): Record<string, SkillRegistryEntry> {
+  return Object.fromEntries(
+    [...entries.entries()].sort(([left], [right]) => left.localeCompare(right))
+  )
 }
 
 function getErrorMessage(error: unknown): string {

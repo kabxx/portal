@@ -6,50 +6,73 @@ import type { CliCommandContext } from '../../../src/cli-commands/core/command-t
 import { TerminalController } from '../../../src/terminal-ui/terminal-controller.ts'
 import { latestTimelineEntry } from '../../helpers/ui.ts'
 
-function createContext(api?: unknown) {
+function createContext(
+  controllers: {
+    api?: unknown
+    mcpServer?: unknown
+  } = {}
+) {
   const ui = new TerminalController()
   return {
-    context: { ui, api } as CliCommandContext,
+    context: { ui, ...controllers } as CliCommandContext,
     ui,
   }
 }
 
-test('ServeCommand reports an unavailable API', async () => {
+test('ServeCommand reports unavailable targets and target help', async () => {
   const { context, ui } = createContext()
 
   await ServeCommand.execute(context, [])
+  assert.match(latestTimelineEntry(ui)?.body ?? '', /Listeners:/)
 
+  await ServeCommand.execute(context, ['api', 'status'])
   assert.equal(latestTimelineEntry(ui)?.tone, 'error')
   assert.equal(latestTimelineEntry(ui)?.body, 'HTTP API is unavailable.')
+
+  await ServeCommand.execute(context, ['mcp', 'status'])
+  assert.equal(latestTimelineEntry(ui)?.tone, 'error')
+  assert.equal(latestTimelineEntry(ui)?.body, 'MCP Server is unavailable.')
 })
 
-test('ServeCommand starts and stops the API', async () => {
+test('ServeCommand starts and stops both listener targets', async () => {
   const calls: string[] = []
-  const { context, ui } = createContext({
-    start: async () => calls.push('start'),
-    stop: async () => calls.push('stop'),
+  const controller = (target: string) => ({
+    start: async () => calls.push(`${target}:start`),
+    stop: async () => calls.push(`${target}:stop`),
     status: () => ({ running: true, address: null, auth: false }),
   })
+  const { context, ui } = createContext({
+    api: controller('api'),
+    mcpServer: controller('mcp'),
+  })
 
-  await ServeCommand.execute(context, ['start'])
+  await ServeCommand.execute(context, ['api', 'start'])
   assert.equal(latestTimelineEntry(ui)?.body, 'HTTP API server started.')
 
-  await ServeCommand.execute(context, ['stop'])
+  await ServeCommand.execute(context, ['api', 'stop'])
   assert.equal(latestTimelineEntry(ui)?.body, 'HTTP API server stopped.')
-  assert.deepEqual(calls, ['start', 'stop'])
+
+  await ServeCommand.execute(context, ['mcp', 'start'])
+  assert.equal(latestTimelineEntry(ui)?.body, 'MCP Server started.')
+
+  await ServeCommand.execute(context, ['mcp', 'stop'])
+  assert.equal(latestTimelineEntry(ui)?.body, 'MCP Server stopped.')
+  assert.deepEqual(calls, ['api:start', 'api:stop', 'mcp:start', 'mcp:stop'])
 })
 
 test('ServeCommand warns but allows an unauthenticated non-loopback listener', async () => {
   const { context, ui } = createContext({
-    start: async () => {},
-    status: () => ({
-      running: true,
-      address: 'http://0.0.0.0:8787',
-      auth: false,
-    }),
+    api: {
+      start: async () => {},
+      status: () => ({
+        running: true,
+        address: 'http://0.0.0.0:8787',
+        auth: false,
+      }),
+    },
   })
 
-  await ServeCommand.execute(context, ['start'])
+  await ServeCommand.execute(context, ['api', 'start'])
 
   assert.equal(latestTimelineEntry(ui)?.tone, 'warning')
   assert.equal(
@@ -60,48 +83,52 @@ test('ServeCommand warns but allows an unauthenticated non-loopback listener', a
 
 test('ServeCommand reports start and stop failures', async () => {
   const { context, ui } = createContext({
-    start: async () => {
-      throw new Error('start failed')
-    },
-    stop: async () => {
-      throw new Error('stop failed')
+    api: {
+      start: async () => {
+        throw new Error('start failed')
+      },
+      stop: async () => {
+        throw new Error('stop failed')
+      },
     },
   })
 
-  await ServeCommand.execute(context, ['start'])
+  await ServeCommand.execute(context, ['api', 'start'])
   assert.equal(latestTimelineEntry(ui)?.body, 'start failed')
 
-  await ServeCommand.execute(context, ['stop'])
+  await ServeCommand.execute(context, ['api', 'stop'])
   assert.equal(latestTimelineEntry(ui)?.body, 'stop failed')
 })
 
 test('ServeCommand renders token, status, and subcommand help', async () => {
   let token: string | null = null
   const { context, ui } = createContext({
-    token: () => token,
-    status: () => ({
-      running: true,
-      address: 'http://127.0.0.1:3000',
-      auth: true,
-    }),
+    api: {
+      token: () => token,
+      status: () => ({
+        running: true,
+        address: 'http://127.0.0.1:3000',
+        auth: true,
+      }),
+    },
   })
 
-  await ServeCommand.execute(context, ['token'])
+  await ServeCommand.execute(context, ['api', 'token'])
   assert.equal(latestTimelineEntry(ui)?.body, 'Authentication disabled.')
 
   token = ''
-  await ServeCommand.execute(context, ['token'])
+  await ServeCommand.execute(context, ['api', 'token'])
   assert.equal(latestTimelineEntry(ui)?.body, 'Authentication disabled.')
 
   token = '   '
-  await ServeCommand.execute(context, ['token'])
+  await ServeCommand.execute(context, ['api', 'token'])
   assert.equal(latestTimelineEntry(ui)?.body, '   ')
 
   token = 'secret-token'
-  await ServeCommand.execute(context, ['token'])
+  await ServeCommand.execute(context, ['api', 'token'])
   assert.equal(latestTimelineEntry(ui)?.body, 'secret-token')
 
-  await ServeCommand.execute(context, ['status'])
+  await ServeCommand.execute(context, ['api', 'status'])
   assert.equal(
     latestTimelineEntry(ui)?.body,
     [
@@ -111,6 +138,6 @@ test('ServeCommand renders token, status, and subcommand help', async () => {
     ].join('\n')
   )
 
-  await ServeCommand.execute(context, ['unknown'])
+  await ServeCommand.execute(context, ['api', 'unknown'])
   assert.match(latestTimelineEntry(ui)?.body ?? '', /Subcommands:/)
 })

@@ -36,13 +36,10 @@ test('McpLibrary writes a root config object with servers keyed by name', async 
     })
     const document = parseYamlRecord(await readFile(configPath, 'utf8'))
 
-    assert.deepEqual(document.mcp, {
-      connectionStrategy: 'per-thread',
-      servers: {
-        example: {
-          transport: 'streamable-http',
-          url: 'https://example.com/mcp',
-        },
+    assert.deepEqual(document.mcpServers, {
+      example: {
+        transport: 'streamable-http',
+        url: 'https://example.com/mcp',
       },
     })
     await assert.rejects(
@@ -57,9 +54,8 @@ test('McpLibrary writes a root config object with servers keyed by name', async 
     assert.equal((await library.list()).servers[0]?.enabled, false)
     await library.enable('example')
     const enabledDocument = parseYamlRecord(await readFile(configPath, 'utf8'))
-    const mcp = requireRecord(enabledDocument.mcp, 'mcp')
-    const servers = requireRecord(mcp.servers, 'mcp.servers')
-    const example = requireRecord(servers.example, 'mcp.servers.example')
+    const servers = requireRecord(enabledDocument.mcpServers, 'mcpServers')
+    const example = requireRecord(servers.example, 'mcpServers.example')
     assert.equal(example.enabled, undefined)
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -74,10 +70,7 @@ test('McpLibrary initializes a missing config without overwriting it later', asy
   try {
     await library.initialize()
     const document = parseYamlRecord(await readFile(configPath, 'utf8'))
-    assert.deepEqual(document.mcp, {
-      connectionStrategy: 'per-thread',
-      servers: {},
-    })
+    assert.deepEqual(document.mcpServers, {})
 
     await writeFile(configPath, 'browser: [', 'utf8')
     await library.initialize()
@@ -121,26 +114,15 @@ test('McpLibrary preserves concurrent mutations in the MCP section', async () =>
   }
 })
 
-test('MCP config isolates invalid servers and rejects unsupported root strategies', () => {
+test('MCP config isolates invalid servers and rejects non-object roots', () => {
   const parsed = parseMcpConfig({
-    connectionStrategy: 'per-thread',
-    servers: {
-      valid: { transport: 'stdio', command: 'node' },
-      invalid: { transport: 'stdio' },
-    },
+    valid: { transport: 'stdio', command: 'node' },
+    invalid: { transport: 'stdio' },
   })
 
   assert.deepEqual([...parsed.servers.keys()], ['valid'])
   assert.equal(parsed.issues.length, 1)
   assert.equal(parsed.issues[0]?.server, 'invalid')
-  assert.throws(
-    () =>
-      parseMcpConfig({
-        connectionStrategy: 'shared',
-        servers: {},
-      }),
-    /must be "per-thread"/
-  )
   assert.throws(() => parseMcpConfig([]), McpConfigError)
 })
 
