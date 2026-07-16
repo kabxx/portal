@@ -1148,7 +1148,7 @@ export async function run(argv = process.argv): Promise<void> {
       : Number(options.browserRemoteDebuggingPort)
   if (
     !Number.isSafeInteger(browserRemoteDebuggingPort) ||
-    browserRemoteDebuggingPort <= 0 ||
+    browserRemoteDebuggingPort < 0 ||
     browserRemoteDebuggingPort > 65_535
   ) {
     throw new Error(
@@ -1193,11 +1193,15 @@ export async function run(argv = process.argv): Promise<void> {
     done: Promise<unknown>
   } | null = null
   let browserLaunch: Awaited<ReturnType<typeof launchBrowser>> | null = null
+  let browserStartupController: AbortController | null = null
+  let browserStartupPromise: ReturnType<typeof launchBrowser> | null = null
   let apiServer: PortalApiServer | null = null
   let mcpServer: PortalMcpServer | null = null
   let exitRequested = false
   const shutdown = createIdempotentAsyncTask(async () => {
     keybindingCatalog.stop()
+    browserStartupController?.abort()
+    await browserStartupPromise?.catch(() => {})
     runCommandJobs.beginShutdown()
     const hasMcpForegroundOperation = mcpForegroundOperations.size > 0
     const mcpStop = mcpServer?.stop().catch(() => {})
@@ -1575,13 +1579,24 @@ export async function run(argv = process.argv): Promise<void> {
 
   try {
     try {
-      browserLaunch = await launchBrowser(
+      const startupController = new AbortController()
+      browserStartupController = startupController
+      const startupPromise = launchBrowser(
         browserEngine,
         browserExecutablePath,
         browserRemoteDebuggingPort,
         browserProfileDir,
-        settings.browserLaunch
+        { ...settings.browserLaunch, signal: startupController.signal }
       )
+      browserStartupPromise = startupPromise
+      try {
+        browserLaunch = await startupPromise
+      } finally {
+        if (browserStartupController === startupController) {
+          browserStartupController = null
+          browserStartupPromise = null
+        }
+      }
       const activeBrowserLaunch = browserLaunch
       void activeBrowserLaunch.disconnected
         .then(async () => {
@@ -1607,6 +1622,9 @@ export async function run(argv = process.argv): Promise<void> {
           }
         })
     } catch (error) {
+      if (exitRequested && isAbortError(error)) {
+        return
+      }
       ui.setBrowserConnected(false)
       ui.renderError('error', String(error))
       process.exitCode = 1

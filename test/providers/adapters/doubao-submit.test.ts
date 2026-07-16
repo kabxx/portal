@@ -37,6 +37,35 @@ function createTestDoubaoAdapter(): DoubaoAdapterHarness {
   return adapter
 }
 
+test('DoubaoAdapter.submit handles request failure before a failed click settles', async () => {
+  const adapter = createTestDoubaoAdapter()
+  const request = {
+    method: () => 'POST',
+    url: () => 'https://www.doubao.com/chat/completion',
+    failure: () => ({ errorText: 'net::ERR_FAILED' }),
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('requestfailed', request)
+      throw new Error('click failed')
+    },
+  }
+  const page = createDoubaoPage(sendButton)
+  adapter.page = page
+  adapter.getCapturedFetchEntryCount = async () => 0
+
+  const assertion = assert.rejects(
+    adapter.submit(),
+    /Action failed during submit/
+  )
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  await assertion
+
+  assert.equal(page.listenerCount('requestfailed'), 0)
+})
+
 test('DoubaoAdapter.submit reads final text from browser-captured response instead of response.body()', async () => {
   const adapter = createTestDoubaoAdapter()
   const correctText = 'response received successfully.'
@@ -792,6 +821,7 @@ function createDoubaoPage(
     emit: (eventName: string, payload: unknown) => {
       emitter.emit(eventName, payload)
     },
+    listenerCount: (eventName: string) => emitter.listenerCount(eventName),
   }
 }
 

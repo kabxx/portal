@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { ProviderAdapterError } from '../../../src/providers/adapters/adapter-base.ts'
 import { GeminiAdapter } from '../../../src/providers/adapters/adapter-gemini.ts'
 import { createPrototypeObject } from '../../helpers/fakes.ts'
 
@@ -12,6 +13,7 @@ type GeminiAdapterHarness = Pick<GeminiAdapter, keyof GeminiAdapter> & {
   readCurrentStreamedResponseText: unknown
   getSubmitRequestStartGraceMs(): number
   getSubmitBlockedWarningIntervalMs(): number
+  getSubmitResponseTimeoutMs(): number
 }
 
 function createTestGeminiAdapter(): GeminiAdapterHarness {
@@ -89,6 +91,53 @@ test('GeminiAdapter.submit emits periodic warnings while waiting for the request
   const warningCountAfterRecovery = warnings.length
   await new Promise((resolve) => setTimeout(resolve, 30))
   assert.equal(warnings.length, warningCountAfterRecovery)
+})
+
+test('GeminiAdapter.submit contains asynchronous response parser failures', async () => {
+  const adapter = createTestGeminiAdapter()
+  adapter.lastParsedResponse = null
+  adapter.parseResponse = async () => {
+    throw new Error('parser failed')
+  }
+  const request = {
+    method: () => 'POST',
+    url: () =>
+      'https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate',
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        status: () => 200,
+        text: async () => 'raw',
+      })
+    },
+  }
+  const microphoneButton = {
+    isVisible: async () => true,
+    isEnabled: async () => true,
+    first: () => microphoneButton,
+  }
+  const page = createGeminiPage(sendButton, microphoneButton)
+  adapter.page = page
+  adapter.getSubmitRequestStartGraceMs = () => 5
+  adapter.getSubmitResponseTimeoutMs = () => 20
+
+  const assertion = assert.rejects(adapter.submit(), (error: unknown) => {
+    assert.ok(error instanceof ProviderAdapterError)
+    assert.equal(error.message, 'Action failed during submit')
+    assert.ok(error.cause instanceof Error)
+    assert.equal(error.cause.message, 'parser failed')
+    return true
+  })
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  await assertion
+
+  assert.equal(page.listenerCount('response'), 0)
 })
 
 test('GeminiAdapter.submit emits assistant stream snapshots while the response is growing', async () => {
@@ -427,6 +476,7 @@ function createGeminiPage(
     emit: (eventName: string, payload: unknown) => {
       emitter.emit(eventName, payload)
     },
+    listenerCount: (eventName: string) => emitter.listenerCount(eventName),
   }
 }
 
