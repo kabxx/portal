@@ -79,7 +79,7 @@ same activation-only form as typing `$skill-name` in the TUI. The combined
 | `GET`    | `/v1/skills`                  | List registered Skills and validation issues                                                                                |
 | `POST`   | `/v1/skills`                  | `{ "source": "...", "registryUrl": "..." }`; optional registry; returns `201` with `{ "skills": [...], "warnings": [...] }` |
 | `PUT`    | `/v1/skills/:name`            | `{ "enabled": true }` or `{ "enabled": false }`                                                                             |
-| `DELETE` | `/v1/skills/:name`            | Remove the registration and any portal-managed download                                                                     |
+| `DELETE` | `/v1/skills/:name`            | Remove the registration and managed download; returns `{ "removed": true, "name": "...", "warnings": [...] }`               |
 
 For a Hub install, `source` is the Skill name and `registryUrl` is the HTTP(S)
 registry root. For local directories and direct URLs, omit `registryUrl`. See

@@ -19,6 +19,12 @@ function createContext(
   }
 }
 
+function rejectWith(reason: unknown): Promise<never> {
+  const { promise, reject } = Promise.withResolvers<never>()
+  reject(reason)
+  return promise
+}
+
 test('ServeCommand reports unavailable targets and target help', async () => {
   const { context, ui } = createContext()
 
@@ -46,10 +52,14 @@ test('ServeCommand starts and stops both listener targets', async () => {
     mcpServer: controller('mcp'),
   })
 
-  await ServeCommand.execute(context, ['api', 'start'])
+  assert.deepEqual(await ServeCommand.execute(context, ['api', 'start']), {
+    continue: true,
+  })
   assert.equal(latestTimelineEntry(ui)?.body, 'HTTP API server started.')
 
-  await ServeCommand.execute(context, ['api', 'stop'])
+  assert.deepEqual(await ServeCommand.execute(context, ['api', 'stop']), {
+    continue: true,
+  })
   assert.equal(latestTimelineEntry(ui)?.body, 'HTTP API server stopped.')
 
   await ServeCommand.execute(context, ['mcp', 'start'])
@@ -82,21 +92,33 @@ test('ServeCommand warns but allows an unauthenticated non-loopback listener', a
 })
 
 test('ServeCommand reports start and stop failures', async () => {
+  const failingController = {
+    start: () => rejectWith(new Error('start failed')),
+    stop: () => rejectWith('stop failed'),
+  }
   const { context, ui } = createContext({
-    api: {
-      start: async () => {
-        throw new Error('start failed')
-      },
-      stop: async () => {
-        throw new Error('stop failed')
-      },
-    },
+    api: failingController,
+    mcpServer: failingController,
   })
 
-  await ServeCommand.execute(context, ['api', 'start'])
+  assert.deepEqual(await ServeCommand.execute(context, ['api', 'start']), {
+    continue: true,
+  })
   assert.equal(latestTimelineEntry(ui)?.body, 'start failed')
 
-  await ServeCommand.execute(context, ['api', 'stop'])
+  assert.deepEqual(await ServeCommand.execute(context, ['api', 'stop']), {
+    continue: true,
+  })
+  assert.equal(latestTimelineEntry(ui)?.body, 'stop failed')
+
+  assert.deepEqual(await ServeCommand.execute(context, ['mcp', 'start']), {
+    continue: true,
+  })
+  assert.equal(latestTimelineEntry(ui)?.body, 'start failed')
+
+  assert.deepEqual(await ServeCommand.execute(context, ['mcp', 'stop']), {
+    continue: true,
+  })
   assert.equal(latestTimelineEntry(ui)?.body, 'stop failed')
 })
 

@@ -15,8 +15,9 @@ import { stringify as stringifyYaml } from 'yaml'
 
 import { createDefaultPortalConfig } from '../../src/config/portal-config.ts'
 import {
-  commitSkillBatch,
-  SkillBatchCommitError,
+  commitManagedSkillRemoval,
+  commitPreparedSkillBatch,
+  finalizeCommittedSkillRemoval,
   SkillLibrary,
 } from '../../src/skills/skill-library.ts'
 import { DEFAULT_SKILL_POLICY } from '../../src/skills/skill-policy.ts'
@@ -162,7 +163,10 @@ test('SkillLibrary installs, catalogs, disables, enables, and removes skills', a
 
     assert.equal(await library.enable('test-skill'), true)
     assert.equal((await library.createCatalogSnapshot()).size, 1)
-    assert.equal(await library.remove('test-skill'), true)
+    assert.deepEqual(await library.remove('test-skill'), {
+      removed: true,
+      warnings: [],
+    })
     assert.equal((await library.list()).skills.length, 0)
     await access(path.join(source, 'SKILL.md'))
   } finally {
@@ -200,7 +204,10 @@ test('SkillLibrary registers a recursive local skill collection in place', async
       (await library.list()).skills.map(({ name }) => name),
       ['alpha-skill', 'beta-skill']
     )
-    assert.equal(await library.remove('alpha-skill'), true)
+    assert.deepEqual(await library.remove('alpha-skill'), {
+      removed: true,
+      warnings: [],
+    })
     await access(path.join(alpha, 'SKILL.md'))
     assert.deepEqual(await readdir(path.join(root, 'data', 'skills')), [])
   } finally {
@@ -274,98 +281,228 @@ test('SkillLibrary rejects duplicate names across a skill collection', async () 
   }
 })
 
-test('commitSkillBatch keeps a committed batch when post-commit cleanup fails', async () => {
-  const entries = new Map<string, { directory: string; enabled: boolean }>()
-  const batch = [
-    {
-      name: 'committed-skill',
-      description: 'Committed skill.',
-      directory: 'C:\\skills\\committed-skill',
-      registryDirectory: 'skills/committed-skill',
-      managed: true,
-    },
-  ]
-
-  const result = await commitSkillBatch('config.yaml', batch, {
-    update: async (_registryPath, update) => {
-      update({ entries, issues: [] })
-      throw new Error('lock cleanup failed')
-    },
-    read: async () => ({ entries, issues: [] }),
-  })
-
-  assert.match(result.warnings[0] ?? '', /lock cleanup failed/)
-  assert.deepEqual(entries.get('committed-skill'), {
-    directory: 'skills/committed-skill',
-    enabled: true,
-  })
-})
-
-test('commitSkillBatch preserves a pre-commit conflict with an identical local entry', async () => {
-  const directory = path.resolve('existing-skill')
-  const entries = new Map([['existing-skill', { directory, enabled: true }]])
-  let readCalled = false
-
-  await assert.rejects(
-    commitSkillBatch(
-      'config.yaml',
-      [
-        {
-          name: 'existing-skill',
-          description: 'Existing skill.',
-          directory,
-          registryDirectory: directory,
-          managed: false,
-        },
-      ],
-      {
-        update: async (_registryPath, update) => {
-          update({ entries, issues: [] })
-        },
-        read: async () => {
-          readCalled = true
-          return { entries, issues: [] }
-        },
-      }
-    ),
-    (error: unknown) =>
-      error instanceof SkillBatchCommitError &&
-      error.rollbackManaged &&
-      /already added/.test(error.message)
+test('commitPreparedSkillBatch renames staging before committing the registry', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-commit-'))
+  const staged = await createTestSkill(
+    path.join(root, 'staging'),
+    'committed-skill'
   )
-  assert.equal(readCalled, false)
-})
+  const finalDirectory = path.join(root, 'skills', 'committed-skill')
+  const expectedManifest = await readFile(path.join(staged, 'SKILL.md'), 'utf8')
+  const entries = new Map<string, { directory: string; enabled: boolean }>()
+  let commits = 0
 
-test('commitSkillBatch never rolls back directories still referenced by mismatched entries', async () => {
-  const entries = new Map([
-    ['managed-skill', { directory: 'skills/managed-skill', enabled: false }],
-  ])
-
-  await assert.rejects(
-    commitSkillBatch(
-      'config.yaml',
+  try {
+    await commitPreparedSkillBatch(
+      {
+        registry: { entries, issues: [] },
+        commit: async () => {
+          commits += 1
+          assert.equal(
+            await readFile(path.join(finalDirectory, 'SKILL.md'), 'utf8'),
+            expectedManifest
+          )
+        },
+        noChange: () => assert.fail('unexpected noChange'),
+      },
       [
         {
-          name: 'managed-skill',
-          description: 'Managed skill.',
-          directory: 'C:\\skills\\managed-skill',
-          registryDirectory: 'skills/managed-skill',
+          name: 'committed-skill',
+          description: 'Test skill.',
+          directory: staged,
+          stagedDirectory: staged,
+          finalDirectory,
+          registryDirectory: 'skills/committed-skill',
           managed: true,
         },
-      ],
-      {
-        update: async (_registryPath, update) => {
-          update({ entries: new Map(), issues: [] })
-          throw new Error('post-commit failure')
+      ]
+    )
+
+    assert.equal(commits, 1)
+    await assert.rejects(access(staged), { code: 'ENOENT' })
+    assert.deepEqual(entries.get('committed-skill'), {
+      directory: 'skills/committed-skill',
+      enabled: true,
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('commitPreparedSkillBatch restores staging when config commit fails', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-rollback-'))
+  const staged = await createTestSkill(path.join(root, 'staging'), 'rollback')
+  const finalDirectory = path.join(root, 'skills', 'rollback')
+
+  try {
+    await assert.rejects(
+      commitPreparedSkillBatch(
+        {
+          registry: { entries: new Map(), issues: [] },
+          commit: async () => {
+            throw new Error('config commit failed')
+          },
+          noChange: () => assert.fail('unexpected noChange'),
         },
-        read: async () => ({ entries, issues: [] }),
-      }
-    ),
-    (error: unknown) =>
-      error instanceof SkillBatchCommitError &&
-      !error.rollbackManaged &&
-      /partial batch commit/.test(error.message)
+        [
+          {
+            name: 'rollback',
+            description: 'Test skill.',
+            directory: staged,
+            stagedDirectory: staged,
+            finalDirectory,
+            registryDirectory: 'skills/rollback',
+            managed: true,
+          },
+        ]
+      ),
+      /config commit failed/
+    )
+    await access(path.join(staged, 'SKILL.md'))
+    await assert.rejects(access(finalDirectory), { code: 'ENOENT' })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('commitPreparedSkillBatch moves nothing when a destination conflicts', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-conflict-'))
+  const staged = await createTestSkill(path.join(root, 'staging'), 'conflict')
+  const finalDirectory = await createTestSkill(
+    path.join(root, 'skills'),
+    'conflict'
   )
+  let commits = 0
+
+  try {
+    await assert.rejects(
+      commitPreparedSkillBatch(
+        {
+          registry: { entries: new Map(), issues: [] },
+          commit: async () => {
+            commits += 1
+          },
+          noChange: () => assert.fail('unexpected noChange'),
+        },
+        [
+          {
+            name: 'conflict',
+            description: 'Test skill.',
+            directory: staged,
+            stagedDirectory: staged,
+            finalDirectory,
+            registryDirectory: 'skills/conflict',
+            managed: true,
+          },
+        ]
+      ),
+      /already exists/
+    )
+    assert.equal(commits, 0)
+    await access(path.join(staged, 'SKILL.md'))
+    await access(path.join(finalDirectory, 'SKILL.md'))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('commitPreparedSkillBatch rechecks registry names before moving staging', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-recheck-'))
+  const staged = await createTestSkill(path.join(root, 'staging'), 'duplicate')
+  const finalDirectory = path.join(root, 'skills', 'duplicate')
+  let commits = 0
+
+  try {
+    await assert.rejects(
+      commitPreparedSkillBatch(
+        {
+          registry: {
+            entries: new Map([
+              [
+                'duplicate',
+                { directory: 'C:/external/duplicate', enabled: true },
+              ],
+            ]),
+            issues: [],
+          },
+          commit: async () => {
+            commits += 1
+          },
+          noChange: () => assert.fail('unexpected noChange'),
+        },
+        [
+          {
+            name: 'duplicate',
+            description: 'Test skill.',
+            directory: staged,
+            stagedDirectory: staged,
+            finalDirectory,
+            registryDirectory: 'skills/duplicate',
+            managed: true,
+          },
+        ]
+      ),
+      /Skill already added: duplicate/
+    )
+    assert.equal(commits, 0)
+    await access(path.join(staged, 'SKILL.md'))
+    await assert.rejects(access(finalDirectory), { code: 'ENOENT' })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('commitManagedSkillRemoval restores the directory when config commit fails', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-remove-'))
+  const managedDirectory = await createTestSkill(
+    path.join(root, 'skills'),
+    'remove-rollback'
+  )
+  const recycledDirectory = path.join(
+    root,
+    'temp',
+    'skill-remove',
+    'operation',
+    'remove-rollback'
+  )
+  const state = { recycled: false, committed: false }
+
+  try {
+    await mkdir(path.dirname(recycledDirectory), { recursive: true })
+    await assert.rejects(
+      commitManagedSkillRemoval(
+        managedDirectory,
+        recycledDirectory,
+        async () => {
+          throw new Error('config commit failed')
+        },
+        state
+      ),
+      /config commit failed/
+    )
+    assert.deepEqual(state, { recycled: false, committed: false })
+    await access(path.join(managedDirectory, 'SKILL.md'))
+    await assert.rejects(access(recycledDirectory), { code: 'ENOENT' })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('finalizeCommittedSkillRemoval reports cleanup failures as warnings', async () => {
+  const result = await finalizeCommittedSkillRemoval(
+    'removed-skill',
+    'data/temp/skill-remove/operation',
+    new Error('unlock failed'),
+    async () => {
+      throw new Error('recycle cleanup failed')
+    }
+  )
+
+  assert.equal(result.removed, true)
+  assert.equal(result.warnings.length, 2)
+  assert.match(result.warnings[0] ?? '', /unlock failed/)
+  assert.match(result.warnings[1] ?? '', /recycle cleanup failed/)
+  assert.match(result.warnings[1] ?? '', /data\/temp\/skill-remove\/operation/)
 })
 
 test('SkillLibrary applies the configured resource file limit', async () => {
@@ -470,7 +607,10 @@ test('SkillLibrary bootstraps existing managed skills as enabled', async () => {
         enabled: true,
       },
     })
-    assert.equal(await library.remove('managed-skill'), true)
+    assert.deepEqual(await library.remove('managed-skill'), {
+      removed: true,
+      warnings: [],
+    })
     await assert.rejects(access(managedDirectory))
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -526,7 +666,10 @@ test('SkillLibrary reloads manual registry edits and isolates invalid entries', 
     assert.equal((await library.list()).skills[0]?.enabled, false)
     assert.equal((await library.createCatalogSnapshot()).size, 0)
 
-    assert.equal(await library.remove('missing-skill'), true)
+    assert.deepEqual(await library.remove('missing-skill'), {
+      removed: true,
+      warnings: [],
+    })
     assert.equal((await library.list()).issues.length, 0)
   } finally {
     await rm(root, { recursive: true, force: true })
