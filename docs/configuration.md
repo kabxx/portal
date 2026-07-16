@@ -51,7 +51,10 @@ absolute or relative; relative values resolve from portal's working directory.
 When the file is created, portal checks common Edge, Chrome, Chromium, Brave,
 Vivaldi, Opera, Opera GX, and Arc locations for the current operating system,
 including macOS application bundles and Linux PATH entries. The remote debugging
-port must be an integer from `1` to `65535`. The CLI options
+port must be an integer from `0` to `65535`. A nonzero value is used exactly;
+if that port is occupied, browser startup fails rather than choosing another
+port. `0` asks Chromium to choose an available port for that run and does not
+rewrite the configuration file. The CLI options
 `--browser-engine`, `--browser-executable-path`, and
 `--browser-remote-debugging-port` take precedence over the corresponding file
 values for one run.

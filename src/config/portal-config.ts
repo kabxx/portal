@@ -394,11 +394,11 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
   }
   if (
     !Number.isSafeInteger(browser.remoteDebuggingPort) ||
-    (browser.remoteDebuggingPort as number) <= 0 ||
+    (browser.remoteDebuggingPort as number) < 0 ||
     (browser.remoteDebuggingPort as number) > 65_535
   ) {
     throw new PortalConfigError(
-      'browser.remoteDebuggingPort must be an integer from 1 to 65535'
+      'browser.remoteDebuggingPort must be an integer from 0 to 65535'
     )
   }
 
@@ -1122,7 +1122,10 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
       ['engine', 'Browser automation engine. Currently only chromium.'],
       ['executablePath', 'Path to the browser executable.'],
       ['profilePath', 'Directory that stores the dedicated browser profile.'],
-      ['remoteDebuggingPort', 'Local CDP port used to control the browser.'],
+      [
+        'remoteDebuggingPort',
+        'Local CDP port used to control the browser. Use 0 for a dynamic port.',
+      ],
     ]
   )
   commentMap(
