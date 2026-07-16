@@ -1,18 +1,61 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import type { Page } from 'playwright'
 
 import { ClaudeAdapter } from '../../../src/providers/adapters/adapter-claude.ts'
+import { isProviderAdapterError } from '../../../src/providers/adapters/adapter-base.ts'
+import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 const MODEL_SELECTOR = '[role="menuitemradio"][data-trigger-disabled]:visible'
 const EFFORT_SELECTOR =
   '[role="menuitemradio"][data-testid^="effort-option-"]:visible'
 const ANY_RADIO_SELECTOR = `${MODEL_SELECTOR}, ${EFFORT_SELECTOR}`
+const INPUT_SELECTOR = '[data-testid="chat-input"]'
+const COMPOSER_ROOT_SELECTOR =
+  'xpath=ancestor::div[.//input[@data-testid="file-upload"] and .//*[@data-testid="model-selector-dropdown"]][1]'
+
+interface TestLocator {
+  count(): Promise<number>
+  first(): TestLocator
+  last(): TestLocator
+  nth(index: number): TestLocator
+  filter(options: { has?: TestLocator; hasNot?: TestLocator }): TestLocator
+  locator(selector: string): TestLocator
+  isVisible(): Promise<boolean>
+  isEnabled(): Promise<boolean>
+  click(): Promise<void>
+  focus(): Promise<void>
+  getAttribute(name: string): Promise<string | null>
+  innerText(): Promise<string>
+  setInputFiles(paths: string[]): Promise<void>
+}
+
+interface TestPage {
+  keyboard: {
+    press(key: string): Promise<void>
+  }
+  url(): string
+  locator(selector: string): TestLocator
+  getByRole(
+    role: string,
+    options: { name: string; exact: boolean }
+  ): TestLocator
+}
+
+class ClaudeAdapterHarness extends ClaudeAdapter {
+  public constructor(page: TestPage) {
+    super(createBrowserContextStub())
+    this.page = page as unknown as Page
+  }
+
+  protected override getRestoreTimeoutMs(): number {
+    return 1000
+  }
+}
 
 test('ClaudeAdapter changes only selectable models and effort levels', async () => {
-  const adapter = Object.create(ClaudeAdapter.prototype) as any
   const page = createClaudeModelPage()
-  adapter.page = page
-  adapter.getRestoreTimeoutMs = () => 1000
+  const adapter = new ClaudeAdapterHarness(page)
 
   await adapter.changeModel('2+2')
 
@@ -23,10 +66,8 @@ test('ClaudeAdapter changes only selectable models and effort levels', async () 
 })
 
 test('ClaudeAdapter changes models when effort controls are unavailable', async () => {
-  const adapter = Object.create(ClaudeAdapter.prototype) as any
   const page = createClaudeModelPage({ hasEffort: false })
-  adapter.page = page
-  adapter.getRestoreTimeoutMs = () => 1000
+  const adapter = new ClaudeAdapterHarness(page)
 
   await adapter.changeModel('2')
 
@@ -34,56 +75,39 @@ test('ClaudeAdapter changes models when effort controls are unavailable', async 
 })
 
 test('ClaudeAdapter closes model menus when selection fails', async () => {
-  const adapter = Object.create(ClaudeAdapter.prototype) as any
-  adapter.page = createClaudeModelPage()
-  adapter.getRestoreTimeoutMs = () => 1000
-  let closeCalls = 0
-  adapter.closeModelMenus = async () => {
-    closeCalls += 1
-  }
+  const page = createClaudeModelPage()
+  const adapter = new ClaudeAdapterHarness(page)
 
   await assert.rejects(adapter.changeModel('3'), /does not have model 3/)
 
-  assert.equal(closeCalls, 1)
+  assert.equal(page.escapePresses, 1)
 })
 
 test('ClaudeAdapter rejects a model menu that remains expanded', async () => {
-  const adapter = Object.create(ClaudeAdapter.prototype) as any
-  const expanded = { count: async () => 1 }
-  const empty = { count: async () => 0 }
-  adapter.page = {
-    keyboard: { press: async () => undefined },
-    locator: (selector: string) => {
-      if (selector.includes('[aria-expanded="true"]')) return expanded
-      if (selector === '[role="menu"]:visible') {
-        return { filter: () => empty }
-      }
-      return empty
-    },
-  }
+  const page = createClaudeModelPage({ stuckMenus: true })
+  const adapter = new ClaudeAdapterHarness(page)
 
   await assert.rejects(
-    adapter.closeModelMenus(),
+    adapter.changeModel('3'),
     /model menu did not close cleanly/
   )
 })
 
 test('ClaudeAdapter uploads all requested files through the file input', async () => {
-  const adapter = Object.create(ClaudeAdapter.prototype) as any
   const uploads: string[][] = []
-  const input = {
+  const input = createLocator({
     count: async () => 1,
-    first: () => input,
-    setInputFiles: async (paths: string[]) => {
+    setInputFiles: async (paths) => {
       uploads.push(paths)
     },
-  }
-  adapter.page = {
-    locator: (selector: string) => {
+  })
+  const page = createPage({
+    locator: (selector) => {
       assert.equal(selector, 'input[data-testid="file-upload"]')
       return input
     },
-  }
+  })
+  const adapter = new ClaudeAdapterHarness(page)
 
   await adapter.attachFile(['C:/tmp/one.txt', 'C:/tmp/two.png'])
 
@@ -91,20 +115,18 @@ test('ClaudeAdapter uploads all requested files through the file input', async (
 })
 
 test('ClaudeAdapter reports login only when the composer is ready', async () => {
-  const adapter = Object.create(ClaudeAdapter.prototype) as any
-  adapter.isComposerReady = async () => true
-  adapter.isLoginPageVisible = async () => false
+  const page = createClaudeLoginPage()
+  const adapter = new ClaudeAdapterHarness(page)
+
   assert.equal(await adapter.isLoggedIn(), true)
 
-  adapter.isLoginPageVisible = async () => true
+  page.loginVisible = true
   assert.equal(await adapter.isLoggedIn(), false)
 })
 
 test('ClaudeAdapter reads and idempotently changes web_search', async () => {
-  const adapter = Object.create(ClaudeAdapter.prototype) as any
   const page = createClaudeCapabilityPage()
-  adapter.page = page
-  adapter.getComposerRoot = () => page.root
+  const adapter = new ClaudeAdapterHarness(page)
 
   assert.equal(await adapter.hasToggleCapability('web_search'), true)
   assert.equal(page.open, false)
@@ -122,6 +144,31 @@ test('ClaudeAdapter reads and idempotently changes web_search', async () => {
   assert.equal(page.open, false)
 })
 
+test('ClaudeAdapter rejects unsupported toggle capabilities before opening tools', async () => {
+  const page = createClaudeCapabilityPage()
+  const adapter = new ClaudeAdapterHarness(page)
+
+  assert.equal(await adapter.hasToggleCapability('thinking'), false)
+  await assert.rejects(
+    adapter.getToggleState('thinking'),
+    (error: unknown) =>
+      isProviderAdapterError(error) &&
+      error.kind === 'unsupported' &&
+      error.action === 'webSearchStatus' &&
+      error.detailCode === null
+  )
+  await assert.rejects(
+    adapter.setToggleState('thinking', 'on'),
+    (error: unknown) =>
+      isProviderAdapterError(error) &&
+      error.kind === 'unsupported' &&
+      error.action === 'webSearchSet' &&
+      error.detailCode === null
+  )
+  assert.equal(page.open, false)
+  assert.equal(page.itemClicks, 0)
+})
+
 test('ClaudeAdapter hides disabled or ambiguous web_search controls', async () => {
   for (const options of [
     { enabled: false },
@@ -129,10 +176,8 @@ test('ClaudeAdapter hides disabled or ambiguous web_search controls', async () =
     { triggerCount: 2 },
     { itemCount: 2 },
   ]) {
-    const adapter = Object.create(ClaudeAdapter.prototype) as any
     const page = createClaudeCapabilityPage(options)
-    adapter.page = page
-    adapter.getComposerRoot = () => page.root
+    const adapter = new ClaudeAdapterHarness(page)
 
     assert.equal(await adapter.hasToggleCapability('web_search'), false)
     assert.equal(page.open, false)
@@ -140,41 +185,70 @@ test('ClaudeAdapter hides disabled or ambiguous web_search controls', async () =
 })
 
 test('ClaudeAdapter rejects invalid web_search checkbox state and closes the menu', async () => {
-  const adapter = Object.create(ClaudeAdapter.prototype) as any
   const page = createClaudeCapabilityPage({ checked: null })
-  adapter.page = page
-  adapter.getComposerRoot = () => page.root
+  const adapter = new ClaudeAdapterHarness(page)
 
   await assert.rejects(
     adapter.getToggleState('web_search'),
-    (error: any) => error.detailCode === 'claude_web_search_state_invalid'
+    (error: unknown) =>
+      isProviderAdapterError(error) &&
+      error.detailCode === 'claude_web_search_state_invalid'
   )
   assert.equal(page.open, false)
 })
 
 test('ClaudeAdapter rejects an unverified web_search change and closes the menu', async () => {
-  const adapter = Object.create(ClaudeAdapter.prototype) as any
   const page = createClaudeCapabilityPage({ applyClick: false })
-  adapter.page = page
-  adapter.getComposerRoot = () => page.root
+  const adapter = new ClaudeAdapterHarness(page)
 
   await assert.rejects(
     adapter.setToggleState('web_search', 'on'),
-    (error: any) => error.detailCode === 'claude_web_search_state_mismatch'
+    (error: unknown) =>
+      isProviderAdapterError(error) &&
+      error.detailCode === 'claude_web_search_state_mismatch'
   )
   assert.equal(page.open, false)
 })
 
-function createClaudeModelPage({ hasEffort = true } = {}) {
-  const page = {
+interface ClaudeModelPageOptions {
+  hasEffort?: boolean
+  stuckMenus?: boolean
+}
+
+interface ClaudeModelPage extends TestPage {
+  selectedModel: number
+  selectedEffort: number
+  readonly queriedSelectors: string[]
+  readonly escapePresses: number
+}
+
+function createClaudeModelPage({
+  hasEffort = true,
+  stuckMenus = false,
+}: ClaudeModelPageOptions = {}): ClaudeModelPage {
+  let modelMenuOpen = false
+  let effortMenuOpen = false
+  let escapePresses = 0
+  const page: ClaudeModelPage = {
     selectedModel: 0,
     selectedEffort: 0,
-    queriedSelectors: [] as string[],
+    queriedSelectors: [],
+    get escapePresses() {
+      return escapePresses
+    },
     url: () => 'https://claude.ai/new',
     keyboard: {
-      press: async () => undefined,
+      press: async (key) => {
+        assert.equal(key, 'Escape')
+        escapePresses += 1
+        if (!stuckMenus) {
+          modelMenuOpen = false
+          effortMenuOpen = false
+        }
+      },
     },
-    locator: (selector: string): any => {
+    getByRole: () => createLocator(),
+    locator: (selector) => {
       if (selector === 'button[data-testid="model-selector-dropdown"]') {
         return firstLocator(modelTrigger)
       }
@@ -191,144 +265,197 @@ function createClaudeModelPage({ hasEffort = true } = {}) {
         return anyRadioCollection
       }
       if (selector === '[role="menu"]:visible') {
-        return {
-          filter: ({ has }: { has: any }) => {
+        return createLocator({
+          filter: ({ has }) => {
             if (has === modelCollection) {
-              return {
+              return createLocator({
                 first: () => mainMenu,
-                count: async () => 1,
-              }
+                count: async () => (modelMenuOpen ? 1 : 0),
+              })
             }
             if (has === anyRadioCollection) {
-              return emptyLocator()
+              return createLocator({
+                count: async () => (modelMenuOpen || effortMenuOpen ? 1 : 0),
+              })
             }
-            return {
+            return createLocator({
               last: () => effortMenu,
-              count: async () => (hasEffort ? 1 : 0),
-            }
+              count: async () => (effortMenuOpen ? 1 : 0),
+            })
           },
-        }
+        })
+      }
+      if (selector === '[data-base-ui-inert]') {
+        return createLocator({
+          count: async () => (modelMenuOpen || effortMenuOpen ? 1 : 0),
+        })
       }
       if (
-        selector === '[data-base-ui-inert]' ||
         selector ===
-          'button[data-testid="model-selector-dropdown"][aria-expanded="true"]' ||
-        selector === '[data-testid="effort-menu-trigger"]:visible'
+        'button[data-testid="model-selector-dropdown"][aria-expanded="true"]'
       ) {
-        return emptyLocator()
+        return createLocator({
+          count: async () => (modelMenuOpen ? 1 : 0),
+        })
+      }
+      if (selector === '[data-testid="effort-menu-trigger"]:visible') {
+        return createLocator({
+          count: async () => (hasEffort ? 1 : 0),
+        })
       }
       throw new Error(`Unexpected page selector: ${selector}`)
     },
   }
 
-  const modelItems = ['Sonnet', 'Haiku'].map((name, index) => ({
-    innerText: async () => name,
-    getAttribute: async (attribute: string) =>
-      attribute === 'aria-checked' && page.selectedModel === index
-        ? 'true'
-        : 'false',
-    click: async () => {
-      page.selectedModel = index
-    },
-  }))
-  const effortItems = ['Low', 'Medium'].map((name, index) => ({
-    innerText: async () => name,
-    getAttribute: async (attribute: string) =>
-      attribute === 'aria-checked' && page.selectedEffort === index
-        ? 'true'
-        : 'false',
-    click: async () => {
-      page.selectedEffort = index
-    },
-  }))
+  const modelItems = ['Sonnet', 'Haiku'].map((name, index) =>
+    createLocator({
+      innerText: async () => name,
+      getAttribute: async (attribute) =>
+        attribute === 'aria-checked' && page.selectedModel === index
+          ? 'true'
+          : 'false',
+      click: async () => {
+        page.selectedModel = index
+      },
+    })
+  )
+  const effortItems = ['Low', 'Medium'].map((name, index) =>
+    createLocator({
+      innerText: async () => name,
+      getAttribute: async (attribute) =>
+        attribute === 'aria-checked' && page.selectedEffort === index
+          ? 'true'
+          : 'false',
+      click: async () => {
+        page.selectedEffort = index
+      },
+    })
+  )
   const modelCollection = collection(modelItems)
   const effortCollection = collection(effortItems)
-  const anyRadioCollection = emptyLocator()
-  const mainMenu = {
-    locator: (selector: string) => {
+  const anyRadioCollection = createLocator()
+  const mainMenu = createLocator({
+    locator: (selector) => {
       page.queriedSelectors.push(selector)
       if (selector === MODEL_SELECTOR) return modelCollection
       if (
         selector ===
         '[role="menuitem"][aria-haspopup="menu"]:not([data-testid="effort-menu-trigger"])'
       ) {
-        return firstLocator({ isVisible: async () => false })
+        return firstLocator(createLocator({ isVisible: async () => false }))
       }
       throw new Error(`Unexpected main menu selector: ${selector}`)
     },
-  }
-  const effortMenu = {
-    locator: (selector: string) => {
+  })
+  const effortMenu = createLocator({
+    locator: (selector) => {
       page.queriedSelectors.push(selector)
       assert.equal(selector, EFFORT_SELECTOR)
       return effortCollection
     },
-  }
-  const modelTrigger = {
+  })
+  const modelTrigger = createLocator({
     isVisible: async () => true,
     isEnabled: async () => true,
-    click: async () => undefined,
-  }
-  const effortTrigger = {
+    click: async () => {
+      modelMenuOpen = true
+    },
+  })
+  const effortTrigger = createLocator({
     isVisible: async () => true,
-    click: async () => undefined,
-    locator: (selector: string) => {
+    click: async () => {
+      effortMenuOpen = true
+    },
+    locator: (selector) => {
       assert.equal(selector, 'xpath=ancestor::*[@role="menu"][1]')
       return firstLocator(mainMenu)
+    },
+  })
+  return page
+}
+
+interface ClaudeLoginPage extends TestPage {
+  loginVisible: boolean
+}
+
+function createClaudeLoginPage(): ClaudeLoginPage {
+  const input = createLocator({
+    isVisible: async () => true,
+    getAttribute: async (name) => (name === 'contenteditable' ? 'true' : null),
+  })
+  const page: ClaudeLoginPage = {
+    loginVisible: false,
+    url: () => 'https://claude.ai/new',
+    keyboard: { press: async () => undefined },
+    getByRole: () => createLocator(),
+    locator: (selector) => {
+      if (selector === INPUT_SELECTOR) return firstLocator(input)
+      if (selector === '[data-testid="email"], [data-testid="continue"]') {
+        return firstLocator(
+          createLocator({ isVisible: async () => page.loginVisible })
+        )
+      }
+      throw new Error(`Unexpected login selector: ${selector}`)
     },
   }
   return page
 }
 
-function collection(items: any[]) {
-  return {
+function collection(items: readonly TestLocator[]): TestLocator {
+  return createLocator({
     count: async () => items.length,
-    nth: (index: number) => items[index],
-  }
+    nth: (index) => items[index] ?? createLocator(),
+  })
 }
 
-function firstLocator(target: any) {
-  return {
-    first: () => target,
-  }
+function firstLocator(target: TestLocator): TestLocator {
+  return createLocator({ first: () => target })
 }
 
-function emptyLocator() {
-  return {
-    count: async () => 0,
-  }
+function missingLocator(): TestLocator {
+  return createLocator({ isVisible: async () => false })
 }
 
-function missingLocator() {
-  return {
-    isVisible: async () => false,
-  }
+interface ClaudeCapabilityPageOptions {
+  triggerCount?: number
+  itemCount?: number
+  enabled?: boolean
+  disabled?: boolean
+  checked?: string | null
+  applyClick?: boolean
 }
 
-function createClaudeCapabilityPage({
-  triggerCount = 1,
-  itemCount = 1,
-  enabled = true,
-  disabled = false,
-  checked = 'false' as string | null,
-  applyClick = true,
-} = {}) {
+interface ClaudeCapabilityPage extends TestPage {
+  readonly open: boolean
+  readonly state: 'on' | 'off'
+  readonly itemClicks: number
+}
+
+function createClaudeCapabilityPage(
+  options: ClaudeCapabilityPageOptions = {}
+): ClaudeCapabilityPage {
+  const triggerCount = options.triggerCount ?? 1
+  const itemCount = options.itemCount ?? 1
+  const enabled = options.enabled ?? true
+  const disabled = options.disabled ?? false
+  const checked = options.checked === undefined ? 'false' : options.checked
+  const applyClick = options.applyClick ?? true
   let open = false
   let currentChecked = checked
   let itemClicks = 0
-  const trigger = {
+  const trigger = createLocator({
     isVisible: async () => true,
     isEnabled: async () => true,
-    getAttribute: async (name: string) =>
+    getAttribute: async (name) =>
       name === 'aria-expanded' ? String(open) : null,
     click: async () => {
       open = true
     },
-  }
-  const item = {
+  })
+  const item = createLocator({
     isVisible: async () => true,
     isEnabled: async () => enabled,
-    getAttribute: async (name: string) => {
+    getAttribute: async (name) => {
       if (name === 'aria-disabled') return disabled ? 'true' : null
       if (name === 'aria-checked') return currentChecked
       return null
@@ -340,26 +467,31 @@ function createClaudeCapabilityPage({
       }
       open = false
     },
-  }
-  const triggerCollection = {
+  })
+  const triggerCollection = createLocator({
     count: async () => triggerCount,
     first: () => trigger,
-  }
-  const expandedTriggerCollection = {
+  })
+  const expandedTriggerCollection = createLocator({
     count: async () => (open ? triggerCount : 0),
-  }
-  const itemCollection = {
+  })
+  const itemCollection = createLocator({
     count: async () => (open ? itemCount : 0),
     first: () => item,
-  }
-  const root = {
-    locator: (selector: string) =>
+  })
+  const root = createLocator({
+    locator: (selector) =>
       selector.includes('[aria-expanded="true"]')
         ? expandedTriggerCollection
         : triggerCollection,
-  }
-  const page = {
-    root,
+  })
+  const input = createLocator({
+    locator: (selector) => {
+      assert.equal(selector, COMPOSER_ROOT_SELECTOR)
+      return root
+    },
+  })
+  return {
     get open() {
       return open
     },
@@ -369,21 +501,52 @@ function createClaudeCapabilityPage({
     get itemClicks() {
       return itemClicks
     },
-    getByRole: (role: string, options: { name: string; exact: boolean }) => {
+    url: () => 'https://claude.ai/new',
+    getByRole: (role, roleOptions) => {
       assert.equal(role, 'menuitemcheckbox')
-      assert.deepEqual(options, { name: 'Web search', exact: true })
+      assert.deepEqual(roleOptions, { name: 'Web search', exact: true })
       return itemCollection
     },
-    locator: (selector: string) => {
+    locator: (selector) => {
+      if (selector === INPUT_SELECTOR) return firstLocator(input)
       assert.equal(selector, '[role="menu"]:visible')
-      return { count: async () => (open ? 1 : 0) }
+      return createLocator({ count: async () => (open ? 1 : 0) })
     },
     keyboard: {
-      press: async (key: string) => {
+      press: async (key) => {
         assert.equal(key, 'Escape')
         open = false
       },
     },
   }
-  return page
+}
+
+function createPage(overrides: Partial<TestPage> = {}): TestPage {
+  return {
+    keyboard: { press: async () => undefined },
+    url: () => 'https://claude.ai/new',
+    locator: () => createLocator(),
+    getByRole: () => createLocator(),
+    ...overrides,
+  }
+}
+
+function createLocator(overrides: Partial<TestLocator> = {}): TestLocator {
+  const locator: TestLocator = {
+    count: async () => 0,
+    first: () => locator,
+    last: () => locator,
+    nth: () => locator,
+    filter: () => locator,
+    locator: () => locator,
+    isVisible: async () => false,
+    isEnabled: async () => false,
+    click: async () => undefined,
+    focus: async () => undefined,
+    getAttribute: async () => null,
+    innerText: async () => '',
+    setInputFiles: async () => undefined,
+    ...overrides,
+  }
+  return locator
 }

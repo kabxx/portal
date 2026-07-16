@@ -30,8 +30,40 @@ export function setTestProperty(
   }
 }
 
+class StubProviderAdapter extends ProviderAdapter {
+  public override get conversationId(): string | null {
+    return null
+  }
+
+  public override get conversationUrl(): string {
+    return 'https://example.com/thread'
+  }
+
+  public override async restore(): Promise<void> {}
+
+  public override async isLoggedIn(): Promise<boolean> {
+    return true
+  }
+
+  public override async changeModel(_model: string): Promise<void> {}
+
+  public override async attachText(_text: string): Promise<void> {}
+
+  public override async attachFile(
+    _path: string | readonly string[]
+  ): Promise<void> {}
+
+  public override async attachImage(
+    _path: string | readonly string[]
+  ): Promise<void> {}
+
+  public override async submit(): Promise<string> {
+    return ''
+  }
+}
+
 export function createProviderAdapterStub(): ProviderAdapter {
-  return createPrototypeObject(ProviderAdapter.prototype) as ProviderAdapter
+  return new StubProviderAdapter(createBrowserContextStub())
 }
 
 interface BrowserContextStubOverrides {

@@ -6,61 +6,117 @@ import {
   buildClaudeHistoryResult,
   type ClaudeHistoryCellSnapshot,
 } from '../../../src/providers/adapters/adapter-claude.ts'
+import type { ProviderTimingOptions } from '../../../src/providers/adapters/adapter-base.ts'
+import { createBrowserContextStub } from '../../helpers/fakes.ts'
+
+type ClaudeHistoryAction = 'bottom' | 'previous' | 'current'
+
+interface ClaudeHistoryViewportSnapshot {
+  cells: ClaudeHistoryCellSnapshot[]
+  scrollTop: number
+  scrollHeight: number
+  clientHeight: number
+  atBottom: boolean
+}
+
+class ClaudeHistoryTestAdapter extends ClaudeAdapter {
+  public finishHistoryCaptureCalls = 0
+
+  protected override async init(): Promise<void> {
+    this.page = await this.context.newPage()
+  }
+
+  public override async finishHistoryCapture(): Promise<void> {
+    this.finishHistoryCaptureCalls += 1
+  }
+}
+
+async function createHistoryAdapter(
+  readHistoryViewport: (
+    action: ClaudeHistoryAction
+  ) => ClaudeHistoryViewportSnapshot,
+  historyLoadTimeoutMs: number,
+  historyPageTimeoutMs: number
+): Promise<ClaudeHistoryTestAdapter> {
+  const page = {
+    evaluate: (
+      _pageFunction: unknown,
+      action: ClaudeHistoryAction
+    ): Promise<ClaudeHistoryViewportSnapshot> =>
+      Promise.resolve(readHistoryViewport(action)),
+  }
+  return await ClaudeHistoryTestAdapter.create(
+    createBrowserContextStub({ newPage: async () => page }),
+    {
+      timings: historyTimings(historyLoadTimeoutMs, historyPageTimeoutMs),
+    }
+  )
+}
+
+function historyTimings(
+  historyLoadTimeoutMs: number,
+  historyPageTimeoutMs: number
+): ProviderTimingOptions {
+  return {
+    requestStartWarningAfterMs: 1,
+    blockedWarningIntervalMs: 1,
+    responseStartTimeoutMs: 1,
+    responseStallTimeoutMs: 1,
+    restoreTimeoutMs: 1,
+    historyLoadTimeoutMs,
+    historyPageTimeoutMs,
+  }
+}
 
 test('Claude history waits for delayed virtual cells before collecting', async () => {
-  const adapter = Object.create(ClaudeAdapter.prototype) as any
   let bottomCalls = 0
-  let captureFinished = false
   const loadedCell = cell(0, [
     user('Question'),
     assistant('Answer', '<p>Answer</p>'),
   ])
-  adapter.conversationIdVal = 'conversation-1'
-  adapter.getHistoryLoadTimeoutMs = () => 2000
-  adapter.getHistoryPageTimeoutMs = () => 400
-  adapter.finishHistoryCapture = async () => {
-    captureFinished = true
-  }
-  adapter.readHistoryViewport = async (action: string) => {
-    if (action === 'bottom') bottomCalls += 1
-    const ready = action !== 'bottom' || bottomCalls > 1
-    return {
-      cells: ready ? [loadedCell] : [],
-      scrollTop: 0,
-      scrollHeight: ready ? 100 : 0,
-      clientHeight: ready ? 100 : 0,
-      atBottom: ready,
-    }
-  }
+  const adapter = await createHistoryAdapter(
+    (action) => {
+      if (action === 'bottom') bottomCalls += 1
+      const ready = action !== 'bottom' || bottomCalls > 1
+      return {
+        cells: ready ? [loadedCell] : [],
+        scrollTop: 0,
+        scrollHeight: ready ? 100 : 0,
+        clientHeight: ready ? 100 : 0,
+        atBottom: ready,
+      }
+    },
+    2000,
+    400
+  )
 
   const result = await adapter.loadHistory()
 
   assert.equal(result.complete, true)
   assert.equal(result.messages.length, 2)
   assert.ok(bottomCalls >= 5)
-  assert.equal(captureFinished, true)
+  assert.equal(adapter.finishHistoryCaptureCalls, 1)
 })
 
 test('Claude history keeps watching a nonempty bottom for a delayed terminal cell', async () => {
-  const adapter = Object.create(ClaudeAdapter.prototype) as any
   const firstCell = cell(0, [user('Question')])
   const secondCell = cell(1, [assistant('Answer', '<p>Answer</p>')])
   let bottomCalls = 0
-  adapter.conversationIdVal = 'conversation-1'
-  adapter.getHistoryLoadTimeoutMs = () => 2000
-  adapter.getHistoryPageTimeoutMs = () => 750
-  adapter.finishHistoryCapture = async () => undefined
-  adapter.readHistoryViewport = async (action: string) => {
-    if (action === 'bottom') bottomCalls += 1
-    const cells = bottomCalls >= 6 ? [firstCell, secondCell] : [firstCell]
-    return {
-      cells,
-      scrollTop: 0,
-      scrollHeight: 100,
-      clientHeight: 100,
-      atBottom: true,
-    }
-  }
+  const adapter = await createHistoryAdapter(
+    (action) => {
+      if (action === 'bottom') bottomCalls += 1
+      const cells = bottomCalls >= 6 ? [firstCell, secondCell] : [firstCell]
+      return {
+        cells,
+        scrollTop: 0,
+        scrollHeight: 100,
+        clientHeight: 100,
+        atBottom: true,
+      }
+    },
+    2000,
+    750
+  )
 
   const result = await adapter.loadHistory()
 
@@ -70,26 +126,27 @@ test('Claude history keeps watching a nonempty bottom for a delayed terminal cel
 })
 
 test('Claude history waits for virtual cells to update after scrolling', async () => {
-  const adapter = Object.create(ClaudeAdapter.prototype) as any
   const firstCell = cell(0, [user('Question')])
   const secondCell = cell(1, [assistant('Answer', '<p>Answer</p>')])
   let scrolled = false
-  adapter.conversationIdVal = 'conversation-1'
-  adapter.getHistoryLoadTimeoutMs = () => 2000
-  adapter.getHistoryPageTimeoutMs = () => 500
-  adapter.finishHistoryCapture = async () => undefined
-  adapter.readHistoryViewport = async (action: string) => {
-    if (action === 'previous') scrolled = true
-    const cells =
-      scrolled && action === 'current' ? [firstCell, secondCell] : [secondCell]
-    return {
-      cells,
-      scrollTop: action === 'previous' || scrolled ? 0 : 100,
-      scrollHeight: 200,
-      clientHeight: 100,
-      atBottom: action === 'bottom',
-    }
-  }
+  const adapter = await createHistoryAdapter(
+    (action) => {
+      if (action === 'previous') scrolled = true
+      const cells =
+        scrolled && action === 'current'
+          ? [firstCell, secondCell]
+          : [secondCell]
+      return {
+        cells,
+        scrollTop: action === 'previous' || scrolled ? 0 : 100,
+        scrollHeight: 200,
+        clientHeight: 100,
+        atBottom: action === 'bottom',
+      }
+    },
+    2000,
+    500
+  )
 
   const result = await adapter.loadHistory()
 

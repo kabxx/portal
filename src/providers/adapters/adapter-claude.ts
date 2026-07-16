@@ -57,7 +57,6 @@ interface ClaudeCompletionCapture {
   finished: boolean
 }
 
-export type ClaudeToggleCapability = 'web_search'
 export type ClaudeToggleState = 'on' | 'off'
 
 export interface ClaudeHistoryArticleSnapshot {
@@ -183,9 +182,7 @@ export class ClaudeAdapter extends ProviderAdapter {
     return (await this.isComposerReady()) && !(await this.isLoginPageVisible())
   }
 
-  public async hasToggleCapability(
-    capability: ClaudeToggleCapability
-  ): Promise<boolean> {
+  public async hasToggleCapability(capability: string): Promise<boolean> {
     if (capability !== 'web_search') return false
     return await this.wrapAdapterActionErrorAsync(
       'webSearchAvailable',
@@ -200,9 +197,7 @@ export class ClaudeAdapter extends ProviderAdapter {
     )
   }
 
-  public async getToggleState(
-    capability: ClaudeToggleCapability
-  ): Promise<ClaudeToggleState> {
+  public async getToggleState(capability: string): Promise<ClaudeToggleState> {
     if (capability !== 'web_search') {
       throw new ProviderAdapterUnsupportedError(
         'webSearchStatus',
@@ -229,7 +224,7 @@ export class ClaudeAdapter extends ProviderAdapter {
   }
 
   public async setToggleState(
-    capability: ClaudeToggleCapability,
+    capability: string,
     targetState: ClaudeToggleState
   ): Promise<ClaudeToggleState> {
     if (capability !== 'web_search') {

@@ -18,7 +18,7 @@ import { latestTimelineEntry } from '../../helpers/ui.ts'
 import type { SkillLibrary } from '../../../src/skills/skill-library.ts'
 import type { McpLibrary } from '../../../src/mcp/mcp-library.ts'
 
-type ToggleCapability = 'thinking' | 'search' | 'advanced_search'
+type ToggleCapability = 'thinking' | 'search' | 'advanced_search' | 'web_search'
 type ToggleState = 'on' | 'off'
 type ActionCapabilityState =
   | 'available'
@@ -276,7 +276,7 @@ test('ThreadCommand capability lists and executes Claude web_search toggle', asy
   const { context, threadManager, ui } = createCommandContext()
   let state: 'on' | 'off' = 'off'
   const setCalls: string[] = []
-  const adapter = {
+  const adapter: CapabilityAdapterOverrides = {
     hasToggleCapability: async (name: string) => name === 'web_search',
     getToggleState: async () => state,
     setToggleState: async (_name: string, target: 'on' | 'off') => {
@@ -288,7 +288,7 @@ test('ThreadCommand capability lists and executes Claude web_search toggle', asy
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'claude',
-    runtime: createFakeRuntime({ adapter: adapter as any }),
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
     createdAt: 1,
   })
 
@@ -324,11 +324,11 @@ test('ThreadCommand capability handles unavailable Claude web_search adapters', 
     id: unavailable.threadManager.createThreadId(),
     provider: 'claude',
     runtime: createFakeRuntime({
-      adapter: {
+      adapter: createCapabilityAdapter({
         hasToggleCapability: async () => false,
         getToggleState: async () => 'off',
         setToggleState: async () => 'off',
-      } as any,
+      }),
     }),
     createdAt: 1,
   })
@@ -343,7 +343,7 @@ test('ThreadCommand capability handles unavailable Claude web_search adapters', 
   missing.threadManager.addThread({
     id: missing.threadManager.createThreadId(),
     provider: 'claude',
-    runtime: createFakeRuntime({ adapter: {} as any }),
+    runtime: createFakeRuntime({ adapter: createProviderAdapterStub() }),
     createdAt: 1,
   })
   await executeCapability(missing.context, ['web_search', 'status'])
