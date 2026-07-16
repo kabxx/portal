@@ -47,16 +47,12 @@ test('ensurePortalConfig creates one YAML file with concrete defaults', async ()
       claude: { global: false, local: false },
       codex: { global: false, local: false },
     })
-    assert.deepEqual(defaults.api, {
-      host: '127.0.0.1',
-      port: 8787,
-      token: null,
+    assert.deepEqual(defaults.listeners, {
+      api: { host: '127.0.0.1', port: 8787, token: null },
+      mcp: { host: '127.0.0.1', port: 8788, token: null },
     })
-    assert.deepEqual(defaults.mcpServer, {
-      host: '127.0.0.1',
-      port: 8788,
-      token: null,
-    })
+    assert.deepEqual(defaults.mcpServers, {})
+    assert.deepEqual(defaults.skills, {})
     assert.deepEqual(defaults.advanced, createDefaultAdvancedConfig())
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -78,10 +74,8 @@ test('readPortalConfig parses YAML and strips a UTF-8 BOM', async () => {
         `  executablePath: ${JSON.stringify(executablePath)}`,
         `  profilePath: ${JSON.stringify(profilePath)}`,
         '  remoteDebuggingPort: 9222',
-        'mcp:',
-        '  connectionStrategy: per-thread',
-        '  servers: {}',
-        'skills: []',
+        'mcpServers: {}',
+        'skills: {}',
         '',
       ].join('\n'),
       'utf8'
@@ -98,10 +92,12 @@ test('readPortalConfig parses YAML and strips a UTF-8 BOM', async () => {
         claude: { global: false, local: false },
         codex: { global: false, local: false },
       },
-      api: { host: '127.0.0.1', port: 8787, token: null },
-      mcpServer: { host: '127.0.0.1', port: 8788, token: null },
-      mcp: { connectionStrategy: 'per-thread', servers: {} },
-      skills: [],
+      listeners: {
+        api: { host: '127.0.0.1', port: 8787, token: null },
+        mcp: { host: '127.0.0.1', port: 8788, token: null },
+      },
+      mcpServers: {},
+      skills: {},
       hooks: { enabled: false, maxDepth: 1, handlers: [] },
       keybindings: createDefaultKeybindings(),
       advanced: createDefaultAdvancedConfig(),
@@ -288,11 +284,13 @@ test('parsePortalConfig preserves API and MCP Server tokens exactly', () => {
   for (const token of [null, '', '   ', '  secret  ']) {
     const parsed = parsePortalConfig({
       ...valid,
-      api: { ...valid.api, token },
-      mcpServer: { ...valid.mcpServer, token },
+      listeners: {
+        api: { ...valid.listeners.api, token },
+        mcp: { ...valid.listeners.mcp, token },
+      },
     })
-    assert.equal(parsed.api.token, token)
-    assert.equal(parsed.mcpServer.token, token)
+    assert.equal(parsed.listeners.api.token, token)
+    assert.equal(parsed.listeners.mcp.token, token)
   }
 })
 
@@ -322,29 +320,33 @@ test('ensurePortalConfig preserves API and MCP Server tokens on disk', async () 
       configPath,
       stringifyYaml({
         ...defaults,
-        api: { ...defaults.api, token: '  secret  ' },
-        mcpServer: { ...defaults.mcpServer, token: '   ' },
+        listeners: {
+          api: { ...defaults.listeners.api, token: '  secret  ' },
+          mcp: { ...defaults.listeners.mcp, token: '   ' },
+        },
       }),
       'utf8'
     )
     await ensurePortalConfig(configPath, defaults)
     let document = parseYaml(await readFile(configPath, 'utf8'))
-    assert.equal(document.api.token, '  secret  ')
-    assert.equal(document.mcpServer.token, '   ')
+    assert.equal(document.listeners.api.token, '  secret  ')
+    assert.equal(document.listeners.mcp.token, '   ')
 
     await writeFile(
       configPath,
       stringifyYaml({
         ...defaults,
-        api: { ...defaults.api, token: '' },
-        mcpServer: { ...defaults.mcpServer, token: '' },
+        listeners: {
+          api: { ...defaults.listeners.api, token: '' },
+          mcp: { ...defaults.listeners.mcp, token: '' },
+        },
       }),
       'utf8'
     )
     await ensurePortalConfig(configPath, defaults)
     document = parseYaml(await readFile(configPath, 'utf8'))
-    assert.equal(document.api.token, '')
-    assert.equal(document.mcpServer.token, '')
+    assert.equal(document.listeners.api.token, '')
+    assert.equal(document.listeners.mcp.token, '')
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -405,7 +407,45 @@ test('ensurePortalConfig preserves files with unsupported advanced fields', asyn
   }
 })
 
-test('ensurePortalConfig writes a missing API section into an existing config', async () => {
+test('ensurePortalConfig rejects legacy fields and array skills without rewriting', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-legacy-'))
+  const configPath = path.join(root, 'config.yaml')
+  const defaults = createDefaultPortalConfig(root)
+  const cases: Array<{
+    document: Record<string, unknown>
+    message: RegExp
+  }> = [
+    {
+      document: { ...defaults, api: defaults.listeners.api },
+      message: /Unsupported config root fields: api/,
+    },
+    {
+      document: { ...defaults, mcpServer: defaults.listeners.mcp },
+      message: /Unsupported config root fields: mcpServer/,
+    },
+    {
+      document: { ...defaults, mcp: { servers: {} } },
+      message: /Unsupported config root fields: mcp/,
+    },
+    {
+      document: { ...defaults, skills: [] },
+      message: /skills must be an object keyed by name/,
+    },
+  ]
+
+  try {
+    for (const { document, message } of cases) {
+      const contents = stringifyYaml(document)
+      await writeFile(configPath, contents, 'utf8')
+      await assert.rejects(ensurePortalConfig(configPath, defaults), message)
+      assert.equal(await readFile(configPath, 'utf8'), contents)
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('ensurePortalConfig writes a missing listeners section into an existing config', async () => {
   const root = await mkdtemp(
     path.join(os.tmpdir(), 'portal-config-api-migration-')
   )
@@ -413,23 +453,23 @@ test('ensurePortalConfig writes a missing API section into an existing config', 
   const defaults = createDefaultPortalConfig(root)
 
   try {
-    const { api: _api, ...legacyConfig } = defaults
-    await writeFile(configPath, stringifyYaml(legacyConfig), 'utf8')
+    const { listeners: _listeners, ...partialConfig } = defaults
+    await writeFile(configPath, stringifyYaml(partialConfig), 'utf8')
 
     const config = await ensurePortalConfig(configPath, defaults)
     const document = parseYaml(await readFile(configPath, 'utf8'))
 
-    assert.deepEqual(config.api, defaults.api)
-    assert.deepEqual(document.api, defaults.api)
+    assert.deepEqual(config.listeners, defaults.listeners)
+    assert.deepEqual(document.listeners, defaults.listeners)
     assert.deepEqual(document.browser, defaults.browser)
-    assert.deepEqual(document.mcp, defaults.mcp)
+    assert.deepEqual(document.mcpServers, defaults.mcpServers)
     assert.deepEqual(document.skills, defaults.skills)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
 
-test('ensurePortalConfig completes a partial API section without replacing its values', async () => {
+test('ensurePortalConfig completes a partial listener without replacing its values', async () => {
   const root = await mkdtemp(
     path.join(os.tmpdir(), 'portal-config-api-partial-')
   )
@@ -439,14 +479,20 @@ test('ensurePortalConfig completes a partial API section without replacing its v
   try {
     await writeFile(
       configPath,
-      stringifyYaml({ ...defaults, api: { host: 'localhost' } }),
+      stringifyYaml({
+        ...defaults,
+        listeners: {
+          ...defaults.listeners,
+          api: { host: 'localhost' },
+        },
+      }),
       'utf8'
     )
 
     await ensurePortalConfig(configPath, defaults)
     const document = parseYaml(await readFile(configPath, 'utf8'))
 
-    assert.deepEqual(document.api, {
+    assert.deepEqual(document.listeners.api, {
       host: 'localhost',
       port: 8787,
       token: null,
@@ -456,7 +502,7 @@ test('ensurePortalConfig completes a partial API section without replacing its v
   }
 })
 
-test('ensurePortalConfig writes a missing MCP Server section', async () => {
+test('ensurePortalConfig writes a missing MCP listener section', async () => {
   const root = await mkdtemp(
     path.join(os.tmpdir(), 'portal-config-mcp-server-migration-')
   )
@@ -464,14 +510,17 @@ test('ensurePortalConfig writes a missing MCP Server section', async () => {
   const defaults = createDefaultPortalConfig(root)
 
   try {
-    const { mcpServer: _mcpServer, ...legacyConfig } = defaults
-    await writeFile(configPath, stringifyYaml(legacyConfig), 'utf8')
+    const partialConfig = {
+      ...defaults,
+      listeners: { api: defaults.listeners.api },
+    }
+    await writeFile(configPath, stringifyYaml(partialConfig), 'utf8')
 
     const config = await ensurePortalConfig(configPath, defaults)
     const document = parseYaml(await readFile(configPath, 'utf8'))
 
-    assert.deepEqual(config.mcpServer, defaults.mcpServer)
-    assert.deepEqual(document.mcpServer, defaults.mcpServer)
+    assert.deepEqual(config.listeners.mcp, defaults.listeners.mcp)
+    assert.deepEqual(document.listeners.mcp, defaults.listeners.mcp)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -532,12 +581,12 @@ test('parsePortalConfig rejects invalid browser, MCP, and Skill sections', () =>
     /browser\.profilePath must be a non-empty string/
   )
   assert.throws(
-    () => parsePortalConfig({ ...valid, mcp: [] }),
-    /mcp must be an object/
+    () => parsePortalConfig({ ...valid, mcpServers: [] }),
+    /mcpServers must be an object keyed by name/
   )
   assert.throws(
-    () => parsePortalConfig({ ...valid, skills: {} }),
-    /skills must be an array/
+    () => parsePortalConfig({ ...valid, skills: [] }),
+    /skills must be an object keyed by name/
   )
   assert.throws(
     () =>
@@ -602,32 +651,62 @@ test('parsePortalConfig rejects invalid browser, MCP, and Skill sections', () =>
   )
 })
 
-test('parsePortalConfig rejects invalid MCP Server settings', () => {
+test('parsePortalConfig rejects invalid listener settings', () => {
   const valid = createDefaultPortalConfig()
 
   assert.throws(
     () =>
       parsePortalConfig({
         ...valid,
-        mcpServer: { ...valid.mcpServer, host: '' },
+        listeners: {
+          ...valid.listeners,
+          api: { ...valid.listeners.api, host: '   ' },
+        },
       }),
-    /mcpServer\.host must be a non-empty string/
+    /listeners\.api\.host must be a non-empty string/
+  )
+  assert.equal(
+    parsePortalConfig({
+      ...valid,
+      listeners: {
+        ...valid.listeners,
+        mcp: { ...valid.listeners.mcp, host: '   ' },
+      },
+    }).listeners.mcp.host,
+    '   '
   )
   assert.throws(
     () =>
       parsePortalConfig({
         ...valid,
-        mcpServer: { ...valid.mcpServer, port: 0 },
+        listeners: {
+          ...valid.listeners,
+          mcp: { ...valid.listeners.mcp, host: '' },
+        },
       }),
-    /mcpServer\.port must be an integer from 1 to 65535/
+    /listeners\.mcp\.host must be a non-empty string/
   )
   assert.throws(
     () =>
       parsePortalConfig({
         ...valid,
-        mcpServer: { ...valid.mcpServer, token: 123 },
+        listeners: {
+          ...valid.listeners,
+          mcp: { ...valid.listeners.mcp, port: 0 },
+        },
       }),
-    /mcpServer\.token must be a string or null/
+    /listeners\.mcp\.port must be an integer from 1 to 65535/
+  )
+  assert.throws(
+    () =>
+      parsePortalConfig({
+        ...valid,
+        listeners: {
+          ...valid.listeners,
+          mcp: { ...valid.listeners.mcp, token: 123 },
+        },
+      }),
+    /listeners\.mcp\.token must be a string or null/
   )
 })
 
@@ -642,13 +721,10 @@ test('concurrent section updates preserve both MCP and Skill changes', async () 
       updatePortalConfig(
         configPath,
         (config) => {
-          config.mcp = {
-            connectionStrategy: 'per-thread',
-            servers: {
-              example: {
-                transport: 'streamable-http',
-                url: 'https://example.com/mcp',
-              },
+          config.mcpServers = {
+            example: {
+              transport: 'streamable-http',
+              url: 'https://example.com/mcp',
             },
           }
         },
@@ -657,35 +733,30 @@ test('concurrent section updates preserve both MCP and Skill changes', async () 
       updatePortalConfig(
         configPath,
         (config) => {
-          config.skills = [
-            {
-              name: 'example-skill',
+          config.skills = {
+            'example-skill': {
               directory: 'skills/example-skill',
               enabled: true,
             },
-          ]
+          }
         },
         defaults
       ),
     ])
 
     const config = await readPortalConfig(configPath)
-    assert.deepEqual(config?.mcp, {
-      connectionStrategy: 'per-thread',
-      servers: {
-        example: {
-          transport: 'streamable-http',
-          url: 'https://example.com/mcp',
-        },
+    assert.deepEqual(config?.mcpServers, {
+      example: {
+        transport: 'streamable-http',
+        url: 'https://example.com/mcp',
       },
     })
-    assert.deepEqual(config?.skills, [
-      {
-        name: 'example-skill',
+    assert.deepEqual(config?.skills, {
+      'example-skill': {
         directory: 'skills/example-skill',
         enabled: true,
       },
-    ])
+    })
     assert.deepEqual(config?.hooks, defaults.hooks)
   } finally {
     await rm(root, { recursive: true, force: true })
