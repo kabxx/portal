@@ -102,6 +102,31 @@ test('SkillCommand shows subcommand help and validates add arguments', async () 
   assert.match(missingSource, /\/skill add <name> --registry <url>/)
 })
 
+test('SkillCommand reports committed removal cleanup warnings after success', async () => {
+  const ui = new TerminalController()
+  const context = {
+    ui,
+    skillLibrary: {
+      remove: async () => ({
+        removed: true,
+        warnings: ['Temporary cleanup failed at data/temp/skill-remove/test.'],
+      }),
+    },
+  } as unknown as CliCommandContext
+
+  await SkillCommand.execute(context, ['remove', 'warned-skill'])
+
+  const timeline = ui.getState().timeline
+  assert.ok(
+    timeline.some(
+      ({ tone, body }) =>
+        tone === 'success' && /Removed warned-skill/.test(body)
+    )
+  )
+  assert.equal(latestTimelineEntry(ui)?.tone, 'warning')
+  assert.match(latestTimelineEntry(ui)?.body ?? '', /Temporary cleanup failed/)
+})
+
 test('SkillCommand passes a named Hub registry source separately and hides URL secrets', async () => {
   const ui = new TerminalController()
   const registry = new CommandRegistry([SkillCommand])

@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import type { ServerResponse } from 'node:http'
 import { isBearerAuthenticationEnabled } from '../shared/http-auth.ts'
+import { normalizeListenerStartError } from '../shared/listener-errors.ts'
 import {
   ApiHttpError,
   mapApiError,
@@ -173,11 +174,11 @@ export class ApiEventHub {
 export class PortalApiServer {
   private fastify: FastifyInstance | null = null
   private readonly events: ApiEventHub
+  private lifecycleTail: Promise<void> = Promise.resolve()
   private started = false
 
   public constructor(private readonly options: ApiServerOptions) {
     this.events = new ApiEventHub(options.sseHeartbeatMs)
-    this.fastify = this.createFastify()
   }
 
   public get eventHub(): ApiEventHub {
@@ -200,31 +201,45 @@ export class PortalApiServer {
     }
   }
 
-  public async start(): Promise<void> {
-    if (this.started) {
-      return
-    }
-    const fastify = this.fastify ?? this.createFastify()
-    this.fastify = fastify
-    await fastify.listen({
-      host: this.options.host,
-      port: this.options.port,
+  public start(): Promise<void> {
+    return this.enqueueLifecycle(async () => {
+      if (this.started) {
+        return
+      }
+      const candidate = this.createFastify()
+      try {
+        await candidate.listen({
+          host: this.options.host,
+          port: this.options.port,
+        })
+      } catch (error) {
+        await candidate.close().catch(() => {})
+        throw normalizeListenerStartError(
+          error,
+          'HTTP API',
+          this.options.host,
+          this.options.port
+        )
+      }
+      this.fastify = candidate
+      this.started = true
     })
-    this.started = true
   }
 
-  public async stop(): Promise<void> {
-    if (!this.started || this.fastify === null) {
-      return
-    }
-    this.events.close()
-    const fastify = this.fastify
-    try {
-      await fastify.close()
-    } finally {
-      this.fastify = null
-      this.started = false
-    }
+  public stop(): Promise<void> {
+    return this.enqueueLifecycle(async () => {
+      if (!this.started || this.fastify === null) {
+        return
+      }
+      this.events.close()
+      const fastify = this.fastify
+      try {
+        await fastify.close()
+      } finally {
+        this.fastify = null
+        this.started = false
+      }
+    })
   }
 
   public address(): string | null {
@@ -250,6 +265,12 @@ export class PortalApiServer {
     })
     this.registerRoutes(fastify)
     return fastify
+  }
+
+  private enqueueLifecycle(operation: () => Promise<void>): Promise<void> {
+    const result = this.lifecycleTail.then(operation)
+    this.lifecycleTail = result.catch(() => {})
+    return result
   }
 
   private registerRoutes(fastify: FastifyInstance): void {

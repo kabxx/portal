@@ -312,15 +312,19 @@ async function removeSkill(
     return { continue: true }
   }
   try {
-    if (!(await context.skillLibrary.remove(name))) {
+    const result = await context.skillLibrary.remove(name)
+    if (!result.removed) {
       context.ui.renderWarning('/skill remove', `Unknown skill: ${name}`)
       return { continue: true }
+    }
+    context.ui.renderSuccess('/skill remove', `Removed ${name}.`)
+    if (result.warnings.length > 0) {
+      context.ui.renderWarning('/skill remove', result.warnings)
     }
   } catch (error) {
     context.ui.renderError('/skill remove', getErrorMessage(error))
     return { continue: true }
   }
-  context.ui.renderSuccess('/skill remove', `Removed ${name}.`)
   return { continue: true }
 }
 

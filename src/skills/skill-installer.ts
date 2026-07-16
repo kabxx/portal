@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { cp, mkdir, readdir, rm, stat } from 'fs/promises'
+import { cp, mkdir, rm, stat } from 'fs/promises'
 import path from 'path'
 import type { AbortOptions } from '../runtime/runtime-cancellation.ts'
 import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
@@ -17,7 +17,6 @@ import {
   findSkillCandidates,
   inspectSkillTree,
   listSkillResources,
-  pathExists,
   SkillInstallError,
 } from './skill-files.ts'
 import {
@@ -41,8 +40,15 @@ export interface SkillAddOptions {
 
 export interface SkillInstallOptions extends AbortOptions, SkillAddOptions {}
 
-export interface InstalledSkill extends AddedSkill {
+export interface PreparedSkill extends AddedSkill {
   managed: boolean
+  stagedDirectory: string | null
+  finalDirectory: string
+}
+
+export interface PreparedSkillBatch {
+  skills: readonly PreparedSkill[]
+  cleanup(): Promise<void>
 }
 
 interface PreparedSkillSource {
@@ -57,10 +63,10 @@ export class SkillInstaller {
     private readonly policy: SkillPolicy = DEFAULT_SKILL_POLICY
   ) {}
 
-  public async install(
+  public async prepare(
     source: string,
     options: SkillInstallOptions = {}
-  ): Promise<InstalledSkill[]> {
+  ): Promise<PreparedSkillBatch> {
     const normalizedSource = source.trim()
     if (normalizedSource === '') {
       throw new SkillInstallError('Skill source is empty')
@@ -73,7 +79,10 @@ export class SkillInstaller {
     const remoteUrl =
       registryUrl === null ? parseSkillUrl(normalizedSource) : null
     if (registryUrl === null && remoteUrl === null) {
-      return await this.inspectLocalSource(normalizedSource, options)
+      return {
+        skills: await this.inspectLocalSource(normalizedSource, options),
+        cleanup: async () => {},
+      }
     }
 
     const operationDirectory = path.join(this.tempDirectory, randomUUID())
@@ -109,24 +118,31 @@ export class SkillInstaller {
         preparedSource.requestedSubdirectory,
         options.signal
       )
-      return await this.commitCandidates(
+      const skills = await this.prepareCandidates(
         candidates,
         preparedSource.directory,
         operationDirectory,
         true,
         options.signal
       )
-    } finally {
+      return {
+        skills,
+        cleanup: async () => {
+          await rm(operationDirectory, { recursive: true, force: true })
+        },
+      }
+    } catch (error) {
       await rm(operationDirectory, { recursive: true, force: true }).catch(
         () => {}
       )
+      throw error
     }
   }
 
   private async inspectLocalSource(
     source: string,
     options: AbortOptions
-  ): Promise<InstalledSkill[]> {
+  ): Promise<PreparedSkill[]> {
     const sourceDirectory = path.resolve(source)
     let sourceStat
     try {
@@ -146,7 +162,7 @@ export class SkillInstaller {
       null,
       options.signal
     )
-    return await this.commitCandidates(
+    return await this.prepareCandidates(
       candidates,
       sourceDirectory,
       sourceDirectory,
@@ -263,13 +279,13 @@ export class SkillInstaller {
     return candidates[0]!
   }
 
-  private async commitCandidates(
+  private async prepareCandidates(
     candidateDirectories: readonly string[],
     sourceRoot: string,
     operationDirectory: string,
     managed: boolean,
     signal?: AbortSignal
-  ): Promise<InstalledSkill[]> {
+  ): Promise<PreparedSkill[]> {
     if (candidateDirectories.length === 0) {
       throw new SkillInstallError('Skill source does not contain a skill')
     }
@@ -308,6 +324,8 @@ export class SkillInstaller {
         description: manifest.description,
         directory,
         managed: false,
+        stagedDirectory: null,
+        finalDirectory: directory,
       }))
     }
 
@@ -338,88 +356,15 @@ export class SkillInstaller {
       })
     }
 
-    await mkdir(this.skillsDirectory, { recursive: true })
-    for (const item of staged) {
-      if (await pathExists(item.destination)) {
-        throw new SkillInstallError(
-          `Managed skill directory already exists: ${item.destination}`
-        )
-      }
-    }
-
-    const ownedDestinations: string[] = []
-    try {
-      for (const item of staged) {
-        throwIfAborted(signal)
-        try {
-          await mkdir(item.destination)
-        } catch (error) {
-          if (isNodeError(error) && error.code === 'EEXIST') {
-            throw new SkillInstallError(
-              `Managed skill directory already exists: ${item.destination}`
-            )
-          }
-          throw error
-        }
-        ownedDestinations.push(item.destination)
-      }
-      for (const item of staged) {
-        throwIfAborted(signal)
-        await copyDirectoryContents(item.directory, item.destination)
-        await inspectSkillTree(item.destination, signal, this.policy)
-        await assertManifestMatchesDirectory(
-          item.destination,
-          item.manifest,
-          this.policy
-        )
-      }
-    } catch (error) {
-      const residuals = await removeMovedDirectories(ownedDestinations)
-      const detail = error instanceof Error ? error.message : String(error)
-      if (residuals.length > 0) {
-        throw new SkillInstallError(
-          `${detail}\nFailed to roll back managed skill directories:\n${residuals
-            .map((directory) => `- ${directory}`)
-            .join('\n')}`
-        )
-      }
-      throw error
-    }
-
-    return staged.map(({ manifest, destination }) => ({
+    return staged.map(({ manifest, directory, destination }) => ({
       name: manifest.name,
       description: manifest.description,
-      directory: destination,
+      directory,
       managed: true,
+      stagedDirectory: directory,
+      finalDirectory: destination,
     }))
   }
-}
-
-async function copyDirectoryContents(
-  source: string,
-  destination: string
-): Promise<void> {
-  for (const entry of await readdir(source)) {
-    await cp(path.join(source, entry), path.join(destination, entry), {
-      recursive: true,
-      force: false,
-      errorOnExist: true,
-    })
-  }
-}
-
-async function removeMovedDirectories(
-  directories: readonly string[]
-): Promise<string[]> {
-  const residuals: string[] = []
-  for (const directory of directories) {
-    try {
-      await rm(directory, { recursive: true, force: true })
-    } catch {
-      residuals.push(directory)
-    }
-  }
-  return residuals
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

@@ -19,6 +19,7 @@ import { promisify } from 'util'
 import { path7za } from '7zip-bin'
 
 import { SkillLibrary } from '../../src/skills/skill-library.ts'
+import { SkillInstaller } from '../../src/skills/skill-installer.ts'
 import {
   ensureSevenZipExecutable,
   isSupportedArchive,
@@ -477,8 +478,57 @@ test('SkillLibrary installs a directly downloaded SKILL.md', async () => {
         enabled: true,
       },
     })
-    assert.equal(await library.remove('direct-skill'), true)
+    assert.deepEqual(await library.remove('direct-skill'), {
+      removed: true,
+      warnings: [],
+    })
     await assert.rejects(access(installed.directory))
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    )
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('SkillInstaller keeps managed downloads in staging until commit', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-staging-'))
+  const contents = [
+    '---',
+    'name: staged-skill',
+    'description: A staged skill.',
+    '---',
+    '# Staged skill',
+  ].join('\n')
+  const server = createServer((_request, response) => {
+    response.writeHead(200, {
+      'Content-Type': 'text/markdown; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="SKILL.md"',
+    })
+    response.end(contents)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  assert.ok(address && typeof address === 'object')
+  const skillsDirectory = path.join(root, 'data', 'skills')
+  const tempDirectory = path.join(root, 'data', 'temp', 'skill-install')
+  const installer = new SkillInstaller(skillsDirectory, tempDirectory)
+
+  try {
+    const prepared = await installer.prepare(
+      `http://127.0.0.1:${address.port}/download`
+    )
+    try {
+      const skill = prepared.skills[0]
+      assert.ok(skill)
+      assert.equal(skill.managed, true)
+      assert.notEqual(skill.stagedDirectory, null)
+      await access(path.join(skill.stagedDirectory!, 'SKILL.md'))
+      await assert.rejects(access(skill.finalDirectory), { code: 'ENOENT' })
+    } finally {
+      await prepared.cleanup()
+    }
+    assert.deepEqual(await readdir(tempDirectory), [])
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))

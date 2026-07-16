@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createServer, type Server } from 'node:net'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
@@ -316,7 +317,11 @@ test('PortalMcpServer maps HTTP parsing and size errors at the protocol boundary
 
 test('PortalMcpServer bounds stop when a request handler ignores cancellation', async () => {
   const handlers = createHandlers()
-  handlers.openThread = async () => await new Promise(() => {})
+  const requestEntered = deferred()
+  handlers.openThread = async () => {
+    requestEntered.resolve()
+    return await new Promise(() => {})
+  }
   const server = new PortalMcpServer({
     host: '127.0.0.1',
     port: 0,
@@ -331,7 +336,7 @@ test('PortalMcpServer bounds stop when a request handler ignores cancellation', 
     arguments: { provider: 'chatgpt' },
   })
 
-  await new Promise<void>((resolve) => setTimeout(resolve, 5))
+  await requestEntered.promise
   const startedAt = Date.now()
   await server.stop()
   assert.ok(Date.now() - startedAt < 500)
@@ -360,6 +365,108 @@ test('PortalMcpServer can restart and runs its stop callback', async () => {
   assert.equal(stops, 2)
 })
 
+test('PortalMcpServer serializes concurrent lifecycle operations', async () => {
+  const server = new PortalMcpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: null,
+    handlers: createHandlers(),
+  })
+
+  await Promise.all([server.start(), server.start(), server.start()])
+  assert.equal(server.status().running, true)
+
+  await Promise.all([server.stop(), server.stop()])
+  assert.equal(server.status().running, false)
+
+  await Promise.all([server.start(), server.stop()])
+  assert.deepEqual(server.status(), {
+    running: false,
+    address: null,
+    auth: false,
+  })
+})
+
+test('PortalMcpServer queues a restart behind an in-progress stop', async () => {
+  const stopEntered = deferred()
+  const releaseStop = deferred()
+  let stops = 0
+  const server = new PortalMcpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: null,
+    handlers: createHandlers(),
+    onStop: async () => {
+      stops += 1
+      if (stops === 1) {
+        stopEntered.resolve()
+        await releaseStop.promise
+      }
+    },
+  })
+
+  await server.start()
+  const stop = server.stop()
+  await stopEntered.promise
+  assert.equal(server.status().running, true)
+  assert.notEqual(server.status().address, null)
+
+  let restarted = false
+  const restart = server.start().then(() => {
+    restarted = true
+  })
+  await Promise.resolve()
+  assert.equal(restarted, false)
+
+  releaseStop.resolve()
+  await Promise.all([stop, restart])
+  try {
+    assert.equal(server.status().running, true)
+    const client = await connectClient(server.address()!)
+    await client.close()
+  } finally {
+    await server.stop()
+  }
+})
+
+test('PortalMcpServer reports an occupied port and can retry after failure', async () => {
+  const blocker = await occupyTcpPort()
+  const server = new PortalMcpServer({
+    host: '127.0.0.1',
+    port: blocker.port,
+    token: null,
+    handlers: createHandlers(),
+  })
+
+  try {
+    await assert.rejects(server.start(), (error: unknown) => {
+      assert.ok(error instanceof Error)
+      assert.equal((error as NodeJS.ErrnoException).code, 'EADDRINUSE')
+      assert.equal(
+        error.message,
+        `MCP Server could not listen on 127.0.0.1:${blocker.port}: address is already in use.`
+      )
+      assert.ok(error.cause instanceof Error)
+      return true
+    })
+    assert.deepEqual(server.status(), {
+      running: false,
+      address: null,
+      auth: false,
+    })
+  } finally {
+    await closeTcpServer(blocker.server)
+  }
+
+  await server.start()
+  try {
+    const client = await connectClient(server.address()!)
+    await client.close()
+  } finally {
+    await server.stop()
+  }
+})
+
 async function connectClient(url: string, token?: string): Promise<Client> {
   const client = new Client({ name: 'portal-mcp-test', version: '1.0.0' })
   const transport = new StreamableHTTPClientTransport(new URL(url), {
@@ -381,5 +488,30 @@ function initializeRequest(): string {
       capabilities: {},
       clientInfo: { name: 'test', version: '1.0.0' },
     },
+  })
+}
+
+function deferred(): { promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+async function occupyTcpPort(): Promise<{ server: Server; port: number }> {
+  const server = createServer()
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  assert.ok(address !== null && typeof address !== 'string')
+  return { server, port: address.port }
+}
+
+async function closeTcpServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error === undefined ? resolve() : reject(error)))
   })
 }

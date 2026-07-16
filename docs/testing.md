@@ -24,11 +24,11 @@ The smoke test uses a temporary profile and dynamic CDP port. It verifies startu
 
 ## 2026-07-16 audit
 
-The source inventory contains 92 TypeScript or TSX files. `provider-id.ts` is type-only, and the process entry point `index.ts` is intentionally not imported by the test process. Other modules only appear in the coverage report when an application or test entry point loads them, so the console report does not replace this static inventory.
+The source inventory contains 97 TypeScript or TSX files. `provider-id.ts` is type-only, and the process entry point `index.ts` is intentionally not imported by the test process. Other modules only appear in the coverage report when an application or test entry point loads them, so the console report does not replace this static inventory.
 
-The audited Node 24.13.0 run in a clean dedicated worktree contained 604 tests: 603 passed, 1 was skipped by a platform condition, and none failed. The loaded source baseline was 86.10% lines, 79.29% branches, and 80.77% functions. CI runs the same coverage command on Node 24, so compare trends within the same Node and operating-system environment rather than treating small cross-environment changes as regressions.
+The audited Node 24.13.0 run in a clean dedicated worktree contained 673 tests: 672 passed, 1 was skipped by a platform condition, and none failed. The loaded source baseline was 89.74% lines, 79.72% branches, and 80.79% functions. CI runs the same coverage command on Node 24, so compare trends within the same Node and operating-system environment rather than treating small cross-environment changes as regressions.
 
-On the audited Windows machine, `npm test` completed in about 8 seconds. The ChatGPT submit test file fell from about 41.4 seconds to 2.8 seconds by using short test-only timing overrides and controlled response events; production settle timing remains 1,000 ms. Doubao and GLM submit tests no longer keep the process alive for their default 30-second request-start grace timers.
+On the audited Windows machine, `npm test` completed in about 11 seconds. The ChatGPT submit test file fell from about 41.4 seconds to 2.8 seconds by using short test-only timing overrides and controlled response events; production settle timing remains 1,000 ms. Doubao and GLM submit tests no longer keep the process alive for their default 30-second request-start grace timers.
 
 The audit removed migration-only checks that only proved deleted command names, configuration fields, and prompt wording were absent. It retained negative tests for current contracts such as invalid input, cancellation, cleanup, incomplete provider responses, path and size limits, and secret redaction. The generic configuration test still verifies that unsupported fields do not cause an existing file to be rewritten.
 
@@ -43,6 +43,9 @@ Focused tests were added for:
 - repeat attempt boundaries;
 - Skill HTTP redirects, retries, cancellation, credential redaction, limits, and partial-file cleanup;
 - Skill Hub successful downloads, validation, and response boundaries;
+- native config lock contention, timeout, process termination, and atomic writes;
+- Skill staging, lock-time registry rechecks, and add/remove rollback behavior;
+- HTTP API and Portal MCP Server lifecycle serialization and retry behavior;
 - browser launch validation before profile creation;
 - spawn input and progress-rendering isolation.
 

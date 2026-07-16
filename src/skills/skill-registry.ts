@@ -2,9 +2,11 @@ import path from 'path'
 import { validateSkillName } from './skill-manifest.ts'
 import {
   createDefaultPortalConfig,
+  ensurePortalConfig,
   PortalConfigError,
   readPortalConfig,
   updatePortalConfig,
+  withPortalConfigTransaction,
 } from '../config/portal-config.ts'
 
 export interface SkillRegistryEntry {
@@ -20,6 +22,12 @@ export interface SkillRegistryIssue {
 export interface SkillRegistryData {
   entries: Map<string, SkillRegistryEntry>
   issues: readonly SkillRegistryIssue[]
+}
+
+export interface SkillRegistryTransaction {
+  readonly registry: SkillRegistryData
+  commit(): Promise<void>
+  noChange(): void
 }
 
 export class SkillRegistryError extends Error {
@@ -102,6 +110,23 @@ export async function writeSkillRegistry(
   )
 }
 
+export async function ensureSkillRegistry(
+  registryPath: string,
+  entries: ReadonlyMap<string, SkillRegistryEntry>
+): Promise<SkillRegistryData> {
+  const defaults = createDefaultPortalConfig(path.dirname(registryPath))
+  defaults.skills = serializeSkillRegistry(entries)
+  try {
+    const config = await ensurePortalConfig(registryPath, defaults)
+    return parseSkillRegistry(config.skills)
+  } catch (error) {
+    if (error instanceof PortalConfigError) {
+      throw new SkillRegistryError(error.message)
+    }
+    throw error
+  }
+}
+
 export async function updateSkillRegistry<T>(
   registryPath: string,
   update: (registry: SkillRegistryData) => T
@@ -124,6 +149,34 @@ export async function updateSkillRegistry<T>(
     throw error
   }
   return result
+}
+
+export async function withSkillRegistryTransaction<T>(
+  registryPath: string,
+  action: (transaction: SkillRegistryTransaction) => Promise<T> | T
+): Promise<T> {
+  try {
+    return await withPortalConfigTransaction(
+      registryPath,
+      async (transaction) => {
+        const registry = parseSkillRegistry(transaction.config.skills)
+        return await action({
+          registry,
+          commit: async () => {
+            transaction.config.skills = serializeSkillRegistry(registry.entries)
+            await transaction.commit()
+          },
+          noChange: () => transaction.noChange(),
+        })
+      },
+      createDefaultPortalConfig(path.dirname(registryPath))
+    )
+  } catch (error) {
+    if (error instanceof PortalConfigError) {
+      throw new SkillRegistryError(error.message)
+    }
+    throw error
+  }
 }
 
 export function resolveSkillDirectory(
