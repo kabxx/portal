@@ -8,22 +8,58 @@ import { createPrototypeObject } from '../../helpers/fakes.ts'
 type ChatGPTInitHarness = Pick<ChatGPTAdapter, keyof ChatGPTAdapter> & {
   page: unknown
   websocketFrames: string[]
-  parseHttpResponse: unknown
-  parseWebsocketResponse: unknown
   getSubmitRequestStartGraceMs(): number
   getSubmitBlockedWarningIntervalMs(): number
+}
+
+function createInitialWebSocketFrame(text: string): string {
+  return JSON.stringify({
+    conversation_id: 'conversation-1',
+    encoded_item: `event: delta\ndata: ${JSON.stringify({
+      v: {
+        message: {
+          id: 'message-1',
+          author: { role: 'assistant' },
+          content: { content_type: 'text', parts: [text] },
+          status: 'in_progress',
+          end_turn: false,
+          channel: 'final',
+          metadata: {},
+        },
+      },
+    })}`,
+  })
+}
+
+function createAppendWebSocketFrame(text: string): string {
+  return JSON.stringify({
+    encoded_item: `event: delta\ndata: ${JSON.stringify({
+      p: '/message/content/parts/0',
+      o: 'append',
+      v: text,
+    })}`,
+  })
+}
+
+function createFinishedWebSocketFrame(): string {
+  return JSON.stringify({
+    encoded_item: `event: delta\ndata: ${JSON.stringify({
+      o: 'patch',
+      v: [{ p: '/message/end_turn', o: 'replace', v: true }],
+    })}`,
+  })
 }
 
 test('ChatGPTAdapter.submit returns READY from websocket without waiting for a late HTTP response', async () => {
   const adapter = createPrototypeObject(
     ChatGPTAdapter.prototype
   ) as ChatGPTInitHarness
-  adapter.websocketFrames = ['frame-ready']
-  adapter.parseWebsocketResponse = () => ({
-    text: 'READY',
-    isFinished: true,
-  })
-  adapter.parseHttpResponse = () => null
+  adapter.websocketFrames = [
+    JSON.stringify({
+      ref_id: 'turn0search0',
+      url: 'https://old.example/reference',
+    }),
+  ]
 
   const sendButton = {
     isEnabled: async () => true,
@@ -35,6 +71,11 @@ test('ChatGPTAdapter.submit returns READY from websocket without waiting for a l
         failure: () => null,
       }
       page.emit('request', request)
+      adapter.websocketFrames.push(createInitialWebSocketFrame('READY'))
+      adapter.websocketFrames.push(
+        createAppendWebSocketFrame(' \uE200cite\uE202turn0search0\uE202\uE201')
+      )
+      adapter.websocketFrames.push(createFinishedWebSocketFrame())
     },
   }
   const page = createChatGPTPage(sendButton)
