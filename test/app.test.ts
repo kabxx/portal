@@ -20,7 +20,10 @@ import {
 import { createDefaultAdvancedConfig } from '../src/config/portal-config.ts'
 import { TerminalController } from '../src/terminal-ui/terminal-controller.ts'
 import { ThreadManager } from '../src/threads/thread-manager.ts'
-import { createFakeRuntime } from './helpers/fakes.ts'
+import {
+  createFakeRuntime,
+  createProviderAdapterStub,
+} from './helpers/fakes.ts'
 
 test('transitionLoginWaitWarning renders only when entering login wait', () => {
   assert.deepEqual(transitionLoginWaitWarning(false, true), {
@@ -39,15 +42,17 @@ test('transitionLoginWaitWarning renders only when entering login wait', () => {
 
 test('API capability helpers route Claude web_search through toggle semantics', async () => {
   const states: string[] = []
+  const adapter = createProviderAdapterStub()
+  Object.assign(adapter, {
+    hasToggleCapability: async () => true,
+    getToggleState: async () => 'on',
+    setToggleState: async (_name: string, state: string) => {
+      states.push(state)
+      return state
+    },
+  })
   const runtime = createFakeRuntime({
-    adapter: {
-      hasToggleCapability: async () => true,
-      getToggleState: async () => 'on',
-      setToggleState: async (_name: string, state: string) => {
-        states.push(state)
-        return state
-      },
-    } as any,
+    adapter,
   })
 
   assert.deepEqual(
@@ -63,19 +68,21 @@ test('API capability helpers route Claude web_search through toggle semantics', 
 
 test('API capability helpers preserve action capability semantics', async () => {
   const events: string[] = []
+  const adapter = createProviderAdapterStub()
+  Object.assign(adapter, {
+    listActionCapabilities: async () => [
+      { name: 'canvas', state: 'available' },
+    ],
+    selectActionCapability: async (name: string) => {
+      events.push(`select:${name}`)
+      return 'selected'
+    },
+    clearActionCapability: async () => {
+      events.push('clear')
+    },
+  })
   const runtime = createFakeRuntime({
-    adapter: {
-      listActionCapabilities: async () => [
-        { name: 'canvas', state: 'available' },
-      ],
-      selectActionCapability: async (name: string) => {
-        events.push(`select:${name}`)
-        return 'selected'
-      },
-      clearActionCapability: async () => {
-        events.push('clear')
-      },
-    } as any,
+    adapter,
   })
 
   await setApiProviderCapability('chatgpt', runtime, 'canvas', 'selected')
