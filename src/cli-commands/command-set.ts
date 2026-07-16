@@ -9,6 +9,7 @@ import { ServeCommand } from './commands/command-serve.ts'
 import { McpServerCommand } from './commands/command-mcp-server.ts'
 import { HookCommand } from './commands/command-hook.ts'
 import { JobCommand } from './commands/command-job.ts'
+import { KeybindingCommand } from './commands/command-keybinding.ts'
 
 export const DEFAULT_COMMANDS: readonly CliCommand[] = [
   HelpCommand,
@@ -19,6 +20,7 @@ export const DEFAULT_COMMANDS: readonly CliCommand[] = [
   McpServerCommand,
   HookCommand,
   JobCommand,
+  KeybindingCommand,
   ProvidersCommand,
   ExitCommand,
 ]

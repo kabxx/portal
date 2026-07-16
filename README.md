@@ -72,7 +72,7 @@ npm install
 npm run dev
 ```
 
-On first run, portal creates a commented `data/config.yaml` covering the browser, project instructions, HTTP API, Portal MCP Server, outbound MCP connections, Skills, Hooks, and advanced runtime limits. Project instruction sources are disabled by default. See [Configuration](docs/configuration.md). The generated `browser.profilePath` is the absolute path `data/profiles/chromium`.
+On first run, portal creates a commented `data/config.yaml` covering the browser, project instructions, HTTP API, Portal MCP Server, outbound MCP connections, Skills, Hooks, terminal keybindings, and advanced runtime limits. Project instruction sources are disabled by default. See [Configuration](docs/configuration.md). The generated `browser.profilePath` is the absolute path `data/profiles/chromium`.
 
 Override the browser engine, executable, or port when needed:
 
@@ -141,37 +141,39 @@ Remote messages loaded by resume are display-only and do not increase the local 
 
 ## Commands
 
-| Command           | Purpose                                             |
-| ----------------- | --------------------------------------------------- |
-| `/help`           | Show top-level command help                         |
-| `/providers`      | List supported provider ids                         |
-| `/thread ...`     | Open, resume, switch, inspect, detach, and close    |
-| `/skill ...`      | Add, list, enable, disable, and remove Skills       |
-| `/mcp ...`        | Manage MCP servers and attach Resources or Prompts  |
-| `/serve ...`      | Start and manage the local HTTP API                 |
-| `/mcp-server ...` | Start and manage the independent Portal MCP Server  |
-| `/job`            | List running `run_command` jobs                     |
-| `/job stop ...`   | Stop one running `run_command` job                  |
-| `/hook ...`       | Inspect, reload, enable, or disable lifecycle Hooks |
-| `/exit`           | Shut down portal                                    |
+| Command             | Purpose                                              |
+| ------------------- | ---------------------------------------------------- |
+| `/help`             | Show top-level command help                          |
+| `/providers`        | List supported provider ids                          |
+| `/thread ...`       | Open, resume, switch, inspect, detach, and close     |
+| `/skill ...`        | Add, list, enable, disable, and remove Skills        |
+| `/mcp ...`          | Manage MCP servers and attach Resources or Prompts   |
+| `/serve ...`        | Start and manage the local HTTP API                  |
+| `/mcp-server ...`   | Start and manage the independent Portal MCP Server   |
+| `/job`              | List running `run_command` jobs                      |
+| `/job stop ...`     | Stop one running `run_command` job                   |
+| `/hook ...`         | Inspect, reload, enable, or disable lifecycle Hooks  |
+| `/keybinding reset` | Restore and save platform-default terminal shortcuts |
+| `/exit`             | Shut down portal                                     |
 
 Top-level commands and first-level subcommands support unique-prefix completion with `Tab`.
 
 ## Input controls
 
-| Key                      | Behavior                                                     |
-| ------------------------ | ------------------------------------------------------------ |
-| `Enter`                  | Submit the current input while idle                          |
-| `Ctrl+Enter` or `Ctrl+J` | Insert a newline                                             |
-| Paste                    | Preserve multiline layout and normalize Windows line endings |
-| `Up` / `Down`            | Move vertically to input boundaries, or browse input history |
-| `Tab`                    | Complete a unique command, subcommand, provider, or `$skill` |
-| `Ctrl+W`                 | Delete the previous word                                     |
-| `Ctrl+U` or `Esc`        | Clear the current input                                      |
-| `Ctrl+C`                 | Cancel busy work; while idle with input, clear that input    |
-| `Ctrl+D`                 | Exit while idle and the input is empty                       |
+| Key                                                     | Behavior                                                     |
+| ------------------------------------------------------- | ------------------------------------------------------------ |
+| `Enter`                                                 | Submit the current input while idle                          |
+| `Shift+Enter` (Windows/Linux) or `Option+Enter` (macOS) | Insert a newline when supported by the terminal              |
+| `Ctrl+J`                                                | Insert a newline; reliable fallback on every platform        |
+| Paste                                                   | Preserve multiline layout and normalize Windows line endings |
+| `Up` / `Down`                                           | Move vertically to input boundaries, or browse input history |
+| `Tab`                                                   | Complete a unique command, subcommand, provider, or `$skill` |
+| `Ctrl+W`                                                | Delete the previous word                                     |
+| `Ctrl+U` or `Esc`                                       | Clear the current input                                      |
+| `Ctrl+C`                                                | Cancel busy work; while idle with input, clear that input    |
+| `Ctrl+D`                                                | Exit while idle and the input is empty                       |
 
-Input can be edited while portal is busy, but it cannot be submitted until the operation finishes or is cancelled.
+Input can be edited while portal is busy, but it cannot be submitted until the operation finishes or is cancelled. Edit the complete `keybindings` table in `data/config.yaml` to change shortcuts; valid saves apply automatically. See [Configuration](docs/configuration.md#keybindings).
 
 ## Built-in tools
 

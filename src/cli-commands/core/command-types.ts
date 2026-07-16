@@ -13,6 +13,7 @@ import type {
 import type { SkillAddOptions } from '../../skills/skill-installer.ts'
 import type { McpLibrary } from '../../mcp/mcp-library.ts'
 import type { HookCatalog } from '../../hooks/hook-catalog.ts'
+import type { KeybindingCatalog } from '../../keybindings/keybinding-catalog.ts'
 import type { RunCommandJobService } from '../../processes/run-command-job-manager.ts'
 
 export interface ListenerCommandController {
@@ -34,6 +35,7 @@ export interface CliCommandContext {
   mcpLibrary: McpLibrary
   runCommandJobs?: RunCommandJobService
   hookCatalog?: HookCatalog
+  keybindingCatalog?: KeybindingCatalog
   api?: ListenerCommandController
   mcpServer?: ListenerCommandController
   ui: TerminalController
