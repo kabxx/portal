@@ -20,7 +20,7 @@ Provider-specific website behavior stays behind adapters. The runtime understand
 | MCP Server        | `src/mcp-server/`                       | Expose selected thread operations through an independent Streamable HTTP MCP listener               |
 | Browser platform  | `src/platform/`                         | Launch Chromium, connect over CDP, and manage platform-specific process lifetime                    |
 | Provider adapters | `src/providers/adapters/`               | Navigate pages, detect login/readiness, submit, stream, upload, select models, and stop output      |
-| History parsing   | `src/providers/conversation-history.ts` | Convert six provider history formats into visible user/assistant messages                           |
+| History parsing   | `src/providers/conversation-history.ts` | Convert seven provider history formats into visible user/assistant messages                         |
 | Runtime           | `src/runtime/`                          | Build setup prompts, initialize runtimes, execute tool loops, retry, recover, and cancel            |
 | Threads           | `src/threads/`                          | Track open threads and local turns in memory; persist URL history metadata in SQLite                |
 | Commands          | `src/cli-commands/`                     | Tokenize and dispatch slash commands                                                                |
@@ -85,7 +85,7 @@ The setup prompt is composed from:
 - the current working directory;
 - enabled always-on project instructions;
 - optional provider rules, currently used for Grok;
-- an exact `READY` handshake requirement.
+- a setup handshake instruction to reply with `READY`.
 
 `load_skill` is registered only when the new runtime has at least one enabled valid Skill. MCP host tools are backed by the runtime's `ThreadMcpSession`.
 
@@ -107,7 +107,7 @@ The resumed web conversation already contains its provider-side context. Sending
 
 Resume creates one-time page/CDP history capture before navigation. The base adapter waits up to a short bounded interval for matching responses, reads their bodies, restores cache behavior, and releases the capture session. Individual parsers rebuild the provider's current branch and filter setup, tool, reasoning, partial, and control records. DeepSeek can return a nonempty `MERGE` cache delta; its adapter treats only `REPLACE` as complete and repeats a read-only full-history request inside the authenticated page using the original request headers when necessary.
 
-Gemini follows its continuation cursor, Doubao follows `has_more`, and GLM accumulates `messages/batch` pages until the selected chain reaches the root, all under bounded progress and timeout loops. ChatGPT, GLM, and Grok do not report complete when a parent/root, active leaf, or visible response body is missing.
+Claude stabilizes the virtual conversation feed at its terminal cell, then scrolls backward until every indexed cell has been collected. Gemini follows its continuation cursor, Doubao follows `has_more`, and GLM accumulates `messages/batch` pages until the selected chain reaches the root, all under bounded progress and timeout loops. ChatGPT, Claude, GLM, and Grok do not report complete when an indexed cell, parent/root, active leaf, or visible response body is missing.
 
 A resumed conversation skips the setup handshake. It therefore assumes that the original conversation already contains a compatible portal tool protocol. Current Skill and MCP connections exist locally, but newly configured names are not injected as a new catalog turn. The resume path also does not attach the freshly read project-instruction snapshot to the resumed `RuntimeCore`, so it neither resends always-on instructions nor performs target-aware instruction activation for later tool calls in that thread.
 
@@ -184,7 +184,9 @@ All adapters implement these core operations:
 
 Provider completion and history formats differ. See [Providers](providers.md) for the current transport and URL matrix.
 
-The base adapter installs fetch/XHR capture before navigation for submit flows. Resume additionally uses page response and CDP Network capture because some provider requests bypass page-level wrappers or arrive after composer readiness. Adapters remain the most volatile layer and should prefer stable, language-independent selectors and protocol completion signals.
+The base adapter installs fetch/XHR capture before navigation for submit flows. Claude can emit several completion SSE streams for one turn when native tool use continues; its adapter waits for a terminal stop reason and a ready Composer instead of treating the first `message_stop` as final. Resume additionally uses page response and CDP Network capture because some provider requests bypass page-level wrappers or arrive after composer readiness. Adapters remain the most volatile layer and should prefer stable, language-independent selectors and protocol completion signals.
+
+Claude exposes `web_search` as a dynamic toggle backed by the Composer tools menu checkbox. The adapter requires one enabled checkbox with a valid `aria-checked` state, verifies changes by reopening the menu, and closes that menu independently from the model and effort radio menus.
 
 ## Thread state and timelines
 

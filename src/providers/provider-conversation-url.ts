@@ -44,6 +44,16 @@ function resolveProviderFromUrl(url: URL): ResolvedConversationUrl | null {
         }
   }
 
+  if (url.hostname === 'claude.ai' && /^\/chat\/[^/?#]+/.test(url.pathname)) {
+    const conversationId = readPathSegment(url, 1)
+    return conversationId === null
+      ? null
+      : {
+          provider: 'claude',
+          conversationUrl: `https://claude.ai/chat/${encodeURIComponent(conversationId)}`,
+        }
+  }
+
   if (
     url.hostname === 'gemini.google.com' &&
     /^\/app\/[^/?#]+/.test(url.pathname)
