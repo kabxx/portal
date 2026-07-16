@@ -40,6 +40,8 @@ When the model argument is omitted, portal leaves the provider's current/default
 
 If login is required, portal keeps the same adapter page open and waits for the user to complete authentication in the browser.
 
+Claude treats `/logout` as a signed-out transition. A redirect to `/restricted` is reported separately as an account restriction and does not enter the login-wait loop.
+
 Claude treats the unique, available Voice Mode control as page readiness. An editable Composer alone is not sufficient because it can appear briefly before Claude redirects a signed-out session to authentication.
 
 ## Conversation URLs
@@ -131,7 +133,7 @@ The provider-specific history paths currently include:
 | Grok     | `response-node` graph joined with `load-responses` bodies and root/leaf checks            |
 | GLM      | Chat metadata/current node joined with accumulated `messages/batch` pages                 |
 
-The adapter base installs page and one-time CDP history capture before resume navigation. It waits briefly for delayed history requests, reads only matching response bodies, restores browser cache behavior, and releases the CDP session after loading. Claude stabilizes the virtual feed at its terminal cell and then scrolls backward until every cell from zero through that terminal index has been collected. Gemini, Doubao, and GLM drive the provider page toward older history while new pages make progress, with bounded total and per-page timeouts. Graph-based parsers mark history complete only after a verified root/active branch; ambiguous branches and missing response bodies remain incomplete.
+The adapter base installs page and one-time CDP history capture before resume navigation. It waits briefly for delayed history requests, reads only matching response bodies, restores browser cache behavior, and releases the CDP session after loading. Claude treats the virtual feed terminal as stable after one second without a terminal-index change, then scrolls backward until every cell from zero through that terminal index has been collected. Thinking-duration controls such as `Thought for 2s` are excluded from rendered Claude history. Gemini, Doubao, and GLM drive the provider page toward older history while new pages make progress, with bounded total and per-page timeouts. Graph-based parsers mark history complete only after a verified root/active branch; ambiguous branches and missing response bodies remain incomplete.
 
 Remote history is used only for terminal display. It is not submitted to the model again, written to SQLite, or inserted into `ThreadRegistry` turns. Hidden setup messages, tool nodes, reasoning blocks, control records, partial responses, and unsupported content are filtered. A parser or completeness problem appears as a Markdown warning while the resumed thread remains usable.
 
