@@ -25,6 +25,7 @@ interface TestLocator {
   isVisible(): Promise<boolean>
   isEnabled(): Promise<boolean>
   click(): Promise<void>
+  fill(text: string): Promise<void>
   focus(): Promise<void>
   getAttribute(name: string): Promise<string | null>
   innerText(): Promise<string>
@@ -149,15 +150,42 @@ test('ClaudeAdapter recognizes Claude authentication URL variants', async () => 
     '/login?returnTo=%2Fnew',
     '/signup',
     '/signup/account',
+    '/logout',
+    '/logout/session',
+    '/logout?involuntary=1&returnTo=%2Flogin',
   ]) {
     page.urlValue = `https://claude.ai${pathname}`
     assert.equal(await adapter.isLoggedIn(), false, pathname)
   }
 
-  for (const pathname of ['/new', '/loginfoo', '/signups']) {
+  for (const pathname of ['/new', '/loginfoo', '/signups', '/logoutfoo']) {
     page.urlValue = `https://claude.ai${pathname}`
     assert.equal(await adapter.isLoggedIn(), true, pathname)
   }
+})
+
+test('ClaudeAdapter classifies restricted URL variants separately from login', async () => {
+  const page = createClaudeReadyPage()
+  const adapter = new ClaudeAdapterHarness(page)
+
+  for (const pathname of [
+    '/restricted',
+    '/restricted/account',
+    '/restricted?reason=account',
+  ]) {
+    page.urlValue = `https://claude.ai${pathname}`
+    await assert.rejects(adapter.attachText('setup'), (error: unknown) => {
+      return (
+        isProviderAdapterError(error) &&
+        error.kind === 'auth' &&
+        error.detailCode === 'claude_account_restricted' &&
+        error.adapter === adapter
+      )
+    })
+  }
+
+  page.urlValue = 'https://claude.ai/restrictedly'
+  await adapter.attachText('setup')
 })
 
 test('ClaudeAdapter classifies attachText login separately from a missing composer', async () => {
@@ -199,6 +227,61 @@ test('ClaudeAdapter classifies attachText login separately from a missing compos
       error.kind === 'ui' &&
       error.detailCode === 'claude_composer_missing'
   )
+})
+
+test('ClaudeAdapter normalizes authentication redirects during composer updates', async () => {
+  const logoutPage = createClaudeReadyPage({
+    click: async (page) => {
+      page.urlValue = 'https://claude.ai/logout?involuntary=1&returnTo=%2Flogin'
+      throw new Error('locator.click: raw call log')
+    },
+  })
+  const logoutAdapter = new ClaudeAdapterHarness(logoutPage)
+  await assert.rejects(logoutAdapter.attachText('setup'), (error: unknown) => {
+    return (
+      isProviderAdapterError(error) &&
+      error.kind === 'auth' &&
+      error.detailCode === 'claude_signed_out' &&
+      !error.message.includes('locator.click')
+    )
+  })
+
+  const restrictedPage = createClaudeReadyPage({
+    fill: async (page) => {
+      page.urlValue = 'https://claude.ai/restricted'
+      throw new Error('locator.fill: raw call log')
+    },
+  })
+  const restrictedAdapter = new ClaudeAdapterHarness(restrictedPage)
+  await assert.rejects(
+    restrictedAdapter.attachText('setup'),
+    (error: unknown) => {
+      return (
+        isProviderAdapterError(error) &&
+        error.kind === 'auth' &&
+        error.detailCode === 'claude_account_restricted' &&
+        !error.message.includes('locator.fill')
+      )
+    }
+  )
+})
+
+test('ClaudeAdapter normalizes non-authentication composer failures', async () => {
+  const page = createClaudeReadyPage({
+    click: async () => {
+      throw new Error('locator.click: raw call log')
+    },
+  })
+  const adapter = new ClaudeAdapterHarness(page)
+
+  await assert.rejects(adapter.attachText('setup'), (error: unknown) => {
+    return (
+      isProviderAdapterError(error) &&
+      error.kind === 'transient' &&
+      error.detailCode === 'claude_attach_text_failed' &&
+      error.message === 'Claude could not update the composer.'
+    )
+  })
 })
 
 test('ClaudeAdapter reads and idempotently changes web_search', async () => {
@@ -458,6 +541,8 @@ interface ClaudeReadyPageOptions {
   ariaDisabled?: string | null
   composerReady?: boolean
   loginVisible?: boolean | (() => boolean)
+  click?: (page: ClaudeReadyPage) => Promise<void>
+  fill?: (page: ClaudeReadyPage, text: string) => Promise<void>
 }
 
 interface ClaudeReadyPage extends TestPage {
@@ -498,6 +583,8 @@ function createClaudeReadyPage(
       assert.equal(selector, COMPOSER_ROOT_SELECTOR)
       return composerRoot
     },
+    click: async () => await options.click?.(page),
+    fill: async (text) => await options.fill?.(page, text),
   })
   const loginControl = createLocator({
     isVisible: async () =>
@@ -666,6 +753,7 @@ function createLocator(overrides: Partial<TestLocator> = {}): TestLocator {
     isVisible: async () => false,
     isEnabled: async () => false,
     click: async () => undefined,
+    fill: async () => undefined,
     focus: async () => undefined,
     getAttribute: async () => null,
     innerText: async () => '',

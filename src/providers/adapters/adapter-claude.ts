@@ -40,8 +40,10 @@ const CLAUDE_EFFORT_RADIO_SELECTOR =
   '[role="menuitemradio"][data-testid^="effort-option-"]:visible'
 const CLAUDE_ANY_RADIO_SELECTOR = `${CLAUDE_SELECTABLE_RADIO_SELECTOR}, ${CLAUDE_EFFORT_RADIO_SELECTOR}`
 const CLAUDE_VOICE_MODE_BUTTON_SELECTOR = 'button:has(svg[viewBox^="0 0 21.2"])'
-const CLAUDE_AUTH_PATH_PATTERN = /^\/(?:login|signup)(?:\/|$)/
+const CLAUDE_AUTH_PATH_PATTERN = /^\/(?:login|signup|logout)(?:\/|$)/
+const CLAUDE_RESTRICTED_PATH_PATTERN = /^\/restricted(?:\/|$)/
 const CLAUDE_HISTORY_POLL_MS = 100
+const CLAUDE_HISTORY_TERMINAL_QUIET_MS = 1_000
 const CLAUDE_SUBMIT_POLL_MS = 50
 const CLAUDE_MENU_CLOSE_ATTEMPTS = 4
 const CLAUDE_WEB_SEARCH_ACCESSIBLE_NAME = 'Web search'
@@ -83,6 +85,13 @@ interface ClaudeHistoryViewportSnapshot {
 }
 
 interface TurndownServiceInstance {
+  addRule(
+    key: string,
+    rule: {
+      filter: (node: HTMLElement) => boolean
+      replacement: () => string
+    }
+  ): TurndownServiceInstance
   turndown(html: string): string
 }
 
@@ -365,8 +374,32 @@ export class ClaudeAdapter extends ProviderAdapter {
   public async attachText(text: string): Promise<void> {
     await this.assertComposerActionReady('attach text')
     const input = this.getInput()
-    await input.click()
-    await input.fill(text)
+    try {
+      await input.click()
+      await input.fill(text)
+    } catch (error) {
+      if (isAbortError(error) || error instanceof ProviderAdapterError) {
+        throw error
+      }
+      if (this.isRestrictedPage()) {
+        throw this.createRestrictedError('attach text')
+      }
+      if (await this.isLoginPageVisible()) {
+        throw this.createAuthError('attach text')
+      }
+      throw new ProviderAdapterError(
+        'attach text',
+        'Claude could not update the composer.',
+        {
+          kind: 'transient',
+          recovery: 'restore',
+          retryable: true,
+          maxAttempts: 2,
+          detailCode: 'claude_attach_text_failed',
+          cause: error,
+        }
+      )
+    }
   }
 
   public async attachFile(path: string | readonly string[]): Promise<void> {
@@ -433,8 +466,13 @@ export class ClaudeAdapter extends ProviderAdapter {
           .sort((left, right) => left.id - right.id)
 
         if (entries.length === 0) {
-          if (!submitSent && (await this.isLoginPageVisible())) {
-            throw this.createAuthError('submit')
+          if (!submitSent) {
+            if (this.isRestrictedPage()) {
+              throw this.createRestrictedError('submit')
+            }
+            if (await this.isLoginPageVisible()) {
+              throw this.createAuthError('submit')
+            }
           }
           if (Date.now() >= nextWarningAt) {
             await this.emitSubmitStatusSafely(
@@ -578,19 +616,37 @@ export class ClaudeAdapter extends ProviderAdapter {
         )
       }
       let terminalIndex = Math.max(...bottom.cells.map((cell) => cell.index))
-      const stabilizationDeadline = Math.min(
-        deadline,
-        Date.now() + this.getHistoryPageTimeoutMs()
-      )
-      while (Date.now() < stabilizationDeadline) {
-        await delayAsync(CLAUDE_HISTORY_POLL_MS, signal)
+      let terminalQuietSince: number | null = Date.now()
+      while (Date.now() < deadline) {
+        const remainingMs = deadline - Date.now()
+        if (remainingMs <= 0) break
+        await delayAsync(Math.min(CLAUDE_HISTORY_POLL_MS, remainingMs), signal)
         const snapshot = await this.readHistoryViewport('bottom')
-        if (!snapshot.atBottom || snapshot.cells.length === 0) continue
+        const observedAt = Date.now()
+        if (!snapshot.atBottom || snapshot.cells.length === 0) {
+          terminalQuietSince = null
+          continue
+        }
         bottom = snapshot
-        terminalIndex = Math.max(
-          terminalIndex,
+        const snapshotTerminalIndex = Math.max(
           ...snapshot.cells.map((cell) => cell.index)
         )
+        if (snapshotTerminalIndex > terminalIndex) {
+          terminalIndex = snapshotTerminalIndex
+          terminalQuietSince = observedAt
+          continue
+        }
+        if (snapshotTerminalIndex < terminalIndex) {
+          terminalQuietSince = null
+          continue
+        }
+        terminalQuietSince ??= observedAt
+        if (
+          observedAt - terminalQuietSince >=
+          CLAUDE_HISTORY_TERMINAL_QUIET_MS
+        ) {
+          break
+        }
       }
 
       const cells = new Map<number, ClaudeHistoryCellSnapshot>()
@@ -663,6 +719,7 @@ export class ClaudeAdapter extends ProviderAdapter {
   }
 
   private async getClaudePageState(): Promise<ClaudePageState> {
+    if (this.isRestrictedPage()) throw this.createRestrictedError('restore')
     if (await this.isLoginPageVisible()) return 'login'
     if (await this.isVoiceModeReady()) return 'ready'
     return 'pending'
@@ -692,9 +749,17 @@ export class ClaudeAdapter extends ProviderAdapter {
       .catch(() => false)
   }
 
+  private isRestrictedPage(): boolean {
+    return CLAUDE_RESTRICTED_PATH_PATTERN.test(
+      new URL(this.page.url()).pathname
+    )
+  }
+
   private async assertComposerActionReady(action: string): Promise<void> {
+    if (this.isRestrictedPage()) throw this.createRestrictedError(action)
     if (await this.isLoginPageVisible()) throw this.createAuthError(action)
     if (await this.isComposerReady()) return
+    if (this.isRestrictedPage()) throw this.createRestrictedError(action)
     if (await this.isLoginPageVisible()) throw this.createAuthError(action)
     throw new ProviderAdapterError(
       action,
@@ -710,11 +775,26 @@ export class ClaudeAdapter extends ProviderAdapter {
     return new ProviderAdapterError(action, 'Claude is not logged in.', {
       adapter: this,
       kind: 'auth',
-      recovery: 'restore',
-      retryable: true,
-      maxAttempts: 2,
+      recovery: 'none',
+      retryable: false,
+      maxAttempts: 1,
       detailCode: 'claude_signed_out',
     })
+  }
+
+  private createRestrictedError(action: string): ProviderAdapterError {
+    return new ProviderAdapterError(
+      action,
+      'Claude account access is restricted.',
+      {
+        adapter: this,
+        kind: 'auth',
+        recovery: 'none',
+        retryable: false,
+        maxAttempts: 1,
+        detailCode: 'claude_account_restricted',
+      }
+    )
   }
 
   private getWebSearchItems(): Locator {
@@ -1237,6 +1317,19 @@ export function buildClaudeHistoryResult(
   const turndown = new TurndownService({
     codeBlockStyle: 'fenced',
     headingStyle: 'atx',
+  })
+  turndown.addRule('claude-thinking-duration-control', {
+    filter: (node) => {
+      if (
+        node.nodeName !== 'BUTTON' &&
+        node.getAttribute('role') !== 'button'
+      ) {
+        return false
+      }
+      const label = (node.textContent ?? '').trim().replace(/\s+/g, ' ')
+      return label.startsWith('Thought for ')
+    },
+    replacement: () => '',
   })
   const messages: ConversationHistoryMessage[] = []
   for (const article of filtered) {
