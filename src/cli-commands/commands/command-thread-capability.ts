@@ -106,16 +106,19 @@ export async function executeThreadCapability(
       capabilityName,
       args.slice(1)
     )
-    const render =
-      execution.status === 'ok'
-        ? context.ui.renderSuccess
-        : context.ui.renderWarning
-    render.call(
-      context.ui,
-      execution.result.title,
-      execution.result.body,
-      execution.result.format
-    )
+    if (execution.status === 'ok') {
+      context.ui.renderSuccess(
+        execution.result.title,
+        execution.result.body,
+        execution.result.format
+      )
+    } else {
+      context.ui.renderWarning(
+        execution.result.title,
+        execution.result.body,
+        execution.result.format
+      )
+    }
     return { continue: true }
   }
 
@@ -267,7 +270,7 @@ export async function executeProviderCapability(
     }
   }
 
-  const capability = name as ToggleCapability
+  const capability = name
   if (!(await adapter.hasToggleCapability(capability))) {
     return {
       status: 'unsupported_provider',

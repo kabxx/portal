@@ -14,9 +14,9 @@ import {
 import { createServer } from 'http'
 import os from 'os'
 import path from 'path'
-import { parse as parseYaml } from 'yaml'
 import { promisify } from 'util'
 import { path7za } from '7zip-bin'
+import { parseYamlRecord } from '../helpers/yaml.ts'
 
 import { SkillLibrary } from '../../src/skills/skill-library.ts'
 import {
@@ -468,9 +468,9 @@ test('SkillLibrary installs a directly downloaded SKILL.md', async () => {
     const installed = result.skills[0]
     assert.ok(installed)
     assert.equal(installed.name, 'direct-skill')
-    const registry = parseYaml(
+    const registry = parseYamlRecord(
       await readFile(path.join(root, 'data', 'config.yaml'), 'utf8')
-    ).skills as Array<{ name: string; directory: string; enabled: boolean }>
+    ).skills
     assert.deepEqual(registry, [
       {
         name: 'direct-skill',

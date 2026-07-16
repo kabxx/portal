@@ -18,11 +18,37 @@ import {
   createDefaultPortalConfig,
   ensurePortalConfig,
   parsePortalConfig,
-  PortalConfigError,
   readPortalConfig,
   updatePortalConfig,
 } from '../../src/config/portal-config.ts'
 import { createDefaultKeybindings } from '../../src/keybindings/keybinding-config.ts'
+
+function parseConfigYaml(value: string): Record<string, unknown> {
+  const document: unknown = parseYaml(value)
+  if (
+    document === null ||
+    typeof document !== 'object' ||
+    Array.isArray(document)
+  ) {
+    throw new Error('Expected the YAML document root to be an object.')
+  }
+  return document as Record<string, unknown>
+}
+
+function readConfigSection(
+  document: Record<string, unknown>,
+  name: string
+): Record<string, unknown> {
+  const section = document[name]
+  if (
+    section === null ||
+    typeof section !== 'object' ||
+    Array.isArray(section)
+  ) {
+    throw new Error(`Expected ${name} to be an object.`)
+  }
+  return section as Record<string, unknown>
+}
 
 test('ensurePortalConfig creates one YAML file with concrete defaults', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-default-'))
@@ -32,9 +58,11 @@ test('ensurePortalConfig creates one YAML file with concrete defaults', async ()
     const dataDirectory = path.join(root, 'data')
     const defaults = createDefaultPortalConfig(dataDirectory)
     const config = await ensurePortalConfig(configPath, defaults)
-    const document = parseYaml(await readFile(configPath, 'utf8'))
+    const rawDocument = parseConfigYaml(await readFile(configPath, 'utf8'))
+    const document = parsePortalConfig(rawDocument)
 
     assert.deepEqual(config, defaults)
+    assert.deepEqual(rawDocument, defaults)
     assert.deepEqual(document, defaults)
     assert.equal(defaults.browser.engine, 'chromium')
     assert.equal(path.isAbsolute(defaults.browser.executablePath), true)
@@ -189,7 +217,7 @@ test('ensurePortalConfig writes advanced last with field comments and section sp
       /\nhooks:[\s\S]+\n\n# Low-frequency runtime tuning and resource limits\.\nadvanced:\n/
     )
     assert.equal(contents.trimEnd().endsWith('commandOutputLimitMB: 1'), true)
-    assert.equal((advancedContents.match(/\n\n  # /g) ?? []).length, 7)
+    assert.equal((advancedContents.match(/\n\n {2}# /g) ?? []).length, 7)
     for (const field of advancedFields) {
       assert.match(
         advancedContents,
@@ -198,7 +226,7 @@ test('ensurePortalConfig writes advanced last with field comments and section sp
       )
     }
     assert.equal(
-      (advancedContents.match(/\n    # [^\n]+\n    fileCountLimit:/g) ?? [])
+      (advancedContents.match(/\n {4}# [^\n]+\n {4}fileCountLimit:/g) ?? [])
         .length,
       2
     )
@@ -245,11 +273,12 @@ test('ensurePortalConfig migrates partial keybindings to the complete table', as
 
     const config = await ensurePortalConfig(configPath, defaults)
     const contents = await readFile(configPath, 'utf8')
-    const document = parseYaml(contents)
+    const document = parseConfigYaml(contents)
+    const keybindings = readConfigSection(document, 'keybindings')
 
     assert.deepEqual(config.keybindings['input.submit'], ['ctrl+enter'])
-    assert.deepEqual(document.keybindings, config.keybindings)
-    assert.deepEqual(Object.keys(document.keybindings), [
+    assert.deepEqual(keybindings, config.keybindings)
+    assert.deepEqual(Object.keys(keybindings), [
       ...Object.keys(createDefaultKeybindings()),
     ])
     assert.ok(
@@ -328,9 +357,9 @@ test('ensurePortalConfig preserves API and MCP Server tokens on disk', async () 
       'utf8'
     )
     await ensurePortalConfig(configPath, defaults)
-    let document = parseYaml(await readFile(configPath, 'utf8'))
-    assert.equal(document.api.token, '  secret  ')
-    assert.equal(document.mcpServer.token, '   ')
+    let document = parseConfigYaml(await readFile(configPath, 'utf8'))
+    assert.equal(readConfigSection(document, 'api').token, '  secret  ')
+    assert.equal(readConfigSection(document, 'mcpServer').token, '   ')
 
     await writeFile(
       configPath,
@@ -342,9 +371,9 @@ test('ensurePortalConfig preserves API and MCP Server tokens on disk', async () 
       'utf8'
     )
     await ensurePortalConfig(configPath, defaults)
-    document = parseYaml(await readFile(configPath, 'utf8'))
-    assert.equal(document.api.token, '')
-    assert.equal(document.mcpServer.token, '')
+    document = parseConfigYaml(await readFile(configPath, 'utf8'))
+    assert.equal(readConfigSection(document, 'api').token, '')
+    assert.equal(readConfigSection(document, 'mcpServer').token, '')
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -388,8 +417,11 @@ test('parsePortalConfig rejects unknown and invalid advanced settings', () => {
 test('ensurePortalConfig preserves files with unsupported advanced fields', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-invalid-'))
   const configPath = path.join(root, 'config.yaml')
-  const config = createDefaultPortalConfig(root) as any
-  config.advanced.hidden = true
+  const defaults = createDefaultPortalConfig(root)
+  const config = {
+    ...defaults,
+    advanced: { ...defaults.advanced, hidden: true },
+  }
   const contents = stringifyYaml(config)
 
   try {
@@ -417,7 +449,7 @@ test('ensurePortalConfig writes a missing API section into an existing config', 
     await writeFile(configPath, stringifyYaml(legacyConfig), 'utf8')
 
     const config = await ensurePortalConfig(configPath, defaults)
-    const document = parseYaml(await readFile(configPath, 'utf8'))
+    const document = parseConfigYaml(await readFile(configPath, 'utf8'))
 
     assert.deepEqual(config.api, defaults.api)
     assert.deepEqual(document.api, defaults.api)
@@ -444,7 +476,7 @@ test('ensurePortalConfig completes a partial API section without replacing its v
     )
 
     await ensurePortalConfig(configPath, defaults)
-    const document = parseYaml(await readFile(configPath, 'utf8'))
+    const document = parseConfigYaml(await readFile(configPath, 'utf8'))
 
     assert.deepEqual(document.api, {
       host: 'localhost',
@@ -468,7 +500,7 @@ test('ensurePortalConfig writes a missing MCP Server section', async () => {
     await writeFile(configPath, stringifyYaml(legacyConfig), 'utf8')
 
     const config = await ensurePortalConfig(configPath, defaults)
-    const document = parseYaml(await readFile(configPath, 'utf8'))
+    const document = parseConfigYaml(await readFile(configPath, 'utf8'))
 
     assert.deepEqual(config.mcpServer, defaults.mcpServer)
     assert.deepEqual(document.mcpServer, defaults.mcpServer)

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import type { Server } from 'http'
+import type { Request, Response } from 'express'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js'
@@ -57,7 +58,7 @@ test('connectMcpServer initializes, lists, calls, and closes a real stdio server
 test('connectMcpServer uses Streamable HTTP and expands header environment values', async () => {
   const app = createMcpExpressApp()
   const receivedTokens: string[] = []
-  app.post('/mcp', async (request: any, response: any) => {
+  app.post('/mcp', async (request: Request, response: Response) => {
     receivedTokens.push(request.header('x-test-token') ?? '')
     const server = new McpServer({
       name: 'portal-test-http-server',

@@ -5,6 +5,7 @@
   "description": "A browser-backed terminal agent for web AI products and local tools.",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "lint": "eslint . --max-warnings 0",
     "test": "npm run test:type && npm run test:unit",
     "test:type": "tsc -p tsconfig.json --noEmit",
     "test:unit": "node --import tsx --test \"test/**/*.test.ts\"",
@@ -25,12 +26,16 @@
     "node": ">=24"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/express": "5.0.6",
     "@types/node": "^24.13.3",
+    "eslint": "10.7.0",
     "prettier": "3.8.3",
     "ts-node": "^10.9.2",
     "tsup": "^8.5.1",
     "tsx": "^4.22.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "typescript-eslint": "8.64.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import os from 'os'
 import path from 'path'
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
+import { stringify as stringifyYaml } from 'yaml'
 import { createDefaultPortalConfig } from '../../src/config/portal-config.ts'
 
 import {
@@ -11,6 +11,7 @@ import {
   SkillRegistryError,
   writeSkillRegistry,
 } from '../../src/skills/skill-registry.ts'
+import { parseYamlRecord } from '../helpers/yaml.ts'
 
 function defaultConfig() {
   return createDefaultPortalConfig(path.resolve('data'), {
@@ -42,7 +43,7 @@ test('skill registry persists deterministic user-editable YAML', async () => {
 
     const contents = await readFile(registryPath, 'utf8')
     assert.ok(contents.indexOf('alpha-skill') < contents.indexOf('zeta-skill'))
-    assert.deepEqual(parseYaml(contents).skills, [
+    assert.deepEqual(parseYamlRecord(contents).skills, [
       {
         name: 'alpha-skill',
         directory: 'skills/alpha-skill',

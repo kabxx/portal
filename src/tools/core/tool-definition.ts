@@ -22,6 +22,10 @@ interface ToolMetadata {
   examples?: ToolMetadataExample[]
 }
 
+interface ToolMetadataCarrier {
+  [TOOL_METADATA_SYMBOL]?: ToolMetadata
+}
+
 type ToolOutcome = 'success' | 'error' | 'unknown'
 
 interface ToolOutput {
@@ -85,12 +89,13 @@ type SpawnTaskResult =
     }
 
 function defineToolMetadata(metadata: ToolMetadata) {
-  return function (target: any) {
-    target[TOOL_METADATA_SYMBOL] = metadata
+  return function (target: object) {
+    const carrier = target as ToolMetadataCarrier
+    carrier[TOOL_METADATA_SYMBOL] = metadata
   }
 }
 
-abstract class Tool<TInput = any, TOutput extends ToolOutput = ToolOutput> {
+abstract class Tool<TInput = unknown, TOutput extends ToolOutput = ToolOutput> {
   constructor(
     protected readonly providerAdapter: ProviderAdapter,
     protected readonly services: ToolServices = {}
@@ -99,7 +104,8 @@ abstract class Tool<TInput = any, TOutput extends ToolOutput = ToolOutput> {
   abstract call(input: TInput, options?: ToolExecutionOptions): Promise<TOutput>
 
   public get metadata(): ToolMetadata {
-    const metadata = (this.constructor as any)[TOOL_METADATA_SYMBOL]
+    const carrier = this.constructor as unknown as ToolMetadataCarrier
+    const metadata = carrier[TOOL_METADATA_SYMBOL]
     if (!metadata) {
       throw new Error(`Missing @defineToolMetadata on ${this.constructor.name}`)
     }

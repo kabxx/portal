@@ -3,9 +3,23 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { GeminiAdapter } from '../../../src/providers/adapters/adapter-gemini.ts'
+import { createPrototypeObject } from '../../helpers/fakes.ts'
+
+type GeminiAdapterHarness = Pick<GeminiAdapter, keyof GeminiAdapter> & {
+  page: unknown
+  lastParsedResponse: unknown
+  parseResponse: unknown
+  readCurrentStreamedResponseText: unknown
+  getSubmitRequestStartGraceMs(): number
+  getSubmitBlockedWarningIntervalMs(): number
+}
+
+function createTestGeminiAdapter(): GeminiAdapterHarness {
+  return createPrototypeObject(GeminiAdapter.prototype) as GeminiAdapterHarness
+}
 
 test('GeminiAdapter normalizes conversationId and conversationUrl at the source', () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
 
   adapter.lastParsedResponse = {
     conversationId: 'c_7807b33e16f78ea0',
@@ -21,7 +35,7 @@ test('GeminiAdapter normalizes conversationId and conversationUrl at the source'
 })
 
 test('GeminiAdapter.submit emits periodic warnings while waiting for the request to start and still accepts a later response', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   const warnings: string[] = []
   adapter.lastParsedResponse = null
   adapter.parseResponse = async () => ({
@@ -78,7 +92,7 @@ test('GeminiAdapter.submit emits periodic warnings while waiting for the request
 })
 
 test('GeminiAdapter.submit emits assistant stream snapshots while the response is growing', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   const streamedTexts: string[] = []
   adapter.lastParsedResponse = null
   let currentStreamText = 'partial stream'
@@ -134,7 +148,7 @@ test('GeminiAdapter.submit emits assistant stream snapshots while the response i
 })
 
 test('GeminiAdapter lists action capabilities by icon name without reading labels', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   adapter.page = createGeminiCapabilityPage([
     { name: 'image_create' },
     { name: 'canvas', disabled: true },
@@ -149,7 +163,7 @@ test('GeminiAdapter lists action capabilities by icon name without reading label
 })
 
 test('GeminiAdapter selects action capabilities by icon name', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   const page = createGeminiCapabilityPage([
     { name: 'image_create' },
     { name: 'canvas', disabled: true },
@@ -167,7 +181,7 @@ test('GeminiAdapter selects action capabilities by icon name', async () => {
 })
 
 test('GeminiAdapter clears selected action capabilities', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   const page = createGeminiCapabilityPage([{ name: 'image_create' }], {
     selected: true,
   })
@@ -179,7 +193,7 @@ test('GeminiAdapter clears selected action capabilities', async () => {
 })
 
 test('GeminiAdapter clearActionCapability is a no-op without a selected capability', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   const page = createGeminiCapabilityPage([{ name: 'image_create' }])
   adapter.page = page
 
@@ -189,7 +203,7 @@ test('GeminiAdapter clearActionCapability is a no-op without a selected capabili
 })
 
 test('GeminiAdapter clears selected capabilities before selecting another', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   const page = createGeminiCapabilityPage([{ name: 'image_create' }], {
     selected: true,
   })
@@ -205,7 +219,7 @@ test('GeminiAdapter clears selected capabilities before selecting another', asyn
 })
 
 test('GeminiAdapter closes the capability menu after listing', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   const page = createGeminiCapabilityPage([{ name: 'image_create' }])
   adapter.page = page
 
@@ -225,7 +239,7 @@ test('GeminiAdapter closes the capability menu after listing', async () => {
 })
 
 test('GeminiAdapter expands more tools before reading capabilities', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   const page = createGeminiCapabilityPage([{ name: 'image_create' }], {
     moreCapabilities: [{ name: 'guided_learning' }],
   })
@@ -243,7 +257,7 @@ test('GeminiAdapter expands more tools before reading capabilities', async () =>
 })
 
 test('GeminiAdapter expands more tools before selecting capabilities', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   const page = createGeminiCapabilityPage([{ name: 'image_create' }], {
     moreCapabilities: [{ name: 'guided_learning' }],
   })
@@ -261,7 +275,7 @@ test('GeminiAdapter expands more tools before selecting capabilities', async () 
 })
 
 test('GeminiAdapter changes model through the mode menu', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   const page = createGeminiModelPage()
   adapter.page = page
 
@@ -276,7 +290,7 @@ test('GeminiAdapter changes model through the mode menu', async () => {
 })
 
 test('GeminiAdapter enables model extension only when requested', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   const page = createGeminiModelPage()
   adapter.page = page
 
@@ -292,7 +306,7 @@ test('GeminiAdapter enables model extension only when requested', async () => {
 })
 
 test('GeminiAdapter keeps selected model extension when requested', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   const page = createGeminiModelPage({ extended: true })
   adapter.page = page
 
@@ -308,7 +322,7 @@ test('GeminiAdapter keeps selected model extension when requested', async () => 
 })
 
 test('GeminiAdapter disables model extension when it is not requested', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   const page = createGeminiModelPage({ extended: true })
   adapter.page = page
 
@@ -324,7 +338,7 @@ test('GeminiAdapter disables model extension when it is not requested', async ()
 })
 
 test('GeminiAdapter rejects unsupported model names', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   adapter.page = createGeminiModelPage()
 
   await assert.rejects(
@@ -339,7 +353,7 @@ test('GeminiAdapter rejects unsupported model names', async () => {
 })
 
 test('GeminiAdapter.stopGeneration clicks the direct child stop button when present', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   const stopButton = createStopButton()
   adapter.page = createGeminiPage(
     createStopButton(),
@@ -357,7 +371,7 @@ test('GeminiAdapter.stopGeneration clicks the direct child stop button when pres
 })
 
 test('GeminiAdapter.stopGeneration is a no-op when the stop button is missing', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createTestGeminiAdapter()
   adapter.page = createGeminiPage(
     createStopButton(),
     {
@@ -404,10 +418,10 @@ function createGeminiPage(
       }
       throw new Error(`Unexpected selector: ${selector}`)
     },
-    on: (eventName: string, listener: (...args: any[]) => void) => {
+    on: (eventName: string, listener: (...args: unknown[]) => void) => {
       emitter.on(eventName, listener)
     },
-    off: (eventName: string, listener: (...args: any[]) => void) => {
+    off: (eventName: string, listener: (...args: unknown[]) => void) => {
       emitter.off(eventName, listener)
     },
     emit: (eventName: string, payload: unknown) => {

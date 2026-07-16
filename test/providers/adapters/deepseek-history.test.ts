@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { DeepSeekAdapter } from '../../../src/providers/adapters/adapter-deepseek.ts'
+import { createPrototypeObject, setTestProperty } from '../../helpers/fakes.ts'
 
 const HISTORY_URL =
   'https://chat.deepseek.com/api/v0/chat/history_messages?chat_session_id=conversation&cache_version=7&cache_reset_at=8'
@@ -31,8 +32,8 @@ function historyBody(cacheControl: 'MERGE' | 'REPLACE', count: number): string {
   })
 }
 
-function stubCapturedHistory(adapter: any, body: string): void {
-  adapter.getCapturedHistoryEntries = async () => [
+function stubCapturedHistory(adapter: object, body: string): void {
+  setTestProperty(adapter, 'getCapturedHistoryEntries', async () => [
     {
       id: 1,
       url: HISTORY_URL,
@@ -42,22 +43,25 @@ function stubCapturedHistory(adapter: any, body: string): void {
       done: true,
       error: null,
     },
-  ]
-  adapter.getCapturedHistoryRequestHeaders = async () => ({
+  ])
+  setTestProperty(adapter, 'getCapturedHistoryRequestHeaders', async () => ({
     authorization: 'Bearer secret',
     cookie: 'private-cookie',
     'x-app-version': '1',
-  })
+  }))
 }
 
 test('DeepSeekAdapter.loadHistory replaces a nonempty MERGE delta with the full REPLACE snapshot', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createPrototypeObject(DeepSeekAdapter.prototype) as Pick<
+    DeepSeekAdapter,
+    keyof DeepSeekAdapter
+  >
   stubCapturedHistory(adapter, historyBody('MERGE', 2))
   const replayPayloads: Array<{
     url: string
     headers: Record<string, string>
   }> = []
-  adapter.page = {
+  setTestProperty(adapter, 'page', {
     evaluate: async (
       _callback: unknown,
       payload: (typeof replayPayloads)[number]
@@ -69,7 +73,7 @@ test('DeepSeekAdapter.loadHistory replaces a nonempty MERGE delta with the full 
         status: 200,
       }
     },
-  }
+  })
 
   const result = await adapter.loadHistory()
 
@@ -89,13 +93,16 @@ test('DeepSeekAdapter.loadHistory replaces a nonempty MERGE delta with the full 
 })
 
 test('DeepSeekAdapter.loadHistory reports a partial delta when the full replay fails', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createPrototypeObject(DeepSeekAdapter.prototype) as Pick<
+    DeepSeekAdapter,
+    keyof DeepSeekAdapter
+  >
   stubCapturedHistory(adapter, historyBody('MERGE', 2))
-  adapter.page = {
+  setTestProperty(adapter, 'page', {
     evaluate: async () => {
       throw new Error('network failed')
     },
-  }
+  })
 
   const result = await adapter.loadHistory()
 
@@ -105,8 +112,11 @@ test('DeepSeekAdapter.loadHistory reports a partial delta when the full replay f
 })
 
 test('DeepSeekAdapter.loadHistory bounds the full replay with the configured timeout', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
-  adapter.options = {
+  const adapter = createPrototypeObject(DeepSeekAdapter.prototype) as Pick<
+    DeepSeekAdapter,
+    keyof DeepSeekAdapter
+  >
+  setTestProperty(adapter, 'options', {
     timings: {
       requestStartWarningAfterMs: 1,
       blockedWarningIntervalMs: 1,
@@ -116,10 +126,10 @@ test('DeepSeekAdapter.loadHistory bounds the full replay with the configured tim
       historyLoadTimeoutMs: 5,
       historyPageTimeoutMs: 1,
     },
-  }
+  })
   stubCapturedHistory(adapter, historyBody('MERGE', 2))
   let replayTimer: ReturnType<typeof setTimeout> | undefined
-  adapter.page = {
+  setTestProperty(adapter, 'page', {
     evaluate: async () =>
       await new Promise((resolve) => {
         replayTimer = setTimeout(
@@ -132,7 +142,7 @@ test('DeepSeekAdapter.loadHistory bounds the full replay with the configured tim
           1_000
         )
       }),
-  }
+  })
 
   try {
     const result = await adapter.loadHistory()

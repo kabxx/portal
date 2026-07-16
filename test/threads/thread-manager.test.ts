@@ -6,7 +6,23 @@ import {
   ThreadManager,
 } from '../../src/threads/thread-manager.ts'
 import { PortalAbortError } from '../../src/runtime/runtime-cancellation.ts'
+import {
+  type TurnRecord,
+  ThreadRegistry,
+} from '../../src/threads/thread-registry.ts'
 import { createFakeRuntime } from '../helpers/fakes.ts'
+
+function getRecordedTurn(
+  manager: ThreadManager,
+  threadId: string,
+  turnId: string
+): TurnRecord {
+  const registry: unknown = Reflect.get(manager, 'threads')
+  assert.ok(registry instanceof ThreadRegistry)
+  const turn = registry.getTurn(threadId, turnId)
+  assert.ok(turn)
+  return turn
+}
 
 test('ThreadManager creates threads with thread-first APIs', () => {
   const manager = new ThreadManager()
@@ -115,11 +131,10 @@ test('ThreadManager submitThreadInput records cancelled turns without error item
     PortalAbortError
   )
 
-  const recordedTurn = (manager as any).threads.getTurn(thread.id, 'turn1')
-  assert.ok(recordedTurn)
+  const recordedTurn = getRecordedTurn(manager, thread.id, 'turn1')
   assert.equal(recordedTurn.status, 'canceled')
   assert.deepEqual(
-    recordedTurn.items.map((item: { kind: string }) => item.kind),
+    recordedTurn.items.map((item) => item.kind),
     ['user_text']
   )
 })
@@ -176,11 +191,8 @@ test('ThreadManager submitThreadInput preserves status warnings emitted during s
   const updatedThread = manager.getThread(thread.id)
   assert.ok(updatedThread)
   assert.equal(updatedThread.turnCount, 1)
-  const recordedTurn = (manager as any).threads.getTurn(thread.id, 'turn1')
-  assert.ok(recordedTurn)
-  const turnItems = recordedTurn.items.map(
-    (item: { kind: string }) => item.kind
-  )
+  const recordedTurn = getRecordedTurn(manager, thread.id, 'turn1')
+  const turnItems = recordedTurn.items.map((item) => item.kind)
   assert.deepEqual(turnItems, ['user_text', 'status', 'assistant_text'])
 })
 
@@ -207,9 +219,9 @@ test('ThreadManager forwards manual skill selection without persisting it as a t
   })
 
   assert.deepEqual(selected, ['manual-skill'])
-  const turn = (manager as any).threads.getTurn(thread.id, 'turn1')
+  const turn = getRecordedTurn(manager, thread.id, 'turn1')
   assert.deepEqual(
-    turn.items.map((item: { kind: string }) => item.kind),
+    turn.items.map((item) => item.kind),
     ['user_text', 'assistant_text']
   )
 })
@@ -237,14 +249,16 @@ test('ThreadManager preserves full tool content and optional display text', asyn
 
   await manager.submitThreadInput(thread.id, 'load the skill')
 
-  const turn = (manager as any).threads.getTurn(thread.id, 'turn1')
-  assert.deepEqual(turn.items[1], {
+  const turn = getRecordedTurn(manager, thread.id, 'turn1')
+  const toolResult = turn.items[1]
+  assert.ok(toolResult)
+  assert.deepEqual(toolResult, {
     kind: 'tool_result',
     toolName: 'load_skill',
     outcome: 'success',
     result: { instructions: 'FULL SKILL CONTENT' },
     displayText: 'Loaded skill: pdf-processing',
-    createdAt: turn.items[1].createdAt,
+    createdAt: toolResult.createdAt,
   })
 })
 
@@ -287,9 +301,9 @@ test('ThreadManager forwards tool progress without persisting it as a turn item'
   })
 
   assert.deepEqual(progress, ['tool-call-1:start', 'tool-call-1:output'])
-  const turn = (manager as any).threads.getTurn(thread.id, 'turn1')
+  const turn = getRecordedTurn(manager, thread.id, 'turn1')
   assert.deepEqual(
-    turn.items.map((item: { kind: string }) => item.kind),
+    turn.items.map((item) => item.kind),
     ['user_text', 'tool_result']
   )
 })

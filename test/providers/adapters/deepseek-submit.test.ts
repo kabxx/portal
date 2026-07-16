@@ -5,9 +5,27 @@ import assert from 'node:assert/strict'
 import { ProviderAdapterUnsupportedError } from '../../../src/providers/adapters/adapter-base.ts'
 import { DeepSeekAdapter } from '../../../src/providers/adapters/adapter-deepseek.ts'
 import { isAbortError } from '../../../src/runtime/runtime-cancellation.ts'
+import { createPrototypeObject } from '../../helpers/fakes.ts'
+
+type DeepSeekAdapterHarness = Pick<DeepSeekAdapter, keyof DeepSeekAdapter> & {
+  page: unknown
+  conversationIdVal: string | null
+  getCapturedFetchEntryCount(): Promise<number>
+  getLatestCapturedFetchBody(): Promise<string | null>
+  getSubmitRequestStartGraceMs(): number
+  getSubmitBlockedWarningIntervalMs(): number
+  getSubmitResponseTimeoutMs(): number
+  readCurrentStreamedResponseText: unknown
+}
+
+function createTestDeepSeekAdapter(): DeepSeekAdapterHarness {
+  return createPrototypeObject(
+    DeepSeekAdapter.prototype
+  ) as DeepSeekAdapterHarness
+}
 
 test('DeepSeekAdapter.submit returns a captured finished response without waiting for response.text()', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   adapter.conversationIdVal = null
   const responseText =
     '<tool>{"tool":"run_command","params":{"command":"dir"}}</tool>'
@@ -69,7 +87,7 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
 })
 
 test('DeepSeekAdapter.submit emits periodic warnings while waiting for the request to start and still accepts a later response', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   const warnings: string[] = []
   adapter.conversationIdVal = null
   const responseText = 'Recovered after the page resumed.'
@@ -120,7 +138,7 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
 })
 
 test('DeepSeekAdapter.submit emits assistant stream snapshots while the response is growing', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   const streamedTexts: string[] = []
   adapter.conversationIdVal = null
   let currentStreamText = 'partial stream'
@@ -169,7 +187,7 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
 })
 
 test('DeepSeekAdapter.submit aborts after streaming a complete tool payload without a FINISHED status', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   adapter.conversationIdVal = null
   const controller = new AbortController()
   const streamedTexts: string[] = []
@@ -217,7 +235,7 @@ test('DeepSeekAdapter.submit aborts after streaming a complete tool payload with
 })
 
 test('DeepSeekAdapter.submit fails instead of returning an unfinished response without FINISHED status', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   adapter.conversationIdVal = null
   const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":"still streaming"}]}}}`
 
@@ -254,7 +272,7 @@ test('DeepSeekAdapter.submit fails instead of returning an unfinished response w
 })
 
 test('DeepSeekAdapter.submit waits for the ready button to become visible before returning', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   adapter.conversationIdVal = null
   const responseText = 'Recovered after render completed.'
   const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
@@ -301,7 +319,7 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
 })
 
 test('DeepSeekAdapter.submit waits for the send button disabled class to clear before clicking', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   adapter.conversationIdVal = null
   const responseText = 'Submitted after the send button became ready.'
   const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
@@ -343,7 +361,7 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
 })
 
 test('DeepSeekAdapter reads and sets thinking/search toggle states', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   const thinkingButton = createToggleButton('false')
   const searchButton = createToggleButton('true')
   adapter.page = createDeepSeekPage(
@@ -369,7 +387,7 @@ test('DeepSeekAdapter reads and sets thinking/search toggle states', async () =>
 })
 
 test('DeepSeekAdapter treats a missing second toggle as unavailable search', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   adapter.page = createDeepSeekPage(
     {
       isEnabled: async () => true,
@@ -389,7 +407,7 @@ test('DeepSeekAdapter treats a missing second toggle as unavailable search', asy
 })
 
 test('DeepSeekAdapter treats zero toggle buttons as no toggle capabilities', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   adapter.page = createDeepSeekPage(
     {
       isEnabled: async () => true,
@@ -405,7 +423,7 @@ test('DeepSeekAdapter treats zero toggle buttons as no toggle capabilities', asy
 })
 
 test('DeepSeekAdapter changes model by data-model-type', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   const modelButtons = {
     default: createModelButton(),
     expert: createModelButton(),
@@ -428,7 +446,7 @@ test('DeepSeekAdapter changes model by data-model-type', async () => {
 })
 
 test('DeepSeekAdapter rejects unsupported model names', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   adapter.page = createDeepSeekPage(createSendButton())
 
   await assert.rejects(
@@ -446,7 +464,7 @@ test('DeepSeekAdapter rejects unsupported model names', async () => {
 })
 
 test('DeepSeekAdapter.attachFile uploads through the current upload button when available', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   const uploadButton = createUploadButton()
   adapter.page = createDeepSeekPage(
     {
@@ -466,7 +484,7 @@ test('DeepSeekAdapter.attachFile uploads through the current upload button when 
 })
 
 test('DeepSeekAdapter.attachFile reports unsupported when the upload button is unavailable', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   adapter.page = createDeepSeekPage({
     isEnabled: async () => true,
     isVisible: async () => true,
@@ -483,7 +501,7 @@ test('DeepSeekAdapter.attachFile reports unsupported when the upload button is u
 })
 
 test('DeepSeekAdapter.stopGeneration clicks the visible stop icon button when present', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   const stopButton = createStopButton()
   adapter.page = createDeepSeekPage(
     createSendButton(),
@@ -499,7 +517,7 @@ test('DeepSeekAdapter.stopGeneration clicks the visible stop icon button when pr
 })
 
 test('DeepSeekAdapter.stopGeneration clicks a visible stop div even when it is not enabled', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   const stopButton = createStopButton({ enabled: false })
   adapter.page = createDeepSeekPage(
     createSendButton(),
@@ -515,7 +533,7 @@ test('DeepSeekAdapter.stopGeneration clicks a visible stop div even when it is n
 })
 
 test('DeepSeekAdapter.stopGeneration is a no-op when the stop icon is missing', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createTestDeepSeekAdapter()
   adapter.page = createDeepSeekPage(createSendButton())
 
   await adapter.stopGeneration()
@@ -611,16 +629,16 @@ function createDeepSeekPage(
       return {
         setFiles: async (path: string | readonly string[]) => {
           if (uploadButton) {
-            uploadButton.files = Array.isArray(path) ? [...path] : [path]
+            uploadButton.files = typeof path === 'string' ? [path] : [...path]
           }
         },
       }
     },
     url: () => 'https://chat.deepseek.com/a/chat/s/conv-1',
-    on: (eventName: string, listener: (...args: any[]) => void) => {
+    on: (eventName: string, listener: (...args: unknown[]) => void) => {
       emitter.on(eventName, listener)
     },
-    off: (eventName: string, listener: (...args: any[]) => void) => {
+    off: (eventName: string, listener: (...args: unknown[]) => void) => {
       emitter.off(eventName, listener)
     },
     emit: (eventName: string, payload: unknown) => {
@@ -629,7 +647,13 @@ function createDeepSeekPage(
   }
 }
 
-function stubCapturedResponse(adapter: any, raw: string) {
+function stubCapturedResponse(
+  adapter: {
+    getCapturedFetchEntryCount: () => Promise<number>
+    getLatestCapturedFetchBody: () => Promise<string | null>
+  },
+  raw: string
+) {
   adapter.getCapturedFetchEntryCount = async () => 0
   adapter.getLatestCapturedFetchBody = async () => raw
 }

@@ -3,9 +3,24 @@ import assert from 'node:assert/strict'
 
 import { ProviderAdapterUnsupportedError } from '../../../src/providers/adapters/adapter-base.ts'
 import { GrokAdapter } from '../../../src/providers/adapters/adapter-grok.ts'
+import { createPrototypeObject } from '../../helpers/fakes.ts'
+
+type GrokAdapterHarness = Pick<GrokAdapter, keyof GrokAdapter> & {
+  page: unknown
+  websocketFrames: string[]
+  parseWebSocketResponse(frames: readonly string[]): {
+    conversationId?: string
+    text: string
+    isFinished: boolean
+  } | null
+}
+
+function createTestGrokAdapter(): GrokAdapterHarness {
+  return createPrototypeObject(GrokAdapter.prototype) as GrokAdapterHarness
+}
 
 test('GrokAdapter.submit waits for Grok websocket response.done', async () => {
-  const adapter = Object.create(GrokAdapter.prototype) as any
+  const adapter = createTestGrokAdapter()
   const page = createGrokPage()
   const streamedTexts: string[] = []
   adapter.websocketFrames = page.websocketFrames
@@ -22,7 +37,7 @@ test('GrokAdapter.submit waits for Grok websocket response.done', async () => {
 })
 
 test('GrokAdapter websocket parsing does not finish from text chunks alone', () => {
-  const adapter = Object.create(GrokAdapter.prototype) as any
+  const adapter = createTestGrokAdapter()
 
   const parsed = adapter.parseWebSocketResponse([
     buildResponseFrame('conv-1', 'partial text', false),
@@ -36,7 +51,7 @@ test('GrokAdapter websocket parsing does not finish from text chunks alone', () 
 })
 
 test('GrokAdapter changes model through the model menu', async () => {
-  const adapter = Object.create(GrokAdapter.prototype) as any
+  const adapter = createTestGrokAdapter()
   const page = createGrokPage({
     modelItemCount: 4,
   })
@@ -48,7 +63,7 @@ test('GrokAdapter changes model through the model menu', async () => {
 })
 
 test('GrokAdapter rejects unsupported model names', async () => {
-  const adapter = Object.create(GrokAdapter.prototype) as any
+  const adapter = createTestGrokAdapter()
   adapter.page = createGrokPage({
     modelItemCount: 2,
   })
@@ -68,7 +83,7 @@ test('GrokAdapter rejects unsupported model names', async () => {
 })
 
 test('GrokAdapter rejects model selection that redirects to subscribe', async () => {
-  const adapter = Object.create(GrokAdapter.prototype) as any
+  const adapter = createTestGrokAdapter()
   adapter.page = createGrokPage({
     modelItemCount: 4,
     subscribeModelIndex: 2,
@@ -83,7 +98,7 @@ test('GrokAdapter rejects model selection that redirects to subscribe', async ()
 })
 
 test('GrokAdapter.attachFile writes files into the hidden Grok file input', async () => {
-  const adapter = Object.create(GrokAdapter.prototype) as any
+  const adapter = createTestGrokAdapter()
   const page = createGrokPage({
     fileInputAvailable: true,
   })
@@ -95,7 +110,7 @@ test('GrokAdapter.attachFile writes files into the hidden Grok file input', asyn
 })
 
 test('GrokAdapter.attachFile reports unsupported when the file input is missing', async () => {
-  const adapter = Object.create(GrokAdapter.prototype) as any
+  const adapter = createTestGrokAdapter()
   adapter.page = createGrokPage()
 
   await assert.rejects(
@@ -108,7 +123,7 @@ test('GrokAdapter.attachFile reports unsupported when the file input is missing'
 })
 
 test('GrokAdapter.stopGeneration clicks the visible stop icon button when present', async () => {
-  const adapter = Object.create(GrokAdapter.prototype) as any
+  const adapter = createTestGrokAdapter()
   const page = createGrokPage({
     stopButtonAvailable: true,
   })
@@ -120,7 +135,7 @@ test('GrokAdapter.stopGeneration clicks the visible stop icon button when presen
 })
 
 test('GrokAdapter.stopGeneration is a no-op when the stop icon is missing', async () => {
-  const adapter = Object.create(GrokAdapter.prototype) as any
+  const adapter = createTestGrokAdapter()
   const page = createGrokPage()
   adapter.page = page
 
@@ -178,7 +193,11 @@ function createGrokPage({
     count: async () => (fileInputAvailable ? 1 : 0),
     first: () => fileInput,
     setInputFiles: async (path: string | readonly string[]) => {
-      files.splice(0, files.length, ...(Array.isArray(path) ? path : [path]))
+      files.splice(
+        0,
+        files.length,
+        ...(typeof path === 'string' ? [path] : [...path])
+      )
     },
   }
   const modelTrigger = {

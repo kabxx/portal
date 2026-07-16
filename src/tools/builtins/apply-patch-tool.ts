@@ -240,7 +240,8 @@ async function planPatch(operations: PatchOperation[]): Promise<PlannedFile[]> {
       }
     } catch (error) {
       throw new Error(
-        `${operation.path}: ${formatOperationError(operation, error)}`
+        `${operation.path}: ${formatOperationError(operation, error)}`,
+        { cause: error }
       )
     }
   }
@@ -275,7 +276,9 @@ async function commitPatch(files: PlannedFile[]): Promise<void> {
         // Preserve the original failure even if a rollback step also fails.
       }
     }
-    throw new Error(`Patch commit failed: ${errorMessage(error)}`)
+    throw new Error(`Patch commit failed: ${errorMessage(error)}`, {
+      cause: error,
+    })
   }
 }
 

@@ -58,7 +58,7 @@ export async function findSkillCandidates(
   signal?: AbortSignal
 ): Promise<string[]> {
   throwIfAborted(signal)
-  let searchRoot = extractedDirectory
+  let searchRoot: string
   if (requestedSubdirectory !== null) {
     assertSafeRelativePath(requestedSubdirectory)
     const archiveRoot = await unwrapSingleDirectory(extractedDirectory)

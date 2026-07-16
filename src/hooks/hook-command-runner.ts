@@ -5,7 +5,7 @@ import {
   closeJob,
   createJob,
 } from '../platform/win32-process-job.ts'
-import { isAbortError } from '../runtime/runtime-cancellation.ts'
+import { isAbortError, toError } from '../runtime/runtime-cancellation.ts'
 
 const MAX_OUTPUT_BYTES = 1024 * 1024
 
@@ -57,7 +57,7 @@ export async function runHookCommand(
         child.kill()
       }
     }
-    const finish = (error?: unknown, output?: string) => {
+    const finish = (error?: Error, output?: string) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
@@ -66,7 +66,11 @@ export async function runHookCommand(
         closeJob(job)
         job = null
       }
-      error === undefined ? resolve(output ?? '') : reject(error)
+      if (error === undefined) {
+        resolve(output ?? '')
+      } else {
+        reject(error)
+      }
     }
     const collect = (target: Buffer[]) => (chunk: Buffer) => {
       outputBytes += chunk.length
@@ -94,11 +98,11 @@ export async function runHookCommand(
     })
     const onAbort = () => {
       terminate()
-      const reason = options.signal?.reason
+      const reason: unknown = options.signal?.reason
       finish(
         reason instanceof Error || isAbortError(reason)
           ? reason
-          : new Error('Hook command cancelled')
+          : toError(reason, 'Hook command cancelled')
       )
     }
     const timer = setTimeout(() => {

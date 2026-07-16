@@ -18,7 +18,7 @@ test('createJob returns a valid handle on Windows', () => {
   assert.ok(job > 0, 'Job handle should be positive')
 
   // Clean up
-  closeJob(job!)
+  closeJob(job)
 })
 
 test('assignPidToJob returns false for invalid PID', () => {
@@ -31,10 +31,10 @@ test('assignPidToJob returns false for invalid PID', () => {
   assert.ok(job !== null)
 
   // PID 0 is the System Idle Process — can't be assigned to a job
-  const result = assignPidToJob(job!, 0)
+  const result = assignPidToJob(job, 0)
   assert.equal(result, false)
 
-  closeJob(job!)
+  closeJob(job)
 })
 
 test('createJob creates independent handles', () => {
@@ -46,6 +46,6 @@ test('createJob creates independent handles', () => {
   assert.ok(j2 !== null)
   assert.notEqual(j1, j2, 'Each call should create a new job')
 
-  closeJob(j1!)
-  closeJob(j2!)
+  closeJob(j1)
+  closeJob(j2)
 })

@@ -79,6 +79,7 @@ export function mapApiError(error: unknown): ApiErrorDescriptor {
         code: 'NOT_FOUND',
         message: 'Route not found.',
       }
+    case null:
     default:
       return {
         statusCode: 500,

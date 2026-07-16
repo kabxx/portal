@@ -9,10 +9,43 @@ import { ThreadManager } from '../../../src/threads/thread-manager.ts'
 import type { ProviderId } from '../../../src/providers/provider-id.ts'
 import { ThreadStore } from '../../../src/threads/thread-store.ts'
 import { TerminalController } from '../../../src/terminal-ui/terminal-controller.ts'
-import { createFakeRuntime } from '../../helpers/fakes.ts'
+import {
+  createFakeRuntime,
+  createProviderAdapterStub,
+} from '../../helpers/fakes.ts'
 import { latestTimelineEntry } from '../../helpers/ui.ts'
 import type { SkillLibrary } from '../../../src/skills/skill-library.ts'
 import type { McpLibrary } from '../../../src/mcp/mcp-library.ts'
+
+type ToggleCapability = 'thinking' | 'search' | 'advanced_search'
+type ToggleState = 'on' | 'off'
+type ActionCapabilityState =
+  | 'available'
+  | 'selected'
+  | 'disabled'
+  | 'unavailable'
+
+interface CapabilityAdapterOverrides {
+  hasToggleCapability?: (capability: ToggleCapability) => Promise<boolean>
+  getToggleState?: (capability: ToggleCapability) => Promise<ToggleState>
+  setToggleState?: (
+    capability: ToggleCapability,
+    state: ToggleState
+  ) => Promise<ToggleState>
+  listActionCapabilities?: () => Promise<
+    Array<{ name: string; state: ActionCapabilityState }>
+  >
+  selectActionCapability?: (name: string) => Promise<ActionCapabilityState>
+  clearActionCapability?: () => Promise<void>
+}
+
+function createCapabilityAdapter(
+  overrides: CapabilityAdapterOverrides
+): ReturnType<typeof createProviderAdapterStub> {
+  const adapter = createProviderAdapterStub()
+  Object.assign(adapter, overrides)
+  return adapter
+}
 
 async function executeCapability(
   context: CliCommandContext,
@@ -79,7 +112,7 @@ test('ThreadCommand capability lists an empty capability set for the active prov
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'chatgpt',
-    runtime: createFakeRuntime({ adapter: {} as any }),
+    runtime: createFakeRuntime({ adapter: createProviderAdapterStub() }),
     createdAt: 1,
   })
 
@@ -96,7 +129,7 @@ test('ThreadCommand capability lists an empty capability set for the active prov
 
 test('ThreadCommand capability lists ChatGPT one-shot capabilities', async () => {
   const { context, threadManager, ui } = createCommandContext()
-  const adapter = {
+  const adapter: CapabilityAdapterOverrides = {
     listActionCapabilities: async () => [
       { name: 'image_create', state: 'available' },
       { name: 'web_search', state: 'available' },
@@ -108,7 +141,7 @@ test('ThreadCommand capability lists ChatGPT one-shot capabilities', async () =>
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'chatgpt',
-    runtime: createFakeRuntime({ adapter: adapter as any }),
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
     createdAt: 1,
   })
 
@@ -136,7 +169,7 @@ test('ThreadCommand capability lists ChatGPT one-shot capabilities', async () =>
 test('ThreadCommand capability selects ChatGPT one-shot capabilities', async () => {
   const { context, threadManager, ui } = createCommandContext()
   const selectedCapabilities: string[] = []
-  const adapter = {
+  const adapter: CapabilityAdapterOverrides = {
     listActionCapabilities: async () => [
       { name: 'web_search', state: 'available' },
     ],
@@ -148,7 +181,7 @@ test('ThreadCommand capability selects ChatGPT one-shot capabilities', async () 
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'chatgpt',
-    runtime: createFakeRuntime({ adapter: adapter as any }),
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
     createdAt: 1,
   })
 
@@ -165,15 +198,15 @@ test('ThreadCommand capability selects ChatGPT one-shot capabilities', async () 
 
 test('ThreadCommand capability lists DeepSeek capabilities', async () => {
   const { context, threadManager, ui } = createCommandContext()
-  const adapter = {
+  const adapter: CapabilityAdapterOverrides = {
     hasToggleCapability: async () => true,
     getToggleState: async () => 'off',
-    setToggleState: async (_name: string, state: string) => state,
+    setToggleState: async (_name, state) => state,
   }
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'deepseek',
-    runtime: createFakeRuntime({ adapter: adapter as any }),
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
     createdAt: 1,
   })
 
@@ -199,17 +232,17 @@ test('ThreadCommand capability lists DeepSeek capabilities', async () => {
 
 test('ThreadCommand capability executes DeepSeek toggle capabilities', async () => {
   const { context, threadManager, ui } = createCommandContext()
-  const adapter = {
+  const adapter: CapabilityAdapterOverrides = {
     hasToggleCapability: async () => true,
     getToggleState: async (name: string) => {
       return name === 'search' ? 'on' : 'off'
     },
-    setToggleState: async (_name: string, state: string) => state,
+    setToggleState: async (_name, state) => state,
   }
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'deepseek',
-    runtime: createFakeRuntime({ adapter: adapter as any }),
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
     createdAt: 1,
   })
 
@@ -238,9 +271,9 @@ test('ThreadCommand capability lists and executes GLM toggle capabilities', asyn
     advanced_search: 'off',
   }
   const setCalls: Array<{ name: string; state: string }> = []
-  const adapter = {
+  const adapter: CapabilityAdapterOverrides = {
     hasToggleCapability: async () => true,
-    getToggleState: async (name: string) => states[name],
+    getToggleState: async (name) => states[name] ?? 'off',
     setToggleState: async (name: string, state: 'on' | 'off') => {
       setCalls.push({ name, state })
       states[name] = state
@@ -250,7 +283,7 @@ test('ThreadCommand capability lists and executes GLM toggle capabilities', asyn
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'glm',
-    runtime: createFakeRuntime({ adapter: adapter as any }),
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
     createdAt: 1,
   })
 
@@ -314,15 +347,15 @@ test('ThreadCommand capability lists and executes GLM toggle capabilities', asyn
 
 test('ThreadCommand capability hides unavailable DeepSeek search capability', async () => {
   const { context, threadManager, ui } = createCommandContext()
-  const adapter = {
+  const adapter: CapabilityAdapterOverrides = {
     hasToggleCapability: async (name: string) => name === 'thinking',
     getToggleState: async () => 'off',
-    setToggleState: async (_name: string, state: string) => state,
+    setToggleState: async (_name, state) => state,
   }
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'deepseek',
-    runtime: createFakeRuntime({ adapter: adapter as any }),
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
     createdAt: 1,
   })
 
@@ -354,16 +387,16 @@ test('ThreadCommand capability hides unavailable DeepSeek search capability', as
 test('ThreadCommand capability rechecks DeepSeek capability availability each time', async () => {
   const { context, threadManager, ui } = createCommandContext()
   let searchAvailable = false
-  const adapter = {
+  const adapter: CapabilityAdapterOverrides = {
     hasToggleCapability: async (name: string) =>
       name === 'thinking' || searchAvailable,
     getToggleState: async () => 'off',
-    setToggleState: async (_name: string, state: string) => state,
+    setToggleState: async (_name, state) => state,
   }
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'deepseek',
-    runtime: createFakeRuntime({ adapter: adapter as any }),
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
     createdAt: 1,
   })
 
@@ -400,7 +433,7 @@ test('ThreadCommand capability rechecks DeepSeek capability availability each ti
 
 test('ThreadCommand capability lists Doubao one-shot capabilities', async () => {
   const { context, threadManager, ui } = createCommandContext()
-  const adapter = {
+  const adapter: CapabilityAdapterOverrides = {
     listActionCapabilities: async () => [
       { name: 'deep_research', state: 'available' },
       { name: 'translate', state: 'available' },
@@ -412,7 +445,7 @@ test('ThreadCommand capability lists Doubao one-shot capabilities', async () => 
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'doubao',
-    runtime: createFakeRuntime({ adapter: adapter as any }),
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
     createdAt: 1,
   })
 
@@ -439,7 +472,7 @@ test('ThreadCommand capability lists Doubao one-shot capabilities', async () => 
 
 test('ThreadCommand capability lists Gemini one-shot capabilities', async () => {
   const { context, threadManager, ui } = createCommandContext()
-  const adapter = {
+  const adapter: CapabilityAdapterOverrides = {
     listActionCapabilities: async () => [
       { name: 'image_create', state: 'available' },
       { name: 'canvas', state: 'disabled' },
@@ -449,7 +482,7 @@ test('ThreadCommand capability lists Gemini one-shot capabilities', async () => 
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'gemini',
-    runtime: createFakeRuntime({ adapter: adapter as any }),
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
     createdAt: 1,
   })
 
@@ -475,7 +508,7 @@ test('ThreadCommand capability lists Gemini one-shot capabilities', async () => 
 test('ThreadCommand capability selects Gemini one-shot capabilities', async () => {
   const { context, threadManager, ui } = createCommandContext()
   const selectedCapabilities: string[] = []
-  const adapter = {
+  const adapter: CapabilityAdapterOverrides = {
     listActionCapabilities: async () => [
       { name: 'image_create', state: 'available' },
     ],
@@ -487,7 +520,7 @@ test('ThreadCommand capability selects Gemini one-shot capabilities', async () =
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'gemini',
-    runtime: createFakeRuntime({ adapter: adapter as any }),
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
     createdAt: 1,
   })
 
@@ -505,7 +538,7 @@ test('ThreadCommand capability selects Gemini one-shot capabilities', async () =
 test('ThreadCommand capability clears Gemini one-shot capabilities with none', async () => {
   const { context, threadManager, ui } = createCommandContext()
   let clearCount = 0
-  const adapter = {
+  const adapter: CapabilityAdapterOverrides = {
     listActionCapabilities: async () => [
       { name: 'image_create', state: 'available' },
     ],
@@ -517,7 +550,7 @@ test('ThreadCommand capability clears Gemini one-shot capabilities with none', a
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'gemini',
-    runtime: createFakeRuntime({ adapter: adapter as any }),
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
     createdAt: 1,
   })
 
@@ -535,7 +568,7 @@ test('ThreadCommand capability clears Gemini one-shot capabilities with none', a
 test('ThreadCommand capability selects Doubao one-shot capabilities', async () => {
   const { context, threadManager, ui } = createCommandContext()
   const selectedCapabilities: string[] = []
-  const adapter = {
+  const adapter: CapabilityAdapterOverrides = {
     listActionCapabilities: async () => [
       { name: 'image_generation', state: 'available' },
     ],
@@ -547,7 +580,7 @@ test('ThreadCommand capability selects Doubao one-shot capabilities', async () =
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'doubao',
-    runtime: createFakeRuntime({ adapter: adapter as any }),
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
     createdAt: 1,
   })
 
@@ -565,7 +598,7 @@ test('ThreadCommand capability selects Doubao one-shot capabilities', async () =
 test('ThreadCommand capability clears Doubao one-shot capabilities with none', async () => {
   const { context, threadManager, ui } = createCommandContext()
   let clearCount = 0
-  const adapter = {
+  const adapter: CapabilityAdapterOverrides = {
     listActionCapabilities: async () => [
       { name: 'image_generation', state: 'available' },
     ],
@@ -577,7 +610,7 @@ test('ThreadCommand capability clears Doubao one-shot capabilities with none', a
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'doubao',
-    runtime: createFakeRuntime({ adapter: adapter as any }),
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
     createdAt: 1,
   })
 
@@ -594,7 +627,7 @@ test('ThreadCommand capability clears Doubao one-shot capabilities with none', a
 
 test('ThreadCommand capability rejects disabled Doubao capabilities', async () => {
   const { context, threadManager, ui } = createCommandContext()
-  const adapter = {
+  const adapter: CapabilityAdapterOverrides = {
     listActionCapabilities: async () => [
       { name: 'meeting_record', state: 'disabled' },
     ],
@@ -604,7 +637,7 @@ test('ThreadCommand capability rejects disabled Doubao capabilities', async () =
   threadManager.addThread({
     id: threadManager.createThreadId(),
     provider: 'doubao',
-    runtime: createFakeRuntime({ adapter: adapter as any }),
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
     createdAt: 1,
   })
 

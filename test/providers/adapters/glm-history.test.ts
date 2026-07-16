@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { GlmAdapter } from '../../../src/providers/adapters/adapter-glm.ts'
+import { createPrototypeObject, setTestProperty } from '../../helpers/fakes.ts'
 
 function batchEntry(id: number, data: Record<string, unknown>) {
   return {
@@ -16,7 +17,10 @@ function batchEntry(id: number, data: Record<string, unknown>) {
 }
 
 test('GlmAdapter.loadHistory merges batches until currentId reaches the root', async () => {
-  const adapter = Object.create(GlmAdapter.prototype) as any
+  const adapter = createPrototypeObject(GlmAdapter.prototype) as Pick<
+    GlmAdapter,
+    keyof GlmAdapter
+  >
   const metadataEntry = {
     id: 1,
     url: 'https://chat.z.ai/api/v1/chats/conversation',
@@ -43,18 +47,20 @@ test('GlmAdapter.loadHistory merges batches until currentId reaches the root', a
     }),
   ]
   let scrollCalls = 0
-  adapter.getCapturedHistoryEntries = async (
-    predicate: (entry: typeof metadataEntry) => boolean
-  ) =>
-    predicate(metadataEntry)
-      ? [metadataEntry]
-      : batches.slice(0, scrollCalls + 1)
-  adapter.page = {
+  setTestProperty(
+    adapter,
+    'getCapturedHistoryEntries',
+    async (predicate: (entry: typeof metadataEntry) => boolean) =>
+      predicate(metadataEntry)
+        ? [metadataEntry]
+        : batches.slice(0, scrollCalls + 1)
+  )
+  setTestProperty(adapter, 'page', {
     evaluate: async () => {
       scrollCalls += 1
       return true
     },
-  }
+  })
 
   const result = await adapter.loadHistory()
 

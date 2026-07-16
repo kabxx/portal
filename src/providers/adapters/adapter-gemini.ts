@@ -15,7 +15,6 @@ import {
 } from '../../runtime/runtime-cancellation.ts'
 import { retryAsync } from '../../shared/retry.ts'
 import { waitAsync } from '../../shared/wait.ts'
-import { sleepAsync } from '../../shared/sleep.ts'
 import type { Locator } from 'playwright'
 import {
   emptyHistoryResult,
@@ -56,6 +55,16 @@ type GeminiParsedResponse = {
   text: string
   isFinished: boolean
   title?: string
+}
+
+function asUnknownArray(value: unknown): unknown[] | null {
+  return Array.isArray(value) ? (value as unknown[]) : null
+}
+
+function asUnknownRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
 }
 
 function normalizeGeminiConversationId(
@@ -877,7 +886,7 @@ export class GeminiAdapter extends ProviderAdapter {
             return
           }
 
-          let raw = ''
+          let raw: string
           try {
             raw = await response.text()
           } catch {
@@ -1197,54 +1206,70 @@ export class GeminiAdapter extends ProviderAdapter {
     }
     const chunks = extractJsonChunks(raw)
     for (const chunk of chunks) {
-      let outer: any
+      let outerValue: unknown
       try {
-        outer = parseJsonLenient(chunk)
+        outerValue = parseJsonLenient(chunk)
       } catch {
         continue
       }
-      if (!Array.isArray(outer)) continue
+      const outer = asUnknownArray(outerValue)
+      if (outer === null) continue
       for (const item of outer) {
-        if (!Array.isArray(item)) continue
-        if (item[0] !== 'wrb.fr') continue
-        if (typeof item[2] !== 'string') continue
-        let inner: any
+        const itemParts = asUnknownArray(item)
+        if (itemParts === null || itemParts[0] !== 'wrb.fr') continue
+        const encodedInner = itemParts[2]
+        if (typeof encodedInner !== 'string') continue
+        let innerValue: unknown
         try {
-          inner = parseJsonLenient(item[2])
+          innerValue = parseJsonLenient(encodedInner)
         } catch {
           continue
         }
-        const conversationId = normalizeGeminiConversationId(inner?.[1]?.[0])
-        const responseId = inner?.[1]?.[1]
-        const maybeMeta = inner?.[2]
-        if (maybeMeta?.['11']?.[0]) {
-          title = maybeMeta['11'][0]
+        const inner = asUnknownArray(innerValue)
+        if (inner === null) continue
+
+        const identifiers = asUnknownArray(inner[1])
+        const rawConversationId = identifiers?.[0]
+        const conversationId = normalizeGeminiConversationId(
+          typeof rawConversationId === 'string' ? rawConversationId : undefined
+        )
+        const rawResponseId = identifiers?.[1]
+        const responseId =
+          typeof rawResponseId === 'string' ? rawResponseId : undefined
+
+        const metadata = asUnknownRecord(inner[2])
+        const titleParts = asUnknownArray(metadata?.['11'])
+        if (typeof titleParts?.[0] === 'string' && titleParts[0]) {
+          title = titleParts[0]
         }
-        const rawCandidates = Array.isArray(inner?.[0]?.[0]?.[3])
-          ? inner[0][0][3]
-          : inner?.[4]
-        if (!Array.isArray(rawCandidates)) continue
+
+        const innerRoot = asUnknownArray(inner[0])
+        const innerRootEntry = asUnknownArray(innerRoot?.[0])
+        const embeddedCandidates = asUnknownArray(innerRootEntry?.[3])
+        const rawCandidates = embeddedCandidates ?? asUnknownArray(inner[4])
+        if (rawCandidates === null) continue
         const candidates = rawCandidates.every(
           (candidate) =>
-            Array.isArray(candidate) && typeof candidate[0] === 'string'
+            asUnknownArray(candidate) !== null &&
+            typeof asUnknownArray(candidate)?.[0] === 'string'
         )
           ? rawCandidates
-          : rawCandidates.flatMap((group) =>
-              Array.isArray(group) ? group : []
-            )
-        for (const candidate of candidates) {
-          if (!Array.isArray(candidate)) continue
-          const candidateId = candidate?.[0]
+          : rawCandidates.flatMap((group) => asUnknownArray(group) ?? [])
+        for (const candidateValue of candidates) {
+          const candidate = asUnknownArray(candidateValue)
+          if (candidate === null) continue
+          const candidateId =
+            typeof candidate[0] === 'string' ? candidate[0] : undefined
           const rawText =
-            typeof candidate?.[1] === 'string'
+            typeof candidate[1] === 'string'
               ? candidate[1]
-              : Array.isArray(candidate?.[1])
-                ? candidate[1]
+              : asUnknownArray(candidate[1]) !== null
+                ? (asUnknownArray(candidate[1]) ?? [])
                     .filter((part) => typeof part === 'string')
                     .join('')
                 : undefined
           const { placeholderImageQueues, orderedImageUrls } =
-            collectPlaceholderImageQueues(candidate?.[12])
+            collectPlaceholderImageQueues(candidate[12])
           const text =
             typeof rawText === 'string'
               ? placeholderImageQueues.size > 0
@@ -1276,9 +1301,8 @@ export class GeminiAdapter extends ProviderAdapter {
           if (typeof text !== 'string' || !text.trim()) {
             continue
           }
-          const status = Array.isArray(candidate?.[8])
-            ? candidate[8][0]
-            : candidate?.[8]
+          const statusParts = asUnknownArray(candidate[8])
+          const status = statusParts?.[0] ?? candidate[8]
           results.push({
             ...(conversationId !== undefined ? { conversationId } : {}),
             ...(responseId !== undefined ? { responseId } : {}),

@@ -892,9 +892,8 @@ async function resolveFile(
     }
     return null
   }
-  let metadata
   try {
-    metadata = await lstat(lexical)
+    await lstat(lexical)
   } catch (error) {
     if (isNotFound(error)) {
       if (warnMissing) {

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 
 import { ChatGPTAdapter } from '../../../src/providers/adapters/adapter-chatgpt.ts'
 import { createDeferred } from '../../../src/providers/adapters/adapter-base.ts'
+import { createPrototypeObject } from '../../helpers/fakes.ts'
 
 type MockButton = {
   first: () => unknown
@@ -11,8 +12,27 @@ type MockButton = {
   isEnabled: () => Promise<boolean>
 }
 
-function createTestChatGPTAdapter() {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+type ChatGPTAdapterHarness = Pick<ChatGPTAdapter, keyof ChatGPTAdapter> & {
+  page: unknown
+  websocketFrames: string[]
+  isTargetConversationRequest(request: {
+    method(): string
+    url(): string
+  }): boolean
+  getCapturedFetchEntryCount: unknown
+  readCurrentCapturedResponse: unknown
+  parseHttpResponse: unknown
+  parseWebsocketResponse: unknown
+  getFinishedResponseSettleMs(): number
+  getSubmitRequestStartGraceMs(): number
+  getSubmitBlockedWarningIntervalMs(): number
+  getSubmitResponseIdleTimeoutMs(): number
+}
+
+function createTestChatGPTAdapter(): ChatGPTAdapterHarness {
+  const adapter = createPrototypeObject(
+    ChatGPTAdapter.prototype
+  ) as ChatGPTAdapterHarness
   adapter.getFinishedResponseSettleMs = () => 50
   adapter.getSubmitRequestStartGraceMs = () => 5
   return adapter
@@ -881,10 +901,10 @@ function createChatGPTPage(
       }
       throw new Error(`Unexpected selector: ${selector}`)
     },
-    on: (eventName: string, listener: (...args: any[]) => void) => {
+    on: (eventName: string, listener: (...args: unknown[]) => void) => {
       emitter.on(eventName, listener)
     },
-    off: (eventName: string, listener: (...args: any[]) => void) => {
+    off: (eventName: string, listener: (...args: unknown[]) => void) => {
       emitter.off(eventName, listener)
     },
     emit: (eventName: string, payload: unknown) => {

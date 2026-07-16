@@ -21,10 +21,10 @@ export interface ApiThreadSummary {
 }
 
 export interface ApiHandlers {
-  status(): Promise<unknown> | unknown
-  providers(): Promise<unknown> | unknown
-  listThreads(): Promise<unknown> | unknown
-  getThread(threadId: string): Promise<unknown> | unknown
+  status(): unknown
+  providers(): unknown
+  listThreads(): unknown
+  getThread(threadId: string): unknown
   createThread(input: Record<string, unknown>): Promise<unknown>
   resumeThread(input: Record<string, unknown>): Promise<unknown>
   closeThread(threadId: string): Promise<unknown>
@@ -253,7 +253,7 @@ export class PortalApiServer {
   }
 
   private registerRoutes(fastify: FastifyInstance): void {
-    fastify.addHook('onRequest', async (request, reply) => {
+    fastify.addHook('onRequest', async (request, _reply) => {
       if (
         request.routeOptions.url === '/health' ||
         !isBearerAuthenticationEnabled(this.options.token)

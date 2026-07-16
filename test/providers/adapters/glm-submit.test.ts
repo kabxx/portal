@@ -7,12 +7,28 @@ import {
   ProviderAdapterUnsupportedError,
 } from '../../../src/providers/adapters/adapter-base.ts'
 import { GlmAdapter } from '../../../src/providers/adapters/adapter-glm.ts'
+import { createPrototypeObject } from '../../helpers/fakes.ts'
 
 const GLM_COMPLETION_URL = 'https://chat.z.ai/api/v2/chat/completions'
 
-function createTestGlmAdapter() {
-  const adapter = Object.create(GlmAdapter.prototype) as any
-  adapter.getSubmitRequestStartGraceMs = () => 5
+type GlmAdapterHarness = Pick<GlmAdapter, keyof GlmAdapter> & {
+  page: unknown
+  conversationIdVal: string | null
+  parseResponse(raw: string): unknown
+  isTargetCompletionRequest(request: {
+    method(): string
+    url(): string
+  }): boolean
+  getLatestCapturedFetchBody: unknown
+  readCurrentStreamedResponseText(startIndex: number): Promise<string>
+  getSubmitRequestStartGraceMs(): number
+}
+
+function createTestGlmAdapter(): GlmAdapterHarness {
+  const adapter = createPrototypeObject(
+    GlmAdapter.prototype
+  ) as GlmAdapterHarness
+  adapter.getSubmitRequestStartGraceMs = (): number => 5
   return adapter
 }
 
@@ -125,7 +141,6 @@ test('GlmAdapter.submit returns answer text when the visible send button is disa
     'data: {"type":"chat:completion","data":{"delta_content":"world","phase":"answer"}}',
     'data: {"type":"chat:completion","data":{"phase":"done","done":true}}',
   ].join('\n\n')
-  let page: ReturnType<typeof createGlmPage>
   const sendButton = createButton({
     click: async () => {
       sendButton.enabled = false
@@ -137,7 +152,7 @@ test('GlmAdapter.submit returns answer text when the visible send button is disa
       })
     },
   })
-  page = createGlmPage({ sendButton })
+  const page = createGlmPage({ sendButton })
   adapter.page = page
 
   const result = await adapter.submit()
@@ -158,7 +173,6 @@ test('GlmAdapter.submit emits answer snapshots before the final response', async
     'data: {"type":"chat:completion","data":{"delta_content":"partial answer complete","phase":"answer"}}',
     'data: {"type":"chat:completion","data":{"phase":"done","done":true}}',
   ].join('\n\n')
-  let page: ReturnType<typeof createGlmPage>
   const sendButton = createButton({
     click: async () => {
       setTimeout(() => {
@@ -174,7 +188,7 @@ test('GlmAdapter.submit emits answer snapshots before the final response', async
       }, 30)
     },
   })
-  page = createGlmPage({ sendButton })
+  const page = createGlmPage({ sendButton })
   adapter.page = page
   adapter.setSubmitTextReporter(async (text: string) => {
     snapshots.push(text)
@@ -192,7 +206,6 @@ test('GlmAdapter.submit reports concurrency errors as rate limits', async () => 
   adapter.conversationIdVal = null
   const raw =
     'data: {"type":"chat:completion","data":{"content":"","done":true,"error":{"code":"MODEL_CONCURRENCY_LIMIT","detail":"busy"}}}'
-  let page: ReturnType<typeof createGlmPage>
   const sendButton = createButton({
     click: async () => {
       const request = createCompletionRequest()
@@ -203,7 +216,7 @@ test('GlmAdapter.submit reports concurrency errors as rate limits', async () => 
       })
     },
   })
-  page = createGlmPage({ sendButton })
+  const page = createGlmPage({ sendButton })
   adapter.page = page
 
   await assert.rejects(
@@ -425,15 +438,17 @@ function createGlmPage({
       assert.equal(eventName, 'filechooser')
       return {
         setFiles: async (paths: string | readonly string[]) => {
-          uploadedFiles.push(...(Array.isArray(paths) ? paths : [paths]))
+          uploadedFiles.push(
+            ...(typeof paths === 'string' ? [paths] : [...paths])
+          )
         },
       }
     },
     url: () => 'https://chat.z.ai/c/conversation-1',
-    on: (eventName: string, listener: (...args: any[]) => void) => {
+    on: (eventName: string, listener: (...args: unknown[]) => void) => {
       emitter.on(eventName, listener)
     },
-    off: (eventName: string, listener: (...args: any[]) => void) => {
+    off: (eventName: string, listener: (...args: unknown[]) => void) => {
       emitter.off(eventName, listener)
     },
     emit: (eventName: string, payload: unknown) => {

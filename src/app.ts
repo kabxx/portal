@@ -14,7 +14,6 @@ import { createRuntimeFromAdapter } from './runtime/runtime-factory.ts'
 import {
   type ProviderAdapter,
   type ProviderTimingOptions,
-  isProviderAdapterError,
 } from './providers/adapters/adapter-base.ts'
 import { ChatGPTAdapter } from './providers/adapters/adapter-chatgpt.ts'
 import { GeminiAdapter } from './providers/adapters/adapter-gemini.ts'
@@ -344,6 +343,7 @@ export async function closeWithTimeout(
       }),
     ])
   } catch {
+    // Shutdown is best-effort; timeout cleanup still runs below.
   } finally {
     if (timer !== null) {
       clearTimeout(timer)
@@ -1547,7 +1547,9 @@ export async function run(argv = process.argv): Promise<void> {
           process.exitCode = 1
           try {
             ui.renderError('browser', String(error))
-          } catch {}
+          } catch {
+            // The terminal may already be unavailable during shutdown.
+          }
         })
     } catch (error) {
       ui.setBrowserConnected(false)

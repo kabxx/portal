@@ -8,7 +8,10 @@ import {
 } from '../../src/providers/adapters/adapter-base.ts'
 import { PortalAbortError } from '../../src/runtime/runtime-cancellation.ts'
 import { initializeRuntimeWithLoginWait } from '../../src/runtime/runtime-initializer.ts'
-import { createFakeRuntime } from '../helpers/fakes.ts'
+import {
+  createBrowserContextStub,
+  createFakeRuntime,
+} from '../helpers/fakes.ts'
 
 class FakeAdapter extends ProviderAdapter {
   public restoreCalls = 0
@@ -17,7 +20,7 @@ class FakeAdapter extends ProviderAdapter {
   public restoreSignals: Array<AbortSignal | undefined> = []
 
   public constructor(private readonly events: string[] = []) {
-    super({} as any)
+    super(createBrowserContextStub())
   }
 
   public override async close() {

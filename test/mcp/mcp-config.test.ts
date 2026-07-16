@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import os from 'os'
 import path from 'path'
-import { parse as parseYaml } from 'yaml'
 
 import {
   McpConfigError,
@@ -16,6 +15,14 @@ import {
   resolveMcpServerEnvironment,
 } from '../../src/mcp/mcp-environment.ts'
 import { McpLibrary } from '../../src/mcp/mcp-library.ts'
+import { parseYamlRecord } from '../helpers/yaml.ts'
+
+function requireRecord(value: unknown, label: string): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} must be an object.`)
+  }
+  return value as Record<string, unknown>
+}
 
 test('McpLibrary writes a root config object with servers keyed by name', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-mcp-config-'))
@@ -27,7 +34,7 @@ test('McpLibrary writes a root config object with servers keyed by name', async 
       transport: 'streamable-http',
       url: 'https://example.com/mcp',
     })
-    const document = parseYaml(await readFile(configPath, 'utf8'))
+    const document = parseYamlRecord(await readFile(configPath, 'utf8'))
 
     assert.deepEqual(document.mcp, {
       connectionStrategy: 'per-thread',
@@ -49,8 +56,11 @@ test('McpLibrary writes a root config object with servers keyed by name', async 
     await library.disable('example')
     assert.equal((await library.list()).servers[0]?.enabled, false)
     await library.enable('example')
-    const enabledDocument = parseYaml(await readFile(configPath, 'utf8'))
-    assert.equal(enabledDocument.mcp.servers.example.enabled, undefined)
+    const enabledDocument = parseYamlRecord(await readFile(configPath, 'utf8'))
+    const mcp = requireRecord(enabledDocument.mcp, 'mcp')
+    const servers = requireRecord(mcp.servers, 'mcp.servers')
+    const example = requireRecord(servers.example, 'mcp.servers.example')
+    assert.equal(example.enabled, undefined)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -63,7 +73,7 @@ test('McpLibrary initializes a missing config without overwriting it later', asy
 
   try {
     await library.initialize()
-    const document = parseYaml(await readFile(configPath, 'utf8'))
+    const document = parseYamlRecord(await readFile(configPath, 'utf8'))
     assert.deepEqual(document.mcp, {
       connectionStrategy: 'per-thread',
       servers: {},

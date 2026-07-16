@@ -60,7 +60,7 @@ test('JobCommand lists active jobs with sanitized command text', async () => {
   assert.ok(entry)
   assert.equal(entry.label, '/job')
   assert.equal(entry.tone, 'info')
-  assert.match(entry.body, /j-1  pid=42  running/)
+  assert.match(entry.body, /j-1 {2}pid=42 {2}running/)
   assert.match(entry.body, /command: first \[31msecond/)
   assert.doesNotMatch(entry.body, /\u001b/)
 })

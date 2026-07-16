@@ -503,7 +503,7 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
       token: mcpServerToken,
     },
     mcp: { ...mcp },
-    skills: [...skills],
+    skills: [...(skills as unknown[])],
     hooks,
     keybindings,
     advanced,
@@ -809,7 +809,7 @@ export async function readPortalKeybindings(
   }
 
   const document = parseConfigDocument(contents)
-  const value = document.toJS()
+  const value: unknown = document.toJS()
   if (!isRecord(value)) {
     throw new PortalConfigError('Config root must be an object')
   }

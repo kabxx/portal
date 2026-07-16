@@ -103,7 +103,8 @@ export function parseGlmHistory(
 ): ConversationHistoryResult {
   const metadata = asRecord(parseJson(metadataRaw))
   const nodeMap = new Map<string, Record<string, unknown>>()
-  const batchRaws = Array.isArray(batchRaw) ? batchRaw : [batchRaw]
+  const batchRaws: readonly string[] =
+    typeof batchRaw === 'string' ? [batchRaw] : batchRaw
   for (const raw of batchRaws) {
     const nodesRecord = asRecord(asRecord(parseJson(raw))?.data)
     if (nodesRecord === null) continue
@@ -574,17 +575,20 @@ function readDoubaoText(message: Record<string, unknown>): string {
 }
 
 function readGeminiUserText(value: unknown): string {
-  const record = Array.isArray(value) ? value : null
+  const record = asArray(value)
   if (record && typeof record[0] === 'string') return record[0].trim()
-  if (record && Array.isArray(record[0]) && typeof record[0][0] === 'string') {
-    return record[0][0].trim()
+  const nested = asArray(record?.[0])
+  if (typeof nested?.[0] === 'string') {
+    return nested[0].trim()
   }
   return readText(value)
 }
 
 function readGeminiAssistantText(value: unknown): string {
-  if (!Array.isArray(value)) return ''
-  const preferred = value?.[0]?.[0]?.[1]
+  const root = asArray(value)
+  const first = asArray(root?.[0])
+  const content = asArray(first?.[0])
+  const preferred = content?.[1]
   const preferredText = readText(preferred)
   if (preferredText) return preferredText
   const candidates = collectStrings(value).filter((item) => item.length > 0)
@@ -706,15 +710,6 @@ function historyMessage(
     format: input.format ?? (input.role === 'assistant' ? 'markdown' : 'plain'),
     createdAt: input.createdAt ?? null,
   }
-}
-
-function compareMessages(
-  a: ConversationHistoryMessage,
-  b: ConversationHistoryMessage
-): number {
-  return (
-    (a.createdAt ?? 0) - (b.createdAt ?? 0) || compareNumericIds(a.id, b.id)
-  )
 }
 
 function compareNumericIds(a: string, b: string): number {

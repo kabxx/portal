@@ -10,6 +10,7 @@ import { getDefaultShell } from '../../../src/platform/platform-defaults.ts'
 import { RunCommandJobManager } from '../../../src/processes/run-command-job-manager.ts'
 import { PortalAbortError } from '../../../src/runtime/runtime-cancellation.ts'
 import type { ToolProgressEvent } from '../../../src/tools/core/tool-definition.ts'
+import { createProviderAdapterStub } from '../../helpers/fakes.ts'
 
 function testShell(): 'cmd' | 'sh' {
   return os.platform() === 'win32' ? 'cmd' : 'sh'
@@ -82,7 +83,7 @@ function windowsCodePage(): string | null {
 }
 
 function createRunCommandTool(): RunCommandTool {
-  return new RunCommandTool({} as any, {
+  return new RunCommandTool(createProviderAdapterStub(), {
     runCommandJobs: new RunCommandJobManager(),
   })
 }
@@ -107,7 +108,7 @@ test('RunCommandTool does not advertise a default timeout', () => {
 })
 
 test('RunCommandTool requires the portal shared job manager', async () => {
-  const tool = new RunCommandTool({} as any)
+  const tool = new RunCommandTool(createProviderAdapterStub())
 
   await assert.rejects(
     tool.call({ command: echoCommand(), shell: testShell() }),
@@ -258,7 +259,7 @@ test('RunCommandTool emits start and UTF-8 stdout/stderr progress events', async
       ? 'echo first & echo problem 1>&2'
       : "printf 'first\\n'; printf 'problem\\n' >&2"
 
-  const output = await tool.call(
+  await tool.call(
     { command, shell: testShell() },
     { onProgress: (event) => events.push(event) }
   )
@@ -307,7 +308,9 @@ test('RunCommandTool keeps UTF-8 code points intact across output chunks', async
 
 test('RunCommandTool aborts its waiter but leaves the job running', async () => {
   const manager = new RunCommandJobManager()
-  const tool = new RunCommandTool({} as any, { runCommandJobs: manager })
+  const tool = new RunCommandTool(createProviderAdapterStub(), {
+    runCommandJobs: manager,
+  })
   const controller = new AbortController()
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'portal-run-command-'))
   const ready = path.join(tempDir, 'ready.txt')
@@ -331,7 +334,9 @@ test('RunCommandTool aborts its waiter but leaves the job running', async () => 
 
 test('RunCommandTool returns an error result when its job is stopped', async () => {
   const manager = new RunCommandJobManager()
-  const tool = new RunCommandTool({} as any, { runCommandJobs: manager })
+  const tool = new RunCommandTool(createProviderAdapterStub(), {
+    runCommandJobs: manager,
+  })
   const tempDir = mkdtempSync(
     path.join(os.tmpdir(), 'portal-run-command-stop-')
   )

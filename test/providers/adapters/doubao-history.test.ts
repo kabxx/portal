@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { DoubaoAdapter } from '../../../src/providers/adapters/adapter-doubao.ts'
+import { createPrototypeObject, setTestProperty } from '../../helpers/fakes.ts'
 
 function historyPage(index: number, hasMore: boolean): string {
   return JSON.stringify({
@@ -24,7 +25,10 @@ function historyPage(index: number, hasMore: boolean): string {
 }
 
 test('DoubaoAdapter.loadHistory continues beyond three pages until has_more is false', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createPrototypeObject(DoubaoAdapter.prototype) as Pick<
+    DoubaoAdapter,
+    keyof DoubaoAdapter
+  >
   const entries = Array.from({ length: 5 }, (_, index) => ({
     id: index + 1,
     url: 'https://www.doubao.com/im/chain/single',
@@ -35,14 +39,15 @@ test('DoubaoAdapter.loadHistory continues beyond three pages until has_more is f
     error: null,
   }))
   let scrollCalls = 0
-  adapter.getCapturedHistoryEntries = async () =>
+  setTestProperty(adapter, 'getCapturedHistoryEntries', async () =>
     entries.slice(0, scrollCalls + 1)
-  adapter.page = {
+  )
+  setTestProperty(adapter, 'page', {
     evaluate: async () => {
       scrollCalls += 1
       return true
     },
-  }
+  })
 
   const result = await adapter.loadHistory()
 

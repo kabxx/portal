@@ -3,6 +3,7 @@ import {
   abortable,
   type AbortOptions,
   isAbortError,
+  toError,
 } from '../../runtime/runtime-cancellation.ts'
 import { abortableSleep } from '../../shared/sleep.ts'
 import {
@@ -212,7 +213,7 @@ export function awaitWithTimeout<T>(
         },
         (error) => {
           clearTimeout(timer)
-          reject(error)
+          reject(toError(error, 'Provider operation failed.'))
         }
       )
     }),
@@ -741,7 +742,9 @@ export abstract class ProviderAdapter {
   protected emitSubmitActivitySafely(): void {
     try {
       this.emitSubmitActivity()
-    } catch {}
+    } catch {
+      // Progress reporting must not interrupt provider submission.
+    }
   }
 
   protected getSubmitRequestStartGraceMs(): number {
@@ -829,7 +832,7 @@ export abstract class ProviderAdapter {
       }, startIndex)
       .catch(() => [])
 
-    return Array.isArray(entries) ? (entries as CapturedFetchEntry[]) : []
+    return Array.isArray(entries) ? entries : []
   }
 
   protected async getCapturedHistoryEntries(
@@ -1070,10 +1073,7 @@ export abstract class ProviderAdapter {
             .send('Network.getResponseBody', { requestId: response.requestId })
             .then(
               (value) => {
-                const result = value as {
-                  body: string
-                  base64Encoded: boolean
-                }
+                const result = value
                 return {
                   body: result.base64Encoded
                     ? Buffer.from(result.body, 'base64').toString('utf8')

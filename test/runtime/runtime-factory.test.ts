@@ -19,6 +19,7 @@ import {
   type McpConnection,
 } from '../../src/mcp/mcp-connection.ts'
 import { loadProjectInstructions } from '../../src/instructions/project-instructions.ts'
+import { createBrowserContextStub } from '../helpers/fakes.ts'
 
 interface FakeAdapterOptions {
   failChangeModel?: boolean
@@ -34,7 +35,7 @@ class FakeAdapter extends ProviderAdapter {
   public submitSignals: Array<AbortSignal | undefined> = []
 
   public constructor(options: FakeAdapterOptions = {}) {
-    super({} as any)
+    super(createBrowserContextStub())
     this.failChangeModel = options.failChangeModel ?? false
     this.failSubmit = options.failSubmit ?? false
     this.failSubmitWithAuth = options.failSubmitWithAuth ?? false

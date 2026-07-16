@@ -9,6 +9,7 @@ import {
   parsePatch,
 } from '../../../src/tools/builtins/apply-patch-tool.ts'
 import type { ToolOutput } from '../../../src/tools/core/tool-definition.ts'
+import { createProviderAdapterStub } from '../../helpers/fakes.ts'
 
 function expectSuccess(output: ToolOutput) {
   assert.notEqual(output.outcome, 'error')
@@ -31,7 +32,7 @@ async function exists(filePath: string): Promise<boolean> {
 }
 
 test('ApplyPatchTool prompt teaches distinct Add and Update V4A syntax', () => {
-  const prompt = new ApplyPatchTool({} as any).prompt
+  const prompt = new ApplyPatchTool(createProviderAdapterStub()).prompt
 
   assert.match(prompt, /Invoke it only as <tool name="apply_patch">/)
   assert.match(prompt, /Add File rules: do not use @@/)
@@ -52,7 +53,7 @@ test('ApplyPatchTool prompt teaches distinct Add and Update V4A syntax', () => {
 })
 
 test('ApplyPatchTool returns a structured error for empty input', async () => {
-  const output = await new ApplyPatchTool({} as any).call('')
+  const output = await new ApplyPatchTool(createProviderAdapterStub()).call('')
 
   assert.match(expectError(output), /input must be non-empty/)
   assert.equal(output.displayText, output.result.message)
@@ -85,7 +86,7 @@ test('ApplyPatchTool applies Add and Update files as one planned patch', async (
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-apply-patch-'))
   const createdPath = path.join(root, 'nested', 'created.txt')
   const updatedPath = path.join(root, 'updated.txt')
-  const tool = new ApplyPatchTool({} as any)
+  const tool = new ApplyPatchTool(createProviderAdapterStub())
   await writeFile(updatedPath, 'old\n', 'utf8')
 
   try {
@@ -123,7 +124,7 @@ test('ApplyPatchTool applies Add and Update files as one planned patch', async (
 test('ApplyPatchTool explains malformed Add File lines to the model', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-apply-patch-'))
   const filePath = path.join(root, 'created.txt')
-  const tool = new ApplyPatchTool({} as any)
+  const tool = new ApplyPatchTool(createProviderAdapterStub())
 
   try {
     const hunkHeader = await tool.call(
@@ -160,7 +161,7 @@ test('ApplyPatchTool explains malformed Add File lines to the model', async () =
 test('ApplyPatchTool explains forward-only Update File context failures', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-apply-patch-'))
   const filePath = path.join(root, 'ordered.txt')
-  const tool = new ApplyPatchTool({} as any)
+  const tool = new ApplyPatchTool(createProviderAdapterStub())
   await writeFile(filePath, 'top\nmiddle\nbottom', 'utf8')
 
   try {
@@ -192,7 +193,7 @@ test('ApplyPatchTool explains forward-only Update File context failures', async 
 test('ApplyPatchTool rejects move and delete operations without changing files', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-apply-patch-'))
   const filePath = path.join(root, 'keep.txt')
-  const tool = new ApplyPatchTool({} as any)
+  const tool = new ApplyPatchTool(createProviderAdapterStub())
   await writeFile(filePath, 'keep', 'utf8')
 
   try {
@@ -223,7 +224,7 @@ test('ApplyPatchTool rejects a conflicting update before writing any file', asyn
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-apply-patch-'))
   const firstPath = path.join(root, 'first.txt')
   const missingPath = path.join(root, 'missing.txt')
-  const tool = new ApplyPatchTool({} as any)
+  const tool = new ApplyPatchTool(createProviderAdapterStub())
   await writeFile(firstPath, 'old', 'utf8')
 
   try {

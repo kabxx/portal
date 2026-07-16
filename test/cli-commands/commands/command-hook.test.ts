@@ -83,7 +83,7 @@ test('HookCommand reports unknown actions and operation failures', async () => {
       throw new Error('reload failed')
     },
     setEnabled: async () => {
-      throw 'toggle failed'
+      throw new Error('toggle failed')
     },
   })
 
