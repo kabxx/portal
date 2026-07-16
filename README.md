@@ -13,7 +13,7 @@ portal does **not** call provider model APIs. It does not bypass provider accoun
 
 ## Core capabilities
 
-- **Six web providers.** ChatGPT, Gemini, DeepSeek, Doubao, Grok, and GLM share one local thread model.
+- **Seven web providers.** ChatGPT, Claude, Gemini, DeepSeek, Doubao, Grok, and GLM share one local thread model.
 - **Real browser sessions.** A dedicated browser profile preserves login state and account-specific web features.
 - **Local tools.** Models can inspect a workspace, run commands, edit files, attach images, and delegate focused tasks.
 - **Resumable conversations.** portal stores conversation URLs and reloads visible provider history when a conversation is resumed.
@@ -43,6 +43,7 @@ See [Architecture](docs/architecture.md) for the runtime, thread, resume, and sh
 | Provider | Streaming | History on resume | File/image upload | Model selection | Capability controls               |
 | -------- | --------- | ----------------- | ----------------- | --------------- | --------------------------------- |
 | ChatGPT  | Yes       | Yes               | Yes               | Yes             | Page actions when available       |
+| Claude   | Yes       | Yes               | Yes               | Yes             | Web search toggle                 |
 | Gemini   | Yes       | Yes               | Yes               | Yes             | Dynamic page actions              |
 | DeepSeek | Yes       | Yes               | Yes               | Yes             | Thinking and search toggles       |
 | Doubao   | Yes       | Yes               | Yes               | Yes             | Dynamic page actions              |
@@ -282,4 +283,4 @@ portal is available under the [MIT License](LICENSE).
 
 ## Disclaimer
 
-portal is an independent project and is not affiliated with, endorsed by, or sponsored by OpenAI, Google, DeepSeek, ByteDance, xAI, Zhipu AI, or the supported web products. Users are responsible for complying with provider terms and applicable law.
+portal is an independent project and is not affiliated with, endorsed by, or sponsored by OpenAI, Anthropic, Google, DeepSeek, ByteDance, xAI, Zhipu AI, or the supported web products. Users are responsible for complying with provider terms and applicable law.
