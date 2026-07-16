@@ -125,6 +125,147 @@ test('Claude history keeps watching a nonempty bottom for a delayed terminal cel
   assert.ok(bottomCalls >= 6)
 })
 
+test('Claude history stops after the terminal index stays quiet for one second', async () => {
+  const loadedCell = cell(0, [
+    user('Question'),
+    assistant('Answer', '<p>Answer</p>'),
+  ])
+  const adapter = await createHistoryAdapter(
+    () => ({
+      cells: [loadedCell],
+      scrollTop: 0,
+      scrollHeight: 100,
+      clientHeight: 100,
+      atBottom: true,
+    }),
+    3000,
+    10_000
+  )
+
+  const result = await adapter.loadHistory()
+
+  assert.equal(result.complete, true)
+  assert.equal(result.messages.length, 2)
+})
+
+test('Claude history restarts the quiet window when the terminal index grows', async () => {
+  const firstCell = cell(0, [
+    user('First question'),
+    assistant('First answer', '<p>First answer</p>'),
+  ])
+  const secondCell = cell(1, [
+    user('Second question'),
+    assistant('Second answer', '<p>Second answer</p>'),
+  ])
+  const thirdCell = cell(2, [
+    user('Third question'),
+    assistant('Third answer', '<p>Third answer</p>'),
+  ])
+  let bottomCalls = 0
+  const adapter = await createHistoryAdapter(
+    (action) => {
+      if (action === 'bottom') bottomCalls += 1
+      const cells =
+        bottomCalls >= 15
+          ? [firstCell, secondCell, thirdCell]
+          : bottomCalls >= 8
+            ? [firstCell, secondCell]
+            : [firstCell]
+      return {
+        cells,
+        scrollTop: 0,
+        scrollHeight: 100,
+        clientHeight: 100,
+        atBottom: true,
+      }
+    },
+    4000,
+    10_000
+  )
+
+  const result = await adapter.loadHistory()
+
+  assert.equal(result.complete, true)
+  assert.equal(result.messages.length, 6)
+})
+
+test('Claude history restarts the quiet window after an invalid bottom snapshot', async () => {
+  const firstCell = cell(0, [
+    user('First question'),
+    assistant('First answer', '<p>First answer</p>'),
+  ])
+  const secondCell = cell(1, [
+    user('Second question'),
+    assistant('Second answer', '<p>Second answer</p>'),
+  ])
+  let bottomCalls = 0
+  const adapter = await createHistoryAdapter(
+    (action) => {
+      if (action === 'bottom') bottomCalls += 1
+      const invalid = bottomCalls >= 6 && bottomCalls <= 8
+      return {
+        cells: invalid
+          ? []
+          : bottomCalls >= 15
+            ? [firstCell, secondCell]
+            : [firstCell],
+        scrollTop: 0,
+        scrollHeight: 100,
+        clientHeight: 100,
+        atBottom: !invalid,
+      }
+    },
+    4000,
+    10_000
+  )
+
+  const result = await adapter.loadHistory()
+
+  assert.equal(result.complete, true)
+  assert.equal(result.messages.length, 4)
+})
+
+test('Claude history restarts the quiet window after the terminal index regresses', async () => {
+  const firstCell = cell(0, [
+    user('First question'),
+    assistant('First answer', '<p>First answer</p>'),
+  ])
+  const secondCell = cell(1, [
+    user('Second question'),
+    assistant('Second answer', '<p>Second answer</p>'),
+  ])
+  const thirdCell = cell(2, [
+    user('Third question'),
+    assistant('Third answer', '<p>Third answer</p>'),
+  ])
+  let bottomCalls = 0
+  const adapter = await createHistoryAdapter(
+    (action) => {
+      if (action === 'bottom') bottomCalls += 1
+      const cells =
+        bottomCalls >= 15
+          ? [firstCell, secondCell, thirdCell]
+          : bottomCalls >= 6 && bottomCalls <= 8
+            ? [firstCell]
+            : [firstCell, secondCell]
+      return {
+        cells,
+        scrollTop: 0,
+        scrollHeight: 100,
+        clientHeight: 100,
+        atBottom: true,
+      }
+    },
+    4000,
+    10_000
+  )
+
+  const result = await adapter.loadHistory()
+
+  assert.equal(result.complete, true)
+  assert.equal(result.messages.length, 6)
+})
+
 test('Claude history waits for virtual cells to update after scrolling', async () => {
   const firstCell = cell(0, [user('Question')])
   const secondCell = cell(1, [assistant('Answer', '<p>Answer</p>')])
@@ -195,6 +336,30 @@ test('Claude history filters setup before building a complete parent chain', () 
       createdAt: null,
     },
   ])
+})
+
+test('Claude history removes thinking duration controls without removing matching answer text', () => {
+  const result = buildClaudeHistoryResult(
+    [
+      cell(0, [
+        user('Question'),
+        assistant(
+          'Thought for 2s\nThought for a while\nAnswer\nThought for 2s',
+          [
+            '<button><span>Thought for</span> <span>2s</span></button>',
+            '<div role="button"><span>Thought for a while</span></div>',
+            '<p>Answer</p>',
+            '<p>Thought for 2s</p>',
+          ].join('')
+        ),
+      ]),
+    ],
+    0,
+    'conversation-1'
+  )
+
+  assert.equal(result.complete, true)
+  assert.equal(result.messages[1]?.text, 'Answer\n\nThought for 2s')
 })
 
 test('Claude history rejects a missing virtual cell', () => {

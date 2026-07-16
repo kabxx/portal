@@ -114,6 +114,29 @@ test('ClaudeAdapter.submit detects login after Enter before a request starts', a
   assert.deepEqual(adapter.pageHarness.events, ['press:Enter'])
 })
 
+test('ClaudeAdapter.submit detects a restricted account after Enter before a request starts', async () => {
+  const adapter = createClaudeAdapter()
+  let composerChecks = 0
+  adapter.pageHarness.composerReady = () => {
+    composerChecks += 1
+    if (composerChecks >= 2) {
+      adapter.pageHarness.url = 'https://claude.ai/restricted'
+    }
+    return true
+  }
+  adapter.setCapturedEntries(async () => [])
+
+  await assert.rejects(
+    adapter.submit(),
+    (error) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'auth' &&
+      error.detailCode === 'claude_account_restricted' &&
+      error.adapter === adapter
+  )
+  assert.deepEqual(adapter.pageHarness.events, ['press:Enter'])
+})
+
 test('ClaudeAdapter.submit does not reclassify an accepted request as login', async () => {
   const adapter = createClaudeAdapter()
   let loginChecks = 0

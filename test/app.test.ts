@@ -329,28 +329,28 @@ test('shouldRenderFallbackThreadError avoids duplicate turn errors', () => {
   assert.equal(
     shouldRenderFallbackThreadError({
       turnErrorRendered: false,
-      canRetry: false,
+      showFallbackError: true,
     }),
     true
   )
   assert.equal(
     shouldRenderFallbackThreadError({
       turnErrorRendered: true,
-      canRetry: false,
+      showFallbackError: true,
     }),
     false
   )
   assert.equal(
     shouldRenderFallbackThreadError({
       turnErrorRendered: false,
-      canRetry: true,
+      showFallbackError: false,
     }),
     false
   )
   assert.equal(
     shouldRenderFallbackThreadError({
       turnErrorRendered: true,
-      canRetry: true,
+      showFallbackError: false,
     }),
     false
   )
