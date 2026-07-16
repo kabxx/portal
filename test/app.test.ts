@@ -5,11 +5,13 @@ import {
   GROK_PROVIDER_PROMPT,
   canRunCommandWhileThreadBusy,
   clearInteractiveTerminal,
+  clearApiProviderCapability,
   clearTerminalBeforeRender,
   closeLateBrowserLaunchAfterShutdown,
   closeWithTimeout,
   createIdempotentAsyncTask,
   createPortalRuntimeSettings,
+  setApiProviderCapability,
   showPendingThreadTimeline,
   shouldRenderFallbackThreadError,
   stopMcpForegroundOperation,
@@ -33,6 +35,53 @@ test('transitionLoginWaitWarning renders only when entering login wait', () => {
     waitingForLogin: false,
     shouldRender: true,
   })
+})
+
+test('API capability helpers route Claude web_search through toggle semantics', async () => {
+  const states: string[] = []
+  const runtime = createFakeRuntime({
+    adapter: {
+      hasToggleCapability: async () => true,
+      getToggleState: async () => 'on',
+      setToggleState: async (_name: string, state: string) => {
+        states.push(state)
+        return state
+      },
+    } as any,
+  })
+
+  assert.deepEqual(
+    await setApiProviderCapability('claude', runtime, 'web_search', 'off'),
+    { name: 'web_search', state: 'claude.web_search: off' }
+  )
+  assert.deepEqual(
+    await clearApiProviderCapability('claude', runtime, 'web_search'),
+    { name: 'web_search', cleared: true }
+  )
+  assert.deepEqual(states, ['off', 'off'])
+})
+
+test('API capability helpers preserve action capability semantics', async () => {
+  const events: string[] = []
+  const runtime = createFakeRuntime({
+    adapter: {
+      listActionCapabilities: async () => [
+        { name: 'canvas', state: 'available' },
+      ],
+      selectActionCapability: async (name: string) => {
+        events.push(`select:${name}`)
+        return 'selected'
+      },
+      clearActionCapability: async () => {
+        events.push('clear')
+      },
+    } as any,
+  })
+
+  await setApiProviderCapability('chatgpt', runtime, 'canvas', 'selected')
+  await clearApiProviderCapability('chatgpt', runtime, 'canvas')
+
+  assert.deepEqual(events, ['select:canvas', 'clear'])
 })
 
 test('closeWithTimeout returns when a close operation hangs', async () => {
