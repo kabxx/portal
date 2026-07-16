@@ -38,7 +38,15 @@ async function createCommandContext() {
     mcpLibrary: {} as McpLibrary,
     ui,
     browserProfileDir: 'C:\\profiles\\chrome',
-    providers: ['chatgpt', 'gemini', 'deepseek', 'doubao', 'grok', 'glm'],
+    providers: [
+      'chatgpt',
+      'claude',
+      'gemini',
+      'deepseek',
+      'doubao',
+      'grok',
+      'glm',
+    ],
     resolveProvider: (value) => {
       const normalized = value.trim().toLowerCase()
       return context.providers.includes(normalized as ProviderId)
@@ -197,6 +205,7 @@ test('ThreadCommand open forwards supported provider models', async () => {
 
   await ThreadCommand.execute(context, ['open', 'gemini', '3+extended'])
   await ThreadCommand.execute(context, ['open', 'chatgpt', '2+1'])
+  await ThreadCommand.execute(context, ['open', 'claude', '2+3'])
   await ThreadCommand.execute(context, ['open', 'deepseek', '2'])
   await ThreadCommand.execute(context, ['open', 'doubao', '3'])
   await ThreadCommand.execute(context, ['open', 'grok'])
@@ -205,6 +214,7 @@ test('ThreadCommand open forwards supported provider models', async () => {
   assert.deepEqual(createdThreads, [
     { provider: 'gemini', model: '3+extended' },
     { provider: 'chatgpt', model: '2+1' },
+    { provider: 'claude', model: '2+3' },
     { provider: 'deepseek', model: '2' },
     { provider: 'doubao', model: '3' },
     { provider: 'grok', model: null },

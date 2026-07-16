@@ -17,6 +17,7 @@ import {
   isProviderAdapterError,
 } from './providers/adapters/adapter-base.ts'
 import { ChatGPTAdapter } from './providers/adapters/adapter-chatgpt.ts'
+import { ClaudeAdapter } from './providers/adapters/adapter-claude.ts'
 import { GeminiAdapter } from './providers/adapters/adapter-gemini.ts'
 import { DeepSeekAdapter } from './providers/adapters/adapter-deepseek.ts'
 import { DoubaoAdapter } from './providers/adapters/adapter-doubao.ts'
@@ -56,6 +57,7 @@ import {
 import type { CliCommandContext } from './cli-commands/core/command-types.ts'
 import {
   executeProviderCapability,
+  isToggleCapabilityProvider,
   listProviderCapabilityStates,
 } from './cli-commands/commands/command-thread-capability.ts'
 import { resolveConversationUrl } from './providers/provider-conversation-url.ts'
@@ -102,6 +104,57 @@ const CLEAR_TERMINAL_ESCAPE = '\u001B[2J\u001B[3J\u001B[H'
 const PORTAL_VERSION = (
   createRequire(import.meta.url)('../package.json') as { version: string }
 ).version
+
+export async function setApiProviderCapability(
+  provider: ProviderId,
+  runtime: RuntimeCore,
+  name: string,
+  state: string
+): Promise<{ name: string; state: string }> {
+  const isToggleProvider = isToggleCapabilityProvider(provider)
+  if (isToggleProvider && state !== 'on' && state !== 'off') {
+    throw new ApiHttpError(
+      400,
+      'INVALID_REQUEST',
+      'Toggle capability state must be on or off.'
+    )
+  }
+  if (!isToggleProvider && state !== 'selected' && state !== 'on') {
+    throw new ApiHttpError(
+      400,
+      'INVALID_REQUEST',
+      'Action capability state must be selected or on.'
+    )
+  }
+  const execution = await executeProviderCapability(
+    provider,
+    runtime,
+    name,
+    isToggleProvider ? [state] : []
+  )
+  if (execution.status !== 'ok') {
+    throw new ApiHttpError(400, 'CAPABILITY_ERROR', execution.result.body)
+  }
+  return { name, state: execution.result.body }
+}
+
+export async function clearApiProviderCapability(
+  provider: ProviderId,
+  runtime: RuntimeCore,
+  name: string
+): Promise<{ name: string; cleared: true }> {
+  const isToggleProvider = isToggleCapabilityProvider(provider)
+  const execution = await executeProviderCapability(
+    provider,
+    runtime,
+    isToggleProvider ? name : 'none',
+    isToggleProvider ? ['off'] : []
+  )
+  if (execution.status !== 'ok') {
+    throw new ApiHttpError(400, 'CAPABILITY_ERROR', execution.result.body)
+  }
+  return { name, cleared: true }
+}
 
 interface PortalRuntimeSettings {
   browserLaunch: BrowserLaunchOptions
@@ -296,6 +349,7 @@ interface Options {
 
 const PROVIDERS: ProviderId[] = [
   'chatgpt',
+  'claude',
   'gemini',
   'deepseek',
   'doubao',
@@ -424,6 +478,7 @@ function normalizeProviderId(value: string): ProviderId | null {
   const aliases: Record<string, ProviderId> = {
     chatgpt: 'chatgpt',
     gpt: 'chatgpt',
+    claude: 'claude',
     gemini: 'gemini',
     deepseek: 'deepseek',
     doubao: 'doubao',
@@ -679,6 +734,8 @@ async function createAdapterForProvider(
   switch (provider) {
     case 'chatgpt':
       return await ChatGPTAdapter.create(context, options)
+    case 'claude':
+      return await ClaudeAdapter.create(context, options)
     case 'gemini':
       return await GeminiAdapter.create(context, options)
     case 'deepseek':
@@ -2128,48 +2185,20 @@ export async function run(argv = process.argv): Promise<void> {
       },
       setCapability: async (threadId, name, state) => {
         const thread = getApiThread(threadId)
-        const isToggleProvider =
-          thread.provider === 'deepseek' || thread.provider === 'glm'
-        if (isToggleProvider && state !== 'on' && state !== 'off') {
-          throw new ApiHttpError(
-            400,
-            'INVALID_REQUEST',
-            'Toggle capability state must be on or off.'
-          )
-        }
-        if (!isToggleProvider && state !== 'selected' && state !== 'on') {
-          throw new ApiHttpError(
-            400,
-            'INVALID_REQUEST',
-            'Action capability state must be selected or on.'
-          )
-        }
-        const args = isToggleProvider ? [state] : []
-        const execution = await executeProviderCapability(
+        return await setApiProviderCapability(
           thread.provider,
           thread.runtime,
           name,
-          args
+          state
         )
-        if (execution.status !== 'ok') {
-          throw new ApiHttpError(400, 'CAPABILITY_ERROR', execution.result.body)
-        }
-        return { name, state: execution.result.body }
       },
       clearCapability: async (threadId, name) => {
         const thread = getApiThread(threadId)
-        const isToggleProvider =
-          thread.provider === 'deepseek' || thread.provider === 'glm'
-        const execution = await executeProviderCapability(
+        return await clearApiProviderCapability(
           thread.provider,
           thread.runtime,
-          isToggleProvider ? name : 'none',
-          isToggleProvider ? ['off'] : []
+          name
         )
-        if (execution.status !== 'ok') {
-          throw new ApiHttpError(400, 'CAPABILITY_ERROR', execution.result.body)
-        }
-        return { name, cleared: true }
       },
       listSkills: async () => await skillLibrary.list(),
       addSkill: async (input) => {

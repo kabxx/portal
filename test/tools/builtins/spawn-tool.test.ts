@@ -6,13 +6,22 @@ import { SpawnTool } from '../../../src/tools/builtins/spawn-tool.ts'
 test('SpawnTool exposes prompt and optional provider as input', () => {
   const tool = new SpawnTool({} as any)
   const schema = tool.metadata.inputSchema as {
-    properties?: Record<string, unknown>
+    properties?: Record<string, { enum?: string[] }>
     required?: string[]
   }
 
   assert.equal(tool.name, 'spawn')
   assert.deepEqual(Object.keys(schema.properties ?? {}), ['prompt', 'provider'])
   assert.deepEqual(schema.required, ['prompt'])
+  assert.deepEqual(schema.properties?.provider?.enum, [
+    'chatgpt',
+    'claude',
+    'gemini',
+    'deepseek',
+    'doubao',
+    'grok',
+    'glm',
+  ])
   assert.match(tool.prompt, /Examples:\n\n<tool>\n\{/)
   assert.match(tool.prompt, /\n<\/tool>/)
 })
