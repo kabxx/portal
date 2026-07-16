@@ -33,6 +33,15 @@ npm run fmt:check
 
 `test:unit` includes deterministic local integration tests such as the MCP stdio and HTTP connection checks. `test:coverage` runs the same suite and reports line, branch, and function coverage for source modules loaded by the tests. It does not replace the manual browser checks below and must not be interpreted as coverage of provider websites or modules that the suite never imports.
 
+Browser launcher changes also have an opt-in real CDP lifecycle check. It is not part of `npm test` or CI:
+
+```powershell
+$env:PORTAL_BROWSER_EXECUTABLE = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
+npm run test:browser
+```
+
+This command uses a temporary profile to verify browser startup, connection, and process cleanup. It does not visit provider pages or require a provider account.
+
 See [Testing](testing.md) for the current coverage inventory, audit decisions, and known gaps.
 
 Use `npm run fmt` only when you intend to rewrite formatting. Before submitting a change, review the final diff and make sure unrelated files were not modified.
@@ -43,7 +52,7 @@ Tests should protect current observable behavior, failure handling, cleanup, and
 
 ## Manual browser smoke check
 
-The CI jobs do not open a provider website. Run this checklist locally when a change affects the CLI lifecycle, a provider adapter, browser startup, or real tool execution:
+The CI jobs do not open a provider website. Run `npm run test:browser` first when browser startup or cleanup changed, then use this checklist when a change affects the CLI lifecycle, a provider adapter, browser startup, or real tool execution:
 
 1. Run `npm run dev` with a dedicated browser profile.
 2. Confirm the browser connects, then run `/providers`.

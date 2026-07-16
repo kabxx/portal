@@ -8,6 +8,7 @@
     "test": "npm run test:type && npm run test:unit",
     "test:type": "tsc -p tsconfig.json --noEmit",
     "test:unit": "node --import tsx --test \"test/**/*.test.ts\"",
+    "test:browser": "node --import tsx --test --test-timeout=90000 \"test/browser/**/*.smoke.ts\"",
     "test:coverage": "node --experimental-test-coverage --test-coverage-include=\"src/**\" --test-coverage-exclude=\"test/**\" --import tsx --test \"test/**/*.test.ts\"",
     "fmt": "prettier . --write",
     "fmt:check": "prettier . --check"
