@@ -100,3 +100,35 @@ test('launchBrowser starts and cleans up a real Chromium process', async () => {
     })
   }
 })
+
+test('launchBrowser connects to a real Chromium dynamic CDP port', async () => {
+  assert.ok(
+    browserExecutablePath,
+    'Set PORTAL_BROWSER_EXECUTABLE to a Chromium-based browser executable.'
+  )
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-browser-dynamic-'))
+  const profile = path.join(root, 'profile')
+  let launch: BrowserLaunch | null = null
+
+  try {
+    launch = await launchBrowser(
+      'chromium',
+      browserExecutablePath,
+      0,
+      profile,
+      { startupTimeoutMs: 45_000, closeTimeoutMs: 5_000 }
+    )
+
+    assert.ok(launch.context.browser()?.isConnected())
+    await launch.close()
+  } finally {
+    await launch?.close()
+    await rm(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    })
+  }
+})

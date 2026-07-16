@@ -21,7 +21,7 @@ $env:PORTAL_BROWSER_EXECUTABLE = 'C:\Program Files\Google\Chrome\Application\chr
 npm run test:browser
 ```
 
-The smoke test uses a temporary profile and dynamic CDP port. It verifies startup, connection, repeated close calls, and process cleanup without opening a provider website or using an account.
+The smoke tests use temporary profiles and cover both an exact fixed CDP port and Chromium's dynamic port selection. They verify startup, connection, repeated close calls, and process cleanup without opening a provider website or using an account.
 
 ## 2026-07-16 audit
 

@@ -621,6 +621,23 @@ test('parsePortalConfig rejects invalid browser, MCP, and Skill sections', () =>
       }),
     /browser\.profilePath must be a non-empty string/
   )
+  assert.equal(
+    parsePortalConfig({
+      ...valid,
+      browser: { ...valid.browser, remoteDebuggingPort: 0 },
+    }).browser.remoteDebuggingPort,
+    0
+  )
+  for (const remoteDebuggingPort of [-1, 65_536, 1.5]) {
+    assert.throws(
+      () =>
+        parsePortalConfig({
+          ...valid,
+          browser: { ...valid.browser, remoteDebuggingPort },
+        }),
+      /browser\.remoteDebuggingPort must be an integer from 0 to 65535/
+    )
+  }
   assert.throws(
     () => parsePortalConfig({ ...valid, mcpServers: [] }),
     /mcpServers must be an object keyed by name/
