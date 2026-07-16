@@ -32,6 +32,8 @@ Provider-specific website behavior stays behind adapters. The runtime understand
 | MCP               | `src/mcp/`                              | Parse config, connect per-thread clients, cache tools, call tools, and render attachments           |
 | Hooks             | `src/hooks/`                            | Load immutable snapshots, run command/model handlers, gate Tool calls, and publish execution events |
 
+Pure provider transport decoding lives outside the page adapters. ChatGPT responses are decoded in `src/providers/chatgpt-response-parser.ts`, while Claude completion SSE is decoded in `src/providers/claude-sse.ts`.
+
 ## Startup lifecycle
 
 `run()` in `src/app.ts` performs top-level orchestration:
