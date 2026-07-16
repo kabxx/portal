@@ -11,7 +11,11 @@
     "test:browser": "node --import tsx --test --test-timeout=90000 \"test/browser/**/*.smoke.ts\"",
     "test:coverage": "node --experimental-test-coverage --test-coverage-include=\"src/**\" --test-coverage-exclude=\"test/**\" --import tsx --test \"test/**/*.test.ts\"",
     "fmt": "prettier . --write",
-    "fmt:check": "prettier . --check"
+    "fmt:check": "prettier . --check",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*": "prettier --ignore-unknown --write"
   },
   "keywords": [
     "browser-automation",
@@ -26,6 +30,8 @@
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.8",
     "prettier": "3.8.3",
     "ts-node": "^10.9.2",
     "tsup": "^8.5.1",
