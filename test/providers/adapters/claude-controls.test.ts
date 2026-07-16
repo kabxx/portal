@@ -13,6 +13,7 @@ const ANY_RADIO_SELECTOR = `${MODEL_SELECTOR}, ${EFFORT_SELECTOR}`
 const INPUT_SELECTOR = '[data-testid="chat-input"]'
 const COMPOSER_ROOT_SELECTOR =
   'xpath=ancestor::div[.//input[@data-testid="file-upload"] and .//*[@data-testid="model-selector-dropdown"]][1]'
+const VOICE_BUTTON_SELECTOR = 'button:has(svg[viewBox^="0 0 21.2"])'
 
 interface TestLocator {
   count(): Promise<number>
@@ -114,14 +115,90 @@ test('ClaudeAdapter uploads all requested files through the file input', async (
   assert.deepEqual(uploads, [['C:/tmp/one.txt', 'C:/tmp/two.png']])
 })
 
-test('ClaudeAdapter reports login only when the composer is ready', async () => {
-  const page = createClaudeLoginPage()
+test('ClaudeAdapter uses the unique Voice Mode structure as page ready', async () => {
+  for (const [options, expected] of [
+    [{}, true],
+    [{ buttonCount: 0 }, false],
+    [{ buttonCount: 2 }, false],
+    [{ visible: false }, false],
+    [{ enabled: false }, false],
+    [{ ariaDisabled: 'true' }, false],
+  ] as const) {
+    const page = createClaudeReadyPage(options)
+    const adapter = new ClaudeAdapterHarness(page)
+
+    assert.equal(await adapter.isLoggedIn(), expected)
+  }
+})
+
+test('ClaudeAdapter gives login priority over Voice Mode ready', async () => {
+  const page = createClaudeReadyPage({ loginVisible: true })
   const adapter = new ClaudeAdapterHarness(page)
 
-  assert.equal(await adapter.isLoggedIn(), true)
-
-  page.loginVisible = true
   assert.equal(await adapter.isLoggedIn(), false)
+})
+
+test('ClaudeAdapter recognizes Claude authentication URL variants', async () => {
+  const page = createClaudeReadyPage()
+  const adapter = new ClaudeAdapterHarness(page)
+
+  for (const pathname of [
+    '/login',
+    '/login/',
+    '/login/continue',
+    '/login?returnTo=%2Fnew',
+    '/signup',
+    '/signup/account',
+  ]) {
+    page.urlValue = `https://claude.ai${pathname}`
+    assert.equal(await adapter.isLoggedIn(), false, pathname)
+  }
+
+  for (const pathname of ['/new', '/loginfoo', '/signups']) {
+    page.urlValue = `https://claude.ai${pathname}`
+    assert.equal(await adapter.isLoggedIn(), true, pathname)
+  }
+})
+
+test('ClaudeAdapter classifies attachText login separately from a missing composer', async () => {
+  const loginPage = createClaudeReadyPage({ loginVisible: true })
+  const loginAdapter = new ClaudeAdapterHarness(loginPage)
+  await assert.rejects(
+    loginAdapter.attachText('setup'),
+    (error) =>
+      isProviderAdapterError(error) &&
+      error.kind === 'auth' &&
+      error.adapter === loginAdapter &&
+      loginPage.inputReads === 0
+  )
+
+  let loginChecks = 0
+  const redirectPage = createClaudeReadyPage({
+    composerReady: false,
+    loginVisible: () => {
+      loginChecks += 1
+      return loginChecks >= 2
+    },
+  })
+  const redirectAdapter = new ClaudeAdapterHarness(redirectPage)
+
+  await assert.rejects(
+    redirectAdapter.attachText('setup'),
+    (error) =>
+      isProviderAdapterError(error) &&
+      error.kind === 'auth' &&
+      error.adapter === redirectAdapter
+  )
+
+  const missingPage = createClaudeReadyPage({ composerReady: false })
+  const missingAdapter = new ClaudeAdapterHarness(missingPage)
+  await assert.rejects(
+    missingAdapter.attachText('setup'),
+    (error) =>
+      isProviderAdapterError(error) &&
+      error.kind === 'ui' &&
+      error.detailCode === 'claude_composer_missing'
+  )
 })
 
 test('ClaudeAdapter reads and idempotently changes web_search', async () => {
@@ -374,28 +451,75 @@ function createClaudeModelPage({
   return page
 }
 
-interface ClaudeLoginPage extends TestPage {
-  loginVisible: boolean
+interface ClaudeReadyPageOptions {
+  buttonCount?: number
+  visible?: boolean
+  enabled?: boolean
+  ariaDisabled?: string | null
+  composerReady?: boolean
+  loginVisible?: boolean | (() => boolean)
 }
 
-function createClaudeLoginPage(): ClaudeLoginPage {
-  const input = createLocator({
-    isVisible: async () => true,
-    getAttribute: async (name) => (name === 'contenteditable' ? 'true' : null),
+interface ClaudeReadyPage extends TestPage {
+  urlValue: string
+  readonly inputReads: number
+}
+
+function createClaudeReadyPage(
+  options: ClaudeReadyPageOptions = {}
+): ClaudeReadyPage {
+  const buttonCount = options.buttonCount ?? 1
+  const visible = options.visible ?? true
+  const enabled = options.enabled ?? true
+  const ariaDisabled = options.ariaDisabled ?? null
+  const composerReady = options.composerReady ?? true
+  const loginVisible = options.loginVisible ?? false
+  let inputReads = 0
+  const voiceButton = createLocator({
+    isVisible: async () => visible,
+    isEnabled: async () => enabled,
+    getAttribute: async (name) =>
+      name === 'aria-disabled' ? ariaDisabled : null,
   })
-  const page: ClaudeLoginPage = {
-    loginVisible: false,
-    url: () => 'https://claude.ai/new',
+  const composerRoot = createLocator({
+    locator: (selector) => {
+      assert.equal(selector, VOICE_BUTTON_SELECTOR)
+      return createLocator({
+        count: async () => buttonCount,
+        first: () => voiceButton,
+      })
+    },
+  })
+  const input = createLocator({
+    isVisible: async () => composerReady,
+    getAttribute: async (name) =>
+      name === 'contenteditable' && composerReady ? 'true' : null,
+    locator: (selector) => {
+      assert.equal(selector, COMPOSER_ROOT_SELECTOR)
+      return composerRoot
+    },
+  })
+  const loginControl = createLocator({
+    isVisible: async () =>
+      typeof loginVisible === 'function' ? loginVisible() : loginVisible,
+  })
+  const page: ClaudeReadyPage = {
+    urlValue: 'https://claude.ai/new',
+    get inputReads() {
+      return inputReads
+    },
+    url: () => page.urlValue,
     keyboard: { press: async () => undefined },
     getByRole: () => createLocator(),
     locator: (selector) => {
-      if (selector === INPUT_SELECTOR) return firstLocator(input)
-      if (selector === '[data-testid="email"], [data-testid="continue"]') {
-        return firstLocator(
-          createLocator({ isVisible: async () => page.loginVisible })
-        )
+      if (selector === INPUT_SELECTOR) {
+        inputReads += 1
+        return firstLocator(input)
       }
-      throw new Error(`Unexpected login selector: ${selector}`)
+      if (selector === '[data-testid="email"], [data-testid="continue"]') {
+        return firstLocator(loginControl)
+      }
+      throw new Error(`Unexpected ready selector: ${selector}`)
     },
   }
   return page
