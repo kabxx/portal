@@ -11,6 +11,7 @@ export interface RuntimeRecoveryPlan {
   lines: string[]
   canRetry: boolean
   requiresLogin: boolean
+  showFallbackError: boolean
 }
 
 export function buildRuntimeRecoveryPlan(
@@ -27,6 +28,20 @@ export function buildRuntimeRecoveryPlan(
       ],
       canRetry: false,
       requiresLogin: false,
+      showFallbackError: true,
+    }
+  }
+
+  if (error.detailCode === 'claude_account_restricted') {
+    return {
+      title: 'account restricted',
+      lines: [
+        'Claude account access is restricted.',
+        'This thread cannot continue until the account restriction is resolved. Use another provider in the meantime.',
+      ],
+      canRetry: false,
+      requiresLogin: false,
+      showFallbackError: false,
     }
   }
 
@@ -40,6 +55,7 @@ export function buildRuntimeRecoveryPlan(
       ],
       canRetry: true,
       requiresLogin: true,
+      showFallbackError: false,
     }
   }
 
@@ -57,6 +73,7 @@ export function buildRuntimeRecoveryPlan(
       ],
       canRetry: true,
       requiresLogin: false,
+      showFallbackError: false,
     }
   }
 
@@ -69,6 +86,7 @@ export function buildRuntimeRecoveryPlan(
     ],
     canRetry: false,
     requiresLogin: false,
+    showFallbackError: true,
   }
 }
 
@@ -80,11 +98,11 @@ export async function tryRestoreRuntimeForRecovery(
     return
   }
 
-  if (
-    error.kind === 'auth' ||
-    error.recovery === 'restore' ||
-    error.recovery === 'reload'
-  ) {
+  if (error.kind === 'auth') {
+    return
+  }
+
+  if (error.recovery === 'restore' || error.recovery === 'reload') {
     await restore()
   }
 }

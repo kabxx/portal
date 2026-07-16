@@ -310,12 +310,12 @@ export function canRunCommandWhileThreadBusy(input: string): boolean {
 
 export function shouldRenderFallbackThreadError({
   turnErrorRendered,
-  canRetry,
+  showFallbackError,
 }: {
   turnErrorRendered: boolean
-  canRetry: boolean
+  showFallbackError: boolean
 }): boolean {
-  return !turnErrorRendered && !canRetry
+  return !turnErrorRendered && showFallbackError
 }
 
 export const GROK_PROVIDER_PROMPT = [
@@ -1410,7 +1410,7 @@ export async function run(argv = process.argv): Promise<void> {
               if (
                 shouldRenderFallbackThreadError({
                   turnErrorRendered,
-                  canRetry: plan.canRetry,
+                  showFallbackError: plan.showFallbackError,
                 })
               ) {
                 ui.renderThreadError(activeThread, 'error', String(error))
