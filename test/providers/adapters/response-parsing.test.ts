@@ -6,6 +6,35 @@ import { ChatGPTAdapter } from '../../../src/providers/adapters/adapter-chatgpt.
 import { DeepSeekAdapter } from '../../../src/providers/adapters/adapter-deepseek.ts'
 import { DoubaoAdapter } from '../../../src/providers/adapters/adapter-doubao.ts'
 import { GeminiAdapter } from '../../../src/providers/adapters/adapter-gemini.ts'
+import { createPrototypeObject } from '../../helpers/fakes.ts'
+
+interface ParsedResponse {
+  conversationId?: string
+  messageId?: string | number
+  parentId?: number
+  text: string
+  isFinished: boolean
+}
+
+interface SyncParserHarness {
+  parseResponse(raw: string): ParsedResponse | null
+}
+
+interface AsyncParserHarness {
+  parseResponse(raw: string): Promise<ParsedResponse | null>
+}
+
+interface DoubaoParserHarness extends SyncParserHarness {
+  readStreamError(raw: string): {
+    detailCode: string
+    kind: string
+    message: string
+  } | null
+}
+
+interface ChatGptParserHarness {
+  parseHttpResponse(raw: string): ParsedResponse | null
+}
 
 test('DeepSeek parser reads a sanitized SSE sample', () => {
   const raw = [
@@ -13,8 +42,10 @@ test('DeepSeek parser reads a sanitized SSE sample', () => {
     'data: {"v":"呀"}',
     'data: {"p":"response/status","o":"SET","v":"FINISHED"}',
   ].join('\n')
-  const adapter = Object.create(DeepSeekAdapter.prototype) as DeepSeekAdapter
-  const parsed = (adapter as any).parseResponse(raw)
+  const adapter = createPrototypeObject(
+    DeepSeekAdapter.prototype
+  ) as SyncParserHarness
+  const parsed = adapter.parseResponse(raw)
 
   assert.deepEqual(parsed, {
     messageId: 4,
@@ -29,8 +60,10 @@ test('DeepSeek parser hides thinking fragments and keeps response prefix', () =>
     'data: {"v":{"response":{"message_id":12,"parent_id":11,"fragments":[{"type":"THINK","content":"用户说 AI"},{"type":"RESPONSE","content":"哈哈"}]}}}',
     'data: {"p":"response/status","o":"SET","v":"FINISHED"}',
   ].join('\n')
-  const adapter = Object.create(DeepSeekAdapter.prototype) as DeepSeekAdapter
-  const parsed = (adapter as any).parseResponse(raw)
+  const adapter = createPrototypeObject(
+    DeepSeekAdapter.prototype
+  ) as SyncParserHarness
+  const parsed = adapter.parseResponse(raw)
 
   assert.ok(parsed)
   assert.equal(parsed.messageId, 12)
@@ -47,8 +80,10 @@ test('Doubao parser reads a sanitized SSE sample', () => {
     'event: CHUNK_DELTA\ndata: {"text":"😆"}',
     'event: SSE_REPLY_END\ndata: {"end_type":1}',
   ].join('\n\n')
-  const adapter = Object.create(DoubaoAdapter.prototype) as DoubaoAdapter
-  const parsed = (adapter as any).parseResponse(raw)
+  const adapter = createPrototypeObject(
+    DoubaoAdapter.prototype
+  ) as DoubaoParserHarness
+  const parsed = adapter.parseResponse(raw)
 
   assert.deepEqual(parsed, {
     conversationId: 'conversation-1',
@@ -97,8 +132,10 @@ test('Doubao parser prefers a sanitized final creation snapshot', () => {
     })}`,
     'event: SSE_REPLY_END\ndata: {"end_type":1}',
   ].join('\n\n')
-  const adapter = Object.create(DoubaoAdapter.prototype) as DoubaoAdapter
-  const parsed = (adapter as any).parseResponse(raw)
+  const adapter = createPrototypeObject(
+    DoubaoAdapter.prototype
+  ) as DoubaoParserHarness
+  const parsed = adapter.parseResponse(raw)
 
   assert.deepEqual(parsed, {
     conversationId: 'conversation-1',
@@ -109,8 +146,10 @@ test('Doubao parser prefers a sanitized final creation snapshot', () => {
 })
 
 test('Doubao English rate limit errors are marked as rate limits', () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as DoubaoAdapter
-  const streamError = (adapter as any).readStreamError(`id: 0
+  const adapter = createPrototypeObject(
+    DoubaoAdapter.prototype
+  ) as DoubaoParserHarness
+  const streamError = adapter.readStreamError(`id: 0
 event: STREAM_ERROR
 data: {"error_code":710022004,"error_msg":"rate limited","extra":{"ack":"1"}}`)
 
@@ -131,8 +170,10 @@ data: {"content":{"content_block":[{"block_type":10000,"content":{"text_block":{
 id: 1
 event: SSE_REPLY_END
 data: {"end_type":1}`
-  const adapter = Object.create(DoubaoAdapter.prototype) as DoubaoAdapter
-  const parsed = (adapter as any).parseResponse(raw)
+  const adapter = createPrototypeObject(
+    DoubaoAdapter.prototype
+  ) as DoubaoParserHarness
+  const parsed = adapter.parseResponse(raw)
 
   assert.deepEqual(parsed, {
     conversationId: 'c1',
@@ -154,8 +195,10 @@ data: {"end_type":1}
 id: 2
 event: STREAM_MSG_NOTIFY
 data: {"content":{"content_block":[{"block_type":10000,"content":{"text_block":{"text":"after end"}}}]},"meta":{"message_id":"2","conversation_id":"c2"}}`
-  const adapter = Object.create(DoubaoAdapter.prototype) as DoubaoAdapter
-  const parsed = (adapter as any).parseResponse(raw)
+  const adapter = createPrototypeObject(
+    DoubaoAdapter.prototype
+  ) as DoubaoParserHarness
+  const parsed = adapter.parseResponse(raw)
 
   assert.deepEqual(parsed, {
     conversationId: 'c1',
@@ -205,8 +248,10 @@ test('Gemini parser reads a framed response and replaces image placeholders', as
   ]
   const frame = JSON.stringify([['wrb.fr', null, JSON.stringify(inner)]])
   const raw = `)]}'\n${Buffer.byteLength(frame)}\n${frame}`
-  const adapter = Object.create(GeminiAdapter.prototype) as GeminiAdapter
-  const parsed = await (adapter as any).parseResponse(raw)
+  const adapter = createPrototypeObject(
+    GeminiAdapter.prototype
+  ) as AsyncParserHarness
+  const parsed = await adapter.parseResponse(raw)
 
   assert.ok(parsed)
   assert.equal(parsed.text.includes(placeholderUrl), false)
@@ -230,8 +275,10 @@ test('ChatGPT HTTP parser reads a sanitized JSON response', () => {
       },
     },
   })
-  const adapter = Object.create(ChatGPTAdapter.prototype) as ChatGPTAdapter
-  const parsed = (adapter as any).parseHttpResponse(raw)
+  const adapter = createPrototypeObject(
+    ChatGPTAdapter.prototype
+  ) as ChatGptParserHarness
+  const parsed = adapter.parseHttpResponse(raw)
 
   assert.deepEqual(parsed, {
     conversationId: 'conversation-1',
@@ -246,8 +293,10 @@ test('ChatGPT HTTP parser reads the current SSE conversation sample', () => {
     new URL('../../fixtures/chatgpt_http_sse_ready.txt', import.meta.url),
     'utf8'
   )
-  const adapter = Object.create(ChatGPTAdapter.prototype) as ChatGPTAdapter
-  const parsed = (adapter as any).parseHttpResponse(raw)
+  const adapter = createPrototypeObject(
+    ChatGPTAdapter.prototype
+  ) as ChatGptParserHarness
+  const parsed = adapter.parseHttpResponse(raw)
 
   assert.deepEqual(parsed, {
     conversationId: '6a4f6795-34cc-83ec-90c6-53b15956f198',
@@ -279,8 +328,10 @@ test('ChatGPT HTTP parser appends bare SSE delta string chunks', () => {
     'data: [DONE]',
     '',
   ].join('\n')
-  const adapter = Object.create(ChatGPTAdapter.prototype) as ChatGPTAdapter
-  const parsed = (adapter as any).parseHttpResponse(raw)
+  const adapter = createPrototypeObject(
+    ChatGPTAdapter.prototype
+  ) as ChatGptParserHarness
+  const parsed = adapter.parseHttpResponse(raw)
 
   assert.deepEqual(parsed, {
     conversationId: 'conversation-1',

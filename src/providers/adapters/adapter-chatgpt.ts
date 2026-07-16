@@ -11,11 +11,11 @@ import {
 import {
   abortable,
   isAbortError,
+  toError,
   throwIfAborted,
 } from '../../runtime/runtime-cancellation.ts'
 import { retryAsync } from '../../shared/retry.ts'
 import { waitAsync } from '../../shared/wait.ts'
-import { repeatAsync } from '../../shared/repeat.ts'
 import {
   emptyHistoryResult,
   parseChatGptHistory,
@@ -998,7 +998,9 @@ export class ChatGPTAdapter extends ProviderAdapter {
               ) {
                 updateHttpParsedResponse(parsedResponse)
               }
-            } catch {}
+            } catch {
+              // Another response channel may still provide the final result.
+            }
           })()
         }
 
@@ -1197,7 +1199,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
               { signal }
             )
             if (terminalError !== null) {
-              throw terminalError
+              throw toError(terminalError, 'ChatGPT response capture failed.')
             }
             parsedResponse = pickCurrentResponse()
             await emitCurrentStreamText(parsedResponse)
@@ -1214,7 +1216,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
             parsedResponse.text.trim().length === 0
           ) {
             if (terminalError !== null) {
-              throw terminalError
+              throw toError(terminalError, 'ChatGPT response capture failed.')
             }
             throw new ProviderAdapterError(
               'submit',
@@ -1539,7 +1541,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
     for (const frame of frames) {
       for (const chunk of extractJsonChunks(frame)) {
         try {
-          const parsedChunk = JSON.parse(chunk)
+          const parsedChunk: unknown = JSON.parse(chunk)
           results.push(...collectResponses(parsedChunk))
           for (const [referenceId, url] of collectReferenceUrls(
             parsedChunk

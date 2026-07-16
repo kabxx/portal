@@ -11,7 +11,7 @@ import {
 } from 'fs/promises'
 import os from 'os'
 import path from 'path'
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
+import { stringify as stringifyYaml } from 'yaml'
 
 import { createDefaultPortalConfig } from '../../src/config/portal-config.ts'
 import {
@@ -21,11 +21,37 @@ import {
 } from '../../src/skills/skill-library.ts'
 import { DEFAULT_SKILL_POLICY } from '../../src/skills/skill-policy.ts'
 import { createTestSkill } from '../helpers/skills.ts'
+import { parseYamlRecord } from '../helpers/yaml.ts'
 
 interface SkillRegistryDocumentEntry {
   name: string
   directory: string
   enabled: unknown
+}
+
+function parseSkillRegistryEntries(
+  value: unknown
+): SkillRegistryDocumentEntry[] {
+  if (!Array.isArray(value)) {
+    throw new Error('skills must be an array.')
+  }
+  return value.map((entry, index) => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error(`skills[${index}] must be an object.`)
+    }
+    const record = entry as Record<string, unknown>
+    if (
+      typeof record.name !== 'string' ||
+      typeof record.directory !== 'string'
+    ) {
+      throw new Error(`skills[${index}] must have a name and directory.`)
+    }
+    return {
+      name: record.name,
+      directory: record.directory,
+      enabled: record.enabled,
+    }
+  })
 }
 
 function defaultConfig() {
@@ -69,9 +95,9 @@ test('SkillLibrary installs, catalogs, disables, enables, and removes skills', a
       await readFile(path.join(installed.directory, 'SKILL.md'), 'utf8'),
       /SECRET BODY/
     )
-    const registryDocument = parseYaml(
+    const registryDocument = parseYamlRecord(
       await readFile(path.join(root, 'data', 'config.yaml'), 'utf8')
-    ).skills as SkillRegistryDocumentEntry[]
+    ).skills
     assert.deepEqual(registryDocument, [
       {
         name: 'test-skill',
@@ -401,7 +427,10 @@ test('SkillLibrary initializes a missing registry without overwriting it later',
 
   try {
     await library.initialize()
-    assert.deepEqual(parseYaml(await readFile(registryPath, 'utf8')).skills, [])
+    assert.deepEqual(
+      parseYamlRecord(await readFile(registryPath, 'utf8')).skills,
+      []
+    )
 
     await writeFile(registryPath, 'browser: [', 'utf8')
     await library.initialize()
@@ -434,9 +463,9 @@ test('SkillLibrary bootstraps existing managed skills as enabled', async () => {
       })),
       [{ name: 'managed-skill', enabled: true }]
     )
-    const registry = parseYaml(
+    const registry = parseYamlRecord(
       await readFile(path.join(dataDirectory, 'config.yaml'), 'utf8')
-    ).skills as SkillRegistryDocumentEntry[]
+    ).skills
     assert.deepEqual(registry, [
       {
         name: 'managed-skill',
@@ -491,8 +520,8 @@ test('SkillLibrary reloads manual registry edits and isolates invalid entries', 
     assert.equal(listed.issues.length, 1)
     assert.match(listed.issues[0]?.message ?? '', /Missing SKILL\.md/)
 
-    const config = parseYaml(await readFile(registryPath, 'utf8'))
-    const document = config.skills as SkillRegistryDocumentEntry[]
+    const config = parseYamlRecord(await readFile(registryPath, 'utf8'))
+    const document = parseSkillRegistryEntries(config.skills)
     const manualSkill = document.find(({ name }) => name === 'manual-skill')
     assert.ok(manualSkill)
     manualSkill.enabled = false

@@ -1099,26 +1099,26 @@ export class TerminalController {
           const shell =
             typeof params.shell === 'string' ? params.shell : getDefaultShell()
           return [
-            `cwd: ${String(params.cwd ?? process.cwd())}`,
+            `cwd: ${displayScalar(params.cwd, process.cwd())}`,
             `shell: ${shell}`,
-            `timeoutMs: ${String(params.timeoutMs ?? 'none')}`,
-            `command: ${String(params.command ?? '(missing)')}`,
+            `timeoutMs: ${displayScalar(params.timeoutMs, 'none')}`,
+            `command: ${displayScalar(params.command, '(missing)')}`,
           ]
         }
         case 'attach_image':
-          return [`path: ${String(params.path ?? '(missing)')}`]
+          return [`path: ${displayScalar(params.path, '(missing)')}`]
         case 'spawn':
           return [
-            `provider: ${String(params.provider ?? thread.provider)}`,
-            `prompt: ${truncatePreview(firstLine(String(params.prompt ?? '(missing)')))}`,
+            `provider: ${displayScalar(params.provider, thread.provider)}`,
+            `prompt: ${truncatePreview(firstLine(displayScalar(params.prompt, '(missing)')))}`,
           ]
         case 'load_skill':
-          return [`name: ${String(params.name ?? '(missing)')}`]
+          return [`name: ${displayScalar(params.name, '(missing)')}`]
         case 'mcp_search_tool':
         case 'mcp_call_tool': {
           const lines = [
-            `server: ${String(params.server ?? '(missing)')}`,
-            `tool: ${String(params.tool ?? '(missing)')}`,
+            `server: ${displayScalar(params.server, '(missing)')}`,
+            `tool: ${displayScalar(params.tool, '(missing)')}`,
           ]
           if (toolName === 'mcp_call_tool') {
             lines.push(
@@ -1150,7 +1150,7 @@ export class TerminalController {
 
     if (toolName === 'run_command') {
       const lines = [
-        `exitCode: ${String(result.exitCode ?? 'null')}`,
+        `exitCode: ${displayScalar(result.exitCode, 'null')}`,
         `timedOut: ${result.timedOut === true ? 'yes' : 'no'} · truncated: ${result.truncated === true ? 'yes' : 'no'}`,
       ]
       const stderrPreview =
@@ -1361,6 +1361,18 @@ function toLines(body: string | readonly string[]): string[] {
 
 function firstLine(value: string): string {
   return value.split(/\r?\n/)[0] ?? ''
+}
+
+function displayScalar(value: unknown, fallback: string): string {
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint'
+  ) {
+    return String(value)
+  }
+  return fallback
 }
 
 function escapeToolTagsForMarkdown(message: string): string {

@@ -3,9 +3,21 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { ChatGPTAdapter } from '../../../src/providers/adapters/adapter-chatgpt.ts'
+import { createPrototypeObject } from '../../helpers/fakes.ts'
+
+type ChatGPTInitHarness = Pick<ChatGPTAdapter, keyof ChatGPTAdapter> & {
+  page: unknown
+  websocketFrames: string[]
+  parseHttpResponse: unknown
+  parseWebsocketResponse: unknown
+  getSubmitRequestStartGraceMs(): number
+  getSubmitBlockedWarningIntervalMs(): number
+}
 
 test('ChatGPTAdapter.submit returns READY from websocket without waiting for a late HTTP response', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createPrototypeObject(
+    ChatGPTAdapter.prototype
+  ) as ChatGPTInitHarness
   adapter.websocketFrames = ['frame-ready']
   adapter.parseWebsocketResponse = () => ({
     text: 'READY',
@@ -66,10 +78,10 @@ function createChatGPTPage(sendButton: {
       }
       throw new Error(`Unexpected selector: ${selector}`)
     },
-    on: (eventName: string, listener: (...args: any[]) => void) => {
+    on: (eventName: string, listener: (...args: unknown[]) => void) => {
       emitter.on(eventName, listener)
     },
-    off: (eventName: string, listener: (...args: any[]) => void) => {
+    off: (eventName: string, listener: (...args: unknown[]) => void) => {
       emitter.off(eventName, listener)
     },
     emit: (eventName: string, payload: unknown) => {

@@ -212,6 +212,7 @@ function mapFastifyError(error: unknown): {
         code: -32600,
         message: 'Unsupported media type.',
       }
+    case null:
     default:
       return {
         statusCode: 500,

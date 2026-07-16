@@ -8,6 +8,16 @@ import { DeepSeekAdapter } from '../../../src/providers/adapters/adapter-deepsee
 import { DoubaoAdapter } from '../../../src/providers/adapters/adapter-doubao.ts'
 import { GrokAdapter } from '../../../src/providers/adapters/adapter-grok.ts'
 import { GlmAdapter } from '../../../src/providers/adapters/adapter-glm.ts'
+import { createPrototypeObject } from '../../helpers/fakes.ts'
+
+type RestorableAdapter = {
+  page: unknown
+  restore(): Promise<void>
+}
+
+function createRestorableAdapter(prototype: object): RestorableAdapter {
+  return createPrototypeObject(prototype) as RestorableAdapter
+}
 
 function createMockPage({
   afterGotoUrl,
@@ -44,7 +54,7 @@ function createMockPage({
 }
 
 test('ChatGPTAdapter.restore reports auth when login button is visible', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createRestorableAdapter(ChatGPTAdapter.prototype)
   adapter.page = createMockPage({
     afterGotoUrl: 'https://chatgpt.com',
     visibleByTestId: { 'login-button': true },
@@ -62,7 +72,7 @@ test('ChatGPTAdapter.restore reports auth when login button is visible', async (
 })
 
 test('GeminiAdapter.restore reports auth when signed-out panel is visible', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createRestorableAdapter(GeminiAdapter.prototype)
   adapter.page = createMockPage({
     afterGotoUrl: 'https://gemini.google.com/app',
     visibleByLocator: {
@@ -82,7 +92,7 @@ test('GeminiAdapter.restore reports auth when signed-out panel is visible', asyn
 })
 
 test('GeminiAdapter.restore waits for the microphone ready signal before succeeding', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createRestorableAdapter(GeminiAdapter.prototype)
   let checks = 0
   adapter.page = {
     goto: async () => undefined,
@@ -118,7 +128,7 @@ test('GeminiAdapter.restore waits for the microphone ready signal before succeed
 })
 
 test('DeepSeekAdapter.restore reports auth when redirected to /sign_in', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createRestorableAdapter(DeepSeekAdapter.prototype)
   adapter.page = createMockPage({
     afterGotoUrl: 'https://chat.deepseek.com/sign_in',
   })
@@ -135,7 +145,7 @@ test('DeepSeekAdapter.restore reports auth when redirected to /sign_in', async (
 })
 
 test('DeepSeekAdapter.restore waits for the ready button signal before succeeding', async () => {
-  const adapter = Object.create(DeepSeekAdapter.prototype) as any
+  const adapter = createRestorableAdapter(DeepSeekAdapter.prototype)
   let checks = 0
   adapter.page = {
     goto: async () => undefined,
@@ -162,7 +172,7 @@ test('DeepSeekAdapter.restore waits for the ready button signal before succeedin
 })
 
 test('DoubaoAdapter.restore reports auth when login button is visible', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createRestorableAdapter(DoubaoAdapter.prototype)
   adapter.page = createMockPage({
     afterGotoUrl: 'https://www.doubao.com/chat',
     visibleByLocator: { 'button.login-btn-header-CTKsn1': true },
@@ -180,7 +190,7 @@ test('DoubaoAdapter.restore reports auth when login button is visible', async ()
 })
 
 test('DoubaoAdapter.restore waits for the ready container signal before succeeding', async () => {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
+  const adapter = createRestorableAdapter(DoubaoAdapter.prototype)
   let checks = 0
   adapter.page = {
     goto: async () => undefined,
@@ -212,7 +222,7 @@ test('DoubaoAdapter.restore waits for the ready container signal before succeedi
 })
 
 test('GrokAdapter.restore reports auth when signed-out actions are visible', async () => {
-  const adapter = Object.create(GrokAdapter.prototype) as any
+  const adapter = createRestorableAdapter(GrokAdapter.prototype)
   adapter.page = createMockPage({
     afterGotoUrl: 'https://grok.com',
     visibleByLocator: {
@@ -232,7 +242,7 @@ test('GrokAdapter.restore reports auth when signed-out actions are visible', asy
 })
 
 test('GrokAdapter.restore waits for the composer ready signal before succeeding', async () => {
-  const adapter = Object.create(GrokAdapter.prototype) as any
+  const adapter = createRestorableAdapter(GrokAdapter.prototype)
   let checks = 0
   adapter.page = {
     goto: async () => undefined,
@@ -272,7 +282,7 @@ test('GrokAdapter.restore waits for the composer ready signal before succeeding'
 })
 
 test('GlmAdapter.restore reports auth when the signed-out avatar is visible', async () => {
-  const adapter = Object.create(GlmAdapter.prototype) as any
+  const adapter = createRestorableAdapter(GlmAdapter.prototype)
   adapter.page = createMockPage({
     afterGotoUrl: 'https://chat.z.ai/',
     visibleByLocator: {
@@ -293,7 +303,7 @@ test('GlmAdapter.restore reports auth when the signed-out avatar is visible', as
 })
 
 test('GlmAdapter.restore only requires the send button to be visible', async () => {
-  const adapter = Object.create(GlmAdapter.prototype) as any
+  const adapter = createRestorableAdapter(GlmAdapter.prototype)
   let checks = 0
   adapter.page = {
     goto: async () => undefined,
@@ -340,7 +350,7 @@ test('GlmAdapter.restore only requires the send button to be visible', async () 
 })
 
 test('ChatGPTAdapter.restore waits for the speech button ready signal before succeeding', async () => {
-  const adapter = Object.create(ChatGPTAdapter.prototype) as any
+  const adapter = createRestorableAdapter(ChatGPTAdapter.prototype)
   let checks = 0
   adapter.page = {
     goto: async () => undefined,

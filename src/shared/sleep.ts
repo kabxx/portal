@@ -1,5 +1,5 @@
 import {
-  PortalAbortError,
+  getAbortError,
   throwIfAborted,
 } from '../runtime/runtime-cancellation.ts'
 
@@ -23,7 +23,7 @@ export function sleepWithAbortAsync(
     const onAbort = () => {
       clearTimeout(timer)
       signal?.removeEventListener('abort', onAbort)
-      reject(signal?.reason ?? new PortalAbortError())
+      reject(getAbortError(signal))
     }
     signal?.addEventListener('abort', onAbort, { once: true })
   })

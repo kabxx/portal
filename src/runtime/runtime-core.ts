@@ -1,10 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { ProviderAdapter } from '../providers/adapters/adapter-base.ts'
-import {
-  isProviderAdapterError,
-  type ProviderAdapterError,
-} from '../providers/adapters/adapter-base.ts'
+import { isProviderAdapterError } from '../providers/adapters/adapter-base.ts'
 import { formatToolResultMessage } from '../tools/core/tool-registry.ts'
 import type {
   ToolCall,
@@ -200,7 +197,7 @@ export class RuntimeCore {
       throwIfAborted(handlers.signal)
     }
     let user = manualSkill?.prompt ?? input
-    let assistant = ''
+    let assistant: string
     let toolCallCount = 0
 
     while (true) {
@@ -348,7 +345,7 @@ export class RuntimeCore {
           )
           if (decision.action === 'deny') {
             metadata = {
-              ...metadata!,
+              ...metadata,
               rewrittenBy: decision.rewrittenBy,
             }
             toolResult = hookBlockedResult(
@@ -368,7 +365,7 @@ export class RuntimeCore {
                 extractedToolCall.declaredToolName !== null
               )
               metadata = {
-                ...metadata!,
+                ...metadata,
                 effectiveInput: structuredClone(decision.params),
                 rewrittenBy: decision.rewrittenBy,
               }

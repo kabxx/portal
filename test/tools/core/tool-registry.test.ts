@@ -10,6 +10,7 @@ import {
   parseToolCallPayload,
   ToolRegistry,
 } from '../../../src/tools/core/tool-registry.ts'
+import { createProviderAdapterStub } from '../../helpers/fakes.ts'
 
 test('tool extraction preserves named freeform payloads', () => {
   const extracted = extractToolCall(
@@ -23,15 +24,15 @@ test('tool extraction preserves named freeform payloads', () => {
     trailingText: '\nAfter',
   })
   assert.deepEqual(
-    parseToolCallPayload(extracted!.rawPayload, extracted!.declaredToolName),
-    { tool: 'apply_patch', params: extracted!.rawPayload }
+    parseToolCallPayload(extracted.rawPayload, extracted.declaredToolName),
+    { tool: 'apply_patch', params: extracted.rawPayload }
   )
 })
 
 test('ToolRegistry keeps JSON tools and executes named freeform tools', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-tool-registry-'))
   const filePath = path.join(root, 'created.txt')
-  const adapter = {} as any
+  const adapter = createProviderAdapterStub()
   const registry = new ToolRegistry(adapter, [ApplyPatchTool])
 
   try {

@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'fs/promises'
 import os from 'os'
 import path from 'path'
-import { parse as parseYaml } from 'yaml'
 
 import { McpCommand } from '../../../src/cli-commands/commands/command-mcp.ts'
 import { CommandRegistry } from '../../../src/cli-commands/core/command-registry.ts'
@@ -17,6 +16,7 @@ import { ThreadManager } from '../../../src/threads/thread-manager.ts'
 import { ThreadStore } from '../../../src/threads/thread-store.ts'
 import { createFakeRuntime } from '../../helpers/fakes.ts'
 import { latestTimelineEntry } from '../../helpers/ui.ts'
+import { parseYamlRecord } from '../../helpers/yaml.ts'
 
 async function createMcpCommandContext(root: string) {
   const ui = new TerminalController()
@@ -61,7 +61,7 @@ test('McpCommand adds minimal HTTP and stdio server configs', async () => {
       context
     )
     await registry.execute('/mcp add local -- npx -y example-server', context)
-    const document = parseYaml(
+    const document = parseYamlRecord(
       await readFile(path.join(root, 'config.yaml'), 'utf8')
     )
 

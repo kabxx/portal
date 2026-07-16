@@ -158,7 +158,9 @@ function getDownloadFileName(
   let urlName = path.posix.basename(finalUrl.pathname)
   try {
     urlName = decodeURIComponent(urlName)
-  } catch {}
+  } catch {
+    // Keep the encoded URL basename when decoding fails.
+  }
   const candidate = (headerName ?? urlName ?? 'download').trim()
   const safeName = path
     .basename(candidate)

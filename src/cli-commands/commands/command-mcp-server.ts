@@ -1,8 +1,4 @@
-import type {
-  CliCommand,
-  CliCommandContext,
-  CommandResult,
-} from '../core/command-types.ts'
+import type { CliCommand, CliCommandContext } from '../core/command-types.ts'
 import { isUnauthenticatedNonLoopbackListener } from '../core/listener-security.ts'
 
 export const McpServerCommand: CliCommand = {

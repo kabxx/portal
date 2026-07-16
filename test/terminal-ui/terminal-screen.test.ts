@@ -192,13 +192,15 @@ test('deletePreviousWord deletes the word before the cursor', () => {
 })
 
 test('completeSlashCommand completes unique command and subcommand prefixes', () => {
-  const commands = [
-    { name: '/help', description: 'help' },
-    { name: '/providers', description: 'providers' },
+  const execute: CliCommand['execute'] = async () => ({ continue: true })
+  const commands: CliCommand[] = [
+    { name: '/help', description: 'help', execute },
+    { name: '/providers', description: 'providers', execute },
     {
       name: '/skill',
       description: 'skill',
       subcommands: ['add', 'list', 'enable', 'disable', 'remove'],
+      execute,
     },
     {
       name: '/thread',
@@ -214,26 +216,24 @@ test('completeSlashCommand completes unique command and subcommand prefixes', ()
         'detach',
         'capability',
       ],
+      execute,
     },
   ]
 
-  assert.equal(completeSlashCommand('/th', commands as any), '/thread ')
+  assert.equal(completeSlashCommand('/th', commands), '/thread ')
+  assert.equal(completeSlashCommand('/thread op', commands), '/thread open ')
   assert.equal(
-    completeSlashCommand('/thread op', commands as any),
-    '/thread open '
-  )
-  assert.equal(
-    completeSlashCommand('/thread cap', commands as any),
+    completeSlashCommand('/thread cap', commands),
     '/thread capability '
   )
-  assert.equal(completeSlashCommand('/skill a', commands as any), '/skill add ')
-  assert.equal(completeSlashCommand('/thread s', commands as any), '/thread s')
+  assert.equal(completeSlashCommand('/skill a', commands), '/skill add ')
+  assert.equal(completeSlashCommand('/thread s', commands), '/thread s')
   assert.equal(
-    completeSlashCommand('/thread open gemini', commands as any),
+    completeSlashCommand('/thread open gemini', commands),
     '/thread open gemini'
   )
-  assert.equal(completeSlashCommand('/', commands as any), '/')
-  assert.equal(completeSlashCommand('hello /op', commands as any), 'hello /op')
+  assert.equal(completeSlashCommand('/', commands), '/')
+  assert.equal(completeSlashCommand('hello /op', commands), 'hello /op')
 })
 
 test('completeThreadProvider completes only unique provider prefixes', () => {

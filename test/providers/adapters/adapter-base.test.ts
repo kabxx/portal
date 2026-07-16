@@ -14,6 +14,7 @@ import {
   abortable,
   PortalAbortError,
 } from '../../../src/runtime/runtime-cancellation.ts'
+import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 class ThrowingInitAdapter extends ProviderAdapter {
   protected override async init() {
@@ -202,7 +203,7 @@ class ResponseTimingAdapter extends ProviderAdapter {
       signal?: AbortSignal
     ) => Promise<string>
   ) {
-    super({} as any, { timings })
+    super(createBrowserContextStub(), { timings })
   }
 
   public reportActivity(): void {
@@ -286,7 +287,7 @@ test('ProviderAdapter uses configured provider timing options', () => {
     historyLoadTimeoutMs: 6,
     historyPageTimeoutMs: 7,
   }
-  const adapter = new PollingAdapter({} as any, { timings })
+  const adapter = new PollingAdapter(createBrowserContextStub(), { timings })
 
   assert.deepEqual(adapter.readTimingOptions(), timings)
 })
@@ -378,7 +379,7 @@ test('ProviderAdapter bounds history capture waits with the configured page time
     close: async () => undefined,
   }
   const adapter = await PollingAdapter.create(
-    { newPage: async () => page } as any,
+    createBrowserContextStub({ newPage: async () => page }),
     {
       timings: {
         requestStartWarningAfterMs: 1,
@@ -408,14 +409,11 @@ test('ProviderAdapter.create closes the opened page when init fails', async () =
       return undefined
     },
   }
-  const context = {
+  const context = createBrowserContextStub({
     newPage: async () => page,
-  }
+  })
 
-  await assert.rejects(
-    ThrowingInitAdapter.create(context as any),
-    /init failed/
-  )
+  await assert.rejects(ThrowingInitAdapter.create(context), /init failed/)
 
   assert.equal(closeCalls, 1)
 })
@@ -430,13 +428,13 @@ test('ProviderAdapter.create keeps the page open for auth init failures', async 
       return undefined
     },
   }
-  const context = {
+  const context = createBrowserContextStub({
     newPage: async () => page,
-  }
+  })
 
   let capturedError: unknown
   try {
-    await ThrowingAuthInitAdapter.create(context as any)
+    await ThrowingAuthInitAdapter.create(context)
   } catch (error) {
     capturedError = error
   }
@@ -463,10 +461,10 @@ test('ProviderAdapter captures matching Playwright response bodies for history',
     evaluate: async () => [],
     close: async () => undefined,
   }
-  const context = {
+  const context = createBrowserContextStub({
     newPage: async () => page,
-  }
-  const adapter = await PollingAdapter.create(context as any, {
+  })
+  const adapter = await PollingAdapter.create(context, {
     conversationUrl: 'https://example.com/thread',
   })
   const response = {
@@ -545,14 +543,14 @@ test('ProviderAdapter reads capture counts and only fetches entries after the st
       return runInContext(
         `(${expression.toString()})(${serializedArgument})`,
         browserContext
-      )
+      ) as unknown
     },
     close: async () => undefined,
   }
-  const context = {
+  const context = createBrowserContextStub({
     newPage: async () => page,
-  }
-  const adapter = await PollingAdapter.create(context as any)
+  })
+  const adapter = await PollingAdapter.create(context)
 
   assert.equal(await adapter.readFetchCount(), 2)
   assert.equal(
@@ -589,11 +587,11 @@ test('ProviderAdapter captures history bodies through CDP and releases the sessi
       detachCalls += 1
     },
   }
-  const context = {
+  const context = createBrowserContextStub({
     newPage: async () => page,
     newCDPSession: async () => cdpSession,
-  }
-  const adapter = await PollingAdapter.create(context as any, {
+  })
+  const adapter = await PollingAdapter.create(context, {
     conversationUrl: 'https://example.com/thread',
   })
   cdpEmitter.emit('Network.requestWillBeSent', {

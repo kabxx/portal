@@ -176,7 +176,7 @@ class ToolRegistry {
     if (toolCall === null) {
       let parseError = 'Invalid tool call shape'
       try {
-        const parsed = JSON.parse(toolCallPayload)
+        const parsed: unknown = JSON.parse(toolCallPayload)
         if (!isRecord(parsed)) {
           parseError = 'Tool call payload must be a JSON object'
         } else if (typeof parsed.tool !== 'string' || !parsed.tool.trim()) {

@@ -65,14 +65,6 @@ const INPUT_SYNTAX_COLOR: Record<InputSyntaxKind, string> = {
   skill: '#a78bfa',
 }
 const SPINNER_FRAMES = ['waiting', 'waiting.', 'waiting..', 'waiting...']
-const WAITING_INDICATOR_TONES = new Set<TimelineEntry['tone'] | undefined>([
-  undefined,
-  'info',
-  'success',
-  'warning',
-  'user',
-  'tool_result',
-])
 
 const TONE_COLOR: Record<TimelineEntry['tone'], string> = {
   info: 'cyan',
@@ -96,7 +88,7 @@ const TONE_LABEL: Record<TimelineEntry['tone'], string> = {
   user: 'user',
 }
 
-export function shouldShowWaitingIndicator(state: TerminalState): boolean {
+export function shouldShowWaitingIndicator(_state: TerminalState): boolean {
   return false
 }
 
@@ -724,7 +716,7 @@ interface InputEditorState {
 export function describeInputPanel(
   state: TerminalState,
   inputValue: string,
-  spinnerText: string
+  _spinnerText: string
 ): {
   bodyColor: string | undefined
   bodyText: string
@@ -778,7 +770,7 @@ export function TerminalScreen({
   })
   const [spinnerFrameIndex, setSpinnerFrameIndex] = useState(0)
   const historyRef = useRef(new InputHistory())
-  const { columns, rows } = useWindowSize()
+  const { columns } = useWindowSize()
   const inputValue = inputState.value
 
   useEffect(() => {
@@ -1730,7 +1722,8 @@ const GRAPHEME_SEGMENTER =
     : null
 
 const COMBINING_MARK_REGEX = /\p{Mark}/u
-const EMOJI_GRAPHEME_REGEX = /[\p{Extended_Pictographic}\u200d\ufe0f\u20e3]/u
+const EMOJI_GRAPHEME_REGEX =
+  /(?:\p{Extended_Pictographic}|\u200d|\ufe0f|\u20e3)/u
 
 export function wrapSingleLine(value: string, width: number): string[] {
   const safeWidth = Math.max(1, width)
@@ -1787,16 +1780,6 @@ export function truncateAnsiLine(value: string, width: number): string {
   }
 
   return `${leadingAnsi}${current}${ellipsis}`
-}
-
-function estimateTextRows(value: string, width: number): number {
-  const safeWidth = Math.max(1, width)
-
-  return value.split(/\r?\n/).reduce((total, line) => {
-    return (
-      total + Math.max(1, Math.ceil(estimateDisplayWidth(line) / safeWidth))
-    )
-  }, 0)
 }
 
 export function estimateDisplayWidth(value: string): number {

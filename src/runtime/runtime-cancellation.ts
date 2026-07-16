@@ -16,14 +16,26 @@ export function isAbortError(error: unknown): error is Error {
   )
 }
 
+export function toError(error: unknown, fallbackMessage: string): Error {
+  if (error instanceof Error) {
+    return error
+  }
+  return new Error(
+    typeof error === 'string' && error ? error : fallbackMessage,
+    { cause: error }
+  )
+}
+
+export function getAbortError(signal?: AbortSignal): PortalAbortError {
+  const reason: unknown = signal?.reason
+  return reason instanceof PortalAbortError
+    ? reason
+    : new PortalAbortError(reason instanceof Error ? reason.message : undefined)
+}
+
 export function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
-    const reason = signal.reason
-    throw reason instanceof PortalAbortError
-      ? reason
-      : new PortalAbortError(
-          reason instanceof Error ? reason.message : undefined
-        )
+    throw getAbortError(signal)
   }
 }
 
@@ -33,7 +45,9 @@ export function abortable<T>(
 ): Promise<T> {
   throwIfAborted(signal)
   if (signal === undefined) {
-    return promise
+    return promise.catch((error: unknown) => {
+      throw toError(error, 'Operation failed.')
+    })
   }
 
   return new Promise<T>((resolve, reject) => {
@@ -42,7 +56,7 @@ export function abortable<T>(
       try {
         throwIfAborted(signal)
       } catch (error) {
-        reject(error)
+        reject(toError(error, 'Operation aborted.'))
       }
     }
 
@@ -54,7 +68,7 @@ export function abortable<T>(
       },
       (error) => {
         signal.removeEventListener('abort', onAbort)
-        reject(error)
+        reject(toError(error, 'Operation failed.'))
       }
     )
   })

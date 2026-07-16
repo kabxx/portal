@@ -246,10 +246,11 @@ class SdkMcpConnection implements McpConnection {
         this.requestOptions(options)
       )
     } catch (error) {
+      const errorCode = error instanceof McpError ? Number(error.code) : null
       if (
         error instanceof McpError &&
-        error.code !== ErrorCode.ConnectionClosed &&
-        error.code !== ErrorCode.RequestTimeout
+        errorCode !== Number(ErrorCode.ConnectionClosed) &&
+        errorCode !== Number(ErrorCode.RequestTimeout)
       ) {
         throw new McpToolResponseError(
           redactMcpError(error.message, this.redactions)
@@ -422,10 +423,11 @@ function createTransport(config: McpServerConfig) {
 
 function describeUnknownOutcome(error: unknown): string {
   if (error instanceof McpError) {
-    if (error.code === ErrorCode.RequestTimeout) {
+    const errorCode = Number(error.code)
+    if (errorCode === Number(ErrorCode.RequestTimeout)) {
       return 'The MCP request timed out.'
     }
-    if (error.code === ErrorCode.ConnectionClosed) {
+    if (errorCode === Number(ErrorCode.ConnectionClosed)) {
       return 'The MCP connection closed before a result was received.'
     }
   }

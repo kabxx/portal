@@ -1,7 +1,4 @@
-import {
-  ProviderAdapterError,
-  isProviderAdapterError,
-} from '../providers/adapters/adapter-base.ts'
+import { isProviderAdapterError } from '../providers/adapters/adapter-base.ts'
 
 export interface RuntimeRecoveryContext {
   provider: string

@@ -11,6 +11,7 @@ import {
 import {
   abortable,
   isAbortError,
+  toError,
   throwIfAborted,
 } from '../../runtime/runtime-cancellation.ts'
 import { retryAsync } from '../../shared/retry.ts'
@@ -984,7 +985,7 @@ export class DoubaoAdapter extends ProviderAdapter {
         }
         const rejectOnce = (error: unknown) => {
           clearTimer()
-          reject(error)
+          reject(toError(error, 'Doubao response parsing failed.'))
         }
 
         const tick = async () => {

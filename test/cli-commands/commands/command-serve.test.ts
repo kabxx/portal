@@ -64,7 +64,7 @@ test('ServeCommand reports start and stop failures', async () => {
       throw new Error('start failed')
     },
     stop: async () => {
-      throw 'stop failed'
+      throw new Error('stop failed')
     },
   })
 

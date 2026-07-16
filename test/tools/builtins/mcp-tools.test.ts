@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { McpCallTool } from '../../../src/tools/builtins/mcp-call-tool.ts'
 import { McpSearchTool } from '../../../src/tools/builtins/mcp-search-tool.ts'
 import type { ToolOutput } from '../../../src/tools/core/tool-definition.ts'
+import { createProviderAdapterStub } from '../../helpers/fakes.ts'
 
 function assertToolError(output: ToolOutput, message: string): void {
   assert.deepEqual(output, {
@@ -14,7 +15,7 @@ function assertToolError(output: ToolOutput, message: string): void {
 }
 
 test('McpSearchTool returns structured validation and availability errors', async () => {
-  const tool = new McpSearchTool({} as any)
+  const tool = new McpSearchTool(createProviderAdapterStub())
 
   assertToolError(
     await tool.call({ server: '', tool: 'echo' }),
@@ -36,7 +37,7 @@ test('McpSearchTool delegates exact names and propagates service failures', asyn
     result: { name: 'echo', inputSchema: { type: 'object' } },
     displayText: 'Loaded MCP tool: server/echo',
   }
-  const tool = new McpSearchTool({} as any, {
+  const tool = new McpSearchTool(createProviderAdapterStub(), {
     mcpSearchTool: async (server, name) => {
       calls.push([server, name])
       return expected
@@ -47,7 +48,7 @@ test('McpSearchTool delegates exact names and propagates service failures', asyn
   assert.deepEqual(calls, [['server', 'echo']])
 
   const failure = new Error('search failed')
-  const failingTool = new McpSearchTool({} as any, {
+  const failingTool = new McpSearchTool(createProviderAdapterStub(), {
     mcpSearchTool: async () => {
       throw failure
     },
@@ -59,7 +60,7 @@ test('McpSearchTool delegates exact names and propagates service failures', asyn
 })
 
 test('McpCallTool returns structured validation and availability errors', async () => {
-  const tool = new McpCallTool({} as any)
+  const tool = new McpCallTool(createProviderAdapterStub())
 
   assertToolError(
     await tool.call({ server: '', tool: 'echo', arguments: {} }),
@@ -98,7 +99,7 @@ test('McpCallTool forwards input and cancellation options unchanged', async () =
     result: { content: [{ type: 'text', text: 'hello' }] },
     displayText: 'MCP tool completed.',
   }
-  const tool = new McpCallTool({} as any, {
+  const tool = new McpCallTool(createProviderAdapterStub(), {
     mcpCallTool: async (callInput, callOptions) => {
       receivedInput = callInput as typeof input
       receivedOptions = callOptions as typeof options
@@ -113,7 +114,7 @@ test('McpCallTool forwards input and cancellation options unchanged', async () =
 
 test('McpCallTool propagates service failures', async () => {
   const failure = new Error('call outcome is unknown')
-  const tool = new McpCallTool({} as any, {
+  const tool = new McpCallTool(createProviderAdapterStub(), {
     mcpCallTool: async () => {
       throw failure
     },

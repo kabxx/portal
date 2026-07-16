@@ -36,7 +36,9 @@ server.registerTool(
             content: [{ type: 'text', text: 'dynamic:ok' }],
           })
         )
-      } catch {}
+      } catch {
+        // Re-registering the dynamic fixture tool is intentionally idempotent.
+      }
     }
     return { content: [{ type: 'text', text: 'dynamic tool requested' }] }
   }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { GeminiAdapter } from '../../../src/providers/adapters/adapter-gemini.ts'
+import { createPrototypeObject, setTestProperty } from '../../helpers/fakes.ts'
 
 const HISTORY_URL =
   'https://gemini.google.com/_/BardChatUi/data/batchexecute?rpcids=hNvQHb'
@@ -45,7 +46,10 @@ function entry(id: number, body: string) {
 }
 
 test('GeminiAdapter.loadHistory scrolls until the continuation cursor is exhausted', async () => {
-  const adapter = Object.create(GeminiAdapter.prototype) as any
+  const adapter = createPrototypeObject(GeminiAdapter.prototype) as Pick<
+    GeminiAdapter,
+    keyof GeminiAdapter
+  >
   const first = entry(
     1,
     historyBody('new-response', 'older-page', 'new question', 'new answer', 200)
@@ -55,14 +59,15 @@ test('GeminiAdapter.loadHistory scrolls until the continuation cursor is exhaust
     historyBody('old-response', null, 'old question', 'old answer', 100)
   )
   let scrollCalls = 0
-  adapter.getCapturedHistoryEntries = async () =>
+  setTestProperty(adapter, 'getCapturedHistoryEntries', async () =>
     scrollCalls === 0 ? [first] : [first, second]
-  adapter.page = {
+  )
+  setTestProperty(adapter, 'page', {
     evaluate: async () => {
       scrollCalls += 1
       return true
     },
-  }
+  })
 
   const result = await adapter.loadHistory()
 

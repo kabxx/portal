@@ -97,7 +97,7 @@ export async function initializeRuntimeWithLoginWait({
       }
     }
   } finally {
-    const adapterToClose = pendingAdapter as ProviderAdapter | null
+    const adapterToClose = pendingAdapter
     if (adapterToClose !== null) {
       await adapterToClose.close().catch(() => {})
     }

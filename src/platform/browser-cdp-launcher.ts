@@ -52,7 +52,7 @@ export function createBrowserDisconnectSignal(
 
 function resolveBrowserType(browserEngine: BrowserEngine): BrowserType {
   if (browserEngine !== 'chromium') {
-    throw new Error(`Unsupported browser engine: ${browserEngine}`)
+    throw new Error(`Unsupported browser engine: ${String(browserEngine)}`)
   }
   return chromium
 }

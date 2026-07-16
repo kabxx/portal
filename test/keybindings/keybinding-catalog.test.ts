@@ -16,6 +16,37 @@ import {
 } from '../../src/keybindings/keybinding-catalog.ts'
 import { createDefaultKeybindings } from '../../src/keybindings/keybinding-config.ts'
 
+type MutablePortalDocument = Record<string, unknown> & {
+  keybindings: Record<string, unknown>
+}
+
+function parsePortalDocument(value: string): MutablePortalDocument {
+  const document = parseRecord(value)
+  const keybindings = document.keybindings
+  if (
+    keybindings === null ||
+    typeof keybindings !== 'object' ||
+    Array.isArray(keybindings)
+  ) {
+    throw new Error('Expected keybindings to be an object.')
+  }
+  return Object.assign(document, {
+    keybindings: keybindings as Record<string, unknown>,
+  })
+}
+
+function parseRecord(value: string): Record<string, unknown> {
+  const document: unknown = parse(value)
+  if (
+    document === null ||
+    typeof document !== 'object' ||
+    Array.isArray(document)
+  ) {
+    throw new Error('Expected the YAML document root to be an object.')
+  }
+  return document as Record<string, unknown>
+}
+
 test('watch filename filtering accepts directory rescan events', () => {
   const configPath = path.join('data', 'config.yaml')
   assert.equal(shouldReloadKeybindings(null, configPath), true)
@@ -52,38 +83,41 @@ test('catalog watches atomic replacements and keeps last-good bindings on errors
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-keybinding-watch-'))
   const configPath = path.join(root, 'config.yaml')
   const issues: string[] = []
+  let catalog: KeybindingCatalog | null = null
   try {
     const defaults = createDefaultPortalConfig(root)
     await ensurePortalConfig(configPath, defaults)
-    const catalog = new KeybindingCatalog(
+    catalog = new KeybindingCatalog(
       configPath,
       defaults.keybindings,
       (_level, message) => issues.push(message),
       'win32',
       25
     )
-    catalog.start()
+    const activeCatalog = catalog
+    activeCatalog.start()
 
-    const document = parse(await readFile(configPath, 'utf8'))
+    const document = parsePortalDocument(await readFile(configPath, 'utf8'))
     document.keybindings['input.submit'] = ['ctrl+enter']
     const temporaryPath = path.join(root, '.config.yaml.tmp')
     await writeFile(temporaryPath, stringify(document), 'utf8')
     await rename(temporaryPath, configPath)
     await waitFor(
-      () => catalog.snapshot().bindings['input.submit'][0] === 'ctrl+enter'
+      () =>
+        activeCatalog.snapshot().bindings['input.submit'][0] === 'ctrl+enter'
     )
 
-    const lastGoodRevision = catalog.snapshot().revision
+    const lastGoodRevision = activeCatalog.snapshot().revision
     document.keybindings['input.submit'] = []
     await writeFile(configPath, stringify(document), 'utf8')
     await waitFor(() => issues.length === 1)
-    assert.equal(catalog.snapshot().revision, lastGoodRevision)
+    assert.equal(activeCatalog.snapshot().revision, lastGoodRevision)
 
     await writeFile(configPath, stringify(document), 'utf8')
     await new Promise((resolve) => setTimeout(resolve, 100))
     assert.equal(issues.length, 1)
-    catalog.stop()
   } finally {
+    catalog?.stop()
     await rm(root, { recursive: true, force: true })
   }
 })
@@ -111,7 +145,7 @@ test('reset repairs invalid keybindings, preserves comments, and keeps advanced 
     )
     await catalog.reset()
     const resetContents = await readFile(configPath, 'utf8')
-    const resetDocument = parse(resetContents)
+    const resetDocument = parsePortalDocument(resetContents)
 
     assert.match(resetContents, /# keep browser comment/)
     assert.ok(
@@ -139,7 +173,7 @@ test('reset restores keybindings immediately before an advanced section moved by
   const configPath = path.join(root, 'config.yaml')
   try {
     const defaults = createDefaultPortalConfig(root)
-    const document = parse(stringify(defaults))
+    const document = parseRecord(stringify(defaults))
     const advanced = document.advanced
     delete document.advanced
     document.advanced = advanced
@@ -154,7 +188,7 @@ test('reset restores keybindings immediately before an advanced section moved by
       () => {}
     )
     await catalog.reset()
-    const resetDocument = parse(await readFile(configPath, 'utf8'))
+    const resetDocument = parseRecord(await readFile(configPath, 'utf8'))
 
     assert.deepEqual(Object.keys(resetDocument).slice(-2), [
       'keybindings',
@@ -172,7 +206,7 @@ test('serialized reload and reset recover without a stale snapshot rollback', as
   try {
     const defaults = createDefaultPortalConfig(root)
     await ensurePortalConfig(configPath, defaults)
-    const document = parse(await readFile(configPath, 'utf8'))
+    const document = parsePortalDocument(await readFile(configPath, 'utf8'))
     document.keybindings['input.submit'] = []
     await writeFile(configPath, stringify(document), 'utf8')
     const catalog = new KeybindingCatalog(

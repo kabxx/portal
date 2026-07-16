@@ -7,6 +7,7 @@ import {
 } from '../platform/win32-process-job.ts'
 import {
   PortalAbortError,
+  toError,
   throwIfAborted,
 } from '../runtime/runtime-cancellation.ts'
 import {
@@ -285,18 +286,18 @@ class ManagedRunCommandJob {
         callback()
       }
       const onAbort = () => {
-        let reason: unknown = new PortalAbortError('Operation aborted.')
+        let reason: Error = new PortalAbortError('Operation aborted.')
         try {
           throwIfAborted(signal)
         } catch (error) {
-          reason = error
+          reason = toError(error, 'Operation aborted.')
         }
         settle(() => reject(reason))
       }
 
       this.completion.then(
         (result) => settle(() => resolve(result)),
-        (error) => settle(() => reject(error))
+        (error) => settle(() => reject(toError(error, 'Command job failed.')))
       )
       if (signal?.aborted === true) {
         onAbort()

@@ -164,7 +164,8 @@ export class SkillCatalogSnapshot {
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(
-        `Skill files are no longer available or valid: ${name}\n${detail}`
+        `Skill files are no longer available or valid: ${name}\n${detail}`,
+        { cause: error }
       )
     }
 
@@ -382,7 +383,9 @@ export class SkillLibrary {
           directory: this.formatManagedDirectory(directory),
           enabled: true,
         })
-      } catch {}
+      } catch {
+        // Invalid managed directories are omitted from bootstrap discovery.
+      }
     }
 
     return skills

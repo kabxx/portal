@@ -242,7 +242,9 @@ function formatRemoteSource(source: string): string {
     url.search = ''
     url.hash = ''
     display = url.href
-  } catch {}
+  } catch {
+    // Non-URL sources are already sanitized by the fallback above.
+  }
 
   if (display.length <= MAX_DISPLAYED_REMOTE_SOURCE_LENGTH) {
     return display

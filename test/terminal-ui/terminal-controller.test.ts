@@ -192,7 +192,7 @@ test('TerminalController exposes manual skills from the active thread snapshot',
     runtime: createFakeRuntime({ manualSkillNames: ['first-skill'] }),
     createdAt: 1,
   })
-  const second = manager.addThread({
+  manager.addThread({
     id: manager.createThreadId(),
     provider: 'gemini',
     runtime: createFakeRuntime({ manualSkillNames: ['second-skill'] }),
@@ -745,7 +745,7 @@ test('stale command timers cannot mutate a replacement live bubble', () => {
     callbacks.set(id, callback)
     return id
   }) as typeof setTimeout
-  globalThis.clearTimeout = (() => {}) as typeof clearTimeout
+  globalThis.clearTimeout = () => {}
 
   try {
     const manager = new ThreadManager()
@@ -819,7 +819,7 @@ test('stale spawn heartbeats cannot reschedule after replacement', () => {
     callbacks.set(id, callback)
     return id
   }) as typeof setTimeout
-  globalThis.clearTimeout = (() => {}) as typeof clearTimeout
+  globalThis.clearTimeout = () => {}
 
   try {
     const manager = new ThreadManager()
@@ -1214,7 +1214,7 @@ test('TerminalController keeps an incomplete final tool tag visible after a tool
   assert.equal(entries[0]?.tone, 'tool_call')
   assert.equal(entries[1]?.tone, 'assistant')
   assert.equal(entries[1]?.body, '\\<tool>\n')
-  assert.match(renderBubbleBody(entries[1]!.body, 'markdown', 100), /<tool>/)
+  assert.match(renderBubbleBody(entries[1].body, 'markdown', 100), /<tool>/)
 })
 
 test('TerminalController coalesces rapid live assistant updates', async () => {

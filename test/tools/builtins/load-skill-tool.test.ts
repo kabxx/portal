@@ -2,10 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { LoadSkillTool } from '../../../src/tools/builtins/load-skill-tool.ts'
+import { createProviderAdapterStub } from '../../helpers/fakes.ts'
 
 test('LoadSkillTool loads an exact runtime skill catalog entry', async () => {
   const names: string[] = []
-  const tool = new LoadSkillTool({} as any, {
+  const tool = new LoadSkillTool(createProviderAdapterStub(), {
     loadSkill: async (name) => {
       names.push(name)
       return {
@@ -34,7 +35,7 @@ test('LoadSkillTool loads an exact runtime skill catalog entry', async () => {
 })
 
 test('LoadSkillTool validates names and runtime availability', async () => {
-  const tool = new LoadSkillTool({} as any)
+  const tool = new LoadSkillTool(createProviderAdapterStub())
 
   assert.deepEqual(await tool.call({ name: '' }), {
     outcome: 'error',

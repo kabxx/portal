@@ -3,13 +3,37 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { DoubaoAdapter } from '../../../src/providers/adapters/adapter-doubao.ts'
+import { createPrototypeObject } from '../../helpers/fakes.ts'
 
 const DOUBAO_DESKTOP_PROMOTION_CLOSE_SELECTOR =
   'xpath=//img[contains(@src, "/obj/flow-doubao/samantha/jianti.png")]/preceding-sibling::button[@type="button"][1]'
 
-function createTestDoubaoAdapter() {
-  const adapter = Object.create(DoubaoAdapter.prototype) as any
-  adapter.getSubmitRequestStartGraceMs = () => 5
+type DoubaoAdapterHarness = Pick<DoubaoAdapter, keyof DoubaoAdapter> & {
+  page: unknown
+  getCapturedFetchEntryCount(): Promise<number>
+  getLatestCapturedFetchBody(): Promise<string>
+  getActionCapabilityState(capability: string): Promise<string>
+  getSubmitRequestStartGraceMs(): number
+  getSubmitBlockedWarningIntervalMs(): number
+  getSubmitResponseTimeoutMs(): number
+  readCurrentStreamedResponseText: unknown
+}
+
+type WebpackRuntimeCallback = (
+  loadModule: (moduleId: number) => unknown
+) => unknown
+
+function isWebpackRuntimeCallback(
+  value: unknown
+): value is WebpackRuntimeCallback {
+  return typeof value === 'function'
+}
+
+function createTestDoubaoAdapter(): DoubaoAdapterHarness {
+  const adapter = createPrototypeObject(
+    DoubaoAdapter.prototype
+  ) as DoubaoAdapterHarness
+  adapter.getSubmitRequestStartGraceMs = (): number => 5
   return adapter
 }
 
@@ -403,12 +427,16 @@ test('DoubaoAdapter reports a visible desktop promotion that cannot be dismissed
     }),
   })
 
-  await assert.rejects(adapter.attachText('hello'), (error: any) => {
+  await assert.rejects(adapter.attachText('hello'), (error: unknown) => {
+    assert.ok(error instanceof Error)
     assert.equal(
       error.message,
       'Doubao desktop promotion is visible but could not be dismissed.'
     )
-    assert.equal(error.detailCode, 'doubao_desktop_promotion_dismiss_failed')
+    assert.equal(
+      'detailCode' in error ? error.detailCode : undefined,
+      'doubao_desktop_promotion_dismiss_failed'
+    )
     return true
   })
   assert.deepEqual(events, ['click:desktop-promotion-close'])
@@ -755,10 +783,10 @@ function createDoubaoPage(
       }
       throw new Error(`Unexpected selector: ${selector}`)
     },
-    on: (eventName: string, listener: (...args: any[]) => void) => {
+    on: (eventName: string, listener: (...args: unknown[]) => void) => {
       emitter.on(eventName, listener)
     },
-    off: (eventName: string, listener: (...args: any[]) => void) => {
+    off: (eventName: string, listener: (...args: unknown[]) => void) => {
       emitter.off(eventName, listener)
     },
     emit: (eventName: string, payload: unknown) => {
@@ -864,7 +892,13 @@ const missingModelItem = {
   },
 }
 
-function stubCapturedResponse(adapter: any, raw: string) {
+function stubCapturedResponse(
+  adapter: {
+    getCapturedFetchEntryCount: () => Promise<number>
+    getLatestCapturedFetchBody: () => Promise<string>
+  },
+  raw: string
+) {
   adapter.getCapturedFetchEntryCount = async () => 0
   adapter.getLatestCapturedFetchBody = async () => raw
 }
@@ -1083,7 +1117,7 @@ function createDoubaoCapabilityPage({
   return {
     events,
     evaluate: async (fn: (() => unknown) | string) => {
-      const previousSelf = (globalThis as any).self
+      const previousSelf: unknown = Reflect.get(globalThis, 'self')
       try {
         const storeMod = storeAvailable
           ? {
@@ -1095,11 +1129,11 @@ function createDoubaoCapabilityPage({
                   : undefined,
             }
           : {}
-        ;(globalThis as any).self = {
+        Reflect.set(globalThis, 'self', {
           __LOADABLE_LOADED_CHUNKS__: {
             push: (chunk: unknown[]) => {
               const runtimeCallback = chunk[2]
-              if (typeof runtimeCallback === 'function') {
+              if (isWebpackRuntimeCallback(runtimeCallback)) {
                 runtimeCallback((moduleId: number) =>
                   moduleId === 908913 ? storeMod : undefined
                 )
@@ -1107,11 +1141,11 @@ function createDoubaoCapabilityPage({
               return 1
             },
           },
-        }
-        const result = typeof fn === 'string' ? eval(fn) : await fn()
+        })
+        const result: unknown = typeof fn === 'string' ? eval(fn) : await fn()
         return result
       } finally {
-        ;(globalThis as any).self = previousSelf
+        Reflect.set(globalThis, 'self', previousSelf)
       }
     },
     locator: (selector: string) => {

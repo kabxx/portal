@@ -16,7 +16,7 @@ export async function waitAsync(
     timeoutMs = 60000,
     signal,
     continueIf = async (s: number, c: number) => s + timeoutMs > c,
-    onPending = async (s: number, c: number) => {
+    onPending = async (_s: number, _c: number) => {
       await abortableSleep(100, signal)
     },
     onError = async (e: unknown) => {

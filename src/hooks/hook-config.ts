@@ -124,18 +124,19 @@ function parseHandler(value: unknown, label: string): HookHandler {
       `${label}.timeoutMs must be an integer from 1 to 300000`
     )
   }
-  const onError =
+  const onErrorValue =
     value.onError ?? (events.includes('tool.before') ? 'deny' : 'continue')
-  if (onError !== 'deny' && onError !== 'continue') {
+  if (onErrorValue !== 'deny' && onErrorValue !== 'continue') {
     throw new HookConfigError(`${label}.onError must be deny or continue`)
   }
+  const onError: HookErrorPolicy = onErrorValue
   const base = {
     name,
     enabled,
     events,
     match: parseMatch(value.match, `${label}.match`),
     timeoutMs: timeoutMs as number,
-    onError: onError as HookErrorPolicy,
+    onError,
   }
 
   if (value.type === 'command') {
@@ -148,7 +149,10 @@ function parseHandler(value: unknown, label: string): HookHandler {
         `${label}.command must be a non-empty string array`
       )
     }
-    return { ...base, type: 'command', command: [...value.command] as string[] }
+    const command = value.command.filter(
+      (part): part is string => typeof part === 'string'
+    )
+    return { ...base, type: 'command', command }
   }
 
   const prompt = requireString(value.prompt, `${label}.prompt`)

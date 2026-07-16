@@ -3,8 +3,6 @@
  * packages/agents-core/src/utils/applyDiff.ts
  * Copyright (c) 2025 OpenAI. Licensed under the MIT License.
  */
-// The upstream file is type-checked with a less strict indexed-access setting.
-// @ts-nocheck
 /**
  * Applies a headerless V4A diff to the provided file content.
  * - mode "default": patch an existing file using V4A sections ("@@" + +/-/space lines).
@@ -49,6 +47,14 @@ const SECTION_TERMINATORS = [
   '*** Add File:',
 ]
 
+function getLine(lines: readonly string[], index: number): string {
+  const line = lines[index]
+  if (line === undefined) {
+    throw new Error(`Line index out of bounds: ${index}`)
+  }
+  return line
+}
+
 function normalizeDiffLines(diff: string): string[] {
   return diff
     .split(/\r?\n/)
@@ -80,7 +86,7 @@ function parseCreateDiff(lines: string[]): string {
   const output: string[] = []
 
   while (!isDone(parser, SECTION_TERMINATORS)) {
-    const line = parser.lines[parser.index]
+    const line = getLine(parser.lines, parser.index)
     parser.index += 1
     if (!line.startsWith('+')) {
       throw new Error(`Invalid Add File Line: ${line}`)
@@ -166,10 +172,9 @@ function advanceCursorToAnchor(
     !inputLines.slice(0, cursor).some((s) => s.trim() === anchor.trim())
   ) {
     for (let i = cursor; i < inputLines.length; i += 1) {
-      if (inputLines[i].trim() === anchor.trim()) {
+      if (getLine(inputLines, i).trim() === anchor.trim()) {
         cursor = i + 1
         parser.fuzz += 1
-        found = true
         break
       }
     }
@@ -196,7 +201,7 @@ function readSection(
   const origIndex = index
 
   while (index < lines.length) {
-    const raw = lines[index]
+    const raw = getLine(lines, index)
     if (
       raw.startsWith('@@') ||
       raw.startsWith(END_PATCH) ||
@@ -256,8 +261,6 @@ function readSection(
       delLines,
       insLines,
     })
-    delLines = []
-    insLines = []
   }
 
   if (index < lines.length && lines[index] === END_FILE) {
@@ -321,7 +324,8 @@ function equalsSlice(
 ): boolean {
   if (start + target.length > source.length) return false
   for (let i = 0; i < target.length; i += 1) {
-    if (mapFn(source[start + i]) !== mapFn(target[i])) return false
+    if (mapFn(getLine(source, start + i)) !== mapFn(getLine(target, i)))
+      return false
   }
   return true
 }
