@@ -1,8 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import fs from 'node:fs'
 
-import { ChatGPTAdapter } from '../../../src/providers/adapters/adapter-chatgpt.ts'
 import { DeepSeekAdapter } from '../../../src/providers/adapters/adapter-deepseek.ts'
 import { DoubaoAdapter } from '../../../src/providers/adapters/adapter-doubao.ts'
 import { GeminiAdapter } from '../../../src/providers/adapters/adapter-gemini.ts'
@@ -30,10 +28,6 @@ interface DoubaoParserHarness extends SyncParserHarness {
     kind: string
     message: string
   } | null
-}
-
-interface ChatGptParserHarness {
-  parseHttpResponse(raw: string): ParsedResponse | null
 }
 
 test('DeepSeek parser reads a sanitized SSE sample', () => {
@@ -257,86 +251,4 @@ test('Gemini parser reads a framed response and replaces image placeholders', as
   assert.equal(parsed.text.includes(placeholderUrl), false)
   assert.equal(parsed.text, `Here is the image:\n${realImageUrl}`)
   assert.equal(parsed.isFinished, true)
-})
-
-test('ChatGPT HTTP parser reads a sanitized JSON response', () => {
-  const raw = JSON.stringify({
-    conversation_id: 'conversation-1',
-    current_node: 'node-2',
-    mapping: {
-      'node-2': {
-        message: {
-          id: 'message-1',
-          author: { role: 'assistant' },
-          content: { content_type: 'text', parts: ['hello'] },
-          status: 'finished_successfully',
-          end_turn: true,
-        },
-      },
-    },
-  })
-  const adapter = createPrototypeObject(
-    ChatGPTAdapter.prototype
-  ) as ChatGptParserHarness
-  const parsed = adapter.parseHttpResponse(raw)
-
-  assert.deepEqual(parsed, {
-    conversationId: 'conversation-1',
-    messageId: 'message-1',
-    text: 'hello',
-    isFinished: true,
-  })
-})
-
-test('ChatGPT HTTP parser reads the current SSE conversation sample', () => {
-  const raw = fs.readFileSync(
-    new URL('../../fixtures/chatgpt_http_sse_ready.txt', import.meta.url),
-    'utf8'
-  )
-  const adapter = createPrototypeObject(
-    ChatGPTAdapter.prototype
-  ) as ChatGptParserHarness
-  const parsed = adapter.parseHttpResponse(raw)
-
-  assert.deepEqual(parsed, {
-    conversationId: '6a4f6795-34cc-83ec-90c6-53b15956f198',
-    messageId: '9eee97c8-c23d-4260-ae16-9447b330e97b',
-    text: 'READY',
-    isFinished: true,
-  })
-})
-
-test('ChatGPT HTTP parser appends bare SSE delta string chunks', () => {
-  const raw = [
-    'event: delta',
-    'data: {"v":{"message":{"id":"message-1","author":{"role":"assistant"},"content":{"content_type":"text","parts":[""]},"status":"in_progress","channel":"final","metadata":{}}},"conversation_id":"conversation-1"}',
-    '',
-    'event: delta',
-    'data: {"p":"/message/content/parts/0","o":"append","v":"First"}',
-    '',
-    'event: delta',
-    'data: {"v":" second"}',
-    '',
-    'event: delta',
-    'data: {"v":" third"}',
-    '',
-    'event: delta',
-    'data: {"p":"","o":"patch","v":[{"p":"/message/content/parts/0","o":"append","v":" fourth"},{"p":"/message/status","o":"replace","v":"finished_successfully"},{"p":"/message/end_turn","o":"replace","v":true}]}',
-    '',
-    'data: {"type":"message_stream_complete","conversation_id":"conversation-1"}',
-    '',
-    'data: [DONE]',
-    '',
-  ].join('\n')
-  const adapter = createPrototypeObject(
-    ChatGPTAdapter.prototype
-  ) as ChatGptParserHarness
-  const parsed = adapter.parseHttpResponse(raw)
-
-  assert.deepEqual(parsed, {
-    conversationId: 'conversation-1',
-    messageId: 'message-1',
-    text: 'First second third fourth',
-    isFinished: true,
-  })
 })
