@@ -9,6 +9,8 @@ import {
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 import type { Locator, Page } from 'playwright'
 
+const VOICE_BUTTON_SELECTOR = 'button:has(svg[viewBox^="0 0 21.2"])'
+
 test('ClaudeAdapter.restore rejects redirects away from the requested conversation', async () => {
   const adapter = createClaudeAdapter()
   adapter.setCapturedEntries(async () => [finalStream])
@@ -33,7 +35,7 @@ test('ClaudeAdapter.submit follows tool-use completion with the final text strea
     if (polls === 2) return [toolStream]
     return [toolStream, finalStream]
   })
-  adapter.pageHarness.composerReady = () => polls >= 3
+  adapter.pageHarness.composerReady = () => polls === 0 || polls >= 3
   adapter.setSubmitTextReporter(async (text: string) => {
     streamed.push(text)
   })
@@ -43,6 +45,92 @@ test('ClaudeAdapter.submit follows tool-use completion with the final text strea
   assert.equal(result, 'Checking complete.')
   assert.deepEqual(streamed, ['Checking ', 'Checking complete.'])
   assert.equal(adapter.conversationId, 'conversation-1')
+  assert.deepEqual(adapter.pageHarness.events, ['press:Enter'])
+})
+
+test('ClaudeAdapter.restore treats a login redirect after pending as auth', async () => {
+  const adapter = createClaudeAdapter()
+  let loginChecks = 0
+  adapter.pageHarness.voiceButtonCount = 0
+  adapter.pageHarness.loginVisible = () => {
+    loginChecks += 1
+    return loginChecks >= 2
+  }
+
+  await assert.rejects(
+    adapter.restore(),
+    (error) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'auth' &&
+      error.detailCode === 'claude_signed_out' &&
+      error.adapter === adapter
+  )
+})
+
+test('ClaudeAdapter.restore reports a page timeout without Voice Mode ready', async () => {
+  const adapter = createClaudeAdapter()
+  adapter.pageHarness.voiceButtonCount = 0
+  adapter.restoreTimeoutMs = 1
+
+  await assert.rejects(
+    adapter.restore(),
+    (error) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'ui' &&
+      error.detailCode === 'claude_page_not_ready'
+  )
+})
+
+test('ClaudeAdapter.submit rejects login before pressing Enter', async () => {
+  const adapter = createClaudeAdapter()
+  adapter.pageHarness.loginVisible = () => true
+
+  await assert.rejects(
+    adapter.submit(),
+    (error) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'auth' &&
+      error.adapter === adapter
+  )
+  assert.deepEqual(adapter.pageHarness.events, [])
+})
+
+test('ClaudeAdapter.submit detects login after Enter before a request starts', async () => {
+  const adapter = createClaudeAdapter()
+  let loginChecks = 0
+  adapter.pageHarness.loginVisible = () => {
+    loginChecks += 1
+    return loginChecks >= 2
+  }
+  adapter.setCapturedEntries(async () => [])
+
+  await assert.rejects(
+    adapter.submit(),
+    (error) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'auth' &&
+      error.adapter === adapter
+  )
+  assert.deepEqual(adapter.pageHarness.events, ['press:Enter'])
+})
+
+test('ClaudeAdapter.submit does not reclassify an accepted request as login', async () => {
+  const adapter = createClaudeAdapter()
+  let loginChecks = 0
+  let polls = 0
+  adapter.pageHarness.loginVisible = () => {
+    loginChecks += 1
+    return loginChecks > 1
+  }
+  adapter.setCapturedEntries(async () => {
+    polls += 1
+    if (polls === 1) return [toolStream]
+    if (polls === 2) return []
+    return [toolStream, finalStream]
+  })
+
+  assert.equal(await adapter.submit(), 'Checking complete.')
+  assert.equal(loginChecks, 1)
   assert.deepEqual(adapter.pageHarness.events, ['press:Enter'])
 })
 
@@ -140,6 +228,7 @@ test('ClaudeAdapter.stopGeneration is a no-op without a stop response button', a
 
 class TestClaudeAdapter extends ClaudeAdapter {
   public readonly pageHarness = new ClaudePageHarness()
+  public restoreTimeoutMs = 1000
   public submitResponseStallTimeoutMs = 1000
   private capturedEntries: () => Promise<CapturedFetchEntry[]> = async () => []
 
@@ -175,11 +264,17 @@ class TestClaudeAdapter extends ClaudeAdapter {
   protected override getSubmitResponseStallTimeoutMs(): number {
     return this.submitResponseStallTimeoutMs
   }
+
+  protected override getRestoreTimeoutMs(): number {
+    return this.restoreTimeoutMs
+  }
 }
 
 class ClaudePageHarness {
   public url = 'https://claude.ai/chat/conversation-1'
   public composerReady = () => true
+  public loginVisible = () => false
+  public voiceButtonCount = 1
   public stopButtonCount = 0
   public stopClicks = 0
   public readonly events: string[] = []
@@ -201,9 +296,23 @@ class ClaudePageHarness {
         },
       }),
     } as unknown as Locator
+    const voiceButton = {
+      isVisible: async () => true,
+      isEnabled: async () => true,
+      getAttribute: async () => null,
+    } as unknown as Locator
+    const voiceButtons = {
+      count: async () => this.voiceButtonCount,
+      first: () => voiceButton,
+    } as unknown as Locator
+    const loginControl = {
+      first: () => loginControl,
+      isVisible: async () => this.loginVisible(),
+    } as unknown as Locator
     const composerRoot = {
       count: async () => 1,
       locator: (selector: string) => {
+        if (selector === VOICE_BUTTON_SELECTOR) return voiceButtons
         this.stopSelectors.push(selector)
         return stopCandidates
       },
@@ -221,8 +330,13 @@ class ClaudePageHarness {
     this.page = {
       goto: async () => null,
       url: () => this.url,
-      locator: (selector: string) =>
-        selector === '[data-testid="chat-input"]' ? input : missingLocator,
+      locator: (selector: string) => {
+        if (selector === '[data-testid="chat-input"]') return input
+        if (selector === '[data-testid="email"], [data-testid="continue"]') {
+          return loginControl
+        }
+        return missingLocator
+      },
     } as unknown as Page
   }
 }

@@ -39,6 +39,8 @@ const CLAUDE_SELECTABLE_RADIO_SELECTOR =
 const CLAUDE_EFFORT_RADIO_SELECTOR =
   '[role="menuitemradio"][data-testid^="effort-option-"]:visible'
 const CLAUDE_ANY_RADIO_SELECTOR = `${CLAUDE_SELECTABLE_RADIO_SELECTOR}, ${CLAUDE_EFFORT_RADIO_SELECTOR}`
+const CLAUDE_VOICE_MODE_BUTTON_SELECTOR = 'button:has(svg[viewBox^="0 0 21.2"])'
+const CLAUDE_AUTH_PATH_PATTERN = /^\/(?:login|signup)(?:\/|$)/
 const CLAUDE_HISTORY_POLL_MS = 100
 const CLAUDE_SUBMIT_POLL_MS = 50
 const CLAUDE_MENU_CLOSE_ATTEMPTS = 4
@@ -56,6 +58,8 @@ interface ClaudeCompletionCapture {
   stream: ClaudeCompletionStream
   finished: boolean
 }
+
+type ClaudePageState = 'login' | 'ready' | 'pending'
 
 export type ClaudeToggleState = 'on' | 'off'
 
@@ -111,8 +115,11 @@ export class ClaudeAdapter extends ProviderAdapter {
         timeout: this.getRestoreTimeoutMs(),
       })
       await waitAsync(
-        async () =>
-          (await this.isComposerReady()) || (await this.isLoginPageVisible()),
+        async () => {
+          const state = await this.getClaudePageState()
+          if (state === 'login') throw this.createAuthError('restore')
+          return state === 'ready'
+        },
         {
           timeoutMs: this.getRestoreTimeoutMs(),
           signal,
@@ -125,22 +132,12 @@ export class ClaudeAdapter extends ProviderAdapter {
                 recovery: 'reload',
                 retryable: true,
                 maxAttempts: 2,
-                detailCode: 'claude_composer_missing',
+                detailCode: 'claude_page_not_ready',
               }
             )
           },
         }
       )
-      if (await this.isLoginPageVisible()) {
-        throw new ProviderAdapterError('restore', 'Claude is not logged in.', {
-          adapter: this,
-          kind: 'auth',
-          recovery: 'restore',
-          retryable: true,
-          maxAttempts: 2,
-          detailCode: 'claude_signed_out',
-        })
-      }
       const restoredId = readClaudeConversationId(this.page.url())
       if (
         expectedConversationId !== null &&
@@ -179,7 +176,7 @@ export class ClaudeAdapter extends ProviderAdapter {
   }
 
   public async isLoggedIn(): Promise<boolean> {
-    return (await this.isComposerReady()) && !(await this.isLoginPageVisible())
+    return (await this.getClaudePageState()) === 'ready'
   }
 
   public async hasToggleCapability(capability: string): Promise<boolean> {
@@ -366,17 +363,8 @@ export class ClaudeAdapter extends ProviderAdapter {
   }
 
   public async attachText(text: string): Promise<void> {
+    await this.assertComposerActionReady('attach text')
     const input = this.getInput()
-    if (!(await input.isVisible().catch(() => false))) {
-      throw new ProviderAdapterError(
-        'attach text',
-        'Claude composer is not available.',
-        {
-          kind: 'ui',
-          detailCode: 'claude_composer_missing',
-        }
-      )
-    }
     await input.click()
     await input.fill(text)
   }
@@ -436,6 +424,7 @@ export class ClaudeAdapter extends ProviderAdapter {
 
     try {
       throwIfAborted(signal)
+      await this.assertComposerActionReady('submit')
       await this.getInput().press('Enter')
       while (true) {
         throwIfAborted(signal)
@@ -444,6 +433,9 @@ export class ClaudeAdapter extends ProviderAdapter {
           .sort((left, right) => left.id - right.id)
 
         if (entries.length === 0) {
+          if (!submitSent && (await this.isLoginPageVisible())) {
+            throw this.createAuthError('submit')
+          }
           if (Date.now() >= nextWarningAt) {
             await this.emitSubmitStatusSafely(
               buildSubmitBlockedWarningMessage('Claude')
@@ -670,13 +662,59 @@ export class ClaudeAdapter extends ProviderAdapter {
     )
   }
 
+  private async getClaudePageState(): Promise<ClaudePageState> {
+    if (await this.isLoginPageVisible()) return 'login'
+    if (await this.isVoiceModeReady()) return 'ready'
+    return 'pending'
+  }
+
+  private async isVoiceModeReady(): Promise<boolean> {
+    const buttons = this.getComposerRoot().locator(
+      CLAUDE_VOICE_MODE_BUTTON_SELECTOR
+    )
+    if ((await buttons.count().catch(() => 0)) !== 1) return false
+    const button = buttons.first()
+    return (
+      (await button.isVisible().catch(() => false)) &&
+      (await button.isEnabled().catch(() => false)) &&
+      (await button.getAttribute('aria-disabled').catch(() => null)) !== 'true'
+    )
+  }
+
   private async isLoginPageVisible(): Promise<boolean> {
-    if (new URL(this.page.url()).pathname === '/login') return true
+    if (CLAUDE_AUTH_PATH_PATTERN.test(new URL(this.page.url()).pathname)) {
+      return true
+    }
     return await this.page
       .locator('[data-testid="email"], [data-testid="continue"]')
       .first()
       .isVisible()
       .catch(() => false)
+  }
+
+  private async assertComposerActionReady(action: string): Promise<void> {
+    if (await this.isLoginPageVisible()) throw this.createAuthError(action)
+    if (await this.isComposerReady()) return
+    if (await this.isLoginPageVisible()) throw this.createAuthError(action)
+    throw new ProviderAdapterError(
+      action,
+      'Claude composer is not available.',
+      {
+        kind: 'ui',
+        detailCode: 'claude_composer_missing',
+      }
+    )
+  }
+
+  private createAuthError(action: string): ProviderAdapterError {
+    return new ProviderAdapterError(action, 'Claude is not logged in.', {
+      adapter: this,
+      kind: 'auth',
+      recovery: 'restore',
+      retryable: true,
+      maxAttempts: 2,
+      detailCode: 'claude_signed_out',
+    })
   }
 
   private getWebSearchItems(): Locator {
