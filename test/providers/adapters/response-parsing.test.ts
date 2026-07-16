@@ -7,19 +7,6 @@ import { DeepSeekAdapter } from '../../../src/providers/adapters/adapter-deepsee
 import { DoubaoAdapter } from '../../../src/providers/adapters/adapter-doubao.ts'
 import { GeminiAdapter } from '../../../src/providers/adapters/adapter-gemini.ts'
 
-const localDoubaoImageCapture = new URL(
-  '../../../temp/doubao_http_2.txt',
-  import.meta.url
-)
-const localGeminiImageCapture = new URL(
-  '../../../temp/gemini_unknow-1',
-  import.meta.url
-)
-const localChatGptCapture = new URL(
-  '../../../temp/chatgpt_http_1.txt',
-  import.meta.url
-)
-
 test('DeepSeek parser reads a sanitized SSE sample', () => {
   const raw = [
     'data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"type":"RESPONSE","content":"你好"}]}}}',
@@ -70,33 +57,6 @@ test('Doubao parser reads a sanitized SSE sample', () => {
     isFinished: true,
   })
 })
-
-test(
-  'Doubao parser prefers the final creation_full_content snapshot in a local capture',
-  {
-    skip: fs.existsSync(localDoubaoImageCapture)
-      ? false
-      : 'local capture not available',
-  },
-  () => {
-    const raw = fs.readFileSync(localDoubaoImageCapture, 'utf8')
-    const adapter = Object.create(DoubaoAdapter.prototype) as DoubaoAdapter
-    const parsed = (adapter as any).parseResponse(raw)
-
-    assert.deepEqual(parsed, {
-      conversationId: '38426588927511298',
-      messageId: '45346773623004162',
-      text: [
-        '\u8fd9\u5c31\u4e3a\u60a8\u751f\u6210\u827e\u5c14\u83f2\u5229\u4e9a\u7684\u56fe\u7247~',
-        'https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc_gen_image/ef22da4a42644d91aabc58041c60a22e.jpeg~tplv-a9rns2rl98-image_raw_b.png?lk3s=8e244e95&rcl=20260519160818E2225FF6B7E2EA5AED69&rrcfp=ddbb2dc7&x-expires=2094538109&x-signature=BahaGjy9iJDzDjZKlUsOUgZYI4U%3D',
-        'https://p11-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc_gen_image/6b37f68929d843349b717b3d95a1f1f5.jpeg~tplv-a9rns2rl98-image_raw_b.png?lk3s=8e244e95&rcl=20260519160818E2225FF6B7E2EA5AED69&rrcfp=ddbb2dc7&x-expires=2094538112&x-signature=TsQo%2Bl8p4ls5TYTD8%2B9mWmL%2Bt6Q%3D',
-        'https://p11-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc_gen_image/d02b1eb911de4aa88e34df0206d7bb1a.jpeg~tplv-a9rns2rl98-image_raw_b.png?lk3s=8e244e95&rcl=20260519160818E2225FF6B7E2EA5AED69&rrcfp=ddbb2dc7&x-expires=2094538108&x-signature=fY%2B6Dws9U8RBrJM%2FBRVq1zBV%2FgA%3D',
-        'https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc_gen_image/970c06bf306d40b3a8203a32ffd1c74c.jpeg~tplv-a9rns2rl98-image_raw_b.png?lk3s=8e244e95&rcl=20260519160818E2225FF6B7E2EA5AED69&rrcfp=ddbb2dc7&x-expires=2094538112&x-signature=dTaTZkeuC6BOJoEdQfPZuSOZAmw%3D',
-      ].join('\n'),
-      isFinished: true,
-    })
-  }
-)
 
 test('Doubao parser prefers a sanitized final creation snapshot', () => {
   const snapshot = JSON.stringify([
@@ -205,7 +165,7 @@ data: {"content":{"content_block":[{"block_type":10000,"content":{"text_block":{
   })
 })
 
-test('Gemini parser replaces image_generation_content placeholders with real image URLs', async () => {
+test('Gemini parser reads a framed response and replaces image placeholders', async () => {
   const placeholderUrl =
     'http://googleusercontent.com/image_generation_content/300'
   const realImageUrl = 'https://lh3.googleusercontent.com/gg/real-image'
@@ -243,7 +203,8 @@ test('Gemini parser replaces image_generation_content placeholders with real ima
       ],
     ],
   ]
-  const raw = JSON.stringify([['wrb.fr', null, JSON.stringify(inner)]])
+  const frame = JSON.stringify([['wrb.fr', null, JSON.stringify(inner)]])
+  const raw = `)]}'\n${Buffer.byteLength(frame)}\n${frame}`
   const adapter = Object.create(GeminiAdapter.prototype) as GeminiAdapter
   const parsed = await (adapter as any).parseResponse(raw)
 
@@ -252,45 +213,6 @@ test('Gemini parser replaces image_generation_content placeholders with real ima
   assert.equal(parsed.text, `Here is the image:\n${realImageUrl}`)
   assert.equal(parsed.isFinished, true)
 })
-
-test(
-  'Gemini parser reads generated image URLs from a local capture',
-  {
-    skip: fs.existsSync(localGeminiImageCapture)
-      ? false
-      : 'local capture not available',
-  },
-  async () => {
-    const raw = fs.readFileSync(localGeminiImageCapture, 'utf8')
-    const adapter = Object.create(GeminiAdapter.prototype) as GeminiAdapter
-    const parsed = await (adapter as any).parseResponse(raw)
-
-    assert.ok(parsed)
-    assert.equal(parsed.text.includes('image_generation_content'), false)
-    assert.ok(parsed.text.startsWith('https://lh3.googleusercontent.com/gg/'))
-    assert.equal(parsed.isFinished, true)
-  }
-)
-
-test(
-  'ChatGPT HTTP parser reads a local capture',
-  {
-    skip: fs.existsSync(localChatGptCapture)
-      ? false
-      : 'local capture not available',
-  },
-  () => {
-    const raw = fs.readFileSync(localChatGptCapture, 'utf8')
-    const adapter = Object.create(ChatGPTAdapter.prototype) as ChatGPTAdapter
-    const parsed = (adapter as any).parseHttpResponse(raw)
-
-    assert.ok(parsed)
-    assert.match(parsed.conversationId ?? '', /^[0-9a-f-]{36}$/i)
-    assert.match(parsed.messageId ?? '', /^[0-9a-f-]{36}$/i)
-    assert.ok(parsed.text.trim().length > 0)
-    assert.equal(parsed.isFinished, true)
-  }
-)
 
 test('ChatGPT HTTP parser reads a sanitized JSON response', () => {
   const raw = JSON.stringify({
