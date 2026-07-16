@@ -8,19 +8,19 @@ listener, configuration, authentication, protocol, and lifecycle, and it never
 calls the API. Both services share the same in-process browser, runtimes, and
 open threads.
 
-The existing [`mcp` configuration](mcp.md) has the opposite direction: it makes
-Portal an MCP client. The `mcpServer` section documented here makes Portal an
-MCP server.
+The [`mcpServers` configuration](mcp.md) has the opposite direction: it makes
+Portal an MCP client. The `listeners.mcp` section documented here configures
+Portal's own MCP Server listener.
 
 ## Start and stop
 
 The server is disabled by default. Manage it from the TUI:
 
 ```text
-/mcp-server start
-/mcp-server status
-/mcp-server token
-/mcp-server stop
+/serve mcp start
+/serve mcp status
+/serve mcp token
+/serve mcp stop
 ```
 
 API and MCP listeners can run at the same time. Stopping the MCP Server rejects
@@ -30,10 +30,11 @@ closes active transports. It does not cancel work started by the TUI or API.
 ## Configuration
 
 ```yaml
-mcpServer:
-  host: 127.0.0.1
-  port: 8788
-  token: null
+listeners:
+  mcp:
+    host: 127.0.0.1
+    port: 8788
+    token: null
 ```
 
 The endpoint is `http://<host>:<port>/mcp`. Authentication depends only on the

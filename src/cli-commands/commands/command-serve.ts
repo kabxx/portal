@@ -1,71 +1,123 @@
 import type {
   CliCommand,
   CliCommandContext,
-  CommandResult,
+  ListenerCommandController,
 } from '../core/command-types.ts'
 import { isUnauthenticatedNonLoopbackListener } from '../core/listener-security.ts'
 
+type ListenerTarget = 'api' | 'mcp'
+
+const LISTENERS: Record<
+  ListenerTarget,
+  {
+    label: string
+    unavailable: string
+    controller: (
+      context: CliCommandContext
+    ) => ListenerCommandController | undefined
+  }
+> = {
+  api: {
+    label: 'HTTP API server',
+    unavailable: 'HTTP API is unavailable.',
+    controller: (context) => context.api,
+  },
+  mcp: {
+    label: 'MCP Server',
+    unavailable: 'MCP Server is unavailable.',
+    controller: (context) => context.mcpServer,
+  },
+}
+
 export const ServeCommand: CliCommand = {
   name: '/serve',
-  usage: '/serve <start|status|stop|token>',
-  description: 'Manage the local HTTP API server.',
-  subcommands: ['start', 'status', 'stop', 'token'],
+  usage: '/serve <api|mcp> <start|status|stop|token>',
+  description: 'Manage Portal network listeners.',
+  subcommands: ['api', 'mcp'],
   async execute(context: CliCommandContext, args: readonly string[]) {
-    if (context.api === undefined) {
-      context.ui.renderError('/serve', 'HTTP API is unavailable.')
+    const target = parseListenerTarget(args[0])
+    if (target === null) {
+      renderServeHelp(context)
       return { continue: true }
     }
-    const action = args[0] ?? ''
+    const definition = LISTENERS[target]
+    const controller = definition.controller(context)
+    const title = `/serve ${target}`
+    if (controller === undefined) {
+      context.ui.renderError(title, definition.unavailable)
+      return { continue: true }
+    }
+    const action = args[1] ?? ''
     if (action === 'start') {
       try {
-        await context.api.start()
-        context.ui.renderSuccess('/serve start', 'HTTP API server started.')
-        if (isUnauthenticatedNonLoopbackListener(context.api.status())) {
+        await controller.start()
+        context.ui.renderSuccess(
+          `${title} start`,
+          `${definition.label} started.`
+        )
+        if (isUnauthenticatedNonLoopbackListener(controller.status())) {
           context.ui.renderWarning(
-            '/serve start',
+            `${title} start`,
             'Authentication is disabled on a non-loopback listener.'
           )
         }
       } catch (error) {
-        context.ui.renderError('/serve start', getErrorMessage(error))
+        context.ui.renderError(`${title} start`, getErrorMessage(error))
       }
       return { continue: true }
     }
     if (action === 'stop') {
       try {
-        await context.api.stop()
-        context.ui.renderSuccess('/serve stop', 'HTTP API server stopped.')
+        await controller.stop()
+        context.ui.renderSuccess(
+          `${title} stop`,
+          `${definition.label} stopped.`
+        )
       } catch (error) {
-        context.ui.renderError('/serve stop', getErrorMessage(error))
+        context.ui.renderError(`${title} stop`, getErrorMessage(error))
       }
       return { continue: true }
     }
     if (action === 'token') {
-      const token = context.api.token()
+      const token = controller.token()
       context.ui.renderInfo(
-        '/serve token',
+        `${title} token`,
         token === null || token === '' ? 'Authentication disabled.' : token
       )
       return { continue: true }
     }
     if (action === 'status') {
-      const status = context.api.status()
-      context.ui.renderInfo('/serve status', [
+      const status = controller.status()
+      context.ui.renderInfo(`${title} status`, [
         `Running: ${status.running ? 'yes' : 'no'}`,
         `Address: ${status.address ?? '-'}`,
         `Authentication: ${status.auth ? 'enabled' : 'disabled'}`,
       ])
       return { continue: true }
     }
-    context.ui.renderInfo('/serve', [
+    context.ui.renderInfo(title, [
       'Subcommands:',
-      '  start   Start the HTTP API server.',
+      `  start   Start the ${definition.label}.`,
       '  status  Show server status.',
-      '  stop    Stop the HTTP API server.',
+      `  stop    Stop the ${definition.label}.`,
       '  token   Show the configured token state.',
     ])
     return { continue: true }
   },
+}
+
+function parseListenerTarget(value: string | undefined): ListenerTarget | null {
+  return value === 'api' || value === 'mcp' ? value : null
+}
+
+function renderServeHelp(context: CliCommandContext): void {
+  context.ui.renderInfo('/serve', [
+    'Listeners:',
+    '  api  Local HTTP API server.',
+    '  mcp  Portal MCP Server.',
+    '',
+    'Usage: /serve <api|mcp> <start|status|stop|token>',
+  ])
 }
 
 function getErrorMessage(error: unknown): string {

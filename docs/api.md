@@ -6,10 +6,10 @@ shares its browser, provider pages, threads, Skills, and MCP configuration.
 The server is disabled by default. Start it from the TUI with:
 
 ```text
-/serve start
-/serve status
-/serve token
-/serve stop
+/serve api start
+/serve api status
+/serve api token
+/serve api stop
 ```
 
 `run_command` jobs are managed only by the TUI. `/job` lists active jobs and
@@ -20,10 +20,11 @@ controlled portal shutdown.
 The default listener is `127.0.0.1:8787`. Configure it in `data/config.yaml`:
 
 ```yaml
-api:
-  host: 127.0.0.1
-  port: 8787
-  token: null
+listeners:
+  api:
+    host: 127.0.0.1
+    port: 8787
+    token: null
 ```
 
 When `token` is neither `null` nor the exact empty string `""`, every `/v1/*`
@@ -32,8 +33,8 @@ strings exactly and does not trim whitespace. `/health` is always
 unauthenticated. Host and authentication are independent; an unauthenticated
 non-loopback listener is allowed. Use an SSH tunnel or TLS reverse proxy for
 remote access. Listener and Token changes require restarting portal;
-`/serve stop` followed by `/serve start` reuses the configuration loaded by the
-current process. See [Configuration](configuration.md).
+`/serve api stop` followed by `/serve api start` reuses the configuration
+loaded by the current process. See [Configuration](configuration.md).
 
 The [Portal MCP Server](mcp-server.md) is a separate native MCP service. It does
 not add MCP routes to the HTTP API or call the API internally.
@@ -95,7 +96,7 @@ registry root. For local directories and direct URLs, omit `registryUrl`. See
 | `GET`    | `/v1/threads/:threadId/mcp/resources?server=name` | List Resources in the active runtime; `server` is optional                |
 | `GET`    | `/v1/threads/:threadId/mcp/prompts?server=name`   | List Prompts in the active runtime; `server` is optional                  |
 
-The POST config is the same server object accepted under `mcp.servers` after
+The POST config is the same server object accepted under `mcpServers` after
 removing `name`; PUT replacement wraps that object in `config`. Runtime
 Resource and Prompt endpoints are read-only and do not attach content to a
 thread. See [MCP](mcp.md).

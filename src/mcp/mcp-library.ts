@@ -136,7 +136,6 @@ export class McpLibrary {
     const servers = new Map<string, McpServerConfig>()
     await writeMcpConfig(this.configPath, servers)
     return {
-      connectionStrategy: 'per-thread' as const,
       servers,
       issues: [] as const,
     }

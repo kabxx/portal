@@ -57,6 +57,11 @@ export interface PortalMcpServerConfig {
   token: string | null
 }
 
+export interface PortalListenersConfig {
+  api: PortalApiConfig
+  mcp: PortalMcpServerConfig
+}
+
 export interface PortalAdvancedBrowserConfig {
   startupTimeoutSeconds: number
   closeTimeoutSeconds: number
@@ -127,10 +132,9 @@ export interface PortalAdvancedConfig {
 export interface PortalConfigDocument {
   browser: PortalBrowserConfig
   agentInstructions: PortalAgentInstructionsConfig
-  api: PortalApiConfig
-  mcpServer: PortalMcpServerConfig
-  mcp: Record<string, unknown>
-  skills: unknown[]
+  listeners: PortalListenersConfig
+  mcpServers: Record<string, unknown>
+  skills: Record<string, unknown>
   hooks: HooksConfig
   keybindings: KeybindingConfig
   advanced: PortalAdvancedConfig
@@ -148,9 +152,8 @@ const DEFAULT_LOCK_WAIT_MS = 5_000
 const CONFIG_FIELDS = new Set([
   'browser',
   'agentInstructions',
-  'api',
-  'mcpServer',
-  'mcp',
+  'listeners',
+  'mcpServers',
   'skills',
   'hooks',
   'keybindings',
@@ -164,8 +167,8 @@ const BROWSER_FIELDS = new Set([
 ])
 const AGENT_INSTRUCTIONS_FIELDS = new Set(['claude', 'codex'])
 const INSTRUCTION_SCOPE_FIELDS = new Set(['global', 'local'])
+const LISTENER_FIELDS = new Set(['api', 'mcp'])
 const API_FIELDS = new Set(['host', 'port', 'token'])
-const MCP_SERVER_FIELDS = new Set(['host', 'port', 'token'])
 const ADVANCED_FIELDS = new Set([
   'browser',
   'provider',
@@ -234,21 +237,20 @@ export function createDefaultPortalConfig(
       claude: createDefaultInstructionScope(),
       codex: createDefaultInstructionScope(),
     },
-    api: {
-      host: '127.0.0.1',
-      port: 8787,
-      token: null,
+    listeners: {
+      api: {
+        host: '127.0.0.1',
+        port: 8787,
+        token: null,
+      },
+      mcp: {
+        host: '127.0.0.1',
+        port: 8788,
+        token: null,
+      },
     },
-    mcpServer: {
-      host: '127.0.0.1',
-      port: 8788,
-      token: null,
-    },
-    mcp: {
-      connectionStrategy: 'per-thread',
-      servers: {},
-    },
-    skills: [],
+    mcpServers: {},
+    skills: {},
     hooks: createDefaultHooksConfig(),
     keybindings: createDefaultKeybindings(),
     advanced: createDefaultAdvancedConfig(),
@@ -406,17 +408,26 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
     `${agentInstructionsLabel}.codex`
   )
 
-  const api = document.api
+  const listeners = document.listeners
+  if (listeners !== undefined && !isRecord(listeners)) {
+    throw new PortalConfigError('listeners must be an object')
+  }
+  if (listeners !== undefined) {
+    assertSupportedFields(listeners, LISTENER_FIELDS, 'listeners')
+  }
+  const listenersRecord = isRecord(listeners) ? listeners : {}
+
+  const api = listenersRecord.api
   if (api !== undefined && !isRecord(api)) {
-    throw new PortalConfigError('api must be an object')
+    throw new PortalConfigError('listeners.api must be an object')
   }
   if (api !== undefined) {
-    assertSupportedFields(api, API_FIELDS, 'api')
+    assertSupportedFields(api, API_FIELDS, 'listeners.api')
   }
   const apiRecord = isRecord(api) ? api : {}
   const host = apiRecord.host ?? '127.0.0.1'
   if (typeof host !== 'string' || host.trim() === '') {
-    throw new PortalConfigError('api.host must be a non-empty string')
+    throw new PortalConfigError('listeners.api.host must be a non-empty string')
   }
   const port = apiRecord.port ?? 8787
   if (
@@ -425,24 +436,26 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
     port <= 0 ||
     port > 65_535
   ) {
-    throw new PortalConfigError('api.port must be an integer from 1 to 65535')
+    throw new PortalConfigError(
+      'listeners.api.port must be an integer from 1 to 65535'
+    )
   }
   const rawToken = apiRecord.token ?? null
   if (rawToken !== null && typeof rawToken !== 'string') {
-    throw new PortalConfigError('api.token must be a string or null')
+    throw new PortalConfigError('listeners.api.token must be a string or null')
   }
 
-  const mcpServer = document.mcpServer
+  const mcpServer = listenersRecord.mcp
   if (mcpServer !== undefined && !isRecord(mcpServer)) {
-    throw new PortalConfigError('mcpServer must be an object')
+    throw new PortalConfigError('listeners.mcp must be an object')
   }
   if (mcpServer !== undefined) {
-    assertSupportedFields(mcpServer, MCP_SERVER_FIELDS, 'mcpServer')
+    assertSupportedFields(mcpServer, API_FIELDS, 'listeners.mcp')
   }
   const mcpServerRecord = isRecord(mcpServer) ? mcpServer : {}
   const mcpServerHost = mcpServerRecord.host ?? '127.0.0.1'
   if (typeof mcpServerHost !== 'string' || mcpServerHost === '') {
-    throw new PortalConfigError('mcpServer.host must be a non-empty string')
+    throw new PortalConfigError('listeners.mcp.host must be a non-empty string')
   }
   const mcpServerPort = mcpServerRecord.port ?? 8788
   if (
@@ -452,21 +465,21 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
     mcpServerPort > 65_535
   ) {
     throw new PortalConfigError(
-      'mcpServer.port must be an integer from 1 to 65535'
+      'listeners.mcp.port must be an integer from 1 to 65535'
     )
   }
   const mcpServerToken = mcpServerRecord.token ?? null
   if (mcpServerToken !== null && typeof mcpServerToken !== 'string') {
-    throw new PortalConfigError('mcpServer.token must be a string or null')
+    throw new PortalConfigError('listeners.mcp.token must be a string or null')
   }
 
-  const mcp = document.mcp
-  if (!isRecord(mcp)) {
-    throw new PortalConfigError('mcp must be an object')
+  const mcpServers = document.mcpServers
+  if (!isRecord(mcpServers)) {
+    throw new PortalConfigError('mcpServers must be an object keyed by name')
   }
   const skills = document.skills
-  if (!Array.isArray(skills)) {
-    throw new PortalConfigError('skills must be an array')
+  if (!isRecord(skills)) {
+    throw new PortalConfigError('skills must be an object keyed by name')
   }
   let hooks: HooksConfig
   try {
@@ -496,14 +509,16 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
       remoteDebuggingPort: browser.remoteDebuggingPort as number,
     },
     agentInstructions: { claude, codex },
-    api: { host, port, token: rawToken },
-    mcpServer: {
-      host: mcpServerHost,
-      port: mcpServerPort,
-      token: mcpServerToken,
+    listeners: {
+      api: { host, port, token: rawToken },
+      mcp: {
+        host: mcpServerHost,
+        port: mcpServerPort,
+        token: mcpServerToken,
+      },
     },
-    mcp: { ...mcp },
-    skills: [...skills],
+    mcpServers: { ...mcpServers },
+    skills: { ...skills },
     hooks,
     keybindings,
     advanced,
@@ -752,10 +767,12 @@ async function hasCompleteManagedSections(
 ): Promise<boolean> {
   const contents = await readFile(configPath, 'utf8')
   const document: unknown = parse(contents.replace(/^\uFEFF/, ''))
+  const listeners = isRecord(document) ? document.listeners : undefined
   if (
     !isRecord(document) ||
-    !isRecord(document.api) ||
-    !isRecord(document.mcpServer) ||
+    !isRecord(listeners) ||
+    !isRecord(listeners.api) ||
+    !isRecord(listeners.mcp) ||
     !isRecord(document.hooks) ||
     !isRecord(document.keybindings) ||
     !isRecord(document.advanced)
@@ -763,10 +780,10 @@ async function hasCompleteManagedSections(
     return false
   }
   const apiComplete = ['host', 'port', 'token'].every((field) =>
-    Object.hasOwn(document.api as Record<string, unknown>, field)
+    Object.hasOwn(listeners.api as Record<string, unknown>, field)
   )
   const mcpServerComplete = ['host', 'port', 'token'].every((field) =>
-    Object.hasOwn(document.mcpServer as Record<string, unknown>, field)
+    Object.hasOwn(listeners.mcp as Record<string, unknown>, field)
   )
   const keybindingsComplete = KEYBINDING_ACTIONS.every((action) =>
     Object.hasOwn(document.keybindings as Record<string, unknown>, action)
@@ -982,9 +999,11 @@ function cloneConfig(config: PortalConfigDocument): PortalConfigDocument {
       claude: { ...config.agentInstructions.claude },
       codex: { ...config.agentInstructions.codex },
     },
-    api: { ...config.api },
-    mcpServer: { ...config.mcpServer },
-    mcp: structuredClone(config.mcp),
+    listeners: {
+      api: { ...config.listeners.api },
+      mcp: { ...config.listeners.mcp },
+    },
+    mcpServers: structuredClone(config.mcpServers),
     skills: structuredClone(config.skills),
     hooks: structuredClone(config.hooks),
     keybindings: structuredClone(config.keybindings),
@@ -1003,9 +1022,8 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
         'agentInstructions',
         'Project instruction sources loaded into runtimes.',
       ],
-      ['api', 'Local HTTP API listener and authentication settings.'],
-      ['mcpServer', 'Portal MCP Server listener and authentication settings.'],
-      ['mcp', 'Outbound Model Context Protocol client connections.'],
+      ['listeners', 'Inbound network listeners exposed by Portal.'],
+      ['mcpServers', 'Outbound MCP servers keyed by local name.'],
       ['skills', 'Registered Skill directories and enabled states.'],
       ['hooks', 'Lifecycle hook handlers and execution policy.'],
       ['keybindings', 'Terminal input shortcuts. Changes apply automatically.'],
@@ -1043,7 +1061,15 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
   }
   commentMap(
     document,
-    ['api'],
+    ['listeners'],
+    [
+      ['api', 'Local HTTP API listener and authentication settings.'],
+      ['mcp', 'Portal MCP Server listener and authentication settings.'],
+    ]
+  )
+  commentMap(
+    document,
+    ['listeners', 'api'],
     [
       ['host', 'Network interface used by the local HTTP API.'],
       ['port', 'TCP port used by the local HTTP API.'],
@@ -1055,7 +1081,7 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
   )
   commentMap(
     document,
-    ['mcpServer'],
+    ['listeners', 'mcp'],
     [
       ['host', 'Network interface used by the Portal MCP Server.'],
       ['port', 'TCP port used by the Portal MCP Server.'],
@@ -1063,14 +1089,6 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
         'token',
         'Bearer token required by the MCP Server; null or an empty string disables authentication.',
       ],
-    ]
-  )
-  commentMap(
-    document,
-    ['mcp'],
-    [
-      ['connectionStrategy', 'How MCP connections are scoped across threads.'],
-      ['servers', 'MCP servers keyed by their unique local names.'],
     ]
   )
   commentMap(

@@ -148,8 +148,8 @@ resume 加载的远程消息只用于显示，不会增加 `/thread list` 中的
 | `/thread ...`       | 创建、恢复、切换、查看、detach 和关闭         |
 | `/skill ...`        | 添加、列出、启用、禁用和删除 Skill            |
 | `/mcp ...`          | 管理 MCP Server，并 attach Resource 或 Prompt |
-| `/serve ...`        | 启动和管理本地 HTTP API                       |
-| `/mcp-server ...`   | 启动和管理独立的 Portal MCP Server            |
+| `/serve api ...`    | 启动和管理本地 HTTP API                       |
+| `/serve mcp ...`    | 启动和管理独立的 Portal MCP Server            |
 | `/job`              | 列出仍在运行的 `run_command` job              |
 | `/job stop ...`     | 停止一个仍在运行的 `run_command` job          |
 | `/hook ...`         | 查看、reload、启用或禁用生命周期 Hooks        |
@@ -210,16 +210,16 @@ $<name> [task]
 
 ## MCP
 
-portal 支持 stdio 和 Streamable HTTP MCP Server。当前 `per-thread` 策略会让每个新建、resume 或 spawn 的 runtime 按照 `data/config.yaml` 的 `mcp` 配置创建全新的独立连接。
+portal 支持 stdio 和 Streamable HTTP MCP Server。每个新建、resume 或 spawn 的 runtime 都会按照 `data/config.yaml` 的 `mcpServers` 配置创建全新的独立连接。
 
 以上是 Portal 的出站 MCP client 能力。Portal 也可以通过独立的
 Streamable HTTP MCP Server 暴露精选 thread 操作：
 
 ```text
-/mcp-server start
-/mcp-server status
-/mcp-server token
-/mcp-server stop
+/serve mcp start
+/serve mcp status
+/serve mcp token
+/serve mcp stop
 ```
 
 配置、工具、认证和安全边界参见 [Portal MCP Server](mcp-server.md)。

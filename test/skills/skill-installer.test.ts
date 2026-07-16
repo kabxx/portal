@@ -470,14 +470,13 @@ test('SkillLibrary installs a directly downloaded SKILL.md', async () => {
     assert.equal(installed.name, 'direct-skill')
     const registry = parseYaml(
       await readFile(path.join(root, 'data', 'config.yaml'), 'utf8')
-    ).skills as Array<{ name: string; directory: string; enabled: boolean }>
-    assert.deepEqual(registry, [
-      {
-        name: 'direct-skill',
+    ).skills as Record<string, { directory: string; enabled: boolean }>
+    assert.deepEqual(registry, {
+      'direct-skill': {
         directory: 'skills/direct-skill',
         enabled: true,
       },
-    ])
+    })
     assert.equal(await library.remove('direct-skill'), true)
     await assert.rejects(access(installed.directory))
   } finally {
