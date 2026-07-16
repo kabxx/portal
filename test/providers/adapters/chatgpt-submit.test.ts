@@ -21,8 +21,6 @@ type ChatGPTAdapterHarness = Pick<ChatGPTAdapter, keyof ChatGPTAdapter> & {
   }): boolean
   getCapturedFetchEntryCount: unknown
   readCurrentCapturedResponse: unknown
-  parseHttpResponse: unknown
-  parseWebsocketResponse: unknown
   getFinishedResponseSettleMs(): number
   getSubmitRequestStartGraceMs(): number
   getSubmitBlockedWarningIntervalMs(): number
@@ -36,6 +34,72 @@ function createTestChatGPTAdapter(): ChatGPTAdapterHarness {
   adapter.getFinishedResponseSettleMs = () => 50
   adapter.getSubmitRequestStartGraceMs = () => 5
   return adapter
+}
+
+function createChatGptHttpResponse(
+  text: string,
+  finished = true,
+  conversationId = 'conversation-1'
+): string {
+  return JSON.stringify({
+    conversation_id: conversationId,
+    current_node: 'node-1',
+    mapping: {
+      'node-1': {
+        message: {
+          id: 'message-1',
+          author: { role: 'assistant' },
+          content: { content_type: 'text', parts: [text] },
+          status: finished ? 'finished_successfully' : 'in_progress',
+          end_turn: finished,
+          channel: 'final',
+          metadata: {},
+        },
+      },
+    },
+  })
+}
+
+function createChatGptWebSocketFrame(
+  text: string,
+  finished = false,
+  conversationId = 'conversation-1'
+): string {
+  return JSON.stringify({
+    conversation_id: conversationId,
+    encoded_item: `event: delta\ndata: ${JSON.stringify({
+      v: {
+        message: {
+          id: 'message-1',
+          author: { role: 'assistant' },
+          content: { content_type: 'text', parts: [text] },
+          status: finished ? 'finished_successfully' : 'in_progress',
+          end_turn: finished,
+          channel: 'final',
+          metadata: {},
+        },
+      },
+    })}`,
+  })
+}
+
+function createChatGptWebSocketAppendFrame(text: string): string {
+  return JSON.stringify({
+    encoded_item: `event: delta\ndata: ${JSON.stringify({
+      p: '/message/content/parts/0',
+      o: 'append',
+      v: text,
+    })}`,
+  })
+}
+
+function createChatGptWebSocketFinishFrame(): string {
+  return JSON.stringify({
+    encoded_item: `event: delta\ndata: ${JSON.stringify({
+      o: 'patch',
+      v: [{ p: '/message/end_turn', o: 'replace', v: true }],
+    })}`,
+  })
 }
 
 test('ChatGPTAdapter target conversation request ignores prepare requests', () => {
@@ -62,17 +126,6 @@ test('ChatGPTAdapter.submit waits past empty target responses for the real HTTP 
   const parsedBodies: string[] = []
 
   adapter.websocketFrames = []
-  adapter.parseHttpResponse = (raw: string) => {
-    parsedBodies.push(raw)
-    if (raw === 'data: READY\n\n') {
-      return {
-        text: 'READY',
-        isFinished: true,
-      }
-    }
-    return null
-  }
-  adapter.parseWebsocketResponse = () => null
 
   const sendButton = {
     isEnabled: async () => true,
@@ -91,7 +144,11 @@ test('ChatGPTAdapter.submit waits past empty target responses for the real HTTP 
       page.emit('request', firstRequest)
       page.emit('response', {
         request: () => firstRequest,
-        text: async () => '{"status":"ok"}',
+        text: async () => {
+          const raw = '{"status":"ok"}'
+          parsedBodies.push(raw)
+          return raw
+        },
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
         status: () => 200,
       })
@@ -99,7 +156,11 @@ test('ChatGPTAdapter.submit waits past empty target responses for the real HTTP 
         page.emit('request', secondRequest)
         page.emit('response', {
           request: () => secondRequest,
-          text: async () => 'data: READY\n\n',
+          text: async () => {
+            const raw = createChatGptHttpResponse('READY')
+            parsedBodies.push(raw)
+            return raw
+          },
           url: () => 'https://chatgpt.com/backend-api/f/conversation',
           status: () => 200,
         })
@@ -115,18 +176,16 @@ test('ChatGPTAdapter.submit waits past empty target responses for the real HTTP 
   const result = await adapter.submit()
 
   assert.equal(result, 'READY')
-  assert.deepEqual(parsedBodies, ['{"status":"ok"}', 'data: READY\n\n'])
+  assert.deepEqual(parsedBodies, [
+    '{"status":"ok"}',
+    createChatGptHttpResponse('READY'),
+  ])
 })
 
 test('ChatGPTAdapter.submit keeps accepting later HTTP text after the first non-empty response', async () => {
   const adapter = createTestChatGPTAdapter()
 
   adapter.websocketFrames = []
-  adapter.parseHttpResponse = (raw: string) => ({
-    text: raw,
-    isFinished: true,
-  })
-  adapter.parseWebsocketResponse = () => null
 
   const sendButton = {
     isEnabled: async () => true,
@@ -145,7 +204,7 @@ test('ChatGPTAdapter.submit keeps accepting later HTTP text after the first non-
       page.emit('request', firstRequest)
       page.emit('response', {
         request: () => firstRequest,
-        text: async () => 'First sentence.',
+        text: async () => createChatGptHttpResponse('First sentence.'),
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
         status: () => 200,
       })
@@ -153,7 +212,8 @@ test('ChatGPTAdapter.submit keeps accepting later HTTP text after the first non-
         page.emit('request', secondRequest)
         page.emit('response', {
           request: () => secondRequest,
-          text: async () => 'First sentence. Second sentence.',
+          text: async () =>
+            createChatGptHttpResponse('First sentence. Second sentence.'),
           url: () => 'https://chatgpt.com/backend-api/f/conversation',
           status: () => 200,
         })
@@ -198,11 +258,6 @@ test('ChatGPTAdapter.submit streams captured HTTP text before response.text comp
       isFinished: true,
     }
   }
-  adapter.parseHttpResponse = (raw: string) => ({
-    text: raw,
-    isFinished: true,
-  })
-  adapter.parseWebsocketResponse = () => null
 
   const sendButton = {
     isEnabled: async () => true,
@@ -220,7 +275,7 @@ test('ChatGPTAdapter.submit streams captured HTTP text before response.text comp
           await releaseResponseText.promise
           responseTextCompleted = true
           responseTextFinished.resolve()
-          return 'First sentence. Second sentence.'
+          return createChatGptHttpResponse('First sentence. Second sentence.')
         },
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
         status: () => 200,
@@ -250,28 +305,8 @@ test('ChatGPTAdapter.submit streams captured HTTP text before response.text comp
 })
 
 test('ChatGPTAdapter.submit waits for websocket text to stabilize after the HTTP response settles', async () => {
-  let websocketParseCalls = 0
-
   const adapter = createTestChatGPTAdapter()
-  adapter.websocketFrames = ['frame-1', 'frame-2', 'frame-3']
-  adapter.parseHttpResponse = () => ({
-    text: 'half tool payload',
-    isFinished: false,
-  })
-  adapter.parseWebsocketResponse = () => {
-    websocketParseCalls += 1
-    if (websocketParseCalls < 3) {
-      return {
-        text: 'half tool payload',
-        isFinished: false,
-      }
-    }
-
-    return {
-      text: '<tool>{"tool":"run_command","params":{"command":"dir"}}</tool>',
-      isFinished: true,
-    }
-  }
+  adapter.websocketFrames = []
 
   const sendButton = {
     isEnabled: async () => true,
@@ -289,6 +324,17 @@ test('ChatGPTAdapter.submit waits for websocket text to stabilize after the HTTP
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
         status: () => 200,
       })
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame(
+          '<tool>{"tool":"run_command","params":{"command":"'
+        )
+      )
+      setTimeout(() => {
+        adapter.websocketFrames.push(
+          createChatGptWebSocketAppendFrame('dir"}}</tool>')
+        )
+        adapter.websocketFrames.push(createChatGptWebSocketFinishFrame())
+      }, 20)
     },
   }
   const page = createChatGPTPage(sendButton)
@@ -303,30 +349,13 @@ test('ChatGPTAdapter.submit waits for websocket text to stabilize after the HTTP
     result,
     '<tool>{"tool":"run_command","params":{"command":"dir"}}</tool>'
   )
-  assert.ok(websocketParseCalls >= 3)
 })
 
 test('ChatGPTAdapter.submit emits assistant stream snapshots while websocket text is growing', async () => {
   const adapter = createTestChatGPTAdapter()
   const streamedTexts: string[] = []
-  let websocketParseCalls = 0
 
-  adapter.websocketFrames = ['frame-1']
-  adapter.parseHttpResponse = () => null
-  adapter.parseWebsocketResponse = () => {
-    websocketParseCalls += 1
-    if (websocketParseCalls < 3) {
-      return {
-        text: 'partial stream',
-        isFinished: false,
-      }
-    }
-
-    return {
-      text: 'partial stream complete',
-      isFinished: true,
-    }
-  }
+  adapter.websocketFrames = []
 
   const sendButton = {
     isEnabled: async () => true,
@@ -344,6 +373,15 @@ test('ChatGPTAdapter.submit emits assistant stream snapshots while websocket tex
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
         status: () => 200,
       })
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame('partial stream')
+      )
+      setTimeout(() => {
+        adapter.websocketFrames.push(
+          createChatGptWebSocketAppendFrame(' complete')
+        )
+        adapter.websocketFrames.push(createChatGptWebSocketFinishFrame())
+      }, 20)
     },
   }
   const page = createChatGPTPage(sendButton)
@@ -363,11 +401,6 @@ test('ChatGPTAdapter.submit emits periodic warnings while waiting for the reques
   const adapter = createTestChatGPTAdapter()
   const warnings: string[] = []
   adapter.websocketFrames = []
-  adapter.parseHttpResponse = () => ({
-    text: 'Recovered after manual verification.',
-    isFinished: true,
-  })
-  adapter.parseWebsocketResponse = () => null
 
   const sendButton = {
     isEnabled: async () => true,
@@ -398,7 +431,8 @@ test('ChatGPTAdapter.submit emits periodic warnings while waiting for the reques
   page.emit('request', request)
   page.emit('response', {
     request: () => request,
-    text: async () => '{"status":"ok"}',
+    text: async () =>
+      createChatGptHttpResponse('Recovered after manual verification.'),
     url: () => 'https://chatgpt.com/backend-api/f/conversation',
     status: () => 200,
   })
@@ -411,25 +445,8 @@ test('ChatGPTAdapter.submit emits periodic warnings while waiting for the reques
 })
 
 test('ChatGPTAdapter.submit waits for finished websocket text to stabilize before returning', async () => {
-  let websocketParseCalls = 0
-
   const adapter = createTestChatGPTAdapter()
-  adapter.websocketFrames = ['frame-1']
-  adapter.parseHttpResponse = () => null
-  adapter.parseWebsocketResponse = () => {
-    websocketParseCalls += 1
-    if (websocketParseCalls < 3) {
-      return {
-        text: '<tool>\n{\n  "tool": "attach_image",\n  "',
-        isFinished: true,
-      }
-    }
-
-    return {
-      text: '<tool>\n{\n  "tool": "attach_image",\n  "params": {\n    "path": "C:/images/cat.png"\n  }\n}\n</tool>',
-      isFinished: true,
-    }
-  }
+  adapter.websocketFrames = []
 
   const sendButton = {
     isEnabled: async () => true,
@@ -447,6 +464,19 @@ test('ChatGPTAdapter.submit waits for finished websocket text to stabilize befor
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
         status: () => 200,
       })
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame(
+          '<tool>\n{\n  "tool": "attach_image",\n  "',
+          true
+        )
+      )
+      setTimeout(() => {
+        adapter.websocketFrames.push(
+          createChatGptWebSocketAppendFrame(
+            'params": {\n    "path": "C:/images/cat.png"\n  }\n}\n</tool>'
+          )
+        )
+      }, 20)
     },
   }
   const page = createChatGPTPage(sendButton)
@@ -461,27 +491,12 @@ test('ChatGPTAdapter.submit waits for finished websocket text to stabilize befor
     result,
     '<tool>\n{\n  "tool": "attach_image",\n  "params": {\n    "path": "C:/images/cat.png"\n  }\n}\n</tool>'
   )
-  assert.ok(websocketParseCalls >= 3)
 })
 
 test('ChatGPTAdapter.submit keeps streaming after an early finished chunk until later websocket text completes', async () => {
   const adapter = createTestChatGPTAdapter()
   const streamedTexts: string[] = []
   adapter.websocketFrames = []
-  adapter.parseHttpResponse = () => null
-  adapter.parseWebsocketResponse = (frames: readonly string[]) => {
-    if (frames.length < 2) {
-      return {
-        text: 'partial finished chunk',
-        isFinished: true,
-      }
-    }
-
-    return {
-      text: 'partial finished chunk that later completed',
-      isFinished: true,
-    }
-  }
 
   const sendButton = {
     isEnabled: async () => true,
@@ -499,9 +514,13 @@ test('ChatGPTAdapter.submit keeps streaming after an early finished chunk until 
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
         status: () => 200,
       })
-      adapter.websocketFrames.push('frame-1')
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame('partial finished chunk', true)
+      )
       setTimeout(() => {
-        adapter.websocketFrames.push('frame-2')
+        adapter.websocketFrames.push(
+          createChatGptWebSocketAppendFrame(' that later completed')
+        )
       }, 20)
     },
   }
@@ -524,23 +543,6 @@ test('ChatGPTAdapter.submit keeps streaming after an early finished chunk until 
 test('ChatGPTAdapter.submit does not accept a stable unfinished tool call before a later websocket frame completes it', async () => {
   const adapter = createTestChatGPTAdapter()
   adapter.websocketFrames = []
-  adapter.parseHttpResponse = () => ({
-    text: 'half tool payload',
-    isFinished: false,
-  })
-  adapter.parseWebsocketResponse = (frames: readonly string[]) => {
-    if (frames.length < 2) {
-      return {
-        text: '<tool>{"tool":"run_command","params":{"command":"d',
-        isFinished: false,
-      }
-    }
-
-    return {
-      text: '<tool>{"tool":"run_command","params":{"command":"dir"}}</tool>',
-      isFinished: true,
-    }
-  }
 
   const sendButton = {
     isEnabled: async () => true,
@@ -558,9 +560,16 @@ test('ChatGPTAdapter.submit does not accept a stable unfinished tool call before
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
         status: () => 200,
       })
-      adapter.websocketFrames.push('frame-1')
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame(
+          '<tool>{"tool":"run_command","params":{"command":"d'
+        )
+      )
       setTimeout(() => {
-        adapter.websocketFrames.push('frame-2')
+        adapter.websocketFrames.push(
+          createChatGptWebSocketAppendFrame('ir"}}</tool>')
+        )
+        adapter.websocketFrames.push(createChatGptWebSocketFinishFrame())
       }, 20)
     },
   }
@@ -581,14 +590,6 @@ test('ChatGPTAdapter.submit does not accept a stable unfinished tool call before
 test('ChatGPTAdapter.submit fails instead of returning an unfinished response without finish', async () => {
   const adapter = createTestChatGPTAdapter()
   adapter.websocketFrames = []
-  adapter.parseHttpResponse = () => ({
-    text: 'still streaming',
-    isFinished: false,
-  })
-  adapter.parseWebsocketResponse = () => ({
-    text: 'still streaming',
-    isFinished: false,
-  })
 
   const sendButton = {
     isEnabled: async () => true,
@@ -606,7 +607,9 @@ test('ChatGPTAdapter.submit fails instead of returning an unfinished response wi
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
         status: () => 200,
       })
-      adapter.websocketFrames.push('frame-1')
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame('still streaming')
+      )
     },
   }
   const page = createChatGPTPage(sendButton)
@@ -623,15 +626,7 @@ test('ChatGPTAdapter.submit fails instead of returning an unfinished response wi
 
 test('ChatGPTAdapter.submit waits for the real speech button selector to become usable again before returning', async () => {
   const adapter = createTestChatGPTAdapter()
-  adapter.websocketFrames = ['frame-1']
-  adapter.parseHttpResponse = () => ({
-    text: 'done',
-    isFinished: true,
-  })
-  adapter.parseWebsocketResponse = () => ({
-    text: 'done',
-    isFinished: true,
-  })
+  adapter.websocketFrames = []
 
   let speechChecks = 0
   const speechButton = {
@@ -659,6 +654,7 @@ test('ChatGPTAdapter.submit waits for the real speech button selector to become 
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
         status: () => 200,
       })
+      adapter.websocketFrames.push(createChatGptWebSocketFrame('done', true))
     },
   }
   const page = createChatGPTPage(sendButton, speechButton)
@@ -675,15 +671,7 @@ test('ChatGPTAdapter.submit waits for the real speech button selector to become 
 
 test('ChatGPTAdapter.submit accepts the data-testid send button as composer ready fallback', async () => {
   const adapter = createTestChatGPTAdapter()
-  adapter.websocketFrames = ['frame-1']
-  adapter.parseHttpResponse = () => ({
-    text: 'done',
-    isFinished: true,
-  })
-  adapter.parseWebsocketResponse = () => ({
-    text: 'done',
-    isFinished: true,
-  })
+  adapter.websocketFrames = []
 
   const unavailableSpeechButton = {
     first: () => unavailableSpeechButton,
@@ -716,6 +704,7 @@ test('ChatGPTAdapter.submit accepts the data-testid send button as composer read
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
         status: () => 200,
       })
+      adapter.websocketFrames.push(createChatGptWebSocketFrame('done', true))
     },
   }
   const page = createChatGPTPage(sendButton, {
