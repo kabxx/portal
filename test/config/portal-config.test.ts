@@ -22,6 +22,7 @@ import {
   readPortalConfig,
   updatePortalConfig,
 } from '../../src/config/portal-config.ts'
+import { createDefaultKeybindings } from '../../src/keybindings/keybinding-config.ts'
 
 test('ensurePortalConfig creates one YAML file with concrete defaults', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-default-'))
@@ -102,6 +103,7 @@ test('readPortalConfig parses YAML and strips a UTF-8 BOM', async () => {
       mcp: { connectionStrategy: 'per-thread', servers: {} },
       skills: [],
       hooks: { enabled: false, maxDepth: 1, handlers: [] },
+      keybindings: createDefaultKeybindings(),
       advanced: createDefaultAdvancedConfig(),
     })
   } finally {
@@ -143,6 +145,7 @@ test('ensurePortalConfig writes advanced last with field comments and section sp
     await ensurePortalConfig(configPath, createDefaultPortalConfig(root))
     const contents = await readFile(configPath, 'utf8')
     const advancedStart = contents.indexOf('\nadvanced:\n')
+    const keybindingsStart = contents.indexOf('\nkeybindings:\n')
     const advancedContents = contents.slice(advancedStart)
     const advancedFields = [
       'startupTimeoutSeconds',
@@ -179,6 +182,8 @@ test('ensurePortalConfig writes advanced last with field comments and section sp
     ]
 
     assert.notEqual(advancedStart, -1)
+    assert.notEqual(keybindingsStart, -1)
+    assert.ok(keybindingsStart < advancedStart)
     assert.match(
       contents,
       /\nhooks:[\s\S]+\n\n# Low-frequency runtime tuning and resource limits\.\nadvanced:\n/
@@ -216,6 +221,39 @@ test('ensurePortalConfig can restore comments after first-run bootstrap writes',
     assert.match(
       await readFile(configPath, 'utf8'),
       /# Low-frequency runtime tuning and resource limits\.\nadvanced:/
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('ensurePortalConfig migrates partial keybindings to the complete table', async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), 'portal-config-keybindings-migration-')
+  )
+  const configPath = path.join(root, 'config.yaml')
+  const defaults = createDefaultPortalConfig(root)
+  try {
+    await writeFile(
+      configPath,
+      stringifyYaml({
+        ...defaults,
+        keybindings: { 'input.submit': ['ctrl+enter'] },
+      }),
+      'utf8'
+    )
+
+    const config = await ensurePortalConfig(configPath, defaults)
+    const contents = await readFile(configPath, 'utf8')
+    const document = parseYaml(contents)
+
+    assert.deepEqual(config.keybindings['input.submit'], ['ctrl+enter'])
+    assert.deepEqual(document.keybindings, config.keybindings)
+    assert.deepEqual(Object.keys(document.keybindings), [
+      ...Object.keys(createDefaultKeybindings()),
+    ])
+    assert.ok(
+      contents.indexOf('\nkeybindings:') < contents.indexOf('\nadvanced:')
     )
   } finally {
     await rm(root, { recursive: true, force: true })
