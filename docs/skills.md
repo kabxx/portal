@@ -91,19 +91,29 @@ The `skills` section of `data/config.yaml` is the sole source of truth for which
 
 ```yaml
 skills:
-  - name: release-notes
+  release-notes:
     directory: D:/shared-skills/release-notes
     enabled: true
-  - name: pdf-processing
+  pdf-processing:
     directory: skills/pdf-processing
     enabled: false
 ```
 
-The `skills` section is an array. Each item contains only `name`, `directory`, and `enabled`; `name` must match the corresponding manifest name. Relative directories resolve from `data/`; absolute directories can point anywhere on the local machine. Directories under `data/skills/` that are not registered are ignored.
+The `skills` section is an object keyed by Skill name. Each value contains only
+`directory` and `enabled`; the key must match the corresponding manifest name.
+Relative directories resolve from `data/`; absolute directories can point
+anywhere on the local machine. Directories under `data/skills/` that are not
+registered are ignored.
 
 During startup, when `config.yaml` does not exist, portal creates it once and imports valid directories already present under `data/skills/`; every imported entry is enabled. Existing configuration, including malformed registries, is never overwritten during startup initialization.
 
-portal rereads the registry for every skill command and new runtime. Invalid YAML or a non-array `skills` section prevents registry writes and new runtime creation without overwriting the file. A malformed entry is reported separately while other valid entries remain available. Duplicate names are reported as entry errors and every entry with that name is excluded from the catalog. Write commands are blocked until all entry errors are fixed so user data cannot be dropped accidentally. A structurally valid entry with missing or invalid skill files remains removable.
+portal rereads the registry for every skill command and new runtime. Invalid
+YAML or a non-object `skills` section prevents registry writes and new runtime
+creation without overwriting the file. YAML duplicate keys are whole-file
+errors. A malformed entry is reported separately while other valid entries
+remain available. Write commands are blocked until all entry errors are fixed
+so user data cannot be dropped accidentally. A structurally valid entry with
+missing or invalid skill files remains removable.
 
 Registry writes use a temporary file followed by an atomic replacement.
 

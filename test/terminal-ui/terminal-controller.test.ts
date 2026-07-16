@@ -103,6 +103,17 @@ test('TerminalController renders the thread command namespace in help', () => {
   assert.equal(new Set(descriptionColumns).size, 1)
 })
 
+test('default commands expose both listeners only through serve', () => {
+  assert.deepEqual(
+    DEFAULT_COMMANDS.find(({ name }) => name === '/serve')?.subcommands,
+    ['api', 'mcp']
+  )
+  assert.equal(
+    DEFAULT_COMMANDS.some(({ name }) => name === '/mcp-server'),
+    false
+  )
+})
+
 test('TerminalController stores the startup welcome in the home timeline', () => {
   const manager = new ThreadManager()
   const thread = manager.addThread({
