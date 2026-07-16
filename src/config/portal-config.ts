@@ -1,7 +1,16 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import path from 'node:path'
+import { tryLock, unlock } from 'fs-native-extensions'
 import {
   Document,
   isMap,
@@ -140,6 +149,12 @@ export interface PortalConfigDocument {
   advanced: PortalAdvancedConfig
 }
 
+export interface PortalConfigTransaction {
+  readonly config: PortalConfigDocument
+  commit(): Promise<void>
+  noChange(): void
+}
+
 export class PortalConfigError extends Error {
   public constructor(message: string) {
     super(message)
@@ -147,8 +162,8 @@ export class PortalConfigError extends Error {
   }
 }
 
-const DEFAULT_LOCK_STALE_MS = 30_000
 const DEFAULT_LOCK_WAIT_MS = 5_000
+const LOCK_RETRY_MS = 25
 const CONFIG_FIELDS = new Set([
   'browser',
   'agentInstructions',
@@ -885,12 +900,62 @@ export async function updatePortalConfig(
   update: (config: PortalConfigDocument) => void,
   defaults: PortalConfigDocument
 ): Promise<PortalConfigDocument> {
+  return await withPortalConfigTransaction(
+    configPath,
+    async (transaction) => {
+      update(transaction.config)
+      await transaction.commit()
+      return transaction.config
+    },
+    defaults
+  )
+}
+
+export async function withPortalConfigTransaction<T>(
+  configPath: string,
+  action: (transaction: PortalConfigTransaction) => Promise<T> | T,
+  defaults: PortalConfigDocument
+): Promise<T> {
   return await withConfigLock(configPath, async () => {
-    const current =
-      (await readPortalConfig(configPath)) ?? cloneConfig(defaults)
-    update(current)
-    await writePortalConfigUnlocked(configPath, current)
-    return current
+    const config = (await readPortalConfig(configPath)) ?? cloneConfig(defaults)
+    let state: 'pending' | 'committed' | 'unchanged' = 'pending'
+    let commitPromise: Promise<void> | undefined
+    const transaction: PortalConfigTransaction = {
+      config,
+      async commit() {
+        if (state !== 'pending') {
+          throw new PortalConfigError(
+            'Config transaction has already been completed'
+          )
+        }
+        state = 'committed'
+        commitPromise = writePortalConfigUnlocked(configPath, config)
+        await commitPromise
+      },
+      noChange() {
+        if (state !== 'pending') {
+          throw new PortalConfigError(
+            'Config transaction has already been completed'
+          )
+        }
+        state = 'unchanged'
+      },
+    }
+
+    let result: T
+    try {
+      result = await action(transaction)
+    } catch (error) {
+      await commitPromise?.catch(() => {})
+      throw error
+    }
+    if (state === 'pending') {
+      throw new PortalConfigError(
+        'Config transaction must call commit() or noChange()'
+      )
+    }
+    await commitPromise
+    return result
   })
 }
 
@@ -930,65 +995,85 @@ async function withConfigLock<T>(
   configPath: string,
   action: () => Promise<T>
 ): Promise<T> {
-  const previous = localTails.get(configPath) ?? Promise.resolve()
+  const lock = await resolveConfigLock(configPath)
+  const previous = localTails.get(lock.key) ?? Promise.resolve()
   let release!: () => void
   const current = new Promise<void>((resolve) => {
     release = resolve
   })
-  localTails.set(configPath, current)
+  localTails.set(lock.key, current)
   await previous
 
   try {
-    return await withFileLock(configPath, action)
+    return await withFileLock(lock.path, configPath, action)
   } finally {
     release()
-    if (localTails.get(configPath) === current) {
-      localTails.delete(configPath)
+    if (localTails.get(lock.key) === current) {
+      localTails.delete(lock.key)
     }
   }
 }
 
+async function resolveConfigLock(
+  configPath: string
+): Promise<{ path: string; key: string }> {
+  const lockDirectory = path.join(
+    path.dirname(path.resolve(configPath)),
+    '.locks'
+  )
+  await mkdir(lockDirectory, { recursive: true })
+  const resolvedDirectory = await realpath(lockDirectory)
+  const lockPath = path.join(resolvedDirectory, 'config.lock')
+  return {
+    path: lockPath,
+    key: process.platform === 'win32' ? lockPath.toLowerCase() : lockPath,
+  }
+}
+
 async function withFileLock<T>(
+  lockPath: string,
   configPath: string,
   action: () => Promise<T>
 ): Promise<T> {
-  await mkdir(path.dirname(configPath), { recursive: true })
-  const lockPath = `${configPath}.lock`
+  const lockFile = await open(lockPath, 'a+')
   const deadline = Date.now() + DEFAULT_LOCK_WAIT_MS
+  let acquired = false
+  let hasPrimaryError = false
 
-  while (true) {
-    try {
-      await mkdir(lockPath)
-      break
-    } catch (error) {
-      if (!isNodeError(error) || error.code !== 'EEXIST') {
-        throw error
-      }
-      try {
-        const details = await stat(lockPath)
-        if (Date.now() - details.mtimeMs > DEFAULT_LOCK_STALE_MS) {
-          await rm(lockPath, { recursive: true, force: true })
-          continue
-        }
-      } catch (statError) {
-        if (isNodeError(statError) && statError.code === 'ENOENT') {
-          continue
-        }
-        throw statError
-      }
+  try {
+    while (!tryLock(lockFile.fd)) {
       if (Date.now() >= deadline) {
         throw new PortalConfigError(
           `Timed out waiting for config lock: ${configPath}`
         )
       }
-      await new Promise((resolve) => setTimeout(resolve, 25))
+      await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS))
     }
-  }
-
-  try {
+    acquired = true
     return await action()
+  } catch (error) {
+    hasPrimaryError = true
+    throw error
   } finally {
-    await rm(lockPath, { recursive: true, force: true })
+    const cleanupErrors: unknown[] = []
+    if (acquired) {
+      try {
+        unlock(lockFile.fd)
+      } catch (error) {
+        cleanupErrors.push(error)
+      }
+    }
+    try {
+      await lockFile.close()
+    } catch (error) {
+      cleanupErrors.push(error)
+    }
+    if (!hasPrimaryError && cleanupErrors.length > 0) {
+      if (cleanupErrors.length === 1) {
+        throw cleanupErrors[0]
+      }
+      throw new AggregateError(cleanupErrors, 'Failed to release config lock')
+    }
   }
 }
 

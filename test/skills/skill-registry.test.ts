@@ -7,6 +7,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { createDefaultPortalConfig } from '../../src/config/portal-config.ts'
 
 import {
+  ensureSkillRegistry,
   readSkillRegistry,
   SkillRegistryError,
   writeSkillRegistry,
@@ -63,6 +64,43 @@ test('skill registry persists deterministic user-editable YAML', async () => {
       ]
     )
     assert.deepEqual(reopened.issues, [])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('skill registry bootstrap preserves a config created after its scan', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-bootstrap-'))
+  const registryPath = path.join(root, 'config.yaml')
+  const concurrentSkills = {
+    'concurrent-skill': {
+      directory: 'skills/concurrent-skill',
+      enabled: true,
+    },
+  }
+
+  try {
+    await writeConfig(registryPath, concurrentSkills)
+    const result = await ensureSkillRegistry(
+      registryPath,
+      new Map([
+        ['stale-scan', { directory: 'skills/stale-scan', enabled: true }],
+      ])
+    )
+
+    assert.deepEqual(
+      [...result.entries],
+      [
+        [
+          'concurrent-skill',
+          { directory: 'skills/concurrent-skill', enabled: true },
+        ],
+      ]
+    )
+    assert.deepEqual(
+      parseYaml(await readFile(registryPath, 'utf8')).skills,
+      concurrentSkills
+    )
   } finally {
     await rm(root, { recursive: true, force: true })
   }

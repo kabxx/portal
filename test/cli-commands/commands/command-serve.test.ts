@@ -46,10 +46,14 @@ test('ServeCommand starts and stops both listener targets', async () => {
     mcpServer: controller('mcp'),
   })
 
-  await ServeCommand.execute(context, ['api', 'start'])
+  assert.deepEqual(await ServeCommand.execute(context, ['api', 'start']), {
+    continue: true,
+  })
   assert.equal(latestTimelineEntry(ui)?.body, 'HTTP API server started.')
 
-  await ServeCommand.execute(context, ['api', 'stop'])
+  assert.deepEqual(await ServeCommand.execute(context, ['api', 'stop']), {
+    continue: true,
+  })
   assert.equal(latestTimelineEntry(ui)?.body, 'HTTP API server stopped.')
 
   await ServeCommand.execute(context, ['mcp', 'start'])
@@ -82,21 +86,37 @@ test('ServeCommand warns but allows an unauthenticated non-loopback listener', a
 })
 
 test('ServeCommand reports start and stop failures', async () => {
-  const { context, ui } = createContext({
-    api: {
-      start: async () => {
-        throw new Error('start failed')
-      },
-      stop: async () => {
-        throw 'stop failed'
-      },
+  const failingController = {
+    start: async () => {
+      throw new Error('start failed')
     },
+    stop: async () => {
+      throw 'stop failed'
+    },
+  }
+  const { context, ui } = createContext({
+    api: failingController,
+    mcpServer: failingController,
   })
 
-  await ServeCommand.execute(context, ['api', 'start'])
+  assert.deepEqual(await ServeCommand.execute(context, ['api', 'start']), {
+    continue: true,
+  })
   assert.equal(latestTimelineEntry(ui)?.body, 'start failed')
 
-  await ServeCommand.execute(context, ['api', 'stop'])
+  assert.deepEqual(await ServeCommand.execute(context, ['api', 'stop']), {
+    continue: true,
+  })
+  assert.equal(latestTimelineEntry(ui)?.body, 'stop failed')
+
+  assert.deepEqual(await ServeCommand.execute(context, ['mcp', 'start']), {
+    continue: true,
+  })
+  assert.equal(latestTimelineEntry(ui)?.body, 'start failed')
+
+  assert.deepEqual(await ServeCommand.execute(context, ['mcp', 'stop']), {
+    continue: true,
+  })
   assert.equal(latestTimelineEntry(ui)?.body, 'stop failed')
 })
 
