@@ -218,6 +218,7 @@ export function canRunCommandWhileThreadBusy(input: string): boolean {
     command === '/providers' ||
     command === '/job' ||
     command === '/keybinding' ||
+    command === '/serve' ||
     command === '/exit'
   ) {
     return true
@@ -247,9 +248,6 @@ export function canRunCommandWhileThreadBusy(input: string): boolean {
       ((subcommand === 'resource' || subcommand === 'prompt') &&
         action === 'list')
     )
-  }
-  if (command === '/mcp-server') {
-    return true
   }
   if (command === '/hook') {
     return true
@@ -2512,18 +2510,18 @@ export async function run(argv = process.argv): Promise<void> {
     }
 
     apiServer = new PortalApiServer({
-      host: portalConfig.api.host,
-      port: portalConfig.api.port,
-      token: portalConfig.api.token,
+      host: portalConfig.listeners.api.host,
+      port: portalConfig.listeners.api.port,
+      token: portalConfig.listeners.api.token,
       handlers: apiHandlers,
       bodyLimitBytes: settings.api.bodyLimitBytes,
       requestTimeoutMs: settings.api.requestTimeoutMs,
       sseHeartbeatMs: settings.api.sseHeartbeatMs,
     })
     mcpServer = new PortalMcpServer({
-      host: portalConfig.mcpServer.host,
-      port: portalConfig.mcpServer.port,
-      token: portalConfig.mcpServer.token,
+      host: portalConfig.listeners.mcp.host,
+      port: portalConfig.listeners.mcp.port,
+      token: portalConfig.listeners.mcp.token,
       handlers: mcpHandlers,
       closeTimeoutMs: settings.shutdownCloseTimeoutMs,
       onStop: async () => {

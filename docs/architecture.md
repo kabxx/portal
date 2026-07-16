@@ -238,7 +238,10 @@ forks the parent's active state. See [Project Instructions](instructions.md).
 
 ## MCP
 
-The `mcp` section of `data/config.yaml` currently supports only `connectionStrategy: "per-thread"`. Every new, resumed, or spawned runtime creates a `ThreadMcpSession` and independent client transports for enabled valid servers. Failed servers are omitted and rendered as Markdown warnings; successful servers continue normally.
+The `mcpServers` section of `data/config.yaml` configures outbound MCP clients.
+Every new, resumed, or spawned runtime creates a `ThreadMcpSession` and
+independent client transports for enabled valid servers. Failed servers are
+omitted and rendered as Markdown warnings; successful servers continue normally.
 
 Only connected Server and Tool names appear in the setup prompt. `mcp_search_tool` reads one exact cached definition, while `mcp_call_tool` dispatches one exact request. Tool list-change notifications refresh the current cache but do not rewrite the setup snapshot. Resource and Prompt commands operate through the active thread session and submit each attachment as its own user turn. See [MCP](mcp.md).
 
@@ -247,7 +250,7 @@ Closing a runtime closes its MCP clients and stdio child processes.
 ## Portal MCP Server
 
 `src/mcp-server/` is independent from both the HTTP API and the outbound MCP
-client code under `src/mcp/`. `/mcp-server start` creates a stateless Streamable
+client code under `src/mcp/`. `/serve mcp start` creates a stateless Streamable
 HTTP listener with fixed Portal tools. Its handlers call the same in-process
 thread and runtime services used by the TUI; they do not call HTTP API routes.
 

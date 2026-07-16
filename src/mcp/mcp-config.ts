@@ -10,8 +10,6 @@ export const DEFAULT_MCP_CONNECT_TIMEOUT_MS = 15_000
 export const DEFAULT_MCP_TOOL_TIMEOUT_MS = 60_000
 export const DEFAULT_MCP_MAX_OUTPUT_CHARS = 100_000
 
-export type McpConnectionStrategy = 'per-thread'
-
 interface McpServerDefaults {
   enabled?: boolean
   connectTimeoutMs?: number
@@ -41,7 +39,6 @@ export interface McpConfigIssue {
 }
 
 export interface McpConfigData {
-  connectionStrategy: McpConnectionStrategy
   servers: Map<string, McpServerConfig>
   issues: readonly McpConfigIssue[]
 }
@@ -75,7 +72,6 @@ export class McpStoredConfigError extends McpConfigError {
   }
 }
 
-const ROOT_FIELDS = new Set(['connectionStrategy', 'servers'])
 const COMMON_SERVER_FIELDS = new Set([
   'transport',
   'enabled',
@@ -98,7 +94,7 @@ export async function readMcpConfig(
 ): Promise<McpConfigData | null> {
   try {
     const config = await readPortalConfig(configPath)
-    return config === null ? null : parseMcpConfig(config.mcp)
+    return config === null ? null : parseMcpConfig(config.mcpServers)
   } catch (error) {
     if (error instanceof PortalConfigError || error instanceof McpConfigError) {
       throw new McpStoredConfigError(getErrorMessage(error))
@@ -109,21 +105,12 @@ export async function readMcpConfig(
 
 export function parseMcpConfig(document: unknown): McpConfigData {
   if (!isRecord(document)) {
-    throw new McpConfigError('MCP config must be an object')
-  }
-  assertSupportedFields(document, ROOT_FIELDS, 'config root')
-  if (document.connectionStrategy !== 'per-thread') {
-    throw new McpConfigError(
-      'connectionStrategy must be "per-thread" in this Portal version'
-    )
-  }
-  if (!isRecord(document.servers)) {
-    throw new McpConfigError('servers must be an object keyed by name')
+    throw new McpConfigError('mcpServers must be an object keyed by name')
   }
 
   const servers = new Map<string, McpServerConfig>()
   const issues: McpConfigIssue[] = []
-  for (const [name, value] of Object.entries(document.servers)) {
+  for (const [name, value] of Object.entries(document)) {
     try {
       validateMcpServerName(name)
       servers.set(name, parseMcpServerConfig(value))
@@ -132,7 +119,7 @@ export function parseMcpConfig(document: unknown): McpConfigData {
     }
   }
 
-  return { connectionStrategy: 'per-thread', servers, issues }
+  return { servers, issues }
 }
 
 export function validateMcpServerName(name: string): void {
@@ -189,7 +176,7 @@ export async function writeMcpConfig(
   await updatePortalConfig(
     configPath,
     (config) => {
-      config.mcp = serializeMcpConfig(servers)
+      config.mcpServers = serializeMcpConfig(servers)
     },
     createDefaultPortalConfig(path.dirname(configPath))
   )
@@ -206,7 +193,7 @@ export async function updateMcpConfig<T>(
       (config) => {
         let current: McpConfigData
         try {
-          current = parseMcpConfig(config.mcp)
+          current = parseMcpConfig(config.mcpServers)
         } catch (error) {
           if (error instanceof McpConfigError) {
             throw new McpStoredConfigError(error.message)
@@ -225,7 +212,7 @@ export async function updateMcpConfig<T>(
         }
         const servers = new Map(current.servers)
         result = update(servers)
-        config.mcp = serializeMcpConfig(servers)
+        config.mcpServers = serializeMcpConfig(servers)
       },
       createDefaultPortalConfig(path.dirname(configPath))
     )
@@ -244,10 +231,7 @@ function serializeMcpConfig(
   const sortedServers = Object.fromEntries(
     [...servers.entries()].sort(([left], [right]) => left.localeCompare(right))
   )
-  return {
-    connectionStrategy: 'per-thread',
-    servers: sortedServers,
-  }
+  return sortedServers
 }
 
 function parseServerDefaults(

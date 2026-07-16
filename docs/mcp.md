@@ -2,29 +2,30 @@
 
 [Back to README](../README.md)
 
-portal is an MCP client for stdio and Streamable HTTP servers. The only connection strategy currently implemented is `per-thread`: each new, resumed, or spawned runtime creates and owns fresh independent MCP connections.
+portal is an MCP client for stdio and Streamable HTTP servers. Each new,
+resumed, or spawned runtime creates and owns fresh independent MCP connections.
 
 This document covers outbound client connections. To expose Portal itself as an
 independent MCP service, see [Portal MCP Server](mcp-server.md).
 
 ## Configuration
 
-The user-editable file is `data/config.yaml`. MCP settings live under its top-level `mcp` section. Server names are object keys and must be unique.
+The user-editable file is `data/config.yaml`. Outbound MCP settings live under
+its top-level `mcpServers` section. Server names are object keys and must be
+unique.
 
 ```yaml
-mcp:
-  connectionStrategy: per-thread
-  servers:
-    remote:
-      transport: streamable-http
-      url: https://example.com/mcp
-      headers:
-        Authorization: Bearer ${env:MCP_TOKEN}
-    local:
-      transport: stdio
-      command: node
-      args:
-        - server.js
+mcpServers:
+  remote:
+    transport: streamable-http
+    url: https://example.com/mcp
+    headers:
+      Authorization: Bearer ${env:MCP_TOKEN}
+  local:
+    transport: stdio
+    command: node
+    args:
+      - server.js
 ```
 
 The smallest valid HTTP entry contains `transport` and `url`. The smallest valid stdio entry contains `transport` and `command`.
@@ -40,9 +41,14 @@ The smallest valid HTTP entry contains `transport` and `url`. The smallest valid
 | `cwd`              | stdio      | Child working directory                       | inherited |
 | `env`              | stdio      | Additional child environment values           | none      |
 
-Unknown fields and unsupported connection strategies are configuration errors. Invalid servers are isolated so valid servers can still connect. Any configuration issue is rendered as Markdown during runtime creation. CLI mutations refuse to rewrite a file while invalid entries exist, preventing accidental loss of hand-edited data.
+Unknown fields are configuration errors. Invalid servers are isolated so valid
+servers can still connect. Any configuration issue is rendered as Markdown
+during runtime creation. CLI mutations refuse to rewrite a file while invalid
+entries exist, preventing accidental loss of hand-edited data.
 
-When `config.yaml` does not exist, portal creates the complete default configuration with `connectionStrategy: "per-thread"` and no MCP servers. Existing files, including malformed files, are never overwritten during initialization.
+When `config.yaml` does not exist, portal creates the complete default
+configuration with no MCP servers. Existing files, including malformed files,
+are never overwritten during initialization.
 
 ## Environment placeholders
 
@@ -147,6 +153,6 @@ All rendered MCP Tool and attachment content is bounded. Error messages redact r
 
 ## Security notes
 
-An MCP server is an external process or network endpoint with its own permissions and side effects. Review its implementation and requested headers/environment before adding it. Do not commit bearer tokens or literal secrets to the `mcp` section of `data/config.yaml`; use environment placeholders and keep the file local.
+An MCP server is an external process or network endpoint with its own permissions and side effects. Review its implementation and requested headers/environment before adding it. Do not commit bearer tokens or literal secrets to the `mcpServers` section of `data/config.yaml`; use environment placeholders and keep the file local.
 
 MCP calls are not subject to a separate human approval gate. Read [Security](security.md) before connecting servers that can modify files, access accounts, or perform irreversible operations.

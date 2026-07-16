@@ -65,20 +65,17 @@ test('McpCommand adds minimal HTTP and stdio server configs', async () => {
       await readFile(path.join(root, 'config.yaml'), 'utf8')
     )
 
-    assert.deepEqual(document.mcp, {
-      connectionStrategy: 'per-thread',
-      servers: {
-        local: {
-          transport: 'stdio',
-          command: 'npx',
-          args: ['-y', 'example-server'],
-        },
-        remote: {
-          transport: 'streamable-http',
-          url: 'https://example.com/mcp',
-          headers: {
-            Authorization: 'Bearer ${env:MCP_TOKEN}',
-          },
+    assert.deepEqual(document.mcpServers, {
+      local: {
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', 'example-server'],
+      },
+      remote: {
+        transport: 'streamable-http',
+        url: 'https://example.com/mcp',
+        headers: {
+          Authorization: 'Bearer ${env:MCP_TOKEN}',
         },
       },
     })

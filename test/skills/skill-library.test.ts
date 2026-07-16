@@ -32,22 +32,19 @@ interface SkillRegistryDocumentEntry {
 function parseSkillRegistryEntries(
   value: unknown
 ): SkillRegistryDocumentEntry[] {
-  if (!Array.isArray(value)) {
-    throw new Error('skills must be an array.')
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('skills must be an object.')
   }
-  return value.map((entry, index) => {
+  return Object.entries(value).map(([name, entry]) => {
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
-      throw new Error(`skills[${index}] must be an object.`)
+      throw new Error(`skills.${name} must be an object.`)
     }
     const record = entry as Record<string, unknown>
-    if (
-      typeof record.name !== 'string' ||
-      typeof record.directory !== 'string'
-    ) {
-      throw new Error(`skills[${index}] must have a name and directory.`)
+    if (typeof record.directory !== 'string') {
+      throw new Error(`skills.${name} must have a directory.`)
     }
     return {
-      name: record.name,
+      name,
       directory: record.directory,
       enabled: record.enabled,
     }
@@ -68,7 +65,9 @@ async function writeSkillConfig(
   entries: readonly SkillRegistryDocumentEntry[]
 ): Promise<void> {
   const config = defaultConfig()
-  config.skills = [...entries]
+  config.skills = Object.fromEntries(
+    entries.map(({ name, ...entry }) => [name, entry])
+  )
   await writeFile(pathname, stringifyYaml(config), 'utf8')
 }
 
@@ -98,13 +97,12 @@ test('SkillLibrary installs, catalogs, disables, enables, and removes skills', a
     const registryDocument = parseYamlRecord(
       await readFile(path.join(root, 'data', 'config.yaml'), 'utf8')
     ).skills
-    assert.deepEqual(registryDocument, [
-      {
-        name: 'test-skill',
+    assert.deepEqual(registryDocument, {
+      'test-skill': {
         directory: path.resolve(source),
         enabled: true,
       },
-    ])
+    })
     assert.deepEqual(await readdir(path.join(root, 'data', 'skills')), [])
     await assert.rejects(library.add(source), /Skill already added/)
 
@@ -429,7 +427,7 @@ test('SkillLibrary initializes a missing registry without overwriting it later',
     await library.initialize()
     assert.deepEqual(
       parseYamlRecord(await readFile(registryPath, 'utf8')).skills,
-      []
+      {}
     )
 
     await writeFile(registryPath, 'browser: [', 'utf8')
@@ -466,13 +464,12 @@ test('SkillLibrary bootstraps existing managed skills as enabled', async () => {
     const registry = parseYamlRecord(
       await readFile(path.join(dataDirectory, 'config.yaml'), 'utf8')
     ).skills
-    assert.deepEqual(registry, [
-      {
-        name: 'managed-skill',
+    assert.deepEqual(registry, {
+      'managed-skill': {
         directory: 'skills/managed-skill',
         enabled: true,
       },
-    ])
+    })
     assert.equal(await library.remove('managed-skill'), true)
     await assert.rejects(access(managedDirectory))
   } finally {
