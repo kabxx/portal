@@ -120,6 +120,7 @@ test('modified Enter, release, repeat, and multi-character events normalize safe
     null
   )
   assert.equal(normalizeInputEvent('pasted text', {}), null)
+  assert.equal(normalizeInputEvent('https://abc.de', { ctrl: true }), null)
 })
 
 test('event resolution uses exact modifiers and covers every default action', () => {
