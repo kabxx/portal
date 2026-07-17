@@ -17,7 +17,7 @@ portal supports eight web AI products through provider-specific adapters. Every 
 | `grok`      | `grok.com`          | Yes            | Yes    | `N`                 | None exposed by `/thread capability`      |
 | `glm`       | `chat.z.ai`         | Yes            | Yes    | `N`                 | `thinking`, `search`, `advanced_search`   |
 | `qwen`      | `chat.qwen.ai`      | Yes            | Yes    | `N`                 | None exposed by `/thread capability`      |
-| `kimi`      | `www.kimi.com`      | Yes            | Yes    | `N`                 | None exposed by `/thread capability`      |
+| `kimi`      | `www.kimi.com`      | Yes            | Yes    | `N`                 | `search`                                  |
 
 `N` and `M` are one-based positions in the menus visible to the current account. They are not stable model identifiers. Provider experiments, subscription state, and regional differences can change both menu order and capability availability.
 
@@ -71,7 +71,7 @@ List capabilities on the active thread:
 /thread capability
 ```
 
-DeepSeek and GLM expose toggle-style controls:
+DeepSeek, GLM, and Kimi expose toggle-style controls:
 
 ```text
 /thread capability thinking status
@@ -80,6 +80,7 @@ DeepSeek and GLM expose toggle-style controls:
 ```
 
 `advanced_search` is GLM-only. A toggle is omitted when the current page does not expose it or exposes it as disabled.
+Kimi exposes only `search` through its current Composer toolkit.
 
 ChatGPT, Gemini, and Doubao expose action-style controls discovered from the current page:
 
@@ -88,7 +89,7 @@ ChatGPT, Gemini, and Doubao expose action-style controls discovered from the cur
 /thread capability none
 ```
 
-Action names are account- and page-dependent. `none` clears the selected action when the adapter supports clearing. Grok, Qwen, and Kimi currently return no capability controls.
+Action names are account- and page-dependent. `none` clears the selected action when the adapter supports clearing. Grok and Qwen currently return no capability controls.
 
 ## Response capture
 
