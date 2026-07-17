@@ -195,7 +195,8 @@ export async function listProviderCapabilityStates(
   if (
     provider === 'doubao' ||
     provider === 'gemini' ||
-    provider === 'chatgpt'
+    provider === 'chatgpt' ||
+    provider === 'qwen'
   ) {
     const adapter = runtime.getAdapter()
     if (!isActionCapabilityAdapter(adapter)) {
@@ -216,7 +217,8 @@ export async function executeProviderCapability(
   if (
     provider === 'doubao' ||
     provider === 'gemini' ||
-    provider === 'chatgpt'
+    provider === 'chatgpt' ||
+    provider === 'qwen'
   ) {
     return await executeActionCapability(provider, runtime, name, args)
   }
@@ -300,7 +302,7 @@ export async function executeProviderCapability(
 }
 
 async function executeActionCapability(
-  provider: 'doubao' | 'gemini' | 'chatgpt',
+  provider: 'doubao' | 'gemini' | 'chatgpt' | 'qwen',
   runtime: RuntimeCore,
   name: string,
   args: readonly string[]
