@@ -9,6 +9,7 @@ import {
   type ProviderPage,
 } from '../../src/providers/adapters/adapter-base.ts'
 import type { ThreadMcpSession } from '../../src/mcp/thread-mcp-session.ts'
+import type { ConversationHistoryResult } from '../../src/providers/conversation-history.ts'
 import type { CDPSession, Page } from 'playwright'
 import { ToolRegistry } from '../../src/tools/core/tool-registry.ts'
 
@@ -22,6 +23,8 @@ export interface FakeRuntimeOptions {
   submitUserInput?: RuntimeCore['submitUserInput']
   mcpSession?: ThreadMcpSession | null
   manualSkillNames?: readonly string[]
+  onUnexpectedPageClose?: (listener: () => void) => () => void
+  loadHistory?: RuntimeCore['loadHistory']
 }
 
 export function createPrototypeObject(prototype: object): unknown {
@@ -113,8 +116,9 @@ function normalizeProviderPage(
   return {
     close: page?.close ?? (async () => {}),
     pause: page?.pause ?? (async () => {}),
-    ...(page?.on === undefined ? {} : { on: page.on }),
-    ...(page?.off === undefined ? {} : { off: page.off }),
+    on: page?.on ?? (() => {}),
+    off: page?.off ?? (() => {}),
+    isClosed: page?.isClosed ?? (() => false),
     ...(page?.addInitScript === undefined
       ? {}
       : { addInitScript: page.addInitScript }),
@@ -192,6 +196,22 @@ class FakeRuntime extends RuntimeCore {
 
   public override async stopGeneration(): Promise<void> {
     await this.fakeOptions.stopGeneration?.()
+  }
+
+  public override onUnexpectedPageClose(listener: () => void): () => void {
+    return this.fakeOptions.onUnexpectedPageClose?.(listener) ?? (() => {})
+  }
+
+  public override async loadHistory(
+    options: Parameters<RuntimeCore['loadHistory']>[0] = {}
+  ): Promise<ConversationHistoryResult> {
+    return (
+      (await this.fakeOptions.loadHistory?.(options)) ?? {
+        messages: [],
+        complete: true,
+        warning: null,
+      }
+    )
   }
 
   public override async close(): Promise<void> {
