@@ -193,6 +193,7 @@ test('ThreadCommand open forwards supported provider models', async () => {
   await ThreadCommand.execute(context, ['open', 'doubao', '3'])
   await ThreadCommand.execute(context, ['open', 'grok'])
   await ThreadCommand.execute(context, ['open', 'glm', '2'])
+  await ThreadCommand.execute(context, ['open', 'kimi', '1'])
 
   assert.deepEqual(createdThreads, [
     { provider: 'gemini', model: '3+extended' },
@@ -201,6 +202,7 @@ test('ThreadCommand open forwards supported provider models', async () => {
     { provider: 'doubao', model: '3' },
     { provider: 'grok', model: null },
     { provider: 'glm', model: '2' },
+    { provider: 'kimi', model: '1' },
   ])
 })
 

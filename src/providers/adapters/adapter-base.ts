@@ -56,6 +56,9 @@ function isCapturedFetchEntry(value: unknown): value is CapturedFetchEntry {
     (typeof value.status === 'number' || value.status === null) &&
     Array.isArray(value.chunks) &&
     value.chunks.every((chunk) => typeof chunk === 'string') &&
+    (value.requestBody === undefined ||
+      value.requestBody === null ||
+      typeof value.requestBody === 'string') &&
     typeof value.done === 'boolean' &&
     (typeof value.error === 'string' || value.error === null)
   )
@@ -283,6 +286,7 @@ export interface CapturedFetchEntry {
   id: number
   url: string
   method: string
+  requestBody?: string | null
   status: number | null
   chunks: string[]
   done: boolean
@@ -319,6 +323,21 @@ const FETCH_CAPTURE_INIT_SCRIPT = String.raw`
     const registerEntry = (entry) => {
       globalObject.__portalFetchCaptureEntries?.push(entry);
       return entry;
+    };
+
+    const readRequestBody = (body) => {
+      if (typeof body === 'string') {
+        return body;
+      }
+      if (body instanceof ArrayBuffer) {
+        return new TextDecoder('utf-8').decode(new Uint8Array(body));
+      }
+      if (ArrayBuffer.isView(body)) {
+        return new TextDecoder('utf-8').decode(
+          new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
+        );
+      }
+      return null;
     };
 
     globalObject.__portalGetFetchCaptureEntries = (startIndex = 0) => {
@@ -375,12 +394,14 @@ const FETCH_CAPTURE_INIT_SCRIPT = String.raw`
         (requestLike instanceof Request ? requestLike.method : null) ??
         'GET'
       ).toUpperCase();
+      const requestBody = readRequestBody(init?.body);
 
       const response = await globalObject.__portalOriginalFetch(...args);
       const entry = registerEntry({
         id: globalObject.__portalFetchCaptureNextEntryId,
         url,
         method,
+        requestBody,
         status: Number.isFinite(response.status) ? response.status : null,
         chunks: [],
         done: false,
@@ -466,6 +487,7 @@ const FETCH_CAPTURE_INIT_SCRIPT = String.raw`
           id: globalObject.__portalFetchCaptureNextEntryId,
           url: this.__portalUrl ?? '',
           method: this.__portalMethod ?? 'GET',
+          requestBody: readRequestBody(body),
           status: null,
           chunks: [],
           done: false,
@@ -873,6 +895,7 @@ export abstract class ProviderAdapter<
             id: number
             url: string
             method: string
+            requestBody?: string | null
             status: number | null
             chunks: string[]
             done: boolean

@@ -120,7 +120,14 @@ function renderThreadHelp(context: CliCommandContext): void {
 }
 
 function isSupportedProviderModel(
-  provider: 'chatgpt' | 'deepseek' | 'doubao' | 'gemini' | 'grok' | 'glm',
+  provider:
+    | 'chatgpt'
+    | 'deepseek'
+    | 'doubao'
+    | 'gemini'
+    | 'grok'
+    | 'glm'
+    | 'kimi',
   model: string
 ): boolean {
   const normalized = model.trim().toLowerCase()
