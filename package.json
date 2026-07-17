@@ -52,7 +52,7 @@
     "commander": "^14.0.3",
     "fastify": "^5.10.0",
     "fs-native-extensions": "1.5.0",
-    "ink": "github:kabxx/ink4portal#5cae5492d8d26162225612af06abab23ce9a3bbd",
+    "ink": "git+https://github.com/kabxx/ink4portal.git#3764659a0965c9289ad33814449e3cdf805fac9d",
     "koffi": "^3.0.2",
     "markdansi": "github:kabxx/Markdansi4portal#c075195137fbf91b9d610543a999bf5913730859",
     "node-unrar-js": "^2.0.2",
