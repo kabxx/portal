@@ -66,6 +66,14 @@ function createPatchFrame(operations: readonly unknown[]): string {
   })
 }
 
+function createEntityMarker(
+  type: string,
+  name: string,
+  disambiguation: string
+): string {
+  return `\uE200entity\uE202${JSON.stringify([type, name, disambiguation])}\uE201`
+}
+
 test('ChatGPT HTTP parser reads a sanitized JSON response', () => {
   const raw = JSON.stringify({
     conversation_id: 'conversation-1',
@@ -87,6 +95,90 @@ test('ChatGPT HTTP parser reads a sanitized JSON response', () => {
     text: 'hello',
     isFinished: true,
   })
+})
+
+test('ChatGPT HTTP parser renders entity markers as their display names', () => {
+  const raw = JSON.stringify({
+    conversation_id: 'conversation-1',
+    current_node: 'node-2',
+    mapping: {
+      'node-2': {
+        message: createAssistantMessage({
+          id: 'message-1',
+          text: `网页显示的是${createEntityMarker(
+            'known_celebrity',
+            '蔡徐坤',
+            'Chinese singer'
+          )}。`,
+          finished: true,
+        }),
+      },
+    },
+  })
+
+  assert.equal(parseChatGptHttpResponse(raw)?.text, '网页显示的是蔡徐坤。')
+})
+
+test('ChatGPT HTTP SSE parser renders an entity marker split across deltas', () => {
+  const marker = createEntityMarker(
+    'known_celebrity',
+    '蔡徐坤',
+    'Chinese singer'
+  )
+  const splitAt = Math.floor(marker.length / 2)
+  const raw = [
+    `data: ${JSON.stringify({
+      v: {
+        message: createAssistantMessage({
+          id: 'message-1',
+          text: '网页显示的是',
+        }),
+      },
+      conversation_id: 'conversation-1',
+    })}`,
+    `data: ${JSON.stringify({
+      p: '/message/content/parts/0',
+      o: 'append',
+      v: marker.slice(0, splitAt),
+    })}`,
+    `data: ${JSON.stringify({
+      o: 'patch',
+      v: [
+        {
+          p: '/message/content/parts/0',
+          o: 'append',
+          v: `${marker.slice(splitAt)}。`,
+        },
+        { p: '/message/end_turn', o: 'replace', v: true },
+      ],
+    })}`,
+  ].join('\n')
+
+  assert.equal(parseChatGptHttpResponse(raw)?.text, '网页显示的是蔡徐坤。')
+})
+
+test('ChatGPT WebSocket parser renders multiple escaped entity markers', () => {
+  const first = createEntityMarker(
+    'known_celebrity',
+    '蔡"徐"坤',
+    'Chinese singer'
+  )
+  const second = createEntityMarker(
+    'known_celebrity',
+    '周杰伦',
+    'Taiwanese musician'
+  )
+  const parsed = parseChatGptWebSocketFrames([
+    createInitialMessageFrame({ id: 'message-1', text: '嘉宾：' }),
+    createEncodedFrame('delta', {
+      p: '/message/content/parts/0',
+      o: 'append',
+      v: `${first}、${second}`,
+    }),
+    createPatchFrame([{ p: '/message/end_turn', o: 'replace', v: true }]),
+  ])
+
+  assert.equal(parsed?.text, '嘉宾：蔡"徐"坤、周杰伦')
 })
 
 test('ChatGPT HTTP parser reads the current SSE conversation sample', () => {
