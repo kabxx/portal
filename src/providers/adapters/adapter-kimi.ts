@@ -31,6 +31,13 @@ const KIMI_MODEL_TRIGGER_SELECTOR = '.chat-editor .current-model'
 const KIMI_MODEL_MENU_SELECTOR = '.models-popover'
 const KIMI_MODEL_ITEM_SELECTOR = '.models-popover .model-item'
 const KIMI_TOOLKIT_TRIGGER_SELECTOR = '.chat-editor .toolkit-trigger-btn'
+const KIMI_TOOLKIT_POPOVER_SELECTOR = '.toolkit-popover'
+const KIMI_SEARCH_ITEM_SELECTOR =
+  '.toolkit-popover .toolkit-item:has(svg[name="InternetOn"])'
+const KIMI_SEARCH_POPOVER_SELECTOR = '.connect-popover'
+const KIMI_SEARCH_OPTION_SELECTOR = '.connect-popover .connect-item'
+const KIMI_SELECTED_OPTION_ICON_SELECTOR = 'svg[name="Check"]'
+const KIMI_SEARCH_STORAGE_KEY = 'selectSearch'
 const KIMI_FILE_INPUT_SELECTOR = '.toolkit-popover input[type="file"]'
 const KIMI_FILE_CARD_SELECTOR = '.chat-editor .file-card-container'
 const KIMI_SIGNED_OUT_SELECTOR = 'button.next-sidebar-history-list__login'
@@ -41,6 +48,10 @@ const KIMI_HISTORY_REQUEST_PATH =
 const KIMI_USER_REQUEST_PATH = '/api/user'
 const KIMI_HISTORY_PAGE_SIZE = 100
 const KIMI_FILE_UPLOAD_TIMEOUT_MS = 30_000
+const KIMI_CAPABILITY_UI_TIMEOUT_MS = 5_000
+
+export type KimiToggleCapability = 'search'
+export type KimiToggleState = 'on' | 'off'
 
 type KimiAuthState = 'pending' | 'signed_in' | 'signed_out'
 
@@ -463,6 +474,261 @@ export class KimiAdapter extends ProviderAdapter {
     } finally {
       await this.page.keyboard.press('Escape').catch(() => {})
     }
+  }
+
+  private async closeToolkitMenu(): Promise<void> {
+    const isClosed = async () => {
+      for (const selector of [
+        KIMI_TOOLKIT_POPOVER_SELECTOR,
+        KIMI_SEARCH_POPOVER_SELECTOR,
+      ]) {
+        const popovers = this.page.locator(selector)
+        if (
+          (await popovers.count().catch(() => 0)) > 0 &&
+          (await popovers
+            .first()
+            .isVisible()
+            .catch(() => false))
+        ) {
+          return false
+        }
+      }
+      return true
+    }
+    await this.page.keyboard.press('Escape').catch(() => {})
+    const composers = this.page.locator(KIMI_INPUT_SELECTOR)
+    if (
+      (await composers.count().catch(() => 0)) === 1 &&
+      (await composers
+        .first()
+        .isVisible()
+        .catch(() => false))
+    ) {
+      await composers.first().click()
+    }
+    await waitAsync(isClosed, { timeoutMs: KIMI_CAPABILITY_UI_TIMEOUT_MS })
+    await delayAsync(100)
+  }
+
+  private async openSearchOptions(): Promise<Locator | null> {
+    await this.closeToolkitMenu()
+    const trigger = this.page.locator(KIMI_TOOLKIT_TRIGGER_SELECTOR)
+    if ((await trigger.count().catch(() => 0)) !== 1) return null
+    const triggerTarget = trigger.first()
+    if (
+      !(await triggerTarget.isVisible().catch(() => false)) ||
+      !(await triggerTarget.isEnabled().catch(() => false))
+    ) {
+      return null
+    }
+    await triggerTarget.click()
+    await waitAsync(
+      async () => {
+        const popovers = this.page.locator(KIMI_TOOLKIT_POPOVER_SELECTOR)
+        return (
+          (await popovers.count().catch(() => 0)) === 1 &&
+          (await popovers
+            .first()
+            .isVisible()
+            .catch(() => false))
+        )
+      },
+      {
+        timeoutMs: KIMI_CAPABILITY_UI_TIMEOUT_MS,
+        onTimeout: async () => {},
+      }
+    )
+    const searchItems = this.page.locator(KIMI_SEARCH_ITEM_SELECTOR)
+    if ((await searchItems.count().catch(() => 0)) !== 1) return null
+    const searchItem = searchItems.first()
+    if (
+      !(await searchItem.isVisible().catch(() => false)) ||
+      !(await searchItem.isEnabled().catch(() => false))
+    ) {
+      return null
+    }
+    await searchItem.click()
+    await waitAsync(
+      async () => {
+        const popovers = this.page.locator(KIMI_SEARCH_POPOVER_SELECTOR)
+        return (
+          (await popovers.count().catch(() => 0)) === 1 &&
+          (await popovers
+            .first()
+            .isVisible()
+            .catch(() => false))
+        )
+      },
+      {
+        timeoutMs: KIMI_CAPABILITY_UI_TIMEOUT_MS,
+        onTimeout: async () => {},
+      }
+    )
+    const options = this.page.locator(KIMI_SEARCH_OPTION_SELECTOR)
+    if ((await options.count().catch(() => 0)) !== 2) return null
+    for (let index = 0; index < 2; index += 1) {
+      const option = options.nth(index)
+      if (
+        !(await option.isVisible().catch(() => false)) ||
+        !(await option.isEnabled().catch(() => false))
+      ) {
+        return null
+      }
+    }
+    return options
+  }
+
+  private async readSearchToggleSnapshot(options: Locator): Promise<{
+    state: KimiToggleState
+    selectedOptionIndex: number
+  } | null> {
+    const selectedOptionIndexes: number[] = []
+    for (let index = 0; index < 2; index += 1) {
+      const icons = options
+        .nth(index)
+        .locator(KIMI_SELECTED_OPTION_ICON_SELECTOR)
+      const iconCount = await icons.count().catch(() => 0)
+      if (iconCount > 1) return null
+      if (
+        iconCount === 1 &&
+        (await icons
+          .first()
+          .isVisible()
+          .catch(() => false))
+      ) {
+        selectedOptionIndexes.push(index)
+      }
+    }
+    if (selectedOptionIndexes.length !== 1) return null
+
+    const storedState = await this.page
+      .evaluate(
+        (storageKey) => window.localStorage.getItem(storageKey),
+        KIMI_SEARCH_STORAGE_KEY
+      )
+      .catch(() => null)
+    if (storedState !== 'true' && storedState !== 'false') return null
+    return {
+      state: storedState === 'true' ? 'on' : 'off',
+      selectedOptionIndex: selectedOptionIndexes[0]!,
+    }
+  }
+
+  private createSearchStateMissingError(action: 'searchStatus' | 'searchSet') {
+    return new ProviderAdapterError(
+      action,
+      'Kimi search did not expose one verifiable selected state.',
+      {
+        kind: 'ui',
+        recovery: 'none',
+        retryable: false,
+        detailCode: 'kimi_search_state_missing',
+      }
+    )
+  }
+
+  public async hasToggleCapability(capability: string): Promise<boolean> {
+    if (capability !== 'search') return false
+    return await this.wrapAdapterActionErrorAsync(
+      'searchAvailable',
+      async () => {
+        try {
+          const options = await this.openSearchOptions()
+          return (
+            options !== null &&
+            (await this.readSearchToggleSnapshot(options)) !== null
+          )
+        } finally {
+          await this.closeToolkitMenu()
+        }
+      }
+    )
+  }
+
+  public async getToggleState(capability: string): Promise<KimiToggleState> {
+    if (capability !== 'search') {
+      throw new ProviderAdapterUnsupportedError(
+        'searchStatus',
+        'Kimi search capability is not available on this page.'
+      )
+    }
+    return await this.wrapAdapterActionErrorAsync('searchStatus', async () => {
+      try {
+        const options = await this.openSearchOptions()
+        if (options === null) {
+          throw new ProviderAdapterUnsupportedError(
+            'searchStatus',
+            'Kimi search capability is not available on this page.'
+          )
+        }
+        const snapshot = await this.readSearchToggleSnapshot(options)
+        if (snapshot === null) {
+          throw this.createSearchStateMissingError('searchStatus')
+        }
+        return snapshot.state
+      } finally {
+        await this.closeToolkitMenu()
+      }
+    })
+  }
+
+  public async setToggleState(
+    capability: string,
+    targetState: KimiToggleState
+  ): Promise<KimiToggleState> {
+    if (capability !== 'search') {
+      throw new ProviderAdapterUnsupportedError(
+        'searchSet',
+        `Kimi does not support the ${capability} capability.`
+      )
+    }
+    return await this.wrapAdapterActionErrorAsync('searchSet', async () => {
+      try {
+        const options = await this.openSearchOptions()
+        if (options === null) {
+          throw new ProviderAdapterUnsupportedError(
+            'searchSet',
+            'Kimi search capability is not available on this page.'
+          )
+        }
+        const currentSnapshot = await this.readSearchToggleSnapshot(options)
+        if (currentSnapshot === null) {
+          throw this.createSearchStateMissingError('searchSet')
+        }
+        if (currentSnapshot.state === targetState) return currentSnapshot.state
+
+        const targetOptionIndex =
+          currentSnapshot.selectedOptionIndex === 0 ? 1 : 0
+        await options.nth(targetOptionIndex).click()
+        await waitAsync(
+          async () => {
+            const snapshot = await this.readSearchToggleSnapshot(options)
+            return (
+              snapshot?.state === targetState &&
+              snapshot.selectedOptionIndex === targetOptionIndex
+            )
+          },
+          {
+            timeoutMs: KIMI_CAPABILITY_UI_TIMEOUT_MS,
+            onTimeout: async () => {
+              throw new ProviderAdapterError(
+                'searchSet',
+                `Kimi did not verify search as ${targetState}.`,
+                {
+                  kind: 'ui',
+                  recovery: 'none',
+                  retryable: false,
+                  detailCode: 'kimi_search_state_unverified',
+                }
+              )
+            },
+          }
+        )
+        return targetState
+      } finally {
+        await this.closeToolkitMenu()
+      }
+    })
   }
 
   private async getUniqueVisibleLocator(
