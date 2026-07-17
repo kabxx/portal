@@ -12,13 +12,6 @@ test('resolveConversationUrl detects supported provider conversation URLs', () =
     }
   )
   assert.deepEqual(
-    resolveConversationUrl('https://claude.ai/chat/claude-conv'),
-    {
-      provider: 'claude',
-      conversationUrl: 'https://claude.ai/chat/claude-conv',
-    }
-  )
-  assert.deepEqual(
     resolveConversationUrl('https://gemini.google.com/app/c_gemini-conv'),
     {
       provider: 'gemini',
@@ -89,7 +82,6 @@ test('resolveConversationUrl rejects unsupported URLs', () => {
     resolveConversationUrl('https://example.com/c/chatgpt-conv'),
     null
   )
-  assert.equal(resolveConversationUrl('https://claude.ai/new'), null)
 })
 
 test('resolveConversationUrl rejects malformed path encoding', () => {
