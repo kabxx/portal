@@ -71,11 +71,8 @@ test('McpCallTool returns structured validation and availability errors', async 
     'mcp_call_tool requires a non-empty string params.tool'
   )
   assertToolError(
-    await tool.call({
-      server: 'server',
-      tool: 'echo',
-      arguments: null as never,
-    }),
+    // @ts-expect-error Deliberately exercises runtime validation of null arguments.
+    await tool.call({ server: 'server', tool: 'echo', arguments: null }),
     'mcp_call_tool requires an object params.arguments'
   )
   assertToolError(
@@ -92,8 +89,8 @@ test('McpCallTool forwards input and cancellation options unchanged', async () =
     arguments: { text: 'hello', nested: { enabled: true } },
   }
   const options = { signal: controller.signal }
-  let receivedInput: typeof input | undefined
-  let receivedOptions: typeof options | undefined
+  let receivedInput: unknown
+  let receivedOptions: unknown
   const expected: ToolOutput = {
     outcome: 'success',
     result: { content: [{ type: 'text', text: 'hello' }] },
@@ -101,8 +98,8 @@ test('McpCallTool forwards input and cancellation options unchanged', async () =
   }
   const tool = new McpCallTool(createProviderAdapterStub(), {
     mcpCallTool: async (callInput, callOptions) => {
-      receivedInput = callInput as typeof input
-      receivedOptions = callOptions as typeof options
+      receivedInput = callInput
+      receivedOptions = callOptions
       return expected
     },
   })

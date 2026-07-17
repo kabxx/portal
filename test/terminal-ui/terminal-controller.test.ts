@@ -742,21 +742,27 @@ test('TerminalController isolates stale live events by tool call id', () => {
   }
 })
 
-test('stale command timers cannot mutate a replacement live bubble', () => {
+test('stale command timers cannot mutate a replacement live bubble', (t) => {
   const originalNow = Date.now
   const originalSetTimeout = globalThis.setTimeout
-  const originalClearTimeout = globalThis.clearTimeout
-  const callbacks = new Map<number, () => void>()
-  let nextTimerId = 1
+  const callbacks = new Map<ReturnType<typeof setTimeout>, () => void>()
   let emitted = 0
 
   Date.now = () => 1000
-  globalThis.setTimeout = ((callback: () => void) => {
-    const id = nextTimerId++
-    callbacks.set(id, callback)
-    return id
-  }) as typeof setTimeout
-  globalThis.clearTimeout = () => {}
+  t.mock.method(
+    globalThis,
+    'setTimeout',
+    (
+      callback: (...args: unknown[]) => void,
+      _delay?: number,
+      ...args: unknown[]
+    ) => {
+      const handle = originalSetTimeout(() => {}, 0)
+      callbacks.set(handle, () => callback(...args))
+      return handle
+    }
+  )
+  t.mock.method(globalThis, 'clearTimeout', () => {})
 
   try {
     const manager = new ThreadManager()
@@ -784,7 +790,7 @@ test('stale command timers cannot mutate a replacement live bubble', () => {
       { type: 'output', stream: 'stdout', text: 'first output' },
       'first-call'
     )
-    const staleTimer = callbacks.get(1)
+    const staleTimer = [...callbacks.values()][0]
     assert.ok(staleTimer)
 
     ui.renderToolCall(thread, 'run_command', '{}', 'second-call')
@@ -800,7 +806,7 @@ test('stale command timers cannot mutate a replacement live bubble', () => {
       { type: 'output', stream: 'stdout', text: 'second output' },
       'second-call'
     )
-    const currentTimer = callbacks.get(2)
+    const currentTimer = [...callbacks.values()][1]
     assert.ok(currentTimer)
 
     const beforeStaleTimer = emitted
@@ -813,24 +819,28 @@ test('stale command timers cannot mutate a replacement live bubble', () => {
     assert.equal(ui.getState().liveCommand?.toolCallId, 'second-call')
   } finally {
     Date.now = originalNow
-    globalThis.setTimeout = originalSetTimeout
-    globalThis.clearTimeout = originalClearTimeout
   }
 })
 
-test('stale spawn heartbeats cannot reschedule after replacement', () => {
+test('stale spawn heartbeats cannot reschedule after replacement', (t) => {
   const originalSetTimeout = globalThis.setTimeout
-  const originalClearTimeout = globalThis.clearTimeout
-  const callbacks = new Map<number, () => void>()
-  let nextTimerId = 1
+  const callbacks = new Map<ReturnType<typeof setTimeout>, () => void>()
   let emitted = 0
 
-  globalThis.setTimeout = ((callback: () => void) => {
-    const id = nextTimerId++
-    callbacks.set(id, callback)
-    return id
-  }) as typeof setTimeout
-  globalThis.clearTimeout = () => {}
+  t.mock.method(
+    globalThis,
+    'setTimeout',
+    (
+      callback: (...args: unknown[]) => void,
+      _delay?: number,
+      ...args: unknown[]
+    ) => {
+      const handle = originalSetTimeout(() => {}, 0)
+      callbacks.set(handle, () => callback(...args))
+      return handle
+    }
+  )
+  t.mock.method(globalThis, 'clearTimeout', () => {})
 
   try {
     const manager = new ThreadManager()
@@ -852,7 +862,7 @@ test('stale spawn heartbeats cannot reschedule after replacement', () => {
       { type: 'start', startedAt: 1000 },
       'first-spawn'
     )
-    const staleHeartbeat = callbacks.get(1)
+    const staleHeartbeat = [...callbacks.values()][0]
     assert.ok(staleHeartbeat)
 
     ui.renderToolCall(thread, 'spawn', '{}', 'second-spawn')
@@ -862,7 +872,7 @@ test('stale spawn heartbeats cannot reschedule after replacement', () => {
       { type: 'start', startedAt: 2000 },
       'second-spawn'
     )
-    const currentHeartbeat = callbacks.get(2)
+    const currentHeartbeat = [...callbacks.values()][1]
     assert.ok(currentHeartbeat)
 
     const beforeStaleHeartbeat = emitted
@@ -872,10 +882,9 @@ test('stale spawn heartbeats cannot reschedule after replacement', () => {
 
     currentHeartbeat()
     assert.equal(emitted, beforeStaleHeartbeat + 1)
-    assert.ok(callbacks.has(3))
+    assert.equal(callbacks.size, 3)
   } finally {
-    globalThis.setTimeout = originalSetTimeout
-    globalThis.clearTimeout = originalClearTimeout
+    t.mock.restoreAll()
   }
 })
 

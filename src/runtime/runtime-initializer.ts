@@ -1,6 +1,8 @@
 import type { RuntimeCore } from './runtime-core.ts'
-import type { ProviderAdapter } from '../providers/adapters/adapter-base.ts'
-import { isProviderAdapterError } from '../providers/adapters/adapter-base.ts'
+import {
+  ProviderAdapter,
+  isProviderAdapterError,
+} from '../providers/adapters/adapter-base.ts'
 import {
   buildRuntimeRecoveryPlan,
   type RuntimeRecoveryPlan,
@@ -59,7 +61,10 @@ export async function initializeRuntimeWithLoginWait({
           throw error
         }
 
-        if (isProviderAdapterError(error) && error.adapter !== null) {
+        if (
+          isProviderAdapterError(error) &&
+          error.adapter instanceof ProviderAdapter
+        ) {
           pendingAdapter = error.adapter
           adapterInFlight = null
         }

@@ -23,11 +23,17 @@ export interface BrowserConnectionEvents {
   isConnected(): boolean
 }
 
-export interface BrowserConnector {
+export interface BrowserConnection {
+  close(): Promise<void>
+}
+
+export interface BrowserConnector<
+  TBrowser extends BrowserConnection = Browser,
+> {
   connectOverCDP(
     endpoint: string,
     options: { timeout: number }
-  ): Promise<Browser>
+  ): Promise<TBrowser>
 }
 
 export interface BrowserProcessFailureMonitor {
@@ -272,13 +278,13 @@ export async function waitForBrowserDevToolsEndpoint(
   })
 }
 
-export async function connectBrowserOverCDP(
-  connector: BrowserConnector,
+export async function connectBrowserOverCDP<TBrowser extends BrowserConnection>(
+  connector: BrowserConnector<TBrowser>,
   endpoint: string,
   startupDeadline: number,
   signal?: AbortSignal,
   processFailure?: Promise<never>
-): Promise<Browser> {
+): Promise<TBrowser> {
   throwIfAborted(signal)
   const remainingMs = startupDeadline - Date.now()
   if (remainingMs <= 0) {

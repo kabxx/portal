@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import type { BrowserContext } from 'playwright'
 
 import { RuntimeCore } from '../../src/runtime/runtime-core.ts'
 import {
@@ -33,6 +32,11 @@ import {
 } from '../../src/hooks/hook-config.ts'
 import { HookDispatcher } from '../../src/hooks/hook-dispatcher.ts'
 import type { HookExecutionScope } from '../../src/hooks/hook-types.ts'
+import { createBrowserContextStub } from '../helpers/fakes.ts'
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
 class FakeAdapter extends ProviderAdapter {
   public readonly attachedTexts: string[] = []
@@ -43,7 +47,7 @@ class FakeAdapter extends ProviderAdapter {
     private readonly responses: string[],
     timings?: ProviderTimingOptions
   ) {
-    super({} as BrowserContext, timings === undefined ? {} : { timings })
+    super(createBrowserContextStub(), timings === undefined ? {} : { timings })
   }
 
   public async restore(): Promise<void> {
@@ -307,11 +311,11 @@ test('RuntimeCore blocks a tool through tool.before and feeds HOOK_BLOCKED back'
   })
 
   assert.deepEqual(hookTargetInputs, [])
-  assert.equal(
-    (metadata[0] as { result: { result: { code: string } } }).result.result
-      .code,
-    'HOOK_BLOCKED'
-  )
+  const firstMetadata = metadata[0]
+  assert.ok(isRecord(firstMetadata))
+  assert.ok(isRecord(firstMetadata.result))
+  assert.ok(isRecord(firstMetadata.result.result))
+  assert.equal(firstMetadata.result.result.code, 'HOOK_BLOCKED')
   assert.match(adapter.attachedTexts[1] ?? '', /"code": "HOOK_BLOCKED"/)
 })
 

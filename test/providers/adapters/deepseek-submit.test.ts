@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { ProviderAdapterUnsupportedError } from '../../../src/providers/adapters/adapter-base.ts'
 import { DeepSeekAdapter } from '../../../src/providers/adapters/adapter-deepseek.ts'
 import { isAbortError } from '../../../src/runtime/runtime-cancellation.ts'
-import { createPrototypeObject } from '../../helpers/fakes.ts'
+import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 type DeepSeekAdapterHarness = Pick<DeepSeekAdapter, keyof DeepSeekAdapter> & {
   page: unknown
@@ -19,9 +19,28 @@ type DeepSeekAdapterHarness = Pick<DeepSeekAdapter, keyof DeepSeekAdapter> & {
 }
 
 function createTestDeepSeekAdapter(): DeepSeekAdapterHarness {
-  return createPrototypeObject(
-    DeepSeekAdapter.prototype
-  ) as DeepSeekAdapterHarness
+  const adapter = new DeepSeekAdapter(createBrowserContextStub())
+  const candidate: object = adapter
+  if (
+    !('readCurrentStreamedResponseText' in candidate) ||
+    typeof candidate.readCurrentStreamedResponseText !== 'function'
+  ) {
+    throw new Error('DeepSeek adapter is missing its streamed response reader.')
+  }
+  return Object.assign(adapter, {
+    page: undefined,
+    conversationIdVal: null,
+    getCapturedFetchEntryCount: async (): Promise<number> => {
+      throw new Error('Captured fetch count was not configured for this test.')
+    },
+    getLatestCapturedFetchBody: async (): Promise<string | null> => {
+      throw new Error('Captured fetch body was not configured for this test.')
+    },
+    getSubmitRequestStartGraceMs: (): number => 30_000,
+    getSubmitBlockedWarningIntervalMs: (): number => 30_000,
+    getSubmitResponseTimeoutMs: (): number => 30_000,
+    readCurrentStreamedResponseText: candidate.readCurrentStreamedResponseText,
+  })
 }
 
 test('DeepSeekAdapter.submit returns a captured finished response without waiting for response.text()', async () => {

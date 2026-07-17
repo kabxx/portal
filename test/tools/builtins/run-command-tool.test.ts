@@ -88,17 +88,31 @@ function createRunCommandTool(): RunCommandTool {
   })
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function requireRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(`Expected ${label} to be an object.`)
+  }
+  return value
+}
+
+function requireString(value: unknown, label: string): string {
+  if (typeof value !== 'string') {
+    throw new Error(`Expected ${label} to be a string.`)
+  }
+  return value
+}
+
 test('RunCommandTool does not advertise a default timeout', () => {
   const tool = createRunCommandTool()
-  const schema = tool.metadata.inputSchema as {
-    properties?: {
-      timeoutMs?: {
-        default?: unknown
-      }
-    }
-  }
+  const schema = requireRecord(tool.metadata.inputSchema, 'input schema')
+  const properties = requireRecord(schema.properties, 'schema properties')
+  const timeout = requireRecord(properties.timeoutMs, 'timeout schema')
 
-  assert.equal(schema.properties?.timeoutMs?.default, undefined)
+  assert.equal(timeout.default, undefined)
   assert.match(tool.prompt, /valid UTF-8 text/i)
   if (getDefaultShell() === 'powershell') {
     assert.match(tool.prompt, /-Encoding UTF8/)
@@ -127,14 +141,10 @@ test(
       command: "Write-Output '中文测试'",
       shell: 'powershell',
     })
-    const result = output.result as {
-      exitCode: number | null
-      stdout: string
-      stderr: string
-    }
+    const result = output.result
 
     assert.equal(result.exitCode, 0)
-    assert.equal(result.stdout.trim(), '中文测试')
+    assert.equal(requireString(result.stdout, 'stdout').trim(), '中文测试')
     assert.equal(result.stderr, '')
     assert.equal(windowsCodePage(), codePageBefore)
   }
@@ -149,20 +159,17 @@ test(
       command: "Write-Error '中文错误'",
       shell: 'powershell',
     })
-    const result = output.result as {
-      exitCode: number | null
-      stderr: string
-    }
+    const result = output.result
 
     assert.equal(result.exitCode, 1)
-    assert.match(result.stderr, /中文错误/)
+    assert.match(requireString(result.stderr, 'stderr'), /中文错误/)
   }
 )
 
 test('RunCommandTool rejects non-UTF-8 stdout and stderr', async () => {
   const tool = createRunCommandTool()
 
-  for (const stream of ['stdout', 'stderr'] as const) {
+  for (const stream of ['stdout', 'stderr']) {
     const command =
       os.platform() === 'win32'
         ? `[Console]::OpenStandard${stream === 'stdout' ? 'Output' : 'Error'}().WriteByte(255)`
@@ -181,33 +188,24 @@ test('RunCommandTool rejects non-UTF-8 stdout and stderr', async () => {
   }
 })
 
-test('RunCommandTool does not register a timeout when timeoutMs is omitted', async () => {
+test('RunCommandTool does not register a timeout when timeoutMs is omitted', async (t) => {
   const tool = createRunCommandTool()
-  const originalSetTimeout = globalThis.setTimeout
-  let timerCount = 0
-
-  globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
-    timerCount += 1
-    return originalSetTimeout(...args)
-  }) as typeof setTimeout
+  const setTimeoutMock = t.mock.method(globalThis, 'setTimeout')
 
   try {
     const output = await tool.call({
       command: echoCommand(),
       shell: testShell(),
     })
-    const result = output.result as {
-      stdout: string
-      timedOut: boolean
-    }
+    const result = output.result
 
-    assert.equal(result.stdout.trim(), 'ok')
+    assert.equal(requireString(result.stdout, 'stdout').trim(), 'ok')
     assert.equal(result.timedOut, false)
     assert.equal(output.outcome, 'success')
     assert.match(output.displayText, /exitCode: 0/)
-    assert.equal(timerCount, 0)
+    assert.equal(setTimeoutMock.mock.callCount(), 0)
   } finally {
-    globalThis.setTimeout = originalSetTimeout
+    setTimeoutMock.mock.restore()
   }
 })
 
@@ -222,15 +220,9 @@ test('RunCommandTool marks nonzero command exits as errors', async () => {
   assert.equal(output.result.exitCode, 2)
 })
 
-test('RunCommandTool registers a timeout when timeoutMs is provided', async () => {
+test('RunCommandTool registers a timeout when timeoutMs is provided', async (t) => {
   const tool = createRunCommandTool()
-  const originalSetTimeout = globalThis.setTimeout
-  let timerCount = 0
-
-  globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
-    timerCount += 1
-    return originalSetTimeout(...args)
-  }) as typeof setTimeout
+  const setTimeoutMock = t.mock.method(globalThis, 'setTimeout')
 
   try {
     const output = await tool.call({
@@ -238,16 +230,13 @@ test('RunCommandTool registers a timeout when timeoutMs is provided', async () =
       shell: testShell(),
       timeoutMs: 1000,
     })
-    const result = output.result as {
-      stdout: string
-      timedOut: boolean
-    }
+    const result = output.result
 
-    assert.equal(result.stdout.trim(), 'ok')
+    assert.equal(requireString(result.stdout, 'stdout').trim(), 'ok')
     assert.equal(result.timedOut, false)
-    assert.equal(timerCount, 1)
+    assert.equal(setTimeoutMock.mock.callCount(), 1)
   } finally {
-    globalThis.setTimeout = originalSetTimeout
+    setTimeoutMock.mock.restore()
   }
 })
 
@@ -352,10 +341,7 @@ test('RunCommandTool returns an error result when its job is stopped', async () 
 
     const output = await running
     assert.equal(output.outcome, 'error')
-    assert.equal(
-      (output.result as { terminationReason: string }).terminationReason,
-      'user'
-    )
+    assert.equal(output.result.terminationReason, 'user')
   } finally {
     await manager.stopAll()
     rmSync(tempDir, { recursive: true, force: true })

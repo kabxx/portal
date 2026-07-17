@@ -1,5 +1,4 @@
 import Fastify, { type FastifyInstance } from 'fastify'
-import type { ServerResponse } from 'node:http'
 import { isBearerAuthenticationEnabled } from '../shared/http-auth.ts'
 import { normalizeListenerStartError } from '../shared/listener-errors.ts'
 import {
@@ -77,10 +76,19 @@ export interface ApiEvent {
 }
 
 interface Subscriber {
-  response: ServerResponse
+  response: ApiEventResponse
   heartbeat: ReturnType<typeof setInterval>
   onClose: () => void
   removed: boolean
+}
+
+interface ApiEventResponse {
+  destroyed: boolean
+  writableEnded: boolean
+  write(chunk: string): unknown
+  end(): unknown
+  once(event: 'close', listener: () => void): unknown
+  off(event: 'close', listener: () => void): unknown
 }
 
 export class ApiEventHub {
@@ -111,7 +119,7 @@ export class ApiEventHub {
     }
   }
 
-  public subscribe(threadId: string, response: ServerResponse): () => void {
+  public subscribe(threadId: string, response: ApiEventResponse): () => void {
     const subscriber = {
       response,
       onClose: () => this.remove(threadId, subscriber),

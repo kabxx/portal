@@ -1,8 +1,38 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import type { CapturedFetchEntry } from '../../../src/providers/adapters/adapter-base.ts'
 import { GlmAdapter } from '../../../src/providers/adapters/adapter-glm.ts'
-import { createPrototypeObject, setTestProperty } from '../../helpers/fakes.ts'
+import { createBrowserContextStub } from '../../helpers/fakes.ts'
+
+interface GlmHistoryPage {
+  evaluate(pageFunction: unknown): Promise<boolean>
+}
+
+class TestGlmAdapter extends GlmAdapter {
+  public constructor(
+    private readonly readEntries: (
+      predicate: (entry: CapturedFetchEntry) => boolean
+    ) => CapturedFetchEntry[]
+  ) {
+    super(createBrowserContextStub())
+  }
+
+  protected override async getCapturedHistoryEntries(
+    predicate: (entry: CapturedFetchEntry) => boolean
+  ): Promise<CapturedFetchEntry[]> {
+    return this.readEntries(predicate)
+  }
+}
+
+function installGlmHistoryPage(
+  adapter: TestGlmAdapter,
+  page: GlmHistoryPage
+): void {
+  if (!Reflect.set(adapter, 'page', page)) {
+    throw new Error('Failed to install the GLM history test page.')
+  }
+}
 
 function batchEntry(id: number, data: Record<string, unknown>) {
   return {
@@ -17,10 +47,6 @@ function batchEntry(id: number, data: Record<string, unknown>) {
 }
 
 test('GlmAdapter.loadHistory merges batches until currentId reaches the root', async () => {
-  const adapter = createPrototypeObject(GlmAdapter.prototype) as Pick<
-    GlmAdapter,
-    keyof GlmAdapter
-  >
   const metadataEntry = {
     id: 1,
     url: 'https://chat.z.ai/api/v1/chats/conversation',
@@ -47,15 +73,12 @@ test('GlmAdapter.loadHistory merges batches until currentId reaches the root', a
     }),
   ]
   let scrollCalls = 0
-  setTestProperty(
-    adapter,
-    'getCapturedHistoryEntries',
-    async (predicate: (entry: typeof metadataEntry) => boolean) =>
-      predicate(metadataEntry)
-        ? [metadataEntry]
-        : batches.slice(0, scrollCalls + 1)
+  const adapter = new TestGlmAdapter((predicate) =>
+    predicate(metadataEntry)
+      ? [metadataEntry]
+      : batches.slice(0, scrollCalls + 1)
   )
-  setTestProperty(adapter, 'page', {
+  installGlmHistoryPage(adapter, {
     evaluate: async () => {
       scrollCalls += 1
       return true

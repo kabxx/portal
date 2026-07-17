@@ -1,8 +1,34 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import type { CapturedFetchEntry } from '../../../src/providers/adapters/adapter-base.ts'
 import { DoubaoAdapter } from '../../../src/providers/adapters/adapter-doubao.ts'
-import { createPrototypeObject, setTestProperty } from '../../helpers/fakes.ts'
+import { createBrowserContextStub } from '../../helpers/fakes.ts'
+
+interface DoubaoHistoryPage {
+  evaluate(pageFunction: unknown): Promise<boolean>
+}
+
+class TestDoubaoAdapter extends DoubaoAdapter {
+  public constructor(private readonly readEntries: () => CapturedFetchEntry[]) {
+    super(createBrowserContextStub())
+  }
+
+  protected override async getCapturedHistoryEntries(): Promise<
+    CapturedFetchEntry[]
+  > {
+    return this.readEntries()
+  }
+}
+
+function installDoubaoHistoryPage(
+  adapter: TestDoubaoAdapter,
+  page: DoubaoHistoryPage
+): void {
+  if (!Reflect.set(adapter, 'page', page)) {
+    throw new Error('Failed to install the Doubao history test page.')
+  }
+}
 
 function historyPage(index: number, hasMore: boolean): string {
   return JSON.stringify({
@@ -25,10 +51,6 @@ function historyPage(index: number, hasMore: boolean): string {
 }
 
 test('DoubaoAdapter.loadHistory continues beyond three pages until has_more is false', async () => {
-  const adapter = createPrototypeObject(DoubaoAdapter.prototype) as Pick<
-    DoubaoAdapter,
-    keyof DoubaoAdapter
-  >
   const entries = Array.from({ length: 5 }, (_, index) => ({
     id: index + 1,
     url: 'https://www.doubao.com/im/chain/single',
@@ -39,10 +61,8 @@ test('DoubaoAdapter.loadHistory continues beyond three pages until has_more is f
     error: null,
   }))
   let scrollCalls = 0
-  setTestProperty(adapter, 'getCapturedHistoryEntries', async () =>
-    entries.slice(0, scrollCalls + 1)
-  )
-  setTestProperty(adapter, 'page', {
+  const adapter = new TestDoubaoAdapter(() => entries.slice(0, scrollCalls + 1))
+  installDoubaoHistoryPage(adapter, {
     evaluate: async () => {
       scrollCalls += 1
       return true

@@ -30,24 +30,27 @@ interface SkillRegistryDocumentEntry {
   enabled: unknown
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function parseSkillRegistryEntries(
   value: unknown
 ): SkillRegistryDocumentEntry[] {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error('skills must be an object.')
   }
   return Object.entries(value).map(([name, entry]) => {
-    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+    if (!isRecord(entry)) {
       throw new Error(`skills.${name} must be an object.`)
     }
-    const record = entry as Record<string, unknown>
-    if (typeof record.directory !== 'string') {
+    if (!('directory' in entry) || typeof entry.directory !== 'string') {
       throw new Error(`skills.${name} must have a directory.`)
     }
     return {
       name,
-      directory: record.directory,
-      enabled: record.enabled,
+      directory: entry.directory,
+      enabled: 'enabled' in entry ? entry.enabled : undefined,
     }
   })
 }

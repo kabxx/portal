@@ -1,22 +1,43 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { ProviderAdapterError } from '../../../src/providers/adapters/adapter-base.ts'
+import {
+  ProviderAdapter,
+  ProviderAdapterError,
+  type ProviderBrowserContext,
+} from '../../../src/providers/adapters/adapter-base.ts'
 import { ChatGPTAdapter } from '../../../src/providers/adapters/adapter-chatgpt.ts'
 import { GeminiAdapter } from '../../../src/providers/adapters/adapter-gemini.ts'
 import { DeepSeekAdapter } from '../../../src/providers/adapters/adapter-deepseek.ts'
 import { DoubaoAdapter } from '../../../src/providers/adapters/adapter-doubao.ts'
 import { GrokAdapter } from '../../../src/providers/adapters/adapter-grok.ts'
 import { GlmAdapter } from '../../../src/providers/adapters/adapter-glm.ts'
-import { createPrototypeObject } from '../../helpers/fakes.ts'
+import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
-type RestorableAdapter = {
-  page: unknown
-  restore(): Promise<void>
+interface RestoreTestLocator {
+  first?(): RestoreTestLocator
+  isVisible(): Promise<boolean>
+  isEnabled?(): Promise<boolean>
+  getAttribute?(name: string): Promise<string | null>
 }
 
-function createRestorableAdapter(prototype: object): RestorableAdapter {
-  return createPrototypeObject(prototype) as RestorableAdapter
+interface RestoreTestPage {
+  goto(): Promise<void>
+  url(): string
+  getByTestId?(testId: string): RestoreTestLocator
+  getByRole?(): RestoreTestLocator
+  locator(selector: string): RestoreTestLocator
+}
+
+function createRestorableAdapter(
+  Adapter: new (context: ProviderBrowserContext) => ProviderAdapter,
+  page: RestoreTestPage
+): ProviderAdapter {
+  const adapter = new Adapter(createBrowserContextStub())
+  if (!Reflect.set(adapter, 'page', page)) {
+    throw new Error('Failed to install the provider restore test page.')
+  }
+  return adapter
 }
 
 function createMockPage({
@@ -54,11 +75,13 @@ function createMockPage({
 }
 
 test('ChatGPTAdapter.restore reports auth when login button is visible', async () => {
-  const adapter = createRestorableAdapter(ChatGPTAdapter.prototype)
-  adapter.page = createMockPage({
-    afterGotoUrl: 'https://chatgpt.com',
-    visibleByTestId: { 'login-button': true },
-  })
+  const adapter = createRestorableAdapter(
+    ChatGPTAdapter,
+    createMockPage({
+      afterGotoUrl: 'https://chatgpt.com',
+      visibleByTestId: { 'login-button': true },
+    })
+  )
 
   let capturedError: unknown
   try {
@@ -72,13 +95,15 @@ test('ChatGPTAdapter.restore reports auth when login button is visible', async (
 })
 
 test('GeminiAdapter.restore reports auth when signed-out panel is visible', async () => {
-  const adapter = createRestorableAdapter(GeminiAdapter.prototype)
-  adapter.page = createMockPage({
-    afterGotoUrl: 'https://gemini.google.com/app',
-    visibleByLocator: {
-      '[data-test-id="conversations-list-signed-out"]': true,
-    },
-  })
+  const adapter = createRestorableAdapter(
+    GeminiAdapter,
+    createMockPage({
+      afterGotoUrl: 'https://gemini.google.com/app',
+      visibleByLocator: {
+        '[data-test-id="conversations-list-signed-out"]': true,
+      },
+    })
+  )
 
   let capturedError: unknown
   try {
@@ -92,9 +117,8 @@ test('GeminiAdapter.restore reports auth when signed-out panel is visible', asyn
 })
 
 test('GeminiAdapter.restore waits for the microphone ready signal before succeeding', async () => {
-  const adapter = createRestorableAdapter(GeminiAdapter.prototype)
   let checks = 0
-  adapter.page = {
+  const adapter = createRestorableAdapter(GeminiAdapter, {
     goto: async () => undefined,
     url: () => 'https://gemini.google.com/app',
     locator: (selector: string) => {
@@ -120,7 +144,7 @@ test('GeminiAdapter.restore waits for the microphone ready signal before succeed
       }
       throw new Error(`Unexpected selector: ${selector}`)
     },
-  }
+  })
 
   await adapter.restore()
 
@@ -128,10 +152,12 @@ test('GeminiAdapter.restore waits for the microphone ready signal before succeed
 })
 
 test('DeepSeekAdapter.restore reports auth when redirected to /sign_in', async () => {
-  const adapter = createRestorableAdapter(DeepSeekAdapter.prototype)
-  adapter.page = createMockPage({
-    afterGotoUrl: 'https://chat.deepseek.com/sign_in',
-  })
+  const adapter = createRestorableAdapter(
+    DeepSeekAdapter,
+    createMockPage({
+      afterGotoUrl: 'https://chat.deepseek.com/sign_in',
+    })
+  )
 
   let capturedError: unknown
   try {
@@ -145,9 +171,8 @@ test('DeepSeekAdapter.restore reports auth when redirected to /sign_in', async (
 })
 
 test('DeepSeekAdapter.restore waits for the ready button signal before succeeding', async () => {
-  const adapter = createRestorableAdapter(DeepSeekAdapter.prototype)
   let checks = 0
-  adapter.page = {
+  const adapter = createRestorableAdapter(DeepSeekAdapter, {
     goto: async () => undefined,
     url: () => 'https://chat.deepseek.com/a/chat/s/conv-1',
     locator: (selector: string) => {
@@ -164,7 +189,7 @@ test('DeepSeekAdapter.restore waits for the ready button signal before succeedin
       }
       throw new Error(`Unexpected selector: ${selector}`)
     },
-  }
+  })
 
   await adapter.restore()
 
@@ -172,11 +197,13 @@ test('DeepSeekAdapter.restore waits for the ready button signal before succeedin
 })
 
 test('DoubaoAdapter.restore reports auth when login button is visible', async () => {
-  const adapter = createRestorableAdapter(DoubaoAdapter.prototype)
-  adapter.page = createMockPage({
-    afterGotoUrl: 'https://www.doubao.com/chat',
-    visibleByLocator: { 'button.login-btn-header-CTKsn1': true },
-  })
+  const adapter = createRestorableAdapter(
+    DoubaoAdapter,
+    createMockPage({
+      afterGotoUrl: 'https://www.doubao.com/chat',
+      visibleByLocator: { 'button.login-btn-header-CTKsn1': true },
+    })
+  )
 
   let capturedError: unknown
   try {
@@ -190,9 +217,8 @@ test('DoubaoAdapter.restore reports auth when login button is visible', async ()
 })
 
 test('DoubaoAdapter.restore waits for the ready container signal before succeeding', async () => {
-  const adapter = createRestorableAdapter(DoubaoAdapter.prototype)
   let checks = 0
-  adapter.page = {
+  const adapter = createRestorableAdapter(DoubaoAdapter, {
     goto: async () => undefined,
     url: () => 'https://www.doubao.com/chat',
     locator: (selector: string) => {
@@ -214,7 +240,7 @@ test('DoubaoAdapter.restore waits for the ready container signal before succeedi
       }
       throw new Error(`Unexpected selector: ${selector}`)
     },
-  }
+  })
 
   await adapter.restore()
 
@@ -222,13 +248,15 @@ test('DoubaoAdapter.restore waits for the ready container signal before succeedi
 })
 
 test('GrokAdapter.restore reports auth when signed-out actions are visible', async () => {
-  const adapter = createRestorableAdapter(GrokAdapter.prototype)
-  adapter.page = createMockPage({
-    afterGotoUrl: 'https://grok.com',
-    visibleByLocator: {
-      '[data-testid="drop-ui"] main > div:first-child button[aria-haspopup="menu"] + button[data-slot="button"] + button[data-slot="button"]': true,
-    },
-  })
+  const adapter = createRestorableAdapter(
+    GrokAdapter,
+    createMockPage({
+      afterGotoUrl: 'https://grok.com',
+      visibleByLocator: {
+        '[data-testid="drop-ui"] main > div:first-child button[aria-haspopup="menu"] + button[data-slot="button"] + button[data-slot="button"]': true,
+      },
+    })
+  )
 
   let capturedError: unknown
   try {
@@ -242,9 +270,8 @@ test('GrokAdapter.restore reports auth when signed-out actions are visible', asy
 })
 
 test('GrokAdapter.restore waits for the composer ready signal before succeeding', async () => {
-  const adapter = createRestorableAdapter(GrokAdapter.prototype)
   let checks = 0
-  adapter.page = {
+  const adapter = createRestorableAdapter(GrokAdapter, {
     goto: async () => undefined,
     url: () => 'https://grok.com',
     locator: (selector: string) => {
@@ -274,7 +301,7 @@ test('GrokAdapter.restore waits for the composer ready signal before succeeding'
       }
       throw new Error(`Unexpected selector: ${selector}`)
     },
-  }
+  })
 
   await adapter.restore()
 
@@ -282,14 +309,16 @@ test('GrokAdapter.restore waits for the composer ready signal before succeeding'
 })
 
 test('GlmAdapter.restore reports auth when the signed-out avatar is visible', async () => {
-  const adapter = createRestorableAdapter(GlmAdapter.prototype)
-  adapter.page = createMockPage({
-    afterGotoUrl: 'https://chat.z.ai/',
-    visibleByLocator: {
-      '#send-message-button': true,
-      'div.pointer-events-auto.px-1\\.5.pb-3\\.5 > button > svg[viewBox="0 0 20 20"] path[fill-rule="evenodd"][clip-rule="evenodd"]': true,
-    },
-  })
+  const adapter = createRestorableAdapter(
+    GlmAdapter,
+    createMockPage({
+      afterGotoUrl: 'https://chat.z.ai/',
+      visibleByLocator: {
+        '#send-message-button': true,
+        'div.pointer-events-auto.px-1\\.5.pb-3\\.5 > button > svg[viewBox="0 0 20 20"] path[fill-rule="evenodd"][clip-rule="evenodd"]': true,
+      },
+    })
+  )
 
   let capturedError: unknown
   try {
@@ -303,9 +332,8 @@ test('GlmAdapter.restore reports auth when the signed-out avatar is visible', as
 })
 
 test('GlmAdapter.restore only requires the send button to be visible', async () => {
-  const adapter = createRestorableAdapter(GlmAdapter.prototype)
   let checks = 0
-  adapter.page = {
+  const adapter = createRestorableAdapter(GlmAdapter, {
     goto: async () => undefined,
     url: () => 'https://chat.z.ai/',
     locator: (selector: string) => {
@@ -342,7 +370,7 @@ test('GlmAdapter.restore only requires the send button to be visible', async () 
       }
       throw new Error(`Unexpected selector: ${selector}`)
     },
-  }
+  })
 
   await adapter.restore()
 
@@ -350,9 +378,8 @@ test('GlmAdapter.restore only requires the send button to be visible', async () 
 })
 
 test('ChatGPTAdapter.restore waits for the speech button ready signal before succeeding', async () => {
-  const adapter = createRestorableAdapter(ChatGPTAdapter.prototype)
   let checks = 0
-  adapter.page = {
+  const adapter = createRestorableAdapter(ChatGPTAdapter, {
     goto: async () => undefined,
     url: () => 'https://chatgpt.com',
     getByTestId: (testId: string) => ({
@@ -393,7 +420,7 @@ test('ChatGPTAdapter.restore waits for the speech button ready signal before suc
       }
       throw new Error(`Unexpected selector: ${selector}`)
     },
-  }
+  })
 
   await adapter.restore()
 

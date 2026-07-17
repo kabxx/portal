@@ -9,13 +9,22 @@ import {
   ProviderAdapter,
   ProviderAdapterError,
   ProviderResponseTimeoutError,
+  type ProviderCdpSession,
+  type ProviderPage,
   type ProviderTimingOptions,
 } from '../../../src/providers/adapters/adapter-base.ts'
 import {
   abortable,
   PortalAbortError,
 } from '../../../src/runtime/runtime-cancellation.ts'
-import { createBrowserContextStub } from '../../helpers/fakes.ts'
+import {
+  createBrowserContextStub,
+  createProviderContextStub,
+} from '../../helpers/fakes.ts'
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
 test('createDeferred preserves an early rejection for a later consumer', async () => {
   const deferred = createDeferred<void>()
@@ -26,7 +35,10 @@ test('createDeferred preserves an early rejection for a later consumer', async (
   await assert.rejects(deferred.promise, /early deferred failure/)
 })
 
-class ThrowingInitAdapter extends ProviderAdapter {
+class ThrowingInitAdapter extends ProviderAdapter<
+  ProviderPage,
+  ProviderCdpSession
+> {
   protected override async init() {
     await super.init()
     throw new Error('init failed')
@@ -69,7 +81,10 @@ class ThrowingInitAdapter extends ProviderAdapter {
   }
 }
 
-class ThrowingAuthInitAdapter extends ProviderAdapter {
+class ThrowingAuthInitAdapter extends ProviderAdapter<
+  ProviderPage,
+  ProviderCdpSession
+> {
   protected override async init() {
     await super.init()
     throw new ProviderAdapterError('restore', 'Login required during init.', {
@@ -117,7 +132,7 @@ class ThrowingAuthInitAdapter extends ProviderAdapter {
   }
 }
 
-class PollingAdapter extends ProviderAdapter {
+class PollingAdapter extends ProviderAdapter<ProviderPage, ProviderCdpSession> {
   public readTimingOptions() {
     return {
       requestStartWarningAfterMs: this.getSubmitRequestStartGraceMs(),
@@ -297,7 +312,9 @@ test('ProviderAdapter uses configured provider timing options', () => {
     historyLoadTimeoutMs: 6,
     historyPageTimeoutMs: 7,
   }
-  const adapter = new PollingAdapter(createBrowserContextStub(), { timings })
+  const adapter = new PollingAdapter(createProviderContextStub({}), {
+    timings,
+  })
 
   assert.deepEqual(adapter.readTimingOptions(), timings)
 })
@@ -389,7 +406,7 @@ test('ProviderAdapter bounds history capture waits with the configured page time
     close: async () => undefined,
   }
   const adapter = await PollingAdapter.create(
-    createBrowserContextStub({ newPage: async () => page }),
+    createProviderContextStub({ newPage: async () => page }),
     {
       timings: {
         requestStartWarningAfterMs: 1,
@@ -419,7 +436,7 @@ test('ProviderAdapter.create closes the opened page when init fails', async () =
       return undefined
     },
   }
-  const context = createBrowserContextStub({
+  const context = createProviderContextStub({
     newPage: async () => page,
   })
 
@@ -438,7 +455,7 @@ test('ProviderAdapter.create keeps the page open for auth init failures', async 
       return undefined
     },
   }
-  const context = createBrowserContextStub({
+  const context = createProviderContextStub({
     newPage: async () => page,
   })
 
@@ -456,7 +473,7 @@ test('ProviderAdapter.create keeps the page open for auth init failures', async 
 })
 
 test('ProviderAdapter.stopGeneration is a no-op extension point by default', async () => {
-  const adapter = Object.create(ProviderAdapter.prototype) as ProviderAdapter
+  const adapter = new PollingAdapter(createProviderContextStub({}))
 
   await adapter.stopGeneration()
 })
@@ -471,7 +488,7 @@ test('ProviderAdapter captures matching Playwright response bodies for history',
     evaluate: async () => [],
     close: async () => undefined,
   }
-  const context = createBrowserContextStub({
+  const context = createProviderContextStub({
     newPage: async () => page,
   })
   const adapter = await PollingAdapter.create(context, {
@@ -557,7 +574,7 @@ test('ProviderAdapter reads capture counts and only fetches entries after the st
     },
     close: async () => undefined,
   }
-  const context = createBrowserContextStub({
+  const context = createProviderContextStub({
     newPage: async () => page,
   })
   const adapter = await PollingAdapter.create(context)
@@ -597,7 +614,7 @@ test('ProviderAdapter captures history bodies through CDP and releases the sessi
       detachCalls += 1
     },
   }
-  const context = createBrowserContextStub({
+  const context = createProviderContextStub({
     newPage: async () => page,
     newCDPSession: async () => cdpSession,
   })
@@ -629,7 +646,8 @@ test('ProviderAdapter captures history bodies through CDP and releases the sessi
     sendCalls.some(
       ({ method, params }) =>
         method === 'Network.setCacheDisabled' &&
-        (params as { cacheDisabled?: boolean }).cacheDisabled === false
+        isRecord(params) &&
+        params.cacheDisabled === false
     )
   )
 
@@ -640,7 +658,7 @@ test('ProviderAdapter captures history bodies through CDP and releases the sessi
 })
 
 test('ProviderAdapter submit text polling ignores abort errors from reporters', async () => {
-  const adapter = Object.create(PollingAdapter.prototype) as PollingAdapter
+  const adapter = new PollingAdapter(createProviderContextStub({}))
   adapter.setSubmitTextReporter(async () => {
     throw new PortalAbortError('cancelled polling reporter')
   })
@@ -651,7 +669,7 @@ test('ProviderAdapter submit text polling ignores abort errors from reporters', 
 })
 
 test('ProviderAdapter safe submit status emission ignores abort errors from reporters', async () => {
-  const adapter = Object.create(PollingAdapter.prototype) as PollingAdapter
+  const adapter = new PollingAdapter(createProviderContextStub({}))
   adapter.setSubmitStatusReporter(async () => {
     throw new PortalAbortError('cancelled status reporter')
   })

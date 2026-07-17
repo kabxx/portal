@@ -3,13 +3,38 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { ChatGPTAdapter } from '../../../src/providers/adapters/adapter-chatgpt.ts'
-import { createPrototypeObject } from '../../helpers/fakes.ts'
+import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
-type ChatGPTInitHarness = Pick<ChatGPTAdapter, keyof ChatGPTAdapter> & {
-  page: unknown
-  websocketFrames: string[]
-  getSubmitRequestStartGraceMs(): number
-  getSubmitBlockedWarningIntervalMs(): number
+class TestChatGPTAdapter extends ChatGPTAdapter {
+  public constructor() {
+    super(createBrowserContextStub())
+  }
+
+  protected override getSubmitRequestStartGraceMs(): number {
+    return 10
+  }
+
+  protected override getSubmitBlockedWarningIntervalMs(): number {
+    return 10
+  }
+}
+
+function installChatGPTTestPage(
+  adapter: TestChatGPTAdapter,
+  page: ReturnType<typeof createChatGPTPage>
+): void {
+  if (!Reflect.set(adapter, 'page', page)) {
+    throw new Error('Failed to install the ChatGPT submit test page.')
+  }
+}
+
+function installChatGPTWebSocketFrames(
+  adapter: TestChatGPTAdapter,
+  frames: string[]
+): void {
+  if (!Reflect.set(adapter, 'websocketFrames', frames)) {
+    throw new Error('Failed to install the ChatGPT websocket frame buffer.')
+  }
 }
 
 function createInitialWebSocketFrame(text: string): string {
@@ -51,15 +76,14 @@ function createFinishedWebSocketFrame(): string {
 }
 
 test('ChatGPTAdapter.submit returns READY from websocket without waiting for a late HTTP response', async () => {
-  const adapter = createPrototypeObject(
-    ChatGPTAdapter.prototype
-  ) as ChatGPTInitHarness
-  adapter.websocketFrames = [
+  const adapter = new TestChatGPTAdapter()
+  const websocketFrames = [
     JSON.stringify({
       ref_id: 'turn0search0',
       url: 'https://old.example/reference',
     }),
   ]
+  installChatGPTWebSocketFrames(adapter, websocketFrames)
 
   const sendButton = {
     isEnabled: async () => true,
@@ -71,18 +95,16 @@ test('ChatGPTAdapter.submit returns READY from websocket without waiting for a l
         failure: () => null,
       }
       page.emit('request', request)
-      adapter.websocketFrames.push(createInitialWebSocketFrame('READY'))
-      adapter.websocketFrames.push(
+      websocketFrames.push(createInitialWebSocketFrame('READY'))
+      websocketFrames.push(
         createAppendWebSocketFrame(' \uE200cite\uE202turn0search0\uE202\uE201')
       )
-      adapter.websocketFrames.push(createFinishedWebSocketFrame())
+      websocketFrames.push(createFinishedWebSocketFrame())
     },
   }
   const page = createChatGPTPage(sendButton)
-  adapter.page = page
+  installChatGPTTestPage(adapter, page)
   adapter.setSubmitStatusReporter(null)
-  adapter.getSubmitRequestStartGraceMs = () => 10
-  adapter.getSubmitBlockedWarningIntervalMs = () => 10
   const result = await adapter.submit()
 
   assert.equal(result, 'READY')

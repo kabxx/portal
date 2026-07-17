@@ -1,13 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { ClaudeAdapter } from '../../../src/providers/adapters/adapter-claude.ts'
+import {
+  ClaudeAdapterBase,
+  type ClaudeLocator,
+  type ClaudePage,
+} from '../../../src/providers/adapters/adapter-claude.ts'
 import {
   type CapturedFetchEntry,
   ProviderAdapterError,
 } from '../../../src/providers/adapters/adapter-base.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
-import type { Locator, Page } from 'playwright'
 
 const VOICE_BUTTON_SELECTOR = 'button:has(svg[viewBox^="0 0 21.2"])'
 
@@ -249,15 +252,17 @@ test('ClaudeAdapter.stopGeneration is a no-op without a stop response button', a
   assert.equal(adapter.pageHarness.stopClicks, 0)
 })
 
-class TestClaudeAdapter extends ClaudeAdapter {
-  public readonly pageHarness = new ClaudePageHarness()
+class TestClaudeAdapter extends ClaudeAdapterBase<ClaudePage> {
+  public readonly pageHarness: ClaudePageHarness
   public restoreTimeoutMs = 1000
   public submitResponseStallTimeoutMs = 1000
   private capturedEntries: () => Promise<CapturedFetchEntry[]> = async () => []
 
   public constructor() {
-    super(createBrowserContextStub())
-    this.page = this.pageHarness.page
+    const pageHarness = new ClaudePageHarness()
+    super(createBrowserContextStub(pageHarness.page))
+    this.pageHarness = pageHarness
+    this.page = pageHarness.page
   }
 
   public setCapturedEntries(
@@ -302,45 +307,46 @@ class ClaudePageHarness {
   public stopClicks = 0
   public readonly events: string[] = []
   public readonly stopSelectors: string[] = []
-  public readonly page: Page
+  public readonly page: ClaudePage
 
   public constructor() {
-    const missingLocator = {
+    const missingLocator = createClaudeLocator({
       first: () => missingLocator,
       isVisible: async () => false,
       count: async () => 0,
-    } as unknown as Locator
-    const stopCandidates = {
+    })
+    const stopCandidates = createClaudeLocator({
       count: async () => this.stopButtonCount,
-      nth: () => ({
-        isVisible: async () => true,
-        click: async () => {
-          this.stopClicks += 1
-        },
-      }),
-    } as unknown as Locator
-    const voiceButton = {
+      nth: () =>
+        createClaudeLocator({
+          isVisible: async () => true,
+          click: async () => {
+            this.stopClicks += 1
+          },
+        }),
+    })
+    const voiceButton = createClaudeLocator({
       isVisible: async () => true,
       isEnabled: async () => true,
       getAttribute: async () => null,
-    } as unknown as Locator
-    const voiceButtons = {
+    })
+    const voiceButtons = createClaudeLocator({
       count: async () => this.voiceButtonCount,
       first: () => voiceButton,
-    } as unknown as Locator
-    const loginControl = {
+    })
+    const loginControl = createClaudeLocator({
       first: () => loginControl,
       isVisible: async () => this.loginVisible(),
-    } as unknown as Locator
-    const composerRoot = {
+    })
+    const composerRoot = createClaudeLocator({
       count: async () => 1,
       locator: (selector: string) => {
         if (selector === VOICE_BUTTON_SELECTOR) return voiceButtons
         this.stopSelectors.push(selector)
         return stopCandidates
       },
-    } as unknown as Locator
-    const input = {
+    })
+    const input = createClaudeLocator({
       first: () => input,
       press: async (key: string) => {
         this.events.push(`press:${key}`)
@@ -349,10 +355,15 @@ class ClaudePageHarness {
       getAttribute: async (name: string) =>
         name === 'contenteditable' && this.composerReady() ? 'true' : null,
       locator: () => composerRoot,
-    } as unknown as Locator
+    })
     this.page = {
+      close: async () => undefined,
+      pause: async () => undefined,
       goto: async () => null,
       url: () => this.url,
+      keyboard: { press: async () => undefined },
+      getByRole: () => missingLocator,
+      evaluate: async () => null,
       locator: (selector: string) => {
         if (selector === '[data-testid="chat-input"]') return input
         if (selector === '[data-testid="email"], [data-testid="continue"]') {
@@ -360,8 +371,32 @@ class ClaudePageHarness {
         }
         return missingLocator
       },
-    } as unknown as Page
+    }
   }
+}
+
+function createClaudeLocator(
+  overrides: Partial<ClaudeLocator> = {}
+): ClaudeLocator {
+  const locator: ClaudeLocator = {
+    count: async () => 0,
+    first: () => locator,
+    last: () => locator,
+    nth: () => locator,
+    filter: () => locator,
+    locator: () => locator,
+    isVisible: async () => false,
+    isEnabled: async () => false,
+    click: async () => undefined,
+    fill: async () => undefined,
+    focus: async () => undefined,
+    press: async () => undefined,
+    getAttribute: async () => null,
+    innerText: async () => '',
+    setInputFiles: async () => undefined,
+    ...overrides,
+  }
+  return locator
 }
 
 function createClaudeAdapter(): TestClaudeAdapter {

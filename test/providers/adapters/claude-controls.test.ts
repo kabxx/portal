@@ -1,8 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import type { Page } from 'playwright'
 
-import { ClaudeAdapter } from '../../../src/providers/adapters/adapter-claude.ts'
+import {
+  ClaudeAdapterBase,
+  type ClaudeLocator,
+  type ClaudePage,
+} from '../../../src/providers/adapters/adapter-claude.ts'
 import { isProviderAdapterError } from '../../../src/providers/adapters/adapter-base.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
@@ -15,28 +18,25 @@ const COMPOSER_ROOT_SELECTOR =
   'xpath=ancestor::div[.//input[@data-testid="file-upload"] and .//*[@data-testid="model-selector-dropdown"]][1]'
 const VOICE_BUTTON_SELECTOR = 'button:has(svg[viewBox^="0 0 21.2"])'
 
-interface TestLocator {
+interface TestLocator extends ClaudeLocator {
   count(): Promise<number>
   first(): TestLocator
   last(): TestLocator
   nth(index: number): TestLocator
-  filter(options: { has?: TestLocator; hasNot?: TestLocator }): TestLocator
+  filter(options: object): TestLocator
   locator(selector: string): TestLocator
   isVisible(): Promise<boolean>
   isEnabled(): Promise<boolean>
   click(): Promise<void>
   fill(text: string): Promise<void>
   focus(): Promise<void>
+  press(key: string): Promise<void>
   getAttribute(name: string): Promise<string | null>
   innerText(): Promise<string>
   setInputFiles(paths: string[]): Promise<void>
 }
 
-interface TestPage {
-  keyboard: {
-    press(key: string): Promise<void>
-  }
-  url(): string
+interface TestPage extends ClaudePage {
   locator(selector: string): TestLocator
   getByRole(
     role: string,
@@ -44,10 +44,10 @@ interface TestPage {
   ): TestLocator
 }
 
-class ClaudeAdapterHarness extends ClaudeAdapter {
+class ClaudeAdapterHarness extends ClaudeAdapterBase<TestPage> {
   public constructor(page: TestPage) {
-    super(createBrowserContextStub())
-    this.page = page as unknown as Page
+    super(createBrowserContextStub(page))
+    this.page = page
   }
 
   protected override getRestoreTimeoutMs(): number {
@@ -390,6 +390,7 @@ function createClaudeModelPage({
   let effortMenuOpen = false
   let escapePresses = 0
   const page: ClaudeModelPage = {
+    ...createPage(),
     selectedModel: 0,
     selectedEffort: 0,
     queriedSelectors: [],
@@ -426,7 +427,8 @@ function createClaudeModelPage({
       }
       if (selector === '[role="menu"]:visible') {
         return createLocator({
-          filter: ({ has }) => {
+          filter: (options) => {
+            const has = 'has' in options ? options.has : undefined
             if (has === modelCollection) {
               return createLocator({
                 first: () => mainMenu,
@@ -591,6 +593,7 @@ function createClaudeReadyPage(
       typeof loginVisible === 'function' ? loginVisible() : loginVisible,
   })
   const page: ClaudeReadyPage = {
+    ...createPage(),
     urlValue: 'https://claude.ai/new',
     get inputReads() {
       return inputReads
@@ -703,6 +706,7 @@ function createClaudeCapabilityPage(
     },
   })
   return {
+    ...createPage(),
     get open() {
       return open
     },
@@ -734,6 +738,10 @@ function createClaudeCapabilityPage(
 
 function createPage(overrides: Partial<TestPage> = {}): TestPage {
   return {
+    close: async () => undefined,
+    pause: async () => undefined,
+    goto: async () => null,
+    evaluate: async () => null,
     keyboard: { press: async () => undefined },
     url: () => 'https://claude.ai/new',
     locator: () => createLocator(),
@@ -755,6 +763,7 @@ function createLocator(overrides: Partial<TestLocator> = {}): TestLocator {
     click: async () => undefined,
     fill: async () => undefined,
     focus: async () => undefined,
+    press: async () => undefined,
     getAttribute: async () => null,
     innerText: async () => '',
     setInputFiles: async () => undefined,

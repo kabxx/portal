@@ -3,28 +3,78 @@ import assert from 'node:assert/strict'
 
 import { ProviderAdapterUnsupportedError } from '../../../src/providers/adapters/adapter-base.ts'
 import { GrokAdapter } from '../../../src/providers/adapters/adapter-grok.ts'
-import { createPrototypeObject } from '../../helpers/fakes.ts'
+import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
-type GrokAdapterHarness = Pick<GrokAdapter, keyof GrokAdapter> & {
-  page: unknown
-  websocketFrames: string[]
-  parseWebSocketResponse(frames: readonly string[]): {
-    conversationId?: string
-    text: string
-    isFinished: boolean
-  } | null
+interface GrokParsedWebSocketResponse {
+  conversationId: string | null
+  text: string
+  isFinished: boolean
 }
 
-function createTestGrokAdapter(): GrokAdapterHarness {
-  return createPrototypeObject(GrokAdapter.prototype) as GrokAdapterHarness
+function createTestGrokAdapter(): GrokAdapter {
+  return new GrokAdapter(createBrowserContextStub())
+}
+
+function parseWebSocketResponse(
+  adapter: GrokAdapter,
+  frames: readonly string[]
+): GrokParsedWebSocketResponse {
+  const candidate: object = adapter
+  if (
+    !('parseWebSocketResponse' in candidate) ||
+    typeof candidate.parseWebSocketResponse !== 'function'
+  ) {
+    throw new Error('Grok adapter does not provide parseWebSocketResponse().')
+  }
+  const parsed: unknown = Reflect.apply(
+    candidate.parseWebSocketResponse,
+    candidate,
+    [frames]
+  )
+  if (
+    parsed === null ||
+    typeof parsed !== 'object' ||
+    !('conversationId' in parsed) ||
+    (typeof parsed.conversationId !== 'string' &&
+      parsed.conversationId !== null) ||
+    !('text' in parsed) ||
+    typeof parsed.text !== 'string' ||
+    !('isFinished' in parsed) ||
+    typeof parsed.isFinished !== 'boolean'
+  ) {
+    throw new Error('Grok websocket parser returned an invalid response.')
+  }
+  return {
+    conversationId: parsed.conversationId,
+    text: parsed.text,
+    isFinished: parsed.isFinished,
+  }
+}
+
+function installGrokTestPage(
+  adapter: GrokAdapter,
+  page: ReturnType<typeof createGrokPage>
+): void {
+  if (!Reflect.set(adapter, 'page', page)) {
+    throw new Error('Failed to install the Grok test page.')
+  }
+}
+
+function installGrokWebSocketFrames(
+  adapter: GrokAdapter,
+  frames: string[]
+): void {
+  if (!Reflect.set(adapter, 'websocketFrames', frames)) {
+    throw new Error('Failed to install the Grok websocket frame buffer.')
+  }
 }
 
 test('GrokAdapter.submit waits for Grok websocket response.done', async () => {
   const adapter = createTestGrokAdapter()
   const page = createGrokPage()
   const streamedTexts: string[] = []
-  adapter.websocketFrames = page.websocketFrames
-  adapter.page = page
+  installGrokWebSocketFrames(adapter, page.websocketFrames)
+  installGrokTestPage(adapter, page)
   adapter.setSubmitTextReporter(async (message: string) => {
     streamedTexts.push(message)
   })
@@ -39,7 +89,7 @@ test('GrokAdapter.submit waits for Grok websocket response.done', async () => {
 test('GrokAdapter websocket parsing does not finish from text chunks alone', () => {
   const adapter = createTestGrokAdapter()
 
-  const parsed = adapter.parseWebSocketResponse([
+  const parsed = parseWebSocketResponse(adapter, [
     buildResponseFrame('conv-1', 'partial text', false),
   ])
 
@@ -55,7 +105,7 @@ test('GrokAdapter changes model through the model menu', async () => {
   const page = createGrokPage({
     modelItemCount: 4,
   })
-  adapter.page = page
+  installGrokTestPage(adapter, page)
 
   await adapter.changeModel('2')
 
@@ -64,9 +114,12 @@ test('GrokAdapter changes model through the model menu', async () => {
 
 test('GrokAdapter rejects unsupported model names', async () => {
   const adapter = createTestGrokAdapter()
-  adapter.page = createGrokPage({
-    modelItemCount: 2,
-  })
+  installGrokTestPage(
+    adapter,
+    createGrokPage({
+      modelItemCount: 2,
+    })
+  )
 
   await assert.rejects(
     adapter.changeModel('auto'),
@@ -84,10 +137,13 @@ test('GrokAdapter rejects unsupported model names', async () => {
 
 test('GrokAdapter rejects model selection that redirects to subscribe', async () => {
   const adapter = createTestGrokAdapter()
-  adapter.page = createGrokPage({
-    modelItemCount: 4,
-    subscribeModelIndex: 2,
-  })
+  installGrokTestPage(
+    adapter,
+    createGrokPage({
+      modelItemCount: 4,
+      subscribeModelIndex: 2,
+    })
+  )
 
   await assert.rejects(
     adapter.changeModel('3'),
@@ -102,7 +158,7 @@ test('GrokAdapter.attachFile writes files into the hidden Grok file input', asyn
   const page = createGrokPage({
     fileInputAvailable: true,
   })
-  adapter.page = page
+  installGrokTestPage(adapter, page)
 
   await adapter.attachFile(['C:/tmp/a.png', 'C:/tmp/b.txt'])
 
@@ -111,7 +167,7 @@ test('GrokAdapter.attachFile writes files into the hidden Grok file input', asyn
 
 test('GrokAdapter.attachFile reports unsupported when the file input is missing', async () => {
   const adapter = createTestGrokAdapter()
-  adapter.page = createGrokPage()
+  installGrokTestPage(adapter, createGrokPage())
 
   await assert.rejects(
     adapter.attachFile('C:/tmp/a.png'),
@@ -127,7 +183,7 @@ test('GrokAdapter.stopGeneration clicks the visible stop icon button when presen
   const page = createGrokPage({
     stopButtonAvailable: true,
   })
-  adapter.page = page
+  installGrokTestPage(adapter, page)
 
   await adapter.stopGeneration()
 
@@ -137,7 +193,7 @@ test('GrokAdapter.stopGeneration clicks the visible stop icon button when presen
 test('GrokAdapter.stopGeneration is a no-op when the stop icon is missing', async () => {
   const adapter = createTestGrokAdapter()
   const page = createGrokPage()
-  adapter.page = page
+  installGrokTestPage(adapter, page)
 
   await adapter.stopGeneration()
 

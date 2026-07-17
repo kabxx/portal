@@ -45,6 +45,7 @@ export default tseslint.config(
           ],
         },
       ],
+      '@typescript-eslint/no-unsafe-type-assertion': 'error',
       '@typescript-eslint/no-unused-vars': [
         'error',
         {

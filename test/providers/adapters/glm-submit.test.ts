@@ -7,7 +7,7 @@ import {
   ProviderAdapterUnsupportedError,
 } from '../../../src/providers/adapters/adapter-base.ts'
 import { GlmAdapter } from '../../../src/providers/adapters/adapter-glm.ts'
-import { createPrototypeObject } from '../../helpers/fakes.ts'
+import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 const GLM_COMPLETION_URL = 'https://chat.z.ai/api/v2/chat/completions'
 
@@ -25,11 +25,58 @@ type GlmAdapterHarness = Pick<GlmAdapter, keyof GlmAdapter> & {
 }
 
 function createTestGlmAdapter(): GlmAdapterHarness {
-  const adapter = createPrototypeObject(
-    GlmAdapter.prototype
-  ) as GlmAdapterHarness
-  adapter.getSubmitRequestStartGraceMs = (): number => 5
-  return adapter
+  const adapter = new GlmAdapter(createBrowserContextStub())
+  const candidate: object = adapter
+  if (
+    !('parseResponse' in candidate) ||
+    typeof candidate.parseResponse !== 'function' ||
+    !('isTargetCompletionRequest' in candidate) ||
+    typeof candidate.isTargetCompletionRequest !== 'function' ||
+    !('getLatestCapturedFetchBody' in candidate) ||
+    typeof candidate.getLatestCapturedFetchBody !== 'function' ||
+    !('readCurrentStreamedResponseText' in candidate) ||
+    typeof candidate.readCurrentStreamedResponseText !== 'function'
+  ) {
+    throw new Error('GLM adapter is missing submit harness methods.')
+  }
+  const parseResponse = candidate.parseResponse
+  const isTargetCompletionRequest = candidate.isTargetCompletionRequest
+  const readCurrentStreamedResponseText =
+    candidate.readCurrentStreamedResponseText
+
+  return Object.assign(adapter, {
+    page: undefined,
+    conversationIdVal: null,
+    parseResponse(raw: string): unknown {
+      const parsed: unknown = Reflect.apply(parseResponse, adapter, [raw])
+      return parsed
+    },
+    isTargetCompletionRequest(request: {
+      method(): string
+      url(): string
+    }): boolean {
+      const matched: unknown = Reflect.apply(
+        isTargetCompletionRequest,
+        adapter,
+        [request]
+      )
+      if (typeof matched !== 'boolean') {
+        throw new Error('GLM request matcher returned a non-boolean value.')
+      }
+      return matched
+    },
+    getLatestCapturedFetchBody: candidate.getLatestCapturedFetchBody,
+    async readCurrentStreamedResponseText(startIndex: number): Promise<string> {
+      const text: unknown = await Promise.resolve(
+        Reflect.apply(readCurrentStreamedResponseText, adapter, [startIndex])
+      )
+      if (typeof text !== 'string') {
+        throw new Error('GLM streamed response reader returned a non-string.')
+      }
+      return text
+    },
+    getSubmitRequestStartGraceMs: (): number => 5,
+  })
 }
 
 test('GlmAdapter parser keeps answer deltas and hides thinking deltas', () => {

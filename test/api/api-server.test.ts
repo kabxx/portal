@@ -1,7 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import type { ServerResponse } from 'node:http'
 import { createServer, type Server } from 'node:net'
 
 import {
@@ -727,7 +726,7 @@ test('PortalApiServer broadcasts one thread event to multiple SSE clients', asyn
 test('ApiEventHub cleans up closed subscribers and releases thread sequences', () => {
   const hub = new ApiEventHub(60_000)
   const response = new FakeSseResponse()
-  const remove = hub.subscribe('t-1', response as unknown as ServerResponse)
+  const remove = hub.subscribe('t-1', response)
 
   hub.publish('t-1', { type: 'status', data: { phase: 'first' } })
   assert.match(response.writes[1] ?? '', /^id: 1\n/)
@@ -738,7 +737,7 @@ test('ApiEventHub cleans up closed subscribers and releases thread sequences', (
   assert.equal(response.writes.length, 2)
 
   const replacement = new FakeSseResponse()
-  hub.subscribe('t-1', replacement as unknown as ServerResponse)
+  hub.subscribe('t-1', replacement)
   hub.publish('t-1', { type: 'status', data: { phase: 'replacement' } })
   assert.match(replacement.writes[1] ?? '', /^id: 1\n/)
 
@@ -753,9 +752,7 @@ test('ApiEventHub rolls back a subscriber when the connected write fails', () =>
   const response = new FakeSseResponse()
   response.failWrites = true
 
-  assert.doesNotThrow(() =>
-    hub.subscribe('t-1', response as unknown as ServerResponse)
-  )
+  assert.doesNotThrow(() => hub.subscribe('t-1', response))
   assert.equal(response.endCalls, 1)
 
   response.failWrites = false

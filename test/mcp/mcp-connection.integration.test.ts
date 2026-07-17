@@ -98,7 +98,36 @@ test('connectMcpServer uses Streamable HTTP and expands header environment value
       })
     )
     const transport = new StreamableHTTPServerTransport()
-    await server.connect(transport as Transport)
+    let onclose: NonNullable<Transport['onclose']> = () => {}
+    let onerror: NonNullable<Transport['onerror']> = () => {}
+    let onmessage: NonNullable<Transport['onmessage']> = () => {}
+    const serverTransport = {
+      start: () => transport.start(),
+      send: (message, options) => transport.send(message, options),
+      close: () => transport.close(),
+      get onclose() {
+        return onclose
+      },
+      set onclose(handler: NonNullable<Transport['onclose']>) {
+        onclose = handler
+        transport.onclose = handler
+      },
+      get onerror() {
+        return onerror
+      },
+      set onerror(handler: NonNullable<Transport['onerror']>) {
+        onerror = handler
+        transport.onerror = handler
+      },
+      get onmessage() {
+        return onmessage
+      },
+      set onmessage(handler: NonNullable<Transport['onmessage']>) {
+        onmessage = handler
+        transport.onmessage = handler
+      },
+    } satisfies Transport
+    await server.connect(serverTransport)
     await transport.handleRequest(request, response, request.body)
     response.on('close', () => {
       void transport.close()

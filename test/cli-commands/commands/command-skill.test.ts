@@ -6,11 +6,9 @@ import path from 'path'
 
 import { SkillCommand } from '../../../src/cli-commands/commands/command-skill.ts'
 import { CommandRegistry } from '../../../src/cli-commands/core/command-registry.ts'
-import type { CliCommandContext } from '../../../src/cli-commands/core/command-types.ts'
 import { SkillLibrary } from '../../../src/skills/skill-library.ts'
 import { TerminalController } from '../../../src/terminal-ui/terminal-controller.ts'
-import { ThreadManager } from '../../../src/threads/thread-manager.ts'
-import { ThreadStore } from '../../../src/threads/thread-store.ts'
+import { createCliCommandContext } from '../../helpers/cli-command-context.ts'
 import { createTestSkill } from '../../helpers/skills.ts'
 import { latestTimelineEntry } from '../../helpers/ui.ts'
 import { McpLibrary } from '../../../src/mcp/mcp-library.ts'
@@ -28,23 +26,16 @@ test('SkillCommand manages the registered skill lifecycle', async () => {
   })
   const ui = new TerminalController()
   const registry = new CommandRegistry([SkillCommand])
-  const context: CliCommandContext = {
-    threadManager: new ThreadManager(),
-    threadStore: new ThreadStore(path.join(root, 'threads.db')),
+  const { context, cleanup } = createCliCommandContext({
     skillLibrary,
     mcpLibrary: new McpLibrary(path.join(root, 'data', 'config.yaml')),
     ui,
     browserProfileDir: path.join(root, 'profile'),
     providers: [],
     resolveProvider: () => null,
-    createThread: async () => {},
-    resumeThread: async () => {},
-    closeThread: async (threadId) =>
-      await context.threadManager.closeThread(threadId),
     addSkill: async (value) => await skillLibrary.add(value),
-    submitThreadInput: async () => {},
     listCommands: () => registry.list(),
-  }
+  })
 
   try {
     await registry.execute(`/skill add ${source}`, context)
@@ -75,16 +66,15 @@ test('SkillCommand manages the registered skill lifecycle', async () => {
     assert.equal((await skillLibrary.list()).skills.length, 0)
     await access(path.join(source, 'SKILL.md'))
   } finally {
-    context.threadStore.close()
+    cleanup()
     await rm(root, { recursive: true, force: true })
   }
 })
 
-test('SkillCommand shows subcommand help and validates add arguments', async () => {
+test('SkillCommand shows subcommand help and validates add arguments', async (t) => {
   const ui = new TerminalController()
-  const context = {
-    ui,
-  } as CliCommandContext
+  const { context, cleanup } = createCliCommandContext({ ui })
+  t.after(cleanup)
 
   await SkillCommand.execute(context, [])
   const help = latestTimelineEntry(ui)?.body ?? ''
@@ -101,17 +91,14 @@ test('SkillCommand shows subcommand help and validates add arguments', async () 
   assert.match(missingSource, /\/skill add <name> --registry <url>/)
 })
 
-test('SkillCommand reports committed removal cleanup warnings after success', async () => {
+test('SkillCommand reports committed removal cleanup warnings after success', async (t) => {
   const ui = new TerminalController()
-  const context = {
-    ui,
-    skillLibrary: {
-      remove: async () => ({
-        removed: true,
-        warnings: ['Temporary cleanup failed at data/temp/skill-remove/test.'],
-      }),
-    },
-  } as unknown as CliCommandContext
+  const { context, cleanup } = createCliCommandContext({ ui })
+  t.after(cleanup)
+  context.skillLibrary.remove = async () => ({
+    removed: true,
+    warnings: ['Temporary cleanup failed at data/temp/skill-remove/test.'],
+  })
 
   await SkillCommand.execute(context, ['remove', 'warned-skill'])
 
@@ -126,13 +113,13 @@ test('SkillCommand reports committed removal cleanup warnings after success', as
   assert.match(latestTimelineEntry(ui)?.body ?? '', /Temporary cleanup failed/)
 })
 
-test('SkillCommand passes a named Hub registry source separately and hides URL secrets', async () => {
+test('SkillCommand passes a named Hub registry source separately and hides URL secrets', async (t) => {
   const ui = new TerminalController()
   const registry = new CommandRegistry([SkillCommand])
   let receivedSource = ''
   let receivedOptions: { registryUrl?: string } | undefined
   let infoAtInstall: ReturnType<typeof latestTimelineEntry>
-  const context = {
+  const { context, cleanup } = createCliCommandContext({
     ui,
     addSkill: async (
       source: string,
@@ -152,7 +139,8 @@ test('SkillCommand passes a named Hub registry source separately and hides URL s
         warnings: [],
       }
     },
-  } as unknown as CliCommandContext
+  })
+  t.after(cleanup)
 
   await registry.execute(
     '/skill add neko-on-everything --registry https://user:password@example.com/?token=secret#fragment',
@@ -170,9 +158,10 @@ test('SkillCommand passes a named Hub registry source separately and hides URL s
   assert.doesNotMatch(infoAtInstall?.body ?? '', /password|secret|fragment/)
 })
 
-test('SkillCommand rejects invalid Hub registry option combinations', async () => {
+test('SkillCommand rejects invalid Hub registry option combinations', async (t) => {
   const ui = new TerminalController()
-  const context = { ui } as CliCommandContext
+  const { context, cleanup } = createCliCommandContext({ ui })
+  t.after(cleanup)
 
   await SkillCommand.execute(context, [
     'add',
@@ -189,10 +178,10 @@ test('SkillCommand rejects invalid Hub registry option combinations', async () =
   assert.match(latestTimelineEntry(ui)?.body ?? '', /--registry requires a URL/)
 })
 
-test('SkillCommand reports remote installation before starting and hides URL secrets', async () => {
+test('SkillCommand reports remote installation before starting and hides URL secrets', async (t) => {
   const ui = new TerminalController()
   let infoAtInstall: ReturnType<typeof latestTimelineEntry>
-  const context = {
+  const { context, cleanup } = createCliCommandContext({
     ui,
     addSkill: async () => {
       infoAtInstall = latestTimelineEntry(ui)
@@ -207,7 +196,8 @@ test('SkillCommand reports remote installation before starting and hides URL sec
         warnings: [],
       }
     },
-  } as unknown as CliCommandContext
+  })
+  t.after(cleanup)
 
   await SkillCommand.execute(context, [
     'add',
@@ -221,9 +211,9 @@ test('SkillCommand reports remote installation before starting and hides URL sec
   assert.match(latestTimelineEntry(ui)?.body ?? '', /Added and enabled/)
 })
 
-test('SkillCommand reports every installed skill in a collection', async () => {
+test('SkillCommand reports every installed skill in a collection', async (t) => {
   const ui = new TerminalController()
-  const context = {
+  const { context, cleanup } = createCliCommandContext({
     ui,
     addSkill: async () => ({
       skills: [
@@ -240,7 +230,8 @@ test('SkillCommand reports every installed skill in a collection', async () => {
       ],
       warnings: [],
     }),
-  } as unknown as CliCommandContext
+  })
+  t.after(cleanup)
 
   await SkillCommand.execute(context, ['add', 'C:\\skill-collection'])
 

@@ -18,11 +18,15 @@ import {
 import { McpLibrary } from '../../src/mcp/mcp-library.ts'
 import { parseYamlRecord } from '../helpers/yaml.ts'
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error(`${label} must be an object.`)
   }
-  return value as Record<string, unknown>
+  return value
 }
 
 test('McpLibrary writes a root config object with servers keyed by name', async () => {
@@ -98,7 +102,8 @@ test('McpLibrary rejects invalid server input without changing config', async ()
     const original = await readFile(configPath, 'utf8')
     const invalidConfigs: unknown[] = [null, [], {}, { command: 'node' }]
 
-    for (const method of ['add', 'set'] as const) {
+    const methods: Array<'add' | 'set'> = ['add', 'set']
+    for (const method of methods) {
       for (const config of invalidConfigs) {
         await assert.rejects(library[method]('example', config), McpConfigError)
         assert.equal(await readFile(configPath, 'utf8'), original)

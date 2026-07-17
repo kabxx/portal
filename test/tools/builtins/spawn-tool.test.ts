@@ -4,17 +4,27 @@ import assert from 'node:assert/strict'
 import { SpawnTool } from '../../../src/tools/builtins/spawn-tool.ts'
 import { createProviderAdapterStub } from '../../helpers/fakes.ts'
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function requireRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(`Expected ${label} to be an object.`)
+  }
+  return value
+}
+
 test('SpawnTool exposes prompt and optional provider as input', () => {
   const tool = new SpawnTool(createProviderAdapterStub())
-  const schema = tool.metadata.inputSchema as {
-    properties?: Record<string, { enum?: string[] }>
-    required?: string[]
-  }
+  const schema = requireRecord(tool.metadata.inputSchema, 'input schema')
+  const properties = requireRecord(schema.properties, 'schema properties')
+  const provider = requireRecord(properties.provider, 'provider schema')
 
   assert.equal(tool.name, 'spawn')
-  assert.deepEqual(Object.keys(schema.properties ?? {}), ['prompt', 'provider'])
+  assert.deepEqual(Object.keys(properties), ['prompt', 'provider'])
   assert.deepEqual(schema.required, ['prompt'])
-  assert.deepEqual(schema.properties?.provider?.enum, [
+  assert.deepEqual(provider.enum, [
     'chatgpt',
     'claude',
     'gemini',
@@ -44,9 +54,6 @@ test('SpawnTool delegates prompt to the configured synchronous runner', async ()
     provider: 'gemini',
     prompt: 'Summarize the test fixture.',
   })
-  const result = output.result as {
-    output: string
-  }
 
   assert.deepEqual(calls, [
     {
@@ -54,7 +61,7 @@ test('SpawnTool delegates prompt to the configured synchronous runner', async ()
       prompt: 'Summarize the test fixture.',
     },
   ])
-  assert.equal(result.output, 'worker result')
+  assert.equal(output.result.output, 'worker result')
   assert.equal(
     output.displayText,
     [
@@ -109,7 +116,7 @@ test('SpawnTool ignores progress rendering failures and forwards options', async
 
   assert.deepEqual(receivedInput, { prompt: 'inspect the child task' })
   assert.equal(receivedOptions, options)
-  assert.equal((output.result as { output: string }).output, 'done')
+  assert.equal(output.result.output, 'done')
 })
 
 test('SpawnTool rejects missing prompt before invoking the runner', async () => {
@@ -129,10 +136,8 @@ test('SpawnTool rejects missing prompt before invoking the runner', async () => 
     result: { message: 'spawn requires a non-empty string params.prompt' },
     displayText: 'spawn requires a non-empty string params.prompt',
   })
-  const invalidInput = { prompt: 1 } as unknown as Parameters<
-    SpawnTool['call']
-  >[0]
-  assert.deepEqual(await tool.call(invalidInput), {
+  // @ts-expect-error Deliberately exercises runtime validation of a non-string prompt.
+  assert.deepEqual(await tool.call({ prompt: 1 }), {
     outcome: 'error',
     result: { message: 'spawn requires a non-empty string params.prompt' },
     displayText: 'spawn requires a non-empty string params.prompt',
