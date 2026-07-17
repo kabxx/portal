@@ -45,9 +45,7 @@ const DOUBAO_DESKTOP_PROMOTION_DISMISS_TIMEOUT_MS = 5000
 const DOUBAO_HISTORY_POLL_MS = 100
 const DOUBAO_STOP_ICON_PATH_PREFIX = 'M12 0.5C18.3513 0.5 23.5 5.64873 23.5 12'
 const DOUBAO_STOP_BUTTON_SELECTORS = [
-  `div.break-btn-fISNgC:has(svg[viewBox="0 0 24 24"] path[d^="${DOUBAO_STOP_ICON_PATH_PREFIX}"])`,
-  'div[class*="break-btn-"]:has(svg[viewBox="0 0 24 24"])',
-  'xpath=//button[@id="flow-end-msg-send"]/ancestor::div[contains(concat(" ", normalize-space(@class), " "), " send-btn-wrapper ")][1]/preceding-sibling::div[contains(@class, "cursor-pointer") and .//svg[@viewBox="0 0 24 24"]][1]',
+  `div.break-btn-fISNgC:has(svg[viewBox^="0 0 24"] path[d^="${DOUBAO_STOP_ICON_PATH_PREFIX}"])`,
 ]
 
 export type DoubaoActionCapability = string
@@ -167,7 +165,7 @@ export class DoubaoAdapter extends ProviderAdapter {
   }
 
   private getReadyContainer() {
-    return this.page.locator(DOUBAO_READY_CONTAINER_SELECTOR).first()
+    return this.page.locator(DOUBAO_READY_CONTAINER_SELECTOR)
   }
 
   private getToolbar() {
@@ -530,9 +528,15 @@ export class DoubaoAdapter extends ProviderAdapter {
     timeoutMs: number,
     signal?: AbortSignal
   ): Promise<void> {
-    const readyContainer = this.getReadyContainer()
     await waitAsync(
-      async () => await readyContainer.isVisible().catch(() => false),
+      async () => {
+        const readyContainers = this.getReadyContainer()
+        if ((await readyContainers.count().catch(() => 0)) !== 1) return false
+        return await readyContainers
+          .first()
+          .isVisible()
+          .catch(() => false)
+      },
       {
         timeoutMs,
         signal,
