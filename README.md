@@ -13,7 +13,7 @@ portal does **not** call provider model APIs. It does not bypass provider accoun
 
 ## Core capabilities
 
-- **Six web providers.** ChatGPT, Gemini, DeepSeek, Doubao, Grok, and GLM share one local thread model.
+- **Seven web providers.** ChatGPT, Gemini, DeepSeek, Doubao, Grok, GLM, and Kimi share one local thread model.
 - **Real browser sessions.** A dedicated browser profile preserves login state and account-specific web features.
 - **Local tools.** Models can inspect a workspace, run commands, edit files, attach images, and delegate focused tasks.
 - **Resumable conversations.** portal stores conversation URLs and reloads visible provider history when a conversation is resumed.
@@ -48,6 +48,7 @@ See [Architecture](docs/architecture.md) for the runtime, thread, resume, and sh
 | Doubao   | Yes       | Yes               | Yes               | Yes             | Dynamic page actions              |
 | Grok     | Yes       | Yes               | Yes               | Yes             | None currently exposed            |
 | GLM      | Yes       | Yes               | Yes               | Yes             | Thinking, search, advanced search |
+| Kimi     | Yes       | Yes               | Yes               | Yes             | None currently exposed            |
 
 Support means that an adapter exists in this repository. Actual availability depends on the account, region, subscription, provider experiment, and current page structure. Model numbers and page actions are based on the menus visible to the current account.
 
@@ -282,4 +283,4 @@ portal is available under the [MIT License](LICENSE).
 
 ## Disclaimer
 
-portal is an independent project and is not affiliated with, endorsed by, or sponsored by OpenAI, Anthropic, Google, DeepSeek, ByteDance, xAI, Zhipu AI, or the supported web products. Users are responsible for complying with provider terms and applicable law.
+portal is an independent project and is not affiliated with, endorsed by, or sponsored by OpenAI, Anthropic, Google, DeepSeek, ByteDance, xAI, Zhipu AI, Moonshot AI, or the supported web products. Users are responsible for complying with provider terms and applicable law.
