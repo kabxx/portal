@@ -114,7 +114,23 @@ export function parseKeybindingConfig(
     )
   }
 
-  const bindings = {} as Record<KeybindingAction, string[]>
+  const bindings: Record<KeybindingAction, string[]> = {
+    'app.interrupt': [],
+    'app.exit': [],
+    'input.submit': [],
+    'input.newline': [],
+    'input.complete': [],
+    'input.clear': [],
+    'input.deleteWordBackward': [],
+    'input.deleteBackward': [],
+    'input.deleteForward': [],
+    'input.lineStart': [],
+    'input.lineEnd': [],
+    'input.moveLeft': [],
+    'input.moveRight': [],
+    'input.moveUp': [],
+    'input.moveDown': [],
+  }
   const owners = new Map<string, KeybindingAction>()
   for (const action of KEYBINDING_ACTIONS) {
     const rawBindings = value[action]

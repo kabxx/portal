@@ -29,7 +29,6 @@ test('SkillCommand manages the registered skill lifecycle', async () => {
   const ui = new TerminalController()
   const registry = new CommandRegistry([SkillCommand])
   const context: CliCommandContext = {
-    readline: {} as CliCommandContext['readline'],
     threadManager: new ThreadManager(),
     threadStore: new ThreadStore(path.join(root, 'threads.db')),
     skillLibrary,

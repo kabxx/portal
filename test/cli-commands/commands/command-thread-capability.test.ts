@@ -63,7 +63,6 @@ function createCommandContext() {
     `portal-cap-${process.pid}-${Date.now()}-${Math.random()}.db`
   )
   const context: CliCommandContext = {
-    readline: {} as CliCommandContext['readline'],
     threadManager,
     threadStore: new ThreadStore(storagePath),
     skillLibrary: {} as SkillLibrary,

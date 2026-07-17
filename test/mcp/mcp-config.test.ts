@@ -9,6 +9,7 @@ import {
   McpDuplicateNameError,
   McpStoredConfigError,
   parseMcpConfig,
+  parseMcpServerConfig,
 } from '../../src/mcp/mcp-config.ts'
 import {
   redactMcpError,
@@ -87,6 +88,27 @@ test('McpLibrary initializes a missing config without overwriting it later', asy
   }
 })
 
+test('McpLibrary rejects invalid server input without changing config', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-mcp-invalid-'))
+  const configPath = path.join(root, 'data', 'config.yaml')
+  const library = new McpLibrary(configPath)
+
+  try {
+    await library.initialize()
+    const original = await readFile(configPath, 'utf8')
+    const invalidConfigs: unknown[] = [null, [], {}, { command: 'node' }]
+
+    for (const method of ['add', 'set'] as const) {
+      for (const config of invalidConfigs) {
+        await assert.rejects(library[method]('example', config), McpConfigError)
+        assert.equal(await readFile(configPath, 'utf8'), original)
+      }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('McpLibrary preserves concurrent mutations in the MCP section', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-mcp-concurrent-'))
   const configPath = path.join(root, 'data', 'config.yaml')
@@ -124,6 +146,22 @@ test('MCP config isolates invalid servers and rejects non-object roots', () => {
   assert.equal(parsed.issues.length, 1)
   assert.equal(parsed.issues[0]?.server, 'invalid')
   assert.throws(() => parseMcpConfig([]), McpConfigError)
+})
+
+test('MCP server timeouts and output limits must be positive integers', () => {
+  for (const field of ['connectTimeoutMs', 'toolTimeoutMs', 'maxOutputChars']) {
+    for (const value of [null, '1', 0, -1, 1.5]) {
+      assert.throws(
+        () =>
+          parseMcpServerConfig({
+            transport: 'stdio',
+            command: 'node',
+            [field]: value,
+          }),
+        new RegExp(`${field} must be a positive integer`)
+      )
+    }
+  }
 })
 
 test('MCP environment placeholders expand once and support literal escaping', () => {

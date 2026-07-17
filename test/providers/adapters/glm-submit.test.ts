@@ -534,19 +534,39 @@ function createAdvancedSearchSwitch(initialValue: 'true' | 'false') {
         arg?: A
       ) => T,
       arg?: A
-    ) =>
-      callback(
-        {
-          disabled: false,
-          getAttribute: (name: string) =>
-            name === 'aria-checked' ? value : null,
-          click: () => {
-            button.clicks += 1
-            value = value === 'true' ? 'false' : 'true'
-          },
-        },
-        arg
-      ),
+    ) => {
+      const hadHtmlButtonElement = Reflect.has(globalThis, 'HTMLButtonElement')
+      const previousHtmlButtonElement: unknown = Reflect.get(
+        globalThis,
+        'HTMLButtonElement'
+      )
+      class TestHtmlButtonElement {
+        public disabled = false
+
+        public getAttribute(name: string): string | null {
+          return name === 'aria-checked' ? value : null
+        }
+
+        public click(): void {
+          button.clicks += 1
+          value = value === 'true' ? 'false' : 'true'
+        }
+      }
+      Reflect.set(globalThis, 'HTMLButtonElement', TestHtmlButtonElement)
+      try {
+        return callback(new TestHtmlButtonElement(), arg)
+      } finally {
+        if (hadHtmlButtonElement) {
+          Reflect.set(
+            globalThis,
+            'HTMLButtonElement',
+            previousHtmlButtonElement
+          )
+        } else {
+          Reflect.deleteProperty(globalThis, 'HTMLButtonElement')
+        }
+      }
+    },
     click: async () => {
       button.clicks += 1
       value = value === 'true' ? 'false' : 'true'

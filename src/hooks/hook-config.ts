@@ -36,6 +36,15 @@ const HANDLER_FIELDS = new Set([
 ])
 const MATCH_FIELDS = new Set(['tool', 'provider'])
 const EVENT_NAMES = new Set<string>(HOOK_EVENTS)
+const PROVIDER_IDS = new Set<string>([
+  'chatgpt',
+  'claude',
+  'gemini',
+  'deepseek',
+  'doubao',
+  'grok',
+  'glm',
+])
 
 export function createDefaultHooksConfig(): HooksConfig {
   return { enabled: false, maxDepth: 1, handlers: [] }
@@ -54,11 +63,7 @@ export function parseHooksConfig(value: unknown): HooksConfig {
     throw new HookConfigError('hooks.enabled must be a boolean')
   }
   const maxDepth = value.maxDepth ?? 1
-  if (
-    !Number.isSafeInteger(maxDepth) ||
-    (maxDepth as number) < 0 ||
-    (maxDepth as number) > 8
-  ) {
+  if (!isSafeInteger(maxDepth) || maxDepth < 0 || maxDepth > 8) {
     throw new HookConfigError('hooks.maxDepth must be an integer from 0 to 8')
   }
   const rawHandlers = value.handlers ?? []
@@ -75,7 +80,7 @@ export function parseHooksConfig(value: unknown): HooksConfig {
     }
     names.add(handler.name)
   }
-  return { enabled, maxDepth: maxDepth as number, handlers }
+  return { enabled, maxDepth, handlers }
 }
 
 export function createHookSnapshot(config: HooksConfig): HookSnapshot {
@@ -107,19 +112,15 @@ function parseHandler(value: unknown, label: string): HookHandler {
     throw new HookConfigError(`${label}.events must be a non-empty array`)
   }
   const events = value.events.map((event, index) => {
-    if (typeof event !== 'string' || !EVENT_NAMES.has(event)) {
+    if (!isHookEventName(event)) {
       throw new HookConfigError(
         `${label}.events[${index}] is not a supported hook event`
       )
     }
-    return event as HookEventName
+    return event
   })
   const timeoutMs = value.timeoutMs ?? 5_000
-  if (
-    !Number.isSafeInteger(timeoutMs) ||
-    (timeoutMs as number) < 1 ||
-    (timeoutMs as number) > 300_000
-  ) {
+  if (!isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) {
     throw new HookConfigError(
       `${label}.timeoutMs must be an integer from 1 to 300000`
     )
@@ -135,7 +136,7 @@ function parseHandler(value: unknown, label: string): HookHandler {
     enabled,
     events,
     match: parseMatch(value.match, `${label}.match`),
-    timeoutMs: timeoutMs as number,
+    timeoutMs,
     onError,
   }
 
@@ -167,21 +168,14 @@ function parseHandler(value: unknown, label: string): HookHandler {
   }
 
   const tools = value.tools ?? []
-  if (
-    !Array.isArray(tools) ||
-    tools.some((tool) => typeof tool !== 'string' || tool.trim() === '')
-  ) {
+  if (!isStringArray(tools) || tools.some((tool) => tool.trim() === '')) {
     throw new HookConfigError(`${label}.tools must be a string array`)
   }
   if (tools.includes('spawn')) {
     throw new HookConfigError(`${label}.tools cannot include spawn`)
   }
   const maxTurns = value.maxTurns ?? 8
-  if (
-    !Number.isSafeInteger(maxTurns) ||
-    (maxTurns as number) < 1 ||
-    (maxTurns as number) > 32
-  ) {
+  if (!isSafeInteger(maxTurns) || maxTurns < 1 || maxTurns > 32) {
     throw new HookConfigError(
       `${label}.maxTurns must be an integer from 1 to 32`
     )
@@ -191,8 +185,8 @@ function parseHandler(value: unknown, label: string): HookHandler {
     type: 'agent',
     prompt,
     ...(provider === undefined ? {} : { provider }),
-    tools: [...new Set(tools as string[])],
-    maxTurns: maxTurns as number,
+    tools: [...new Set(tools)],
+    maxTurns,
   } satisfies AgentHookHandler
 }
 
@@ -222,18 +216,8 @@ function parseProvider(value: unknown, label: string) {
 }
 
 function normalizeProviderId(value: string): ProviderId | null {
-  switch (value.trim().toLowerCase()) {
-    case 'chatgpt':
-    case 'claude':
-    case 'gemini':
-    case 'deepseek':
-    case 'doubao':
-    case 'grok':
-    case 'glm':
-      return value.trim().toLowerCase() as ProviderId
-    default:
-      return null
-  }
+  const normalized = value.trim().toLowerCase()
+  return isProviderId(normalized) ? normalized : null
 }
 
 function requireString(value: unknown, label: string): string {
@@ -257,6 +241,22 @@ function assertFields(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value)
+}
+
+function isHookEventName(value: unknown): value is HookEventName {
+  return typeof value === 'string' && EVENT_NAMES.has(value)
+}
+
+function isProviderId(value: string): value is ProviderId {
+  return PROVIDER_IDS.has(value)
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
 }
 
 function deepFreeze<T>(value: T): T {

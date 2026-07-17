@@ -37,7 +37,7 @@ interface MutableThreadOperation {
 
 interface ClosingThreadOperation {
   startedAt: number
-  done: Promise<unknown>
+  done: Promise<boolean>
 }
 
 const DEFAULT_CANCEL_SETTLE_TIMEOUT_MS = 3000
@@ -142,15 +142,18 @@ export class ThreadOperationCoordinator {
     await this.cancelOperation(threadId, 'cancelling')
   }
 
-  public close<T>(threadId: string, closeThread: () => Promise<T>): Promise<T> {
+  public close(
+    threadId: string,
+    closeThread: () => Promise<boolean>
+  ): Promise<boolean> {
     const existing = this.closingThreads.get(threadId)
     if (existing !== undefined) {
-      return existing.done as Promise<T>
+      return existing.done
     }
 
     const closing: ClosingThreadOperation = {
       startedAt: Date.now(),
-      done: Promise.resolve(),
+      done: Promise.resolve(false),
     }
     this.closingThreads.set(threadId, closing)
     closing.done = Promise.resolve()
@@ -169,7 +172,7 @@ export class ThreadOperationCoordinator {
           this.closingThreads.delete(threadId)
         }
       })
-    return closing.done as Promise<T>
+    return closing.done
   }
 
   public async cancelAll(): Promise<void> {

@@ -149,7 +149,7 @@ export async function executeThreadCapability(
 }
 
 function formatCapabilityList(
-  provider: string,
+  provider: ProviderId,
   capabilities: readonly { name: string; state: string }[]
 ): string {
   const longestNameLength = Math.max(
@@ -166,7 +166,7 @@ function formatCapabilityList(
     ),
     '',
     'Usage:',
-    isToggleCapabilityProvider(provider as ProviderId)
+    isToggleCapabilityProvider(provider)
       ? '  /thread capability <capability> <on|off|status>'
       : '  /thread capability <capability>',
   ].join('\n')

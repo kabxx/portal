@@ -1,4 +1,3 @@
-import type { Interface as ReadlineInterface } from 'readline/promises'
 import type {
   ThreadHandle,
   ThreadManager,
@@ -28,7 +27,6 @@ export interface CommandResult {
 }
 
 export interface CliCommandContext {
-  readline: ReadlineInterface
   threadManager: ThreadManager
   threadStore: ThreadStore
   skillLibrary: SkillLibrary

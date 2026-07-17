@@ -80,10 +80,20 @@ type DoubaoStreamError = {
   message: string
 }
 
-type DoubaoActionBarInputItem = {
-  configKey?: string
-  name?: string
-  skillKey?: string
+interface PageWithEvaluate {
+  evaluate(fn: (() => unknown) | string): Promise<unknown>
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value)
+}
+
+function hasPageEvaluate(value: unknown): value is PageWithEvaluate {
+  return isRecord(value) && typeof value.evaluate === 'function'
 }
 
 const DOUBAO_ACTION_BAR_INPUT_ITEMS_SOURCE = String.raw`(() => {
@@ -248,13 +258,12 @@ export class DoubaoAdapter extends ProviderAdapter {
   private readActionCapabilityNameFromInputItem(
     value: unknown
   ): DoubaoActionCapability | null {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    if (!isRecord(value)) {
       return null
     }
 
-    const item = value as DoubaoActionBarInputItem
-    return typeof item.configKey === 'string' && item.configKey.trim()
-      ? item.configKey.trim()
+    return typeof value.configKey === 'string' && value.configKey.trim()
+      ? value.configKey.trim()
       : null
   }
 
@@ -272,10 +281,8 @@ export class DoubaoAdapter extends ProviderAdapter {
   }
 
   private async readActionBarInputItems(): Promise<readonly unknown[]> {
-    const pageWithEvaluate = this.page as unknown as {
-      evaluate?: <T>(fn: (() => T | Promise<T>) | string) => Promise<T>
-    }
-    if (typeof pageWithEvaluate.evaluate !== 'function') {
+    const page: unknown = this.page
+    if (!hasPageEvaluate(page)) {
       throw new ProviderAdapterError(
         'selectCapability',
         'Doubao action bar data is not available on this page.',
@@ -289,11 +296,9 @@ export class DoubaoAdapter extends ProviderAdapter {
       )
     }
 
-    let inputItems: readonly unknown[]
+    let inputItems: unknown
     try {
-      inputItems = await pageWithEvaluate.evaluate<unknown[]>(
-        DOUBAO_ACTION_BAR_INPUT_ITEMS_SOURCE
-      )
+      inputItems = await page.evaluate(DOUBAO_ACTION_BAR_INPUT_ITEMS_SOURCE)
     } catch (error) {
       throw new ProviderAdapterError(
         'selectCapability',
@@ -309,7 +314,7 @@ export class DoubaoAdapter extends ProviderAdapter {
       )
     }
 
-    if (inputItems.length === 0) {
+    if (!isUnknownArray(inputItems) || inputItems.length === 0) {
       throw new ProviderAdapterError(
         'selectCapability',
         'Doubao action bar state is unavailable.',
@@ -620,22 +625,18 @@ export class DoubaoAdapter extends ProviderAdapter {
         continue
       }
 
-      const payload =
-        parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>)
-          : null
-      if (!payload) {
+      if (!isRecord(parsed)) {
         continue
       }
 
       const errorCode =
-        typeof payload.error_code === 'number'
-          ? String(payload.error_code)
-          : typeof payload.error_code === 'string'
-            ? payload.error_code
+        typeof parsed.error_code === 'number'
+          ? String(parsed.error_code)
+          : typeof parsed.error_code === 'string'
+            ? parsed.error_code
             : 'unknown'
       const normalizedErrorMessage =
-        this.normalizeStreamErrorMessage(payload.error_msg) ?? ''
+        this.normalizeStreamErrorMessage(parsed.error_msg) ?? ''
       const isRateLimit =
         errorCode === '710022002' ||
         errorCode === '710022004' ||
@@ -1281,13 +1282,8 @@ export class DoubaoAdapter extends ProviderAdapter {
     let messageId: string | undefined
     let isFinished = false
 
-    const asRecord = (value: unknown): Record<string, unknown> | null => {
-      return value !== null &&
-        typeof value === 'object' &&
-        !Array.isArray(value)
-        ? (value as Record<string, unknown>)
-        : null
-    }
+    const asRecord = (value: unknown): Record<string, unknown> | null =>
+      isRecord(value) ? value : null
 
     const appendText = (
       value: unknown,

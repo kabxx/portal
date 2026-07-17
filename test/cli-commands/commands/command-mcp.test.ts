@@ -25,7 +25,6 @@ async function createMcpCommandContext(root: string) {
   const registry = new CommandRegistry([McpCommand])
   const submitted: Array<{ input: string; displayInput?: string }> = []
   const context: CliCommandContext = {
-    readline: {} as CliCommandContext['readline'],
     threadManager,
     threadStore: new ThreadStore(path.join(root, 'threads.db')),
     skillLibrary: {} as SkillLibrary,

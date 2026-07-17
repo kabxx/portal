@@ -32,6 +32,10 @@ const GROK_MODEL_ITEM_SELECTOR =
 const GROK_WEBSOCKET_URL = 'wss://grok.com/ws/mgw/'
 const GROK_STOP_ICON_PATH_PREFIX = 'M4 9.2v5.6c0 1.116 0 1.673.11 2.134'
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
 function normalizeToPathArray(path: string | readonly string[]): string[] {
   if (typeof path === 'string') {
     return [path]
@@ -369,51 +373,39 @@ export class GrokAdapter extends ProviderAdapter {
       } catch {
         continue
       }
-      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      if (!isRecord(payload)) {
         continue
       }
-      const root = payload as Record<string, unknown>
-      if (typeof root.session_id === 'string') {
-        conversationId = root.session_id
+      if (typeof payload.session_id === 'string') {
+        conversationId = payload.session_id
       }
-      const event = root.event
-      if (!event || typeof event !== 'object' || Array.isArray(event)) {
+      const event = payload.event
+      if (!isRecord(event)) {
         continue
       }
-      const eventRecord = event as Record<string, unknown>
-      if (eventRecord.type === 'response.done') {
-        const response = eventRecord.response
-        if (
-          response &&
-          typeof response === 'object' &&
-          !Array.isArray(response) &&
-          (response as Record<string, unknown>).status === 'completed'
-        ) {
+      if (event.type === 'response.done') {
+        const response = event.response
+        if (isRecord(response) && response.status === 'completed') {
           isFinished = true
         }
         continue
       }
-      if (eventRecord.type !== 'response.chunk') {
+      if (event.type !== 'response.chunk') {
         continue
       }
-      const chunk = eventRecord.chunk
-      if (!chunk || typeof chunk !== 'object' || Array.isArray(chunk)) {
+      const chunk = event.chunk
+      if (!isRecord(chunk)) {
         continue
       }
-      const textRecord = (chunk as Record<string, unknown>).text
+      const textRecord = chunk.text
+      if (!isRecord(textRecord)) {
+        continue
+      }
       if (
-        !textRecord ||
-        typeof textRecord !== 'object' ||
-        Array.isArray(textRecord)
+        textRecord.channel === 'CHANNEL_ASSISTANT_RESPONSE' &&
+        typeof textRecord.text === 'string'
       ) {
-        continue
-      }
-      const textPayload = textRecord as Record<string, unknown>
-      if (
-        textPayload.channel === 'CHANNEL_ASSISTANT_RESPONSE' &&
-        typeof textPayload.text === 'string'
-      ) {
-        text += textPayload.text
+        text += textRecord.text
       }
     }
 

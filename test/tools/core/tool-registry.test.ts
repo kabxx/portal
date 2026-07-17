@@ -6,11 +6,35 @@ import path from 'path'
 
 import { ApplyPatchTool } from '../../../src/tools/builtins/apply-patch-tool.ts'
 import {
+  defineToolMetadata,
+  Tool,
+  type ToolOutput,
+} from '../../../src/tools/core/tool-definition.ts'
+import {
   extractToolCall,
   parseToolCallPayload,
   ToolRegistry,
 } from '../../../src/tools/core/tool-registry.ts'
 import { createProviderAdapterStub } from '../../helpers/fakes.ts'
+
+@defineToolMetadata({
+  name: 'base_metadata',
+  description: 'Inherited metadata.',
+})
+class BaseMetadataTool extends Tool<Record<string, unknown>, ToolOutput> {
+  public async call(): Promise<ToolOutput> {
+    return { result: {}, displayText: '' }
+  }
+}
+
+class InheritedMetadataTool extends BaseMetadataTool {}
+
+test('Tool metadata remains inherited through the constructor prototype chain', () => {
+  const tool = new InheritedMetadataTool(createProviderAdapterStub())
+
+  assert.equal(tool.name, 'base_metadata')
+  assert.equal(tool.metadata.description, 'Inherited metadata.')
+})
 
 test('tool extraction preserves named freeform payloads', () => {
   const extracted = extractToolCall(

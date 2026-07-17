@@ -31,7 +31,6 @@ async function createCommandContext() {
   const resumedUrls: string[] = []
   const reloadedThreadIds: string[] = []
   const context: CliCommandContext = {
-    readline: {} as CliCommandContext['readline'],
     threadManager,
     threadStore,
     skillLibrary: {} as SkillLibrary,

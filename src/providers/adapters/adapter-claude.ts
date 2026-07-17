@@ -100,8 +100,30 @@ type TurndownServiceConstructor = new (options?: {
   headingStyle?: 'setext' | 'atx'
 }) => TurndownServiceInstance
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isTurndownServiceConstructor(
+  value: unknown
+): value is TurndownServiceConstructor {
+  if (typeof value !== 'function') {
+    return false
+  }
+  const prototype: unknown = Reflect.get(value, 'prototype')
+  return (
+    isRecord(prototype) &&
+    typeof prototype.addRule === 'function' &&
+    typeof prototype.turndown === 'function'
+  )
+}
+
 const require = createRequire(import.meta.url)
-const TurndownService = require('turndown') as TurndownServiceConstructor
+const turndownModule: unknown = require('turndown')
+if (!isTurndownServiceConstructor(turndownModule)) {
+  throw new TypeError('The turndown module did not export a valid constructor.')
+}
+const TurndownService = turndownModule
 
 export class ClaudeAdapter extends ProviderAdapter {
   private conversationIdVal: string | null = null

@@ -30,6 +30,7 @@ export class HookDispatcher {
   ): Promise<HookDecision> {
     const rewrittenBy: string[] = []
     let params = event.payload.params
+    let rewrittenParams: Record<string, unknown> | string | null = null
     const handlers = scope.snapshot.enabled
       ? scope.snapshot.handlers.filter((handler) =>
           this.matches(handler, event, scope)
@@ -68,16 +69,20 @@ export class HookDispatcher {
           rewrittenBy,
         }
       }
-      if (result.action === 'rewrite') {
+      if (
+        result.action === 'rewrite' &&
+        (isRecord(result.params) || typeof result.params === 'string')
+      ) {
         params = result.params
+        rewrittenParams = result.params
         rewrittenBy.push(handler.name)
       }
     }
-    return rewrittenBy.length === 0
+    return rewrittenParams === null
       ? { action: 'allow', rewrittenBy }
       : {
           action: 'rewrite',
-          params: params as Record<string, unknown> | string,
+          params: rewrittenParams,
           rewrittenBy,
         }
   }

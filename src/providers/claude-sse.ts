@@ -141,10 +141,12 @@ export class ClaudeCompletionStream {
   }
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return isRecord(value) ? value : null
 }
 
 function stringValue(value: unknown): string | null {

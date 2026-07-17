@@ -5,10 +5,12 @@ export interface ChatGPTParsedResponse {
   isFinished: boolean
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return isRecord(value) ? value : null
 }
 
 function readConversationId(node: Record<string, unknown>): string | undefined {

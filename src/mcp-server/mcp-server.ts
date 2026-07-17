@@ -156,6 +156,9 @@ export class PortalMcpServer {
       const transport = new StreamableHTTPServerTransport({
         enableJsonResponse: true,
       })
+      if (!isTransport(transport)) {
+        throw new Error('MCP SDK returned an invalid server transport.')
+      }
       const active = { controller, server, transport } satisfies ActiveRequest
       const abort = () => controller.abort()
       this.activeRequests.add(active)
@@ -163,7 +166,7 @@ export class PortalMcpServer {
       reply.raw.once('close', abort)
       reply.hijack()
       try {
-        await server.connect(transport as Transport)
+        await server.connect(transport)
         await transport.handleRequest(request.raw, reply.raw, request.body)
       } finally {
         request.raw.off('aborted', abort)
@@ -196,6 +199,19 @@ export class PortalMcpServer {
     this.lifecycleTail = result.catch(() => {})
     return result
   }
+}
+
+function isTransport(value: unknown): value is Transport {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'start' in value &&
+    typeof value.start === 'function' &&
+    'send' in value &&
+    typeof value.send === 'function' &&
+    'close' in value &&
+    typeof value.close === 'function'
+  )
 }
 
 function mapFastifyError(error: unknown): {

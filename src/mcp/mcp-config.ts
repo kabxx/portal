@@ -268,10 +268,10 @@ function parseOptionalPositiveInteger(
   if (value === undefined) {
     return undefined
   }
-  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+  if (!isSafeInteger(value) || value <= 0) {
     throw new McpConfigError(`${field} must be a positive integer`)
   }
-  return value as number
+  return value
 }
 
 function parseOptionalStringArray(
@@ -351,4 +351,8 @@ function getErrorMessage(error: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value)
 }

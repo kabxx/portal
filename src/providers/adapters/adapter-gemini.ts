@@ -58,13 +58,15 @@ type GeminiParsedResponse = {
 }
 
 function asUnknownArray(value: unknown): unknown[] | null {
-  return Array.isArray(value) ? (value as unknown[]) : null
+  return Array.isArray(value) ? value : null
+}
+
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 function asUnknownRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null
+  return isUnknownRecord(value) ? value : null
 }
 
 function normalizeGeminiConversationId(

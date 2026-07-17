@@ -76,7 +76,7 @@ export class McpLibrary {
     }
   }
 
-  public async add(name: string, config: McpServerConfig): Promise<void> {
+  public async add(name: string, config: unknown): Promise<void> {
     validateMcpServerName(name)
     const normalized = parseMcpServerConfig(config)
     await updateMcpConfig(this.configPath, (servers) => {
@@ -87,7 +87,7 @@ export class McpLibrary {
     })
   }
 
-  public async set(name: string, config: McpServerConfig): Promise<void> {
+  public async set(name: string, config: unknown): Promise<void> {
     validateMcpServerName(name)
     const normalized = parseMcpServerConfig(config)
     await updateMcpConfig(this.configPath, (servers) => {
