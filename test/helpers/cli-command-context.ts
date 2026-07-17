@@ -8,7 +8,6 @@ import { ThreadStore } from '../../src/threads/thread-store.ts'
 
 export const TEST_PROVIDER_IDS = [
   'chatgpt',
-  'claude',
   'gemini',
   'deepseek',
   'doubao',
