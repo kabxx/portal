@@ -2,6 +2,8 @@
 
 [Back to README](../README.md)
 
+Adding or maintaining an integration? Follow the end-to-end [Provider Development](provider-development.md) guide.
+
 portal supports seven web AI products through provider-specific adapters. Every adapter drives the normal website in a real Chromium page; portal does not call provider model APIs.
 
 ## Support matrix
@@ -156,4 +158,4 @@ Most providers use the shared setup prompt. Grok receives an additional strict t
 - Verify real browser behavior when selectors or private response formats change.
 - Never commit browser profiles, authentication headers, private conversation URLs, or raw personal conversation captures.
 
-See [Contributing](contributing.md) for the full change checklist and [Security](security.md) for the browser/account trust boundary.
+See [Provider Development](provider-development.md) for the integration workflow, [Contributing](contributing.md) for the repository change checklist, and [Security](security.md) for the browser/account trust boundary.

@@ -102,8 +102,10 @@ temp/               # provider samples, probes, and debug material
 
 Provider adapters are the highest-maintenance part of portal. When changing `src/providers/`:
 
-- do not use translated or natural-language UI labels as selectors;
-- prefer `data-testid`, `data-test-id`, stable attributes, roles, DOM structure, and protocol events;
+Use [Provider Development](provider-development.md) for the complete registration map, adapter contracts, selector rules, test matrix, and real-profile smoke checklist.
+
+- do not use visible or translated text, Accessible Names, or `aria-label` as selector identity;
+- prefer `data-testid`, `data-test-id`, stable attributes, structural roles, scoped DOM structure, and protocol events; roles must not be combined with name or text filters;
 - keep login detection, ready detection, response completion, and response parsing separate;
 - keep remote-history capture and parsing separate from live submit capture;
 - preserve streaming updates and cancellation behavior;
@@ -111,7 +113,7 @@ Provider adapters are the highest-maintenance part of portal. When changing `src
 - add parser fixtures or focused fake-page tests for every reproduced failure;
 - verify the real provider page when possible, because unit tests cannot detect an upstream redesign.
 
-If a temporary implementation must depend on visible text, call it out as a known fragile point in both code review and documentation.
+Do not merge a temporary text- or geometry-based selector. Stop and obtain explicit approval to change the selector policy before proceeding.
 
 ## Tool changes
 
