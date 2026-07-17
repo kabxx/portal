@@ -254,8 +254,8 @@ test('PortalApiServer routes capability list, toggle updates, and clears', async
   handlers.listCapabilities = async (threadId) => {
     calls.push(`list:${threadId}`)
     return {
-      provider: 'claude',
-      capabilities: [{ name: 'web_search', state: 'off' }],
+      provider: 'deepseek',
+      capabilities: [{ name: 'search', state: 'off' }],
     }
   }
   handlers.setCapability = async (threadId, name, state) => {
@@ -279,12 +279,12 @@ test('PortalApiServer routes capability list, toggle updates, and clears', async
     const listed = await fetch(`${address}/v1/threads/t-1/capabilities`)
     assert.equal(listed.status, 200)
     assert.deepEqual(await listed.json(), {
-      provider: 'claude',
-      capabilities: [{ name: 'web_search', state: 'off' }],
+      provider: 'deepseek',
+      capabilities: [{ name: 'search', state: 'off' }],
     })
 
     const updated = await fetch(
-      `${address}/v1/threads/t-1/capabilities/web_search`,
+      `${address}/v1/threads/t-1/capabilities/search`,
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -293,23 +293,23 @@ test('PortalApiServer routes capability list, toggle updates, and clears', async
     )
     assert.equal(updated.status, 200)
     assert.deepEqual(await updated.json(), {
-      name: 'web_search',
+      name: 'search',
       state: 'off',
     })
 
     const cleared = await fetch(
-      `${address}/v1/threads/t-1/capabilities/web_search`,
+      `${address}/v1/threads/t-1/capabilities/search`,
       { method: 'DELETE' }
     )
     assert.equal(cleared.status, 200)
     assert.deepEqual(await cleared.json(), {
-      name: 'web_search',
+      name: 'search',
       cleared: true,
     })
     assert.deepEqual(calls, [
       'list:t-1',
-      'set:t-1:web_search:off',
-      'clear:t-1:web_search',
+      'set:t-1:search:off',
+      'clear:t-1:search',
     ])
   } finally {
     await server.stop()

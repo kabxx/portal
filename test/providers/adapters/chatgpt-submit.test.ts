@@ -883,10 +883,16 @@ function createChatGPTPage(
         return sendButton
       }
       if (selector === 'button[style*="--vt-composer-speech-button"]') {
-        return readySpeechButton
+        return {
+          count: async () => 1,
+          first: () => readySpeechButton,
+        }
       }
       if (selector === 'button[data-testid="send-button"]') {
-        return readyDataTestIdSendButton
+        return {
+          count: async () => 1,
+          first: () => readyDataTestIdSendButton,
+        }
       }
       throw new Error(`Unexpected selector: ${selector}`)
     },

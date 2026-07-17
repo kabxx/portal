@@ -23,7 +23,7 @@ type ActionCapabilityState =
   | 'disabled'
   | 'unavailable'
 
-type ToggleCapability = 'thinking' | 'search' | 'advanced_search' | 'web_search'
+type ToggleCapability = 'thinking' | 'search' | 'advanced_search'
 type ToggleState = 'on' | 'off'
 
 interface ActionCapabilityInfo {
@@ -51,13 +51,6 @@ export interface ProviderCapabilityExecution {
 const PROVIDER_CAPABILITIES: Record<ProviderId, readonly ProviderCapability[]> =
   {
     chatgpt: [],
-    claude: [
-      {
-        name: 'web_search',
-        description: 'Web search mode.',
-        kind: 'toggle',
-      },
-    ],
     gemini: [],
     deepseek: [
       {
@@ -412,7 +405,6 @@ async function executeActionCapability(
 function formatProviderName(provider: ProviderId): string {
   const names: Record<ProviderId, string> = {
     chatgpt: 'ChatGPT',
-    claude: 'Claude',
     gemini: 'Gemini',
     deepseek: 'DeepSeek',
     doubao: 'Doubao',
@@ -444,17 +436,14 @@ function isToggleCapabilityAdapter(adapter: unknown): adapter is {
 
 function isToggleCapability(value: string): value is ToggleCapability {
   return (
-    value === 'thinking' ||
-    value === 'search' ||
-    value === 'advanced_search' ||
-    value === 'web_search'
+    value === 'thinking' || value === 'search' || value === 'advanced_search'
   )
 }
 
 export function isToggleCapabilityProvider(
   provider: ProviderId
-): provider is 'claude' | 'deepseek' | 'glm' {
-  return provider === 'claude' || provider === 'deepseek' || provider === 'glm'
+): provider is 'deepseek' | 'glm' {
+  return provider === 'deepseek' || provider === 'glm'
 }
 
 function isActionCapabilityAdapter(adapter: unknown): adapter is {

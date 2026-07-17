@@ -460,7 +460,10 @@ function createGeminiPage(
         selector ===
         'button.speech_dictation_mic_button, [data-node-type="speech_dictation_mic_button"] .speech_dictation_mic_button, speech-dictation-mic-button .speech_dictation_mic_button'
       ) {
-        return microphoneButton
+        return {
+          count: async () => 1,
+          first: () => microphoneButton,
+        }
       }
       if (selector === '[data-test-id="send-button-container"]') {
         return createGeminiStopContainer(stopButton ?? null)
