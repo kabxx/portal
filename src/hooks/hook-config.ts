@@ -44,6 +44,7 @@ const PROVIDER_IDS = new Set<string>([
   'grok',
   'glm',
   'qwen',
+  'kimi',
 ])
 
 export function createDefaultHooksConfig(): HooksConfig {

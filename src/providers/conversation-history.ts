@@ -26,6 +26,116 @@ export function emptyHistoryResult(warning: string): ConversationHistoryResult {
   }
 }
 
+export function parseKimiHistory(
+  raw: string,
+  pageSize: number
+): ConversationHistoryResult {
+  const root = asRecord(parseJson(raw))
+  if (root === null || !Array.isArray(root.messages)) {
+    return emptyHistoryResult(
+      'Kimi history response did not contain a messages array.'
+    )
+  }
+  const rows = asArray(root?.messages)
+  if (rows.length === 0) {
+    return {
+      messages: [],
+      complete: true,
+      warning: 'Kimi history contained no visible messages.',
+    }
+  }
+
+  const rowIds: Array<string | null> = []
+  const seenIds = new Set<string>()
+  let integrityComplete = true
+  rows.forEach((value) => {
+    const id = stringValue(asRecord(value)?.id)
+    rowIds.push(id)
+    if (id === null || seenIds.has(id)) {
+      integrityComplete = false
+    } else {
+      seenIds.add(id)
+    }
+  })
+  rows.forEach((value, index) => {
+    const message = asRecord(value)
+    if (message === null) {
+      integrityComplete = false
+      return
+    }
+    const parentId =
+      nullableString(message.parentId) ?? nullableString(message.parent_id)
+    if (index < rows.length - 1) {
+      if (parentId !== rowIds[index + 1]) integrityComplete = false
+    } else if (
+      rows.length < pageSize &&
+      parentId !== null &&
+      parentId !== '00000000-0000-0000-0000-000000000000'
+    ) {
+      integrityComplete = false
+    }
+  })
+
+  const messages = [...rows]
+    .reverse()
+    .map((value) => {
+      const message = asRecord(value)
+      const rawRole = stringValue(message?.role)?.toLowerCase()
+      const role =
+        rawRole === 'user'
+          ? 'user'
+          : rawRole === 'assistant'
+            ? 'assistant'
+            : null
+      if (message === null || role === null) return null
+      const status = stringValue(message.status)
+      if (status !== 'MESSAGE_STATUS_COMPLETED') {
+        if (
+          status !== 'MESSAGE_STATUS_CANCELLED' &&
+          status !== 'MESSAGE_STATUS_TRUNCATED'
+        ) {
+          integrityComplete = false
+        }
+        return null
+      }
+
+      const text = asArray(message.blocks)
+        .map((block) => stringValue(asRecord(asRecord(block)?.text)?.content))
+        .filter((fragment): fragment is string => fragment !== null)
+        .join('')
+        .trim()
+      const id = stringValue(message.id)
+      if (!text || id === null) {
+        integrityComplete = false
+        return null
+      }
+
+      return historyMessage({
+        id,
+        parentId:
+          nullableString(message.parentId) ?? nullableString(message.parent_id),
+        role,
+        text,
+        createdAt: timestamp(message.createTime ?? message.create_time),
+      })
+    })
+    .filter((item): item is ConversationHistoryMessage => item !== null)
+
+  const withinPageLimit = rows.length < pageSize
+  const complete = withinPageLimit && integrityComplete
+  return {
+    messages,
+    complete,
+    warning: !withinPageLimit
+      ? `Kimi history is incomplete because the page returned its ${pageSize}-message limit without a continuation cursor.`
+      : !integrityComplete
+        ? 'Kimi history is incomplete because its message chain or visible content could not be verified.'
+        : messages.length === 0
+          ? 'Kimi history contained no visible messages.'
+          : null,
+  }
+}
+
 export function parseDeepSeekHistory(raw: string): ConversationHistoryResult {
   const root = parseJson(raw)
   const data = asRecord(asRecord(root)?.data)

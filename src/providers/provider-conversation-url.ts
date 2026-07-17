@@ -119,6 +119,19 @@ function resolveProviderFromUrl(url: URL): ResolvedConversationUrl | null {
         }
   }
 
+  if (
+    url.hostname === 'www.kimi.com' &&
+    /^\/chat\/[^/?#]+\/?$/.test(url.pathname)
+  ) {
+    const conversationId = readPathSegment(url, 1)
+    return conversationId === null || conversationId === 'history'
+      ? null
+      : {
+          provider: 'kimi',
+          conversationUrl: `https://www.kimi.com/chat/${encodeURIComponent(conversationId)}`,
+        }
+  }
+
   return null
 }
 

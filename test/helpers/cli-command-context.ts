@@ -14,6 +14,7 @@ export const TEST_PROVIDER_IDS = [
   'grok',
   'glm',
   'qwen',
+  'kimi',
 ] as const satisfies readonly ProviderId[]
 
 export interface CliCommandContextFixture {
