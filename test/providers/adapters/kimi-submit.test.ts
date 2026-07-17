@@ -61,6 +61,193 @@ function kimiRequestFrame(text: string): string {
   })
 }
 
+function createKimiCapabilityPage({
+  initialState = 'off',
+  onOptionIndex = 0,
+  triggerCount = 1,
+  triggerVisible = true,
+  triggerEnabled = true,
+  searchCount = 1,
+  searchVisible = true,
+  searchEnabled = true,
+  optionCount = 2,
+  optionVisible = true,
+  optionEnabled = true,
+  selectedChecks = 'state',
+  storageValue = 'state',
+  applyClicks = true,
+  escapeClosesMenu = true,
+}: {
+  initialState?: 'on' | 'off'
+  onOptionIndex?: 0 | 1
+  triggerCount?: number
+  triggerVisible?: boolean
+  triggerEnabled?: boolean
+  searchCount?: number
+  searchVisible?: boolean
+  searchEnabled?: boolean
+  optionCount?: number
+  optionVisible?: boolean
+  optionEnabled?: boolean
+  selectedChecks?: 'state' | 'none' | 'both' | 'hidden'
+  storageValue?: 'state' | 'invalid' | null
+  applyClicks?: boolean
+  escapeClosesMenu?: boolean
+} = {}) {
+  let state = initialState
+  let toolkitOpen = false
+  let searchOpen = false
+  let searchClicks = 0
+  let triggerClicks = 0
+  let escapePresses = 0
+  let composerClicks = 0
+  const trigger = {
+    count: async () => triggerCount,
+    first() {
+      return this
+    },
+    isVisible: async () => triggerVisible,
+    isEnabled: async () => triggerEnabled,
+    click: async () => {
+      triggerClicks += 1
+      toolkitOpen = true
+    },
+    getAttribute: async (name: string) =>
+      name === 'class' && toolkitOpen
+        ? 'icon-button toolkit-trigger-btn active'
+        : 'icon-button toolkit-trigger-btn',
+  }
+  const popover = {
+    count: async () => (toolkitOpen ? 1 : 0),
+    first() {
+      return this
+    },
+    isVisible: async () => toolkitOpen,
+  }
+  const searchPopover = {
+    count: async () => (searchOpen ? 1 : 0),
+    first() {
+      return this
+    },
+    isVisible: async () => searchOpen,
+  }
+  const search = {
+    count: async () => (toolkitOpen ? searchCount : 0),
+    first() {
+      return this
+    },
+    isVisible: async () => toolkitOpen && searchVisible,
+    isEnabled: async () => searchEnabled,
+    click: async () => {
+      searchOpen = true
+    },
+  }
+  const option = (index: number) => {
+    const isSelected = () => {
+      if (selectedChecks === 'none') return false
+      if (selectedChecks === 'both') return true
+      const selectedIndex = state === 'on' ? onOptionIndex : 1 - onOptionIndex
+      return index === selectedIndex
+    }
+    return {
+      isVisible: async () => searchOpen && optionVisible,
+      isEnabled: async () => optionEnabled,
+      click: async () => {
+        searchClicks += 1
+        if (applyClicks) state = index === onOptionIndex ? 'on' : 'off'
+      },
+      locator: (selector: string) => ({
+        count: async () =>
+          selector === 'svg[name="Check"]' && isSelected() ? 1 : 0,
+        first() {
+          return this
+        },
+        isVisible: async () => isSelected() && selectedChecks !== 'hidden',
+      }),
+    }
+  }
+  const options = {
+    count: async () => (searchOpen ? optionCount : 0),
+    nth: (index: number) => option(index),
+  }
+  const composer = {
+    count: async () => 1,
+    first() {
+      return this
+    },
+    isVisible: async () => true,
+    click: async () => {
+      composerClicks += 1
+      toolkitOpen = false
+      searchOpen = false
+    },
+  }
+  const missing = {
+    count: async () => 0,
+    first() {
+      return this
+    },
+    isVisible: async () => false,
+    isEnabled: async () => false,
+  }
+  return {
+    page: {
+      locator: (selector: string) => {
+        if (selector === '.chat-editor .toolkit-trigger-btn') return trigger
+        if (selector === '.toolkit-popover') return popover
+        if (selector === '.connect-popover') return searchPopover
+        if (selector === '.connect-popover .connect-item') return options
+        if (
+          selector === '.chat-editor .chat-input-editor[contenteditable="true"]'
+        ) {
+          return composer
+        }
+        if (
+          selector ===
+          '.toolkit-popover .toolkit-item:has(svg[name="InternetOn"])'
+        ) {
+          return search
+        }
+        return missing
+      },
+      keyboard: {
+        press: async (key: string) => {
+          if (key === 'Escape') {
+            escapePresses += 1
+            if (escapeClosesMenu) {
+              toolkitOpen = false
+              searchOpen = false
+            }
+          }
+        },
+      },
+      evaluate: async (_pageFunction: unknown, storageKey: string) => {
+        if (storageKey !== 'selectSearch' || storageValue === null) return null
+        if (storageValue === 'invalid') return 'unexpected'
+        return state === 'on' ? 'true' : 'false'
+      },
+    },
+    get state() {
+      return state
+    },
+    get menuOpen() {
+      return toolkitOpen || searchOpen
+    },
+    get searchClicks() {
+      return searchClicks
+    },
+    get triggerClicks() {
+      return triggerClicks
+    },
+    get escapePresses() {
+      return escapePresses
+    },
+    get composerClicks() {
+      return composerClicks
+    },
+  }
+}
+
 test('Kimi Connect parser extracts concatenated JSON frames and completion', () => {
   const raw = [
     connectFrame({ heartbeat: {} }),
@@ -359,6 +546,89 @@ test('KimiAdapter page fallback ignores a concurrent POST with different text', 
   assert.equal(freshTextReads, 1)
   assert.equal(requestListeners.size, 0)
   assert.equal(responseListeners.size, 0)
+})
+
+test('KimiAdapter reads and idempotently changes a reordered search toggle', async () => {
+  const controls = createKimiCapabilityPage({ onOptionIndex: 1 })
+  const adapter = createTestKimiAdapter()
+  adapter.page = controls.page
+
+  assert.equal(await adapter.hasToggleCapability('search'), true)
+  assert.equal(controls.menuOpen, false)
+  assert.equal(await adapter.getToggleState('search'), 'off')
+
+  assert.equal(await adapter.setToggleState('search', 'on'), 'on')
+  assert.equal(controls.state, 'on')
+  assert.equal(controls.searchClicks, 1)
+  assert.equal(controls.menuOpen, false)
+
+  assert.equal(await adapter.setToggleState('search', 'on'), 'on')
+  assert.equal(controls.searchClicks, 1)
+
+  assert.equal(await adapter.setToggleState('search', 'off'), 'off')
+  assert.equal(controls.state, 'off')
+  assert.equal(controls.searchClicks, 2)
+  assert.equal(controls.menuOpen, false)
+  assert.ok(controls.escapePresses > 0)
+})
+
+test('KimiAdapter hides missing, ambiguous, disabled, and unknown toggles', async () => {
+  for (const controls of [
+    createKimiCapabilityPage({ triggerCount: 0 }),
+    createKimiCapabilityPage({ triggerCount: 2 }),
+    createKimiCapabilityPage({ triggerVisible: false }),
+    createKimiCapabilityPage({ triggerEnabled: false }),
+    createKimiCapabilityPage({ searchCount: 0 }),
+    createKimiCapabilityPage({ searchCount: 2 }),
+    createKimiCapabilityPage({ searchVisible: false }),
+    createKimiCapabilityPage({ searchEnabled: false }),
+    createKimiCapabilityPage({ optionCount: 1 }),
+    createKimiCapabilityPage({ optionCount: 3 }),
+    createKimiCapabilityPage({ optionVisible: false }),
+    createKimiCapabilityPage({ optionEnabled: false }),
+    createKimiCapabilityPage({ selectedChecks: 'none' }),
+    createKimiCapabilityPage({ selectedChecks: 'both' }),
+    createKimiCapabilityPage({ selectedChecks: 'hidden' }),
+    createKimiCapabilityPage({ storageValue: null }),
+    createKimiCapabilityPage({ storageValue: 'invalid' }),
+  ]) {
+    const adapter = createTestKimiAdapter()
+    adapter.page = controls.page
+
+    assert.equal(await adapter.hasToggleCapability('search'), false)
+    assert.equal(controls.menuOpen, false)
+  }
+
+  const controls = createKimiCapabilityPage()
+  const adapter = createTestKimiAdapter()
+  adapter.page = controls.page
+  assert.equal(await adapter.hasToggleCapability('thinking'), false)
+  assert.equal(controls.triggerClicks, 0)
+})
+
+test('KimiAdapter closes the toolkit through the Composer when Escape is ignored', async () => {
+  const controls = createKimiCapabilityPage({ escapeClosesMenu: false })
+  const adapter = createTestKimiAdapter()
+  adapter.page = controls.page
+
+  assert.equal(await adapter.hasToggleCapability('search'), true)
+  assert.equal(controls.menuOpen, false)
+  assert.ok(controls.composerClicks > 0)
+})
+
+test('KimiAdapter rejects search state changes that the page does not apply', async () => {
+  const controls = createKimiCapabilityPage({ applyClicks: false })
+  const adapter = createTestKimiAdapter()
+  adapter.page = controls.page
+
+  await assert.rejects(
+    adapter.setToggleState('search', 'on'),
+    (error: unknown) =>
+      error instanceof Error &&
+      'detailCode' in error &&
+      error.detailCode === 'kimi_search_state_unverified'
+  )
+  assert.equal(controls.menuOpen, false)
 })
 
 test('KimiAdapter stopGeneration clicks only one visible stop control', async () => {
