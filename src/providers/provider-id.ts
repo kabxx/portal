@@ -5,3 +5,4 @@ export type ProviderId =
   | 'doubao'
   | 'grok'
   | 'glm'
+  | 'qwen'

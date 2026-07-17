@@ -40,6 +40,10 @@ test('resolveConversationUrl detects supported provider conversation URLs', () =
     provider: 'glm',
     conversationUrl: 'https://chat.z.ai/c/glm-conv',
   })
+  assert.deepEqual(resolveConversationUrl('https://chat.qwen.ai/c/qwen-conv'), {
+    provider: 'qwen',
+    conversationUrl: 'https://chat.qwen.ai/c/qwen-conv',
+  })
 })
 
 test('resolveConversationUrl normalizes provider URL variants', () => {
@@ -70,6 +74,13 @@ test('resolveConversationUrl normalizes provider URL variants', () => {
       conversationUrl: 'https://chat.z.ai/c/glm-conv',
     }
   )
+  assert.deepEqual(
+    resolveConversationUrl('https://chat.qwen.ai/c/qwen%20conv?model=x#top'),
+    {
+      provider: 'qwen',
+      conversationUrl: 'https://chat.qwen.ai/c/qwen%20conv',
+    }
+  )
 })
 
 test('resolveConversationUrl rejects unsupported URLs', () => {
@@ -82,6 +93,12 @@ test('resolveConversationUrl rejects unsupported URLs', () => {
     resolveConversationUrl('https://example.com/c/chatgpt-conv'),
     null
   )
+  assert.equal(resolveConversationUrl('https://qwen.ai/c/qwen-conv'), null)
+  assert.equal(
+    resolveConversationUrl('https://chat.qwen.ai/chat/qwen-conv'),
+    null
+  )
+  assert.equal(resolveConversationUrl('https://chat.qwen.ai/c/one/extra'), null)
 })
 
 test('resolveConversationUrl rejects malformed path encoding', () => {
@@ -90,4 +107,5 @@ test('resolveConversationUrl rejects malformed path encoding', () => {
     resolveConversationUrl('https://gemini.google.com/app/%E0%A4%A'),
     null
   )
+  assert.equal(resolveConversationUrl('https://chat.qwen.ai/c/%ZZ'), null)
 })

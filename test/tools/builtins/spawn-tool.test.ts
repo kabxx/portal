@@ -31,6 +31,7 @@ test('SpawnTool exposes prompt and optional provider as input', () => {
     'doubao',
     'grok',
     'glm',
+    'qwen',
   ])
   assert.match(tool.prompt, /Examples:\n\n<tool>\n\{/)
   assert.match(tool.prompt, /\n<\/tool>/)
