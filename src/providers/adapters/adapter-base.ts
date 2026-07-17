@@ -620,26 +620,20 @@ export abstract class ProviderAdapter {
     count: () => Promise<number>
     first: () => {
       isVisible: () => Promise<boolean>
-      isEnabled?: () => Promise<boolean>
-      click: (options?: { force?: boolean }) => Promise<void>
+      click: () => Promise<void>
     }
   }): Promise<boolean> {
-    if ((await locator.count().catch(() => 0)) === 0) {
+    if ((await locator.count().catch(() => 0)) !== 1) {
       return false
     }
     const target = locator.first()
     if (!(await target.isVisible().catch(() => false))) {
       return false
     }
-    try {
-      await target.click()
-      return true
-    } catch {
-      return await target
-        .click({ force: true })
-        .then(() => true)
-        .catch(() => false)
-    }
+    return await target
+      .click()
+      .then(() => true)
+      .catch(() => false)
   }
 
   public setSubmitStatusReporter(

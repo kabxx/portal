@@ -293,6 +293,23 @@ test('GlmAdapter enables advanced search dependencies and only disables advanced
   assert.equal(searchButton.clicks, 1)
   assert.equal(advancedSearchSwitch.clicks, 2)
   assert.ok(searchButton.hovers > 0)
+  assert.ok(
+    searchButton.hoverOptions.every(
+      (options) =>
+        typeof options === 'object' && options !== null && !('force' in options)
+    )
+  )
+})
+
+test('GlmAdapter reports advanced search unavailable when normal hover fails', async () => {
+  const adapter = createTestGlmAdapter()
+  const searchButton = createToggleButton('data-active', 'false', {
+    hoverFails: true,
+  })
+  adapter.page = createGlmPage({ searchButton })
+
+  assert.equal(await adapter.hasToggleCapability('advanced_search'), false)
+  assert.equal(searchButton.hoverOptions.length, 3)
 })
 
 test('GlmAdapter attaches text and files through stable composer controls', async () => {
@@ -412,7 +429,7 @@ function createGlmPage({
           first: () => thinkingButton ?? missingButton,
         }
       }
-      if (selector === 'button[data-active]:has(svg[viewBox="0 0 15 15"])') {
+      if (selector === 'button[data-active]:has(svg[viewBox^="0 0 15"])') {
         return {
           count: async () => (searchButton === undefined ? 0 : 1),
           first: () => searchButton ?? missingButton,
@@ -460,6 +477,7 @@ function createGlmPage({
 function createSingleLocator<T>(target: T) {
   return {
     ...target,
+    count: async () => 1,
     first: () => target,
   }
 }
@@ -489,22 +507,30 @@ function createButton({
 
 function createToggleButton(
   attribute: 'data-autothink' | 'data-active',
-  initialValue: 'true' | 'false'
+  initialValue: 'true' | 'false',
+  options: { hoverFails?: boolean } = {}
 ) {
   let value = initialValue
   const button = {
     clicks: 0,
     hovers: 0,
+    hoverOptions: [] as unknown[],
     isVisible: async () => true,
     isEnabled: async () => true,
     getAttribute: async (name: string) => (name === attribute ? value : null),
-    hover: async () => {
+    hover: async (hoverOptions?: unknown) => {
+      button.hoverOptions.push(hoverOptions)
+      if (options.hoverFails) {
+        throw new Error('hover failed')
+      }
       button.hovers += 1
     },
     locator: (selector: string) => {
       assert.equal(selector, '..')
       return {
-        hover: button.hover,
+        hover: async (hoverOptions?: unknown) => {
+          await button.hover(hoverOptions)
+        },
       }
     },
     click: async () => {

@@ -28,7 +28,7 @@ const GLM_MODEL_ITEM_SELECTOR = 'button[data-value]'
 const GLM_STOP_BUTTON_SELECTOR =
   '.messageInputContainer button.bg-black.rounded-full'
 const GLM_SIGNED_OUT_AVATAR_SELECTOR =
-  'div.pointer-events-auto.px-1\\.5.pb-3\\.5 > button > svg[viewBox="0 0 20 20"] path[fill-rule="evenodd"][clip-rule="evenodd"]'
+  'div.pointer-events-auto.px-1\\.5.pb-3\\.5 > button > svg[viewBox^="0 0 20"] path[fill-rule="evenodd"][clip-rule="evenodd"]'
 const GLM_BLOCKING_DIALOG_SELECTOR = '[data-dialog-overlay][data-state="open"]'
 const GLM_ADVANCED_SEARCH_SWITCH_SELECTOR =
   '[data-tooltip-content] button[role="switch"][data-switch-root]'
@@ -41,7 +41,7 @@ type GlmDirectToggleCapability = Exclude<GlmToggleCapability, 'advanced_search'>
 
 const GLM_TOGGLE_BUTTON_SELECTORS: Record<GlmDirectToggleCapability, string> = {
   thinking: 'button[data-autothink]',
-  search: 'button[data-active]:has(svg[viewBox="0 0 15 15"])',
+  search: 'button[data-active]:has(svg[viewBox^="0 0 15"])',
 }
 
 interface GlmStreamError {
@@ -59,6 +59,9 @@ interface GlmAdvancedSearchSnapshot {
   enabled: boolean
   state: GlmToggleState
 }
+
+type GlmRestorePageState = 'pending' | 'signed_out' | 'ready'
+type GlmSignedOutIndicatorState = 'absent' | 'ambiguous' | 'visible'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -109,17 +112,15 @@ export class GlmAdapter extends ProviderAdapter {
   }
 
   private async findAdvancedSearchSwitch(): Promise<Locator | null> {
-    await this.page.bringToFront()
-    await this.page.keyboard.press('Escape').catch(() => {})
-    await this.page.mouse.move(1, 1)
-    await this.getToggleButton('search').locator('..').hover({
-      force: true,
-      timeout: 5000,
-    })
-    const advancedSearchSwitch = this.page
-      .locator(GLM_ADVANCED_SEARCH_SWITCH_SELECTOR)
-      .first()
     try {
+      await this.page.bringToFront()
+      await this.page.keyboard.press('Escape').catch(() => {})
+      await this.getToggleButton('search').locator('..').hover({
+        timeout: 5000,
+      })
+      const advancedSearchSwitch = this.page
+        .locator(GLM_ADVANCED_SEARCH_SWITCH_SELECTOR)
+        .first()
       await advancedSearchSwitch.waitFor({ state: 'visible', timeout: 2000 })
       return advancedSearchSwitch
     } catch {
@@ -314,18 +315,76 @@ export class GlmAdapter extends ProviderAdapter {
     timeoutMs: number,
     signal?: AbortSignal
   ): Promise<void> {
-    const readyButton = this.getSendButton()
+    await waitAsync(async () => await this.isReadyButtonVisible(), {
+      timeoutMs,
+      signal,
+      onTimeout: async () => {
+        throw new ProviderAdapterError(
+          action,
+          action === 'restore'
+            ? 'GLM did not become ready after loading.'
+            : 'GLM finished responding, but the send button did not become visible again.',
+          {
+            kind: 'ui',
+            recovery: 'none',
+            retryable: false,
+            maxAttempts: 1,
+            detailCode: 'glm_ready_button_missing',
+          }
+        )
+      },
+    })
+  }
+
+  private async isReadyButtonVisible(): Promise<boolean> {
+    const readyButtons = this.page.locator(GLM_READY_BUTTON_SELECTOR)
+    if ((await readyButtons.count().catch(() => 0)) !== 1) return false
+    return await readyButtons
+      .first()
+      .isVisible()
+      .catch(() => false)
+  }
+
+  private async getSignedOutIndicatorState(): Promise<GlmSignedOutIndicatorState> {
+    const indicators = this.page.locator(GLM_SIGNED_OUT_AVATAR_SELECTOR)
+    const count = await indicators.count().catch(() => 0)
+    if (count === 0) return 'absent'
+    if (count !== 1) return 'ambiguous'
+    return (await indicators
+      .first()
+      .isVisible()
+      .catch(() => false))
+      ? 'visible'
+      : 'absent'
+  }
+
+  private async waitForRestorePageState(
+    timeoutMs: number,
+    signal?: AbortSignal
+  ): Promise<Exclude<GlmRestorePageState, 'pending'>> {
+    let signedOut = false
     await waitAsync(
-      async () => await readyButton.isVisible().catch(() => false),
+      async () => {
+        const signedOutIndicator = await this.getSignedOutIndicatorState()
+        if (signedOutIndicator === 'visible') {
+          signedOut = true
+          return true
+        }
+        if (signedOutIndicator === 'ambiguous') {
+          return false
+        }
+        if (await this.isReadyButtonVisible()) {
+          return true
+        }
+        return false
+      },
       {
         timeoutMs,
         signal,
         onTimeout: async () => {
           throw new ProviderAdapterError(
-            action,
-            action === 'restore'
-              ? 'GLM did not become ready after loading.'
-              : 'GLM finished responding, but the send button did not become visible again.',
+            'restore',
+            'GLM did not become ready after loading.',
             {
               kind: 'ui',
               recovery: 'none',
@@ -337,6 +396,7 @@ export class GlmAdapter extends ProviderAdapter {
         },
       }
     )
+    return signedOut ? 'signed_out' : 'ready'
   }
 
   private async isSendButtonReady(): Promise<boolean> {
@@ -451,12 +511,11 @@ export class GlmAdapter extends ProviderAdapter {
           })
         })
       })
-      await this.waitForReadyButton(
-        'restore',
+      const pageState = await this.waitForRestorePageState(
         this.getRestoreTimeoutMs(),
         signal
       )
-      if (!(await this.isLoggedIn())) {
+      if (pageState === 'signed_out') {
         throw new ProviderAdapterError(
           'restore',
           'GLM is not logged in for the current browser profile.',
@@ -587,12 +646,7 @@ export class GlmAdapter extends ProviderAdapter {
       return false
     }
 
-    const signedOutAvatarVisible = await this.page
-      .locator(GLM_SIGNED_OUT_AVATAR_SELECTOR)
-      .first()
-      .isVisible()
-      .catch(() => false)
-    return !signedOutAvatarVisible
+    return (await this.getSignedOutIndicatorState()) === 'absent'
   }
 
   public async changeModel(model: string): Promise<void> {

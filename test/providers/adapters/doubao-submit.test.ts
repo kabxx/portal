@@ -282,6 +282,7 @@ data: {"end_type":1}`
 
   let readyChecks = 0
   const readyContainer = {
+    count: async () => 1,
     first: () => readyContainer,
     isVisible: async () => {
       readyChecks += 1
@@ -709,18 +710,6 @@ test('DoubaoAdapter.stopGeneration clicks a visible stop div even when it is not
   assert.equal(stopButton.clicks, 1)
 })
 
-test('DoubaoAdapter.stopGeneration falls back to the stop button class when the primary icon selector misses', async () => {
-  const adapter = createTestDoubaoAdapter()
-  const stopButton = createStopButton()
-  adapter.page = createDoubaoPage(createSendButton(), undefined, stopButton, {
-    primaryStopSelectorAvailable: false,
-  })
-
-  await adapter.stopGeneration()
-
-  assert.equal(stopButton.clicks, 1)
-})
-
 test('DoubaoAdapter.stopGeneration is a no-op when the stop icon is missing', async () => {
   const adapter = createTestDoubaoAdapter()
   adapter.page = createDoubaoPage(createSendButton())
@@ -735,18 +724,19 @@ function createDoubaoPage(
     click: () => Promise<void>
   },
   readyContainer?: {
+    count: () => Promise<number>
     first: () => unknown
     isVisible: () => Promise<boolean>
   },
   stopButton?: ReturnType<typeof createStopButton>,
   stopOptions: {
-    primaryStopSelectorAvailable?: boolean
     modelMenu?: ReturnType<typeof createModelMenu>
     desktopPromotion?: ReturnType<typeof createDesktopPromotion>
   } = {}
 ) {
   const emitter = new EventEmitter()
   let readyContainerLocator: {
+    count: () => Promise<number>
     first: () => unknown
     isVisible: () => Promise<boolean>
   }
@@ -754,6 +744,7 @@ function createDoubaoPage(
     readyContainerLocator = readyContainer
   } else {
     readyContainerLocator = {
+      count: async () => 1,
       first: () => readyContainerLocator,
       isVisible: async () => true,
     }
@@ -792,22 +783,10 @@ function createDoubaoPage(
       }
       if (
         selector.startsWith(
-          'div.break-btn-fISNgC:has(svg[viewBox="0 0 24 24"]'
+          'div.break-btn-fISNgC:has(svg[viewBox^="0 0 24"]'
         ) &&
         selector.includes('path[d^=')
       ) {
-        return createOptionalLocator(
-          stopOptions.primaryStopSelectorAvailable === false
-            ? null
-            : (stopButton ?? null)
-        )
-      }
-      if (
-        selector === 'div[class*="break-btn-"]:has(svg[viewBox="0 0 24 24"])'
-      ) {
-        return createOptionalLocator(stopButton ?? null)
-      }
-      if (selector.startsWith('xpath=//button[@id="flow-end-msg-send"]')) {
         return createOptionalLocator(stopButton ?? null)
       }
       throw new Error(`Unexpected selector: ${selector}`)

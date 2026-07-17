@@ -58,8 +58,6 @@
     "node-unrar-js": "^2.0.2",
     "playwright": "^1.59.1",
     "react": "^19.2.7",
-    "turndown": "^7.2.4",
-    "turndown-plugin-gfm": "^1.0.2",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
   }

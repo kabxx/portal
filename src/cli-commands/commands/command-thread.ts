@@ -120,21 +120,14 @@ function renderThreadHelp(context: CliCommandContext): void {
 }
 
 function isSupportedProviderModel(
-  provider:
-    | 'chatgpt'
-    | 'claude'
-    | 'deepseek'
-    | 'doubao'
-    | 'gemini'
-    | 'grok'
-    | 'glm',
+  provider: 'chatgpt' | 'deepseek' | 'doubao' | 'gemini' | 'grok' | 'glm',
   model: string
 ): boolean {
   const normalized = model.trim().toLowerCase()
   return (
     provider === 'gemini'
       ? /^([1-9]\d*)(\+extended)?$/
-      : provider === 'chatgpt' || provider === 'claude'
+      : provider === 'chatgpt'
         ? /^([1-9]\d*)(\+[1-9]\d*)?$/
         : /^([1-9]\d*)$/
   ).test(normalized)

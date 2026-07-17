@@ -5,6 +5,9 @@ import { ProviderAdapterUnsupportedError } from '../../../src/providers/adapters
 import { GrokAdapter } from '../../../src/providers/adapters/adapter-grok.ts'
 import { createPrototypeObject } from '../../helpers/fakes.ts'
 
+const GROK_VOICE_MODE_READY_SELECTOR =
+  'form:has([data-testid="chat-input"]) div:has(> [data-query-bar-mode-select]) button[type="button"]:has(> div > div:nth-child(6):last-child)'
+
 type GrokAdapterHarness = Pick<GrokAdapter, keyof GrokAdapter> & {
   page: unknown
   websocketFrames: string[]
@@ -260,6 +263,14 @@ function createGrokPage({
           first: () => submitButton,
         }
       }
+      if (selector === GROK_VOICE_MODE_READY_SELECTOR) {
+        return {
+          count: async () => 1,
+          first: () => ({
+            isVisible: async () => true,
+          }),
+        }
+      }
       if (selector === 'input[type="file"][name="files"]') {
         return fileInput
       }
@@ -273,7 +284,7 @@ function createGrokPage({
         return modelMenu
       }
       if (
-        selector.startsWith('button:has(svg[viewBox="0 0 24 24"]') &&
+        selector.startsWith('button:has(svg[viewBox^="0 0 24"]') &&
         selector.includes('path[d^=')
       ) {
         return {
