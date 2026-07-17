@@ -556,6 +556,68 @@ test('ThreadCommand capability clears Gemini one-shot capabilities with none', a
   })
 })
 
+test('ThreadCommand capability lists, selects, and clears Qwen actions', async () => {
+  const { context, threadManager, ui } = createCommandContext()
+  const selectedCapabilities: string[] = []
+  let clearCount = 0
+  const adapter: CapabilityAdapterOverrides = {
+    listActionCapabilities: async () => [
+      { name: 'deep_research', state: 'available' },
+      { name: 't2v', state: 'disabled' },
+      { name: 'search', state: 'available' },
+    ],
+    selectActionCapability: async (name: string) => {
+      selectedCapabilities.push(name)
+      return 'selected'
+    },
+    clearActionCapability: async () => {
+      clearCount += 1
+    },
+  }
+  threadManager.addThread({
+    id: threadManager.createThreadId(),
+    provider: 'qwen',
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
+    createdAt: 1,
+  })
+
+  await executeCapability(context, [])
+  assert.deepEqual(latestTimelineEntry(ui), {
+    tone: 'info',
+    label: '/thread capability',
+    body: [
+      'Provider: qwen',
+      '',
+      'Capabilities:',
+      '  deep_research  available',
+      '  t2v            disabled',
+      '  search         available',
+      '',
+      'Usage:',
+      '  /thread capability <capability>',
+    ].join('\n'),
+    format: 'plain',
+  })
+
+  await executeCapability(context, ['search'])
+  assert.deepEqual(selectedCapabilities, ['search'])
+  assert.deepEqual(latestTimelineEntry(ui), {
+    tone: 'success',
+    label: '/thread capability',
+    body: 'qwen.search: selected',
+    format: 'plain',
+  })
+
+  await executeCapability(context, ['none'])
+  assert.equal(clearCount, 1)
+  assert.deepEqual(latestTimelineEntry(ui), {
+    tone: 'success',
+    label: '/thread capability',
+    body: 'qwen.none: cleared',
+    format: 'plain',
+  })
+})
+
 test('ThreadCommand capability selects Doubao one-shot capabilities', async () => {
   const { context, threadManager, ui } = createCommandContext()
   const selectedCapabilities: string[] = []

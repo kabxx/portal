@@ -16,7 +16,7 @@ portal supports eight web AI products through provider-specific adapters. Every 
 | `doubao`    | `www.doubao.com`    | Yes            | Yes    | `N`                 | Dynamic page actions                      |
 | `grok`      | `grok.com`          | Yes            | Yes    | `N`                 | None exposed by `/thread capability`      |
 | `glm`       | `chat.z.ai`         | Yes            | Yes    | `N`                 | `thinking`, `search`, `advanced_search`   |
-| `qwen`      | `chat.qwen.ai`      | Yes            | Yes    | `N`                 | None exposed by `/thread capability`      |
+| `qwen`      | `chat.qwen.ai`      | Yes            | Yes    | `N`                 | Dynamic page actions                      |
 | `kimi`      | `www.kimi.com`      | Yes            | Yes    | `N`                 | None exposed by `/thread capability`      |
 
 `N` and `M` are one-based positions in the menus visible to the current account. They are not stable model identifiers. Provider experiments, subscription state, and regional differences can change both menu order and capability availability.
@@ -81,14 +81,16 @@ DeepSeek and GLM expose toggle-style controls:
 
 `advanced_search` is GLM-only. A toggle is omitted when the current page does not expose it or exposes it as disabled.
 
-ChatGPT, Gemini, and Doubao expose action-style controls discovered from the current page:
+ChatGPT, Gemini, Doubao, and Qwen expose action-style controls discovered from the current page:
 
 ```text
 /thread capability <action-name>
 /thread capability none
 ```
 
-Action names are account- and page-dependent. `none` clears the selected action when the adapter supports clearing. Grok, Qwen, and Kimi currently return no capability controls.
+Qwen currently recognizes `deep_research`, `t2i`, `t2v`, `web_dev`, `slides`, `search`, `artifacts`, `learn`, and `travel` when those actions are present in the current account's mode menu. Upload is handled separately; Qwen's tools menu is not exposed as a capability.
+
+Action names are account- and page-dependent. `none` clears the selected action when the adapter supports clearing. Grok and Kimi currently return no capability controls.
 
 ## Response capture
 

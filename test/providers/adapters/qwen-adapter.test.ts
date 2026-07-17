@@ -645,6 +645,285 @@ test('QwenAdapter uploads through the unique file input and stops generation', a
   assert.equal(stopClicks, 1)
 })
 
+test('QwenAdapter lists discovered action capabilities and closes the menu', async () => {
+  const adapter = createTestQwenAdapter()
+  const page = createCapabilityPage({
+    hidden: ['travel'],
+    disabled: ['t2v'],
+  })
+  adapter.page = page
+
+  assert.deepEqual(await adapter.listActionCapabilities(), [
+    { name: 'deep_research', state: 'available' },
+    { name: 't2i', state: 'available' },
+    { name: 't2v', state: 'disabled' },
+    { name: 'web_dev', state: 'available' },
+    { name: 'slides', state: 'available' },
+    { name: 'search', state: 'available' },
+    { name: 'artifacts', state: 'available' },
+    { name: 'learn', state: 'available' },
+  ])
+  assert.equal(page.menuOpen(), false)
+})
+
+test('QwenAdapter selects and clears an action capability', async () => {
+  const adapter = createTestQwenAdapter()
+  const page = createCapabilityPage({ disabled: ['t2v'] })
+  adapter.page = page
+
+  assert.equal(await adapter.selectActionCapability('search'), 'selected')
+  assert.equal(page.selectedCapability(), 'search')
+  assert.equal(
+    (await adapter.listActionCapabilities()).find(
+      (capability) => capability.name === 'search'
+    )?.state,
+    'selected'
+  )
+  await adapter.clearActionCapability()
+  assert.equal(page.selectedCapability(), null)
+  assert.equal(await adapter.selectActionCapability('t2v'), 'disabled')
+})
+
+test('QwenAdapter preserves the selected action for unavailable targets', async () => {
+  const adapter = createTestQwenAdapter()
+  const page = createCapabilityPage({
+    selected: 'deep_research',
+    hidden: ['travel'],
+    disabled: ['t2v'],
+  })
+  adapter.page = page
+
+  assert.equal(await adapter.selectActionCapability('t2v'), 'disabled')
+  assert.equal(page.selectedCapability(), 'deep_research')
+  assert.equal(await adapter.selectActionCapability('travel'), 'unavailable')
+  assert.equal(page.selectedCapability(), 'deep_research')
+})
+
+test('QwenAdapter rejects ambiguous capability and selected-mode identities', async () => {
+  const adapter = createTestQwenAdapter()
+  const duplicatePage = createCapabilityPage({ duplicates: ['search'] })
+  adapter.page = duplicatePage
+
+  await assert.rejects(adapter.listActionCapabilities(), (error: unknown) => {
+    return (
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'qwen_capability_item_duplicated'
+    )
+  })
+  assert.equal(duplicatePage.menuOpen(), false)
+
+  const selectedPage = createCapabilityPage({
+    selected: 'search',
+    ambiguousSelected: true,
+  })
+  adapter.page = selectedPage
+  await assert.rejects(adapter.clearActionCapability(), (error: unknown) => {
+    return (
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'qwen_selected_capability_ambiguous'
+    )
+  })
+})
+
+interface CapabilityTestLocator {
+  count(): Promise<number>
+  first(): CapabilityTestLocator
+  nth(index: number): CapabilityTestLocator
+  filter(options?: { visible?: boolean }): CapabilityTestLocator
+  locator(selector: string): CapabilityTestLocator
+  isVisible(): Promise<boolean>
+  isEnabled(): Promise<boolean>
+  getAttribute(name: string): Promise<string | null>
+  click(options?: { force?: boolean }): Promise<void>
+  hover(options?: { force?: boolean }): Promise<void>
+  dispatchEvent(name: string): Promise<void>
+}
+
+function createCapabilityPage(
+  options: {
+    selected?: string | null
+    hidden?: string[]
+    disabled?: string[]
+    duplicates?: string[]
+    ambiguousSelected?: boolean
+  } = {}
+) {
+  const emitter = new EventEmitter()
+  const hidden = new Set(options.hidden ?? [])
+  const disabled = new Set(options.disabled ?? [])
+  const duplicates = new Set(options.duplicates ?? [])
+  const directCapabilities = new Set([
+    'deep_research',
+    't2i',
+    't2v',
+    'web_dev',
+    'slides',
+  ])
+  let isMenuOpen = false
+  let isSubmenuOpen = false
+  let isCloseVisible = false
+  let selected = options.selected ?? null
+
+  const readCapability = (selector: string): string | undefined =>
+    selector.match(/data-menu-id\$="-([^"]+)"/)?.[1]
+
+  const makeIconLocator = (reference: string): CapabilityTestLocator => {
+    const icon: CapabilityTestLocator = {
+      count: async () => 1,
+      first: () => icon,
+      nth: () => icon,
+      filter: () => icon,
+      locator: () => icon,
+      isVisible: async () => true,
+      isEnabled: async () => true,
+      getAttribute: async (name: string) =>
+        name === 'xlink:href' ? reference : null,
+      click: async () => {},
+      hover: async () => {},
+      dispatchEvent: async () => {},
+    }
+    return icon
+  }
+
+  const makeLocator = (
+    kind: string,
+    capability?: string
+  ): CapabilityTestLocator => {
+    const locator: CapabilityTestLocator = {
+      count: async () => {
+        if (kind === 'trigger') return 1
+        if (kind === 'rootMenu' || kind === 'submenu') {
+          return isMenuOpen ? 1 : 0
+        }
+        if (kind === 'nestedMenu') return isSubmenuOpen ? 1 : 0
+        if (kind === 'nestedItems') {
+          return isSubmenuOpen
+            ? ['search', 'artifacts', 'learn', 'travel'].filter(
+                (name) => !hidden.has(name)
+              ).length
+            : 0
+        }
+        if (kind === 'directAction') {
+          const present =
+            isMenuOpen &&
+            capability !== undefined &&
+            directCapabilities.has(capability) &&
+            !hidden.has(capability)
+          return present ? (duplicates.has(capability) ? 2 : 1) : 0
+        }
+        if (kind === 'nestedAction') {
+          const present =
+            isSubmenuOpen &&
+            capability !== undefined &&
+            !directCapabilities.has(capability) &&
+            !hidden.has(capability)
+          return present ? (duplicates.has(capability) ? 2 : 1) : 0
+        }
+        if (kind === 'selected') {
+          if (selected === null) return 0
+          return options.ambiguousSelected === true ? 2 : 1
+        }
+        if (kind === 'selectedClose') {
+          return selected !== null && isCloseVisible ? 1 : 0
+        }
+        return 0
+      },
+      first: () => locator,
+      nth: () => locator,
+      filter: () => locator,
+      locator: (selector: string) => {
+        if (kind === 'rootMenu') {
+          if (selector.includes('aria-haspopup')) return makeLocator('submenu')
+          return makeLocator('directAction', readCapability(selector))
+        }
+        if (kind === 'nestedMenu') {
+          if (selector.endsWith('[role="menuitem"][data-menu-id]')) {
+            return makeLocator('nestedItems')
+          }
+          return makeLocator('nestedAction', readCapability(selector))
+        }
+        if (kind === 'selected' && selector.includes('close')) {
+          return makeLocator('selectedClose')
+        }
+        return makeIconLocator(`#icon-${capability ?? selected ?? 'unknown'}`)
+      },
+      isVisible: async () => {
+        if (kind === 'trigger') return true
+        return (await locator.count()) === 1
+      },
+      isEnabled: async () => true,
+      getAttribute: async (name: string) => {
+        if (kind === 'submenu' && name === 'aria-controls') {
+          return 'qwen-capability-popup'
+        }
+        if (
+          (kind === 'directAction' || kind === 'nestedAction') &&
+          name === 'aria-disabled'
+        ) {
+          return capability !== undefined && disabled.has(capability)
+            ? 'true'
+            : 'false'
+        }
+        return null
+      },
+      click: async () => {
+        if (kind === 'trigger') {
+          isMenuOpen = true
+          isSubmenuOpen = false
+        } else if (
+          (kind === 'directAction' || kind === 'nestedAction') &&
+          capability !== undefined
+        ) {
+          if (!disabled.has(capability)) {
+            selected = capability
+            isCloseVisible = false
+            isMenuOpen = false
+            isSubmenuOpen = false
+          }
+        } else if (kind === 'selectedClose') {
+          selected = null
+          isCloseVisible = false
+        }
+      },
+      hover: async () => {
+        if (kind === 'submenu') isSubmenuOpen = true
+        if (kind === 'selected') isCloseVisible = true
+      },
+      dispatchEvent: async () => {
+        if (kind === 'submenu') isSubmenuOpen = true
+      },
+    }
+    return locator
+  }
+
+  const page = Object.assign(emitter, {
+    locator: (selector: string) => {
+      if (selector === '.mode-select-dropdown [role="menu"]') {
+        return makeLocator('rootMenu')
+      }
+      if (selector === '[id="qwen-capability-popup"]') {
+        return makeLocator('nestedMenu')
+      }
+      if (selector.includes('.mode-select-open')) {
+        return makeLocator('trigger')
+      }
+      if (selector.includes('.mode-select-current-mode')) {
+        return makeLocator('selected')
+      }
+      return makeLocator('missing')
+    },
+    keyboard: {
+      press: async () => {
+        isMenuOpen = false
+        isSubmenuOpen = false
+      },
+    },
+    menuOpen: () => isMenuOpen,
+    selectedCapability: () => selected,
+  })
+  return page
+}
+
 interface SubmitPageOptions {
   finished?: boolean
   omitResponse?: boolean
