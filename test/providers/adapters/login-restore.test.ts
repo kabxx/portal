@@ -15,8 +15,9 @@ import { GlmAdapter } from '../../../src/providers/adapters/adapter-glm.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 interface RestoreTestLocator {
+  count?(): Promise<number>
   first?(): RestoreTestLocator
-  isVisible(): Promise<boolean>
+  isVisible?(): Promise<boolean>
   isEnabled?(): Promise<boolean>
   getAttribute?(name: string): Promise<string | null>
 }
@@ -39,6 +40,9 @@ function createRestorableAdapter(
   }
   return adapter
 }
+
+const GROK_VOICE_MODE_READY_SELECTOR =
+  'form:has([data-testid="chat-input"]) div:has(> [data-query-bar-mode-select]) button[type="button"]:has(> div > div:nth-child(6):last-child)'
 
 function createMockPage({
   afterGotoUrl,
@@ -65,6 +69,7 @@ function createMockPage({
       isVisible: async () => false,
     }),
     locator: (selector: string) => ({
+      count: async () => (visibleByLocator[selector] ? 1 : 0),
       isVisible: async () => visibleByLocator[selector] ?? false,
       isEnabled: async () => enabledByLocator[selector] ?? false,
       first() {
@@ -117,6 +122,7 @@ test('GeminiAdapter.restore reports auth when signed-out panel is visible', asyn
 })
 
 test('GeminiAdapter.restore waits for the microphone ready signal before succeeding', async () => {
+  let countChecks = 0
   let checks = 0
   const adapter = createRestorableAdapter(GeminiAdapter, {
     goto: async () => undefined,
@@ -132,6 +138,10 @@ test('GeminiAdapter.restore waits for the microphone ready signal before succeed
         'button.speech_dictation_mic_button, [data-node-type="speech_dictation_mic_button"] .speech_dictation_mic_button, speech-dictation-mic-button .speech_dictation_mic_button'
       ) {
         return {
+          count: async () => {
+            countChecks += 1
+            return countChecks >= 3 ? 1 : 2
+          },
           first() {
             return this
           },
@@ -149,6 +159,7 @@ test('GeminiAdapter.restore waits for the microphone ready signal before succeed
   await adapter.restore()
 
   assert.ok(checks >= 3)
+  assert.ok(countChecks >= 3)
 })
 
 test('DeepSeekAdapter.restore reports auth when redirected to /sign_in', async () => {
@@ -171,6 +182,7 @@ test('DeepSeekAdapter.restore reports auth when redirected to /sign_in', async (
 })
 
 test('DeepSeekAdapter.restore waits for the ready button signal before succeeding', async () => {
+  let countChecks = 0
   let checks = 0
   const adapter = createRestorableAdapter(DeepSeekAdapter, {
     goto: async () => undefined,
@@ -178,6 +190,10 @@ test('DeepSeekAdapter.restore waits for the ready button signal before succeedin
     locator: (selector: string) => {
       if (selector === 'div[role="button"][class*="bd74640a"]') {
         return {
+          count: async () => {
+            countChecks += 1
+            return countChecks >= 3 ? 1 : 2
+          },
           first() {
             return this
           },
@@ -194,6 +210,7 @@ test('DeepSeekAdapter.restore waits for the ready button signal before succeedin
   await adapter.restore()
 
   assert.ok(checks >= 3)
+  assert.ok(countChecks >= 3)
 })
 
 test('DoubaoAdapter.restore reports auth when login button is visible', async () => {
@@ -217,6 +234,7 @@ test('DoubaoAdapter.restore reports auth when login button is visible', async ()
 })
 
 test('DoubaoAdapter.restore waits for the ready container signal before succeeding', async () => {
+  let countChecks = 0
   let checks = 0
   const adapter = createRestorableAdapter(DoubaoAdapter, {
     goto: async () => undefined,
@@ -229,6 +247,10 @@ test('DoubaoAdapter.restore waits for the ready container signal before succeedi
       }
       if (selector === 'div[class*="container-YCWnMI"]') {
         return {
+          count: async () => {
+            countChecks += 1
+            return countChecks >= 3 ? 1 : 2
+          },
           first() {
             return this
           },
@@ -245,6 +267,7 @@ test('DoubaoAdapter.restore waits for the ready container signal before succeedi
   await adapter.restore()
 
   assert.ok(checks >= 3)
+  assert.ok(countChecks >= 3)
 })
 
 test('GrokAdapter.restore reports auth when signed-out actions are visible', async () => {
@@ -269,8 +292,9 @@ test('GrokAdapter.restore reports auth when signed-out actions are visible', asy
   assert.equal(capturedError.kind, 'auth')
 })
 
-test('GrokAdapter.restore waits for the composer ready signal before succeeding', async () => {
-  let checks = 0
+test('GrokAdapter.restore ignores an editable Composer and waits for one visible voice mode control', async () => {
+  let countChecks = 0
+  let visibilityChecks = 0
   const adapter = createRestorableAdapter(GrokAdapter, {
     goto: async () => undefined,
     url: () => 'https://grok.com',
@@ -291,12 +315,26 @@ test('GrokAdapter.restore waits for the composer ready signal before succeeding'
           first() {
             return this
           },
-          isVisible: async () => {
-            checks += 1
-            return checks >= 3
+          isVisible: async () => true,
+          getAttribute: async () => 'false',
+        }
+      }
+      if (selector === GROK_VOICE_MODE_READY_SELECTOR) {
+        return {
+          count: async () => {
+            countChecks += 1
+            if (countChecks === 1) {
+              return 0
+            }
+            return countChecks === 2 ? 2 : 1
           },
-          getAttribute: async (name: string) =>
-            name === 'aria-disabled' ? 'false' : null,
+          first() {
+            return this
+          },
+          isVisible: async () => {
+            visibilityChecks += 1
+            return visibilityChecks >= 2
+          },
         }
       }
       throw new Error(`Unexpected selector: ${selector}`)
@@ -305,17 +343,18 @@ test('GrokAdapter.restore waits for the composer ready signal before succeeding'
 
   await adapter.restore()
 
-  assert.ok(checks >= 3)
+  assert.ok(countChecks >= 4)
+  assert.ok(visibilityChecks >= 2)
 })
 
-test('GlmAdapter.restore reports auth when the signed-out avatar is visible', async () => {
+test('GlmAdapter.restore gives signed-out state priority over ready', async () => {
   const adapter = createRestorableAdapter(
     GlmAdapter,
     createMockPage({
       afterGotoUrl: 'https://chat.z.ai/',
       visibleByLocator: {
         '#send-message-button': true,
-        'div.pointer-events-auto.px-1\\.5.pb-3\\.5 > button > svg[viewBox="0 0 20 20"] path[fill-rule="evenodd"][clip-rule="evenodd"]': true,
+        'div.pointer-events-auto.px-1\\.5.pb-3\\.5 > button > svg[viewBox^="0 0 20"] path[fill-rule="evenodd"][clip-rule="evenodd"]': true,
       },
     })
   )
@@ -331,7 +370,62 @@ test('GlmAdapter.restore reports auth when the signed-out avatar is visible', as
   assert.equal(capturedError.kind, 'auth')
 })
 
+test('GlmAdapter.restore keeps waiting while the signed-out indicator is ambiguous', async () => {
+  let signedOutCountChecks = 0
+  let readyCountChecks = 0
+  const adapter = createRestorableAdapter(GlmAdapter, {
+    goto: async () => undefined,
+    url: () => 'https://chat.z.ai/',
+    locator: (selector: string) => {
+      if (
+        selector ===
+        'div.pointer-events-auto.px-1\\.5.pb-3\\.5 > button > svg[viewBox^="0 0 20"] path[fill-rule="evenodd"][clip-rule="evenodd"]'
+      ) {
+        return {
+          count: async () => {
+            signedOutCountChecks += 1
+            return signedOutCountChecks <= 3 ? 2 : 0
+          },
+          first: () => ({
+            isVisible: async () => {
+              throw new Error('Ambiguous auth target must not be selected.')
+            },
+          }),
+        }
+      }
+      if (selector === '#send-message-button') {
+        return {
+          count: async () => {
+            assert.ok(signedOutCountChecks > 3)
+            readyCountChecks += 1
+            return 1
+          },
+          first() {
+            return this
+          },
+          isVisible: async () => true,
+        }
+      }
+      if (selector === '[data-dialog-overlay][data-state="open"]') {
+        return {
+          first() {
+            return this
+          },
+          isVisible: async () => false,
+        }
+      }
+      throw new Error(`Unexpected selector: ${selector}`)
+    },
+  })
+
+  await adapter.restore()
+
+  assert.ok(signedOutCountChecks >= 4)
+  assert.ok(readyCountChecks >= 2)
+})
+
 test('GlmAdapter.restore only requires the send button to be visible', async () => {
+  let countChecks = 0
   let checks = 0
   const adapter = createRestorableAdapter(GlmAdapter, {
     goto: async () => undefined,
@@ -339,6 +433,10 @@ test('GlmAdapter.restore only requires the send button to be visible', async () 
     locator: (selector: string) => {
       if (selector === '#send-message-button') {
         return {
+          count: async () => {
+            countChecks += 1
+            return countChecks >= 3 ? 1 : 2
+          },
           first() {
             return this
           },
@@ -351,9 +449,10 @@ test('GlmAdapter.restore only requires the send button to be visible', async () 
       }
       if (
         selector ===
-        'div.pointer-events-auto.px-1\\.5.pb-3\\.5 > button > svg[viewBox="0 0 20 20"] path[fill-rule="evenodd"][clip-rule="evenodd"]'
+        'div.pointer-events-auto.px-1\\.5.pb-3\\.5 > button > svg[viewBox^="0 0 20"] path[fill-rule="evenodd"][clip-rule="evenodd"]'
       ) {
         return {
+          count: async () => 0,
           first() {
             return this
           },
@@ -375,9 +474,11 @@ test('GlmAdapter.restore only requires the send button to be visible', async () 
   await adapter.restore()
 
   assert.ok(checks >= 3)
+  assert.ok(countChecks >= 3)
 })
 
 test('ChatGPTAdapter.restore waits for the speech button ready signal before succeeding', async () => {
+  let countChecks = 0
   let checks = 0
   const adapter = createRestorableAdapter(ChatGPTAdapter, {
     goto: async () => undefined,
@@ -399,6 +500,10 @@ test('ChatGPTAdapter.restore waits for the speech button ready signal before suc
       }
       if (selector === 'button[style*="--vt-composer-speech-button"]') {
         return {
+          count: async () => {
+            countChecks += 1
+            return countChecks >= 3 ? 1 : 2
+          },
           first() {
             return this
           },
@@ -411,6 +516,7 @@ test('ChatGPTAdapter.restore waits for the speech button ready signal before suc
       }
       if (selector === 'button[data-testid="send-button"]') {
         return {
+          count: async () => 0,
           first() {
             return this
           },
@@ -425,4 +531,5 @@ test('ChatGPTAdapter.restore waits for the speech button ready signal before suc
   await adapter.restore()
 
   assert.ok(checks >= 3)
+  assert.ok(countChecks >= 3)
 })

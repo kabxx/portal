@@ -38,7 +38,6 @@ const MATCH_FIELDS = new Set(['tool', 'provider'])
 const EVENT_NAMES = new Set<string>(HOOK_EVENTS)
 const PROVIDER_IDS = new Set<string>([
   'chatgpt',
-  'claude',
   'gemini',
   'deepseek',
   'doubao',

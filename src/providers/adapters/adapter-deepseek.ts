@@ -74,7 +74,7 @@ export class DeepSeekAdapter extends ProviderAdapter {
   private conversationIdVal!: string | null
 
   private getReadyButton() {
-    return this.page.locator(DEEPSEEK_READY_BUTTON_SELECTOR).first()
+    return this.page.locator(DEEPSEEK_READY_BUTTON_SELECTOR)
   }
 
   private getToggleButton(capability: DeepSeekToggleCapability) {
@@ -152,9 +152,15 @@ export class DeepSeekAdapter extends ProviderAdapter {
     timeoutMs: number,
     signal?: AbortSignal
   ): Promise<void> {
-    const readyButton = this.getReadyButton()
     await waitAsync(
-      async () => await readyButton.isVisible().catch(() => false),
+      async () => {
+        const readyButtons = this.getReadyButton()
+        if ((await readyButtons.count().catch(() => 0)) !== 1) return false
+        return await readyButtons
+          .first()
+          .isVisible()
+          .catch(() => false)
+      },
       {
         timeoutMs,
         signal,
@@ -453,7 +459,7 @@ export class DeepSeekAdapter extends ProviderAdapter {
 
   public override async stopGeneration(): Promise<void> {
     const stopButton = this.page.locator(
-      `div[role="button"]:has(svg[viewBox="0 0 16 16"] path[d^="${DEEPSEEK_STOP_ICON_PATH_PREFIX}"])`
+      `div[role="button"]:has(svg[viewBox^="0 0 16"] path[d^="${DEEPSEEK_STOP_ICON_PATH_PREFIX}"])`
     )
 
     await this.clickLocatorIfReady(stopButton)

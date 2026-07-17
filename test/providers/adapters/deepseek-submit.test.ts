@@ -584,17 +584,8 @@ function createDeepSeekPage(
     ...sendButton,
     getAttribute: sendButton.getAttribute ?? (async () => null),
   }
-  let readyButtonLocator: {
-    first: () => unknown
-    isVisible: () => Promise<boolean>
-  }
-  if (readyButton) {
-    readyButtonLocator = readyButton
-  } else {
-    readyButtonLocator = {
-      first: () => readyButtonLocator,
-      isVisible: async () => true,
-    }
+  const readyButtonTarget = readyButton ?? {
+    isVisible: async () => true,
   }
 
   return {
@@ -606,7 +597,10 @@ function createDeepSeekPage(
         }
       }
       if (selector === 'div[role="button"][class*="bd74640a"]') {
-        return readyButtonLocator
+        return {
+          count: async () => 1,
+          first: () => readyButtonTarget,
+        }
       }
       if (selector === 'div.f79352dc') {
         return {
@@ -634,9 +628,7 @@ function createDeepSeekPage(
         }
       }
       if (
-        selector.startsWith(
-          'div[role="button"]:has(svg[viewBox="0 0 16 16"]'
-        ) &&
+        selector.startsWith('div[role="button"]:has(svg[viewBox^="0 0 16"]') &&
         selector.includes('path[d^=')
       ) {
         return createOptionalLocator(stopButton ?? null)
