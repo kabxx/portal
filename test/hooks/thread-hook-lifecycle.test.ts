@@ -51,7 +51,13 @@ test('ThreadManager emits each lifecycle Hook once with one turn snapshot', asyn
   })
 
   await manager.submitThreadInput(thread.id, 'run')
-  await manager.closeThread(thread.id)
+  assert.deepEqual(
+    await Promise.all([
+      manager.closeThread(thread.id),
+      manager.closeThread(thread.id),
+    ]),
+    [true, true]
+  )
 
   assert.deepEqual(events, [
     'thread.ready',

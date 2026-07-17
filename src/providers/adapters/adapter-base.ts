@@ -16,8 +16,11 @@ export type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
 export interface ProviderPage {
   close(): Promise<void>
   pause(): Promise<void>
-  on?(event: 'response', listener: (response: Response) => void): unknown
-  off?(event: 'response', listener: (response: Response) => void): unknown
+  on(event: 'response', listener: (response: Response) => void): unknown
+  on(event: 'close', listener: () => void): unknown
+  off(event: 'response', listener: (response: Response) => void): unknown
+  off(event: 'close', listener: () => void): unknown
+  isClosed(): boolean
   addInitScript?(script: unknown): Promise<unknown>
   evaluate?(pageFunction: unknown, argument?: unknown): Promise<unknown>
 }
@@ -583,6 +586,7 @@ export abstract class ProviderAdapter<
     Promise<{ body: string; error: string | null }>
   >()
   private pageResponseListener: ((response: Response) => void) | null = null
+  private portalClosing = false
   private cdpSession: TSession | null = null
   private cdpCacheDisabled = false
   private nextCdpResponseId = 1
@@ -646,7 +650,40 @@ export abstract class ProviderAdapter<
     await this.ensureFetchCaptureInstalled()
   }
 
+  public onUnexpectedPageClose(listener: () => void): () => void {
+    let subscribed = true
+    let closeObserved = false
+    const onClose = () => {
+      if (!subscribed || closeObserved) {
+        return
+      }
+      closeObserved = true
+      this.page.off('close', onClose)
+      queueMicrotask(() => {
+        if (!subscribed || this.portalClosing) {
+          return
+        }
+        subscribed = false
+        listener()
+      })
+    }
+
+    this.page.on('close', onClose)
+    if (this.page.isClosed()) {
+      onClose()
+    }
+
+    return () => {
+      if (!subscribed) {
+        return
+      }
+      subscribed = false
+      this.page.off('close', onClose)
+    }
+  }
+
   public async close() {
+    this.portalClosing = true
     if (!this.page) {
       return
     }

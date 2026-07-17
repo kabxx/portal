@@ -69,10 +69,34 @@ export class ThreadAlreadyRunningError extends Error {
   }
 }
 
+export class ThreadCloseCleanupError extends Error {
+  public readonly cleanupErrors: readonly unknown[]
+
+  public constructor(
+    public readonly threadId: string,
+    cleanupErrors: readonly unknown[]
+  ) {
+    super(
+      `Thread ${threadId} was closed, but cleanup failed: ${cleanupErrors.map(String).join('; ')}`,
+      {
+        cause:
+          cleanupErrors.length === 1
+            ? cleanupErrors[0]
+            : new AggregateError(cleanupErrors),
+      }
+    )
+    this.name = 'ThreadCloseCleanupError'
+    this.cleanupErrors = [...cleanupErrors]
+  }
+}
+
 export class ThreadManager {
   private readonly threads = new ThreadRegistry()
   private readonly runningThreadIds = new Set<string>()
   private readonly ready = new Map<string, Promise<void>>()
+  private readonly pageCloseListeners = new Set<(threadId: string) => void>()
+  private readonly pageCloseUnsubscribers = new Map<string, () => void>()
+  private readonly closingThreads = new Map<string, Promise<boolean>>()
 
   public constructor(
     private readonly hookCatalog: HookCatalog | null = null,
@@ -82,6 +106,13 @@ export class ThreadManager {
 
   public createThreadId(): string {
     return this.threads.createThreadId()
+  }
+
+  public onThreadPageClosed(listener: (threadId: string) => void): () => void {
+    this.pageCloseListeners.add(listener)
+    return () => {
+      this.pageCloseListeners.delete(listener)
+    }
   }
 
   public addThread(thread: CreateThreadInput): ThreadHandle {
@@ -110,6 +141,21 @@ export class ThreadManager {
           .then(() => {})
       )
     }
+    this.pageCloseUnsubscribers.set(
+      thread.id,
+      thread.runtime.onUnexpectedPageClose(() => {
+        if (this.threads.getThread(thread.id) === null) {
+          return
+        }
+        for (const listener of [...this.pageCloseListeners]) {
+          try {
+            listener(thread.id)
+          } catch {
+            // One observer must not prevent delivery to the remaining observers.
+          }
+        }
+      })
+    )
     return handle
   }
 
@@ -150,17 +196,49 @@ export class ThreadManager {
     return this.switchThread(latestThread.id)
   }
 
-  public async closeThread(
+  public closeThread(
     id: string,
     source: HookExecutionScope['source'] = 'system'
+  ): Promise<boolean> {
+    const existing = this.closingThreads.get(id)
+    if (existing !== undefined) {
+      return existing
+    }
+
+    const closing = Promise.resolve()
+      .then(async () => await this.closeThreadOnce(id, source))
+      .finally(() => {
+        if (this.closingThreads.get(id) === closing) {
+          this.closingThreads.delete(id)
+        }
+      })
+    this.closingThreads.set(id, closing)
+    return closing
+  }
+
+  private async closeThreadOnce(
+    id: string,
+    source: HookExecutionScope['source']
   ): Promise<boolean> {
     const thread = this.threads.getThread(id)
     if (thread === null) {
       return false
     }
 
-    await this.ready.get(id)
-    await thread.runtime.close()
+    const unsubscribe = this.pageCloseUnsubscribers.get(id)
+    this.pageCloseUnsubscribers.delete(id)
+    unsubscribe?.()
+    const failures: unknown[] = []
+    try {
+      await this.ready.get(id)
+    } catch (error) {
+      failures.push(error)
+    }
+    try {
+      await thread.runtime.close()
+    } catch (error) {
+      failures.push(error)
+    }
     this.threads.removeThread(id)
     this.ready.delete(id)
     if (this.hookCatalog !== null && this.hookDispatcher !== null) {
@@ -169,10 +247,17 @@ export class ThreadManager {
         this.hookCatalog.snapshot(),
         source
       )
-      await this.hookDispatcher.dispatch(
-        this.hookDispatcher.createEvent('thread.closed', scope),
-        scope
-      )
+      try {
+        await this.hookDispatcher.dispatch(
+          this.hookDispatcher.createEvent('thread.closed', scope),
+          scope
+        )
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    if (failures.length > 0) {
+      throw new ThreadCloseCleanupError(id, failures)
     }
     return true
   }
