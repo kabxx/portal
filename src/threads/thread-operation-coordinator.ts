@@ -142,6 +142,34 @@ export class ThreadOperationCoordinator {
     await this.cancelOperation(threadId, 'cancelling')
   }
 
+  public async waitForIdle(threadId: string): Promise<boolean> {
+    const operation = this.operations.get(threadId)
+    if (operation === undefined) {
+      return true
+    }
+    const settlement =
+      operation.cancellation ??
+      operation.done.then(
+        () => {},
+        () => {}
+      )
+    return await waitForSettlement(settlement, this.cancelSettleTimeoutMs)
+  }
+
+  public abandon(threadId: string): Promise<void> | null {
+    const operation = this.operations.get(threadId)
+    if (operation === undefined) {
+      return null
+    }
+    if (this.operations.get(threadId)?.token === operation.token) {
+      this.operations.delete(threadId)
+    }
+    return operation.done.then(
+      () => {},
+      () => {}
+    )
+  }
+
   public close(
     threadId: string,
     closeThread: () => Promise<boolean>

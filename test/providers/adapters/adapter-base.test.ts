@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { createContext, runInContext } from 'node:vm'
+import type { Response } from 'playwright'
 
 import {
   type CapturedFetchEntry,
@@ -220,6 +221,74 @@ class PollingAdapter extends ProviderAdapter<ProviderPage, ProviderCdpSession> {
   public async attachImage(_path: string | readonly string[]) {
     return undefined
   }
+
+  public async submit(): Promise<string> {
+    return 'READY'
+  }
+}
+
+type PageEventListener = ((response: Response) => void) | (() => void)
+
+class CloseAwarePage implements ProviderPage {
+  private readonly events = new EventEmitter()
+  private closed = false
+
+  public async close(): Promise<void> {
+    this.closeExternally()
+  }
+
+  public async pause(): Promise<void> {}
+
+  public on(event: 'response', listener: (response: Response) => void): unknown
+  public on(event: 'close', listener: () => void): unknown
+  public on(event: 'response' | 'close', listener: PageEventListener): unknown {
+    return this.events.on(event, listener)
+  }
+
+  public off(event: 'response', listener: (response: Response) => void): unknown
+  public off(event: 'close', listener: () => void): unknown
+  public off(
+    event: 'response' | 'close',
+    listener: PageEventListener
+  ): unknown {
+    return this.events.off(event, listener)
+  }
+
+  public isClosed(): boolean {
+    return this.closed
+  }
+
+  public closeExternally(): void {
+    if (this.closed) {
+      return
+    }
+    this.closed = true
+    this.events.emit('close')
+  }
+}
+
+class PageLifecycleAdapter extends ProviderAdapter<CloseAwarePage> {
+  public async restore(): Promise<void> {}
+
+  public async isLoggedIn(): Promise<boolean> {
+    return true
+  }
+
+  public get conversationId(): string | null {
+    return null
+  }
+
+  public get conversationUrl(): string {
+    return 'https://example.com/thread'
+  }
+
+  public async changeModel(_model: string): Promise<void> {}
+
+  public async attachText(_text: string): Promise<void> {}
+
+  public async attachFile(_path: string | readonly string[]): Promise<void> {}
+
+  public async attachImage(_path: string | readonly string[]): Promise<void> {}
 
   public async submit(): Promise<string> {
     return 'READY'
@@ -721,4 +790,64 @@ test('ProviderAdapter safe submit status emission ignores abort errors from repo
   })
 
   await adapter.emitStatusSafely('waiting')
+})
+
+test('ProviderAdapter reports one unexpected page close', async () => {
+  const page = new CloseAwarePage()
+  const adapter = await PageLifecycleAdapter.create(
+    createBrowserContextStub(page)
+  )
+  let closeEvents = 0
+  adapter.onUnexpectedPageClose(() => {
+    closeEvents += 1
+  })
+
+  page.closeExternally()
+  page.closeExternally()
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.equal(closeEvents, 1)
+})
+
+test('ProviderAdapter reports a page that closed before subscription', async () => {
+  const page = new CloseAwarePage()
+  const adapter = await PageLifecycleAdapter.create(
+    createBrowserContextStub(page)
+  )
+  page.closeExternally()
+  let closeEvents = 0
+
+  adapter.onUnexpectedPageClose(() => {
+    closeEvents += 1
+  })
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.equal(closeEvents, 1)
+})
+
+test('ProviderAdapter suppresses queued and portal-initiated page closes', async () => {
+  const externallyClosedPage = new CloseAwarePage()
+  const externalAdapter = await PageLifecycleAdapter.create(
+    createBrowserContextStub(externallyClosedPage)
+  )
+  let externalEvents = 0
+  const unsubscribe = externalAdapter.onUnexpectedPageClose(() => {
+    externalEvents += 1
+  })
+  externallyClosedPage.closeExternally()
+  unsubscribe()
+
+  const portalClosedPage = new CloseAwarePage()
+  const portalAdapter = await PageLifecycleAdapter.create(
+    createBrowserContextStub(portalClosedPage)
+  )
+  let portalEvents = 0
+  portalAdapter.onUnexpectedPageClose(() => {
+    portalEvents += 1
+  })
+  await portalAdapter.close()
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.equal(externalEvents, 0)
+  assert.equal(portalEvents, 0)
 })

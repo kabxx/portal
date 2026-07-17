@@ -127,7 +127,8 @@ function isSupportedProviderModel(
     | 'gemini'
     | 'grok'
     | 'glm'
-    | 'qwen',
+    | 'qwen'
+    | 'kimi',
   model: string
 ): boolean {
   const normalized = model.trim().toLowerCase()
@@ -338,13 +339,19 @@ async function closeThread(
   }
 
   const wasActive = context.threadManager.getActiveThread()?.id === targetId
-  const closed = await context.closeThread(targetId)
+  let closed: boolean
+  try {
+    closed = await context.closeThread(targetId)
+  } finally {
+    if (context.threadManager.getThread(targetId) === null) {
+      context.ui.removeThreadTimeline(targetId)
+    }
+  }
   if (!closed) {
     context.ui.renderWarning('/thread close', `Unknown thread: ${targetId}`)
     return { continue: true }
   }
 
-  context.ui.removeThreadTimeline(targetId)
   if (!wasActive) {
     context.ui.renderSuccess('/thread close', `Closed ${targetId}.`)
   }

@@ -20,7 +20,7 @@ Provider-specific website behavior stays behind adapters. The runtime understand
 | MCP Server        | `src/mcp-server/`                       | Expose selected thread operations through an independent Streamable HTTP MCP listener               |
 | Browser platform  | `src/platform/`                         | Launch Chromium, connect over CDP, and manage platform-specific process lifetime                    |
 | Provider adapters | `src/providers/adapters/`               | Navigate pages, detect login/readiness, submit, stream, upload, select models, and stop output      |
-| History parsing   | `src/providers/conversation-history.ts` | Convert seven provider history formats into visible user/assistant messages                         |
+| History parsing   | `src/providers/conversation-history.ts` | Convert eight provider history formats into visible user/assistant messages                         |
 | Runtime           | `src/runtime/`                          | Build setup prompts, initialize runtimes, execute tool loops, retry, recover, and cancel            |
 | Threads           | `src/threads/`                          | Track open threads and local turns in memory; persist URL history metadata in SQLite                |
 | Commands          | `src/cli-commands/`                     | Tokenize and dispatch slash commands                                                                |
@@ -50,7 +50,7 @@ Pure provider transport decoding lives outside the page adapters. For example, C
 
 On Windows, the launched browser is assigned to a Job Object. Closing the Job Object terminates the browser process tree even when ordinary child-process cleanup is insufficient. Other platforms use the generic Node child-process path.
 
-The browser and portal share one lifecycle. Playwright's browser-level `disconnected` event covers browser process exit, crash, and CDP loss. An unexpected disconnect requests the same controlled shutdown used by `/exit`; portal-initiated browser closure is marked internally and does not trigger a second shutdown. Closing an individual page does not end the portal process.
+The browser and portal share one lifecycle. Playwright's browser-level `disconnected` event covers browser process exit, crash, and CDP loss. An unexpected disconnect requests the same controlled shutdown used by `/exit`; portal-initiated browser closure is marked internally and does not trigger a second shutdown. Closing an individual provider page does not end the portal process. Instead, the base adapter reports an unexpected page close to the owning thread, which uses the normal coordinated close path.
 
 ## New runtime creation
 
@@ -109,7 +109,7 @@ The resumed web conversation already contains its provider-side context. Sending
 
 Resume creates one-time page/CDP history capture before navigation. The base adapter waits up to a short bounded interval for matching responses, reads their bodies, restores cache behavior, and releases the capture session. Individual parsers rebuild the provider's current branch and filter setup, tool, reasoning, partial, and control records. DeepSeek can return a nonempty `MERGE` cache delta; its adapter treats only `REPLACE` as complete and repeats a read-only full-history request inside the authenticated page using the original request headers when necessary.
 
-Gemini follows its continuation cursor, Doubao follows `has_more`, and GLM accumulates `messages/batch` pages until the selected chain reaches the root, all under bounded progress and timeout loops. Qwen reads `GET /api/v2/chats/<id>` and establishes completeness only for the current active branch. ChatGPT, GLM, and Grok do not report complete when an indexed cell, parent/root, active leaf, or visible response body is missing.
+Gemini follows its continuation cursor, Doubao follows `has_more`, and GLM accumulates `messages/batch` pages until the selected chain reaches the root, all under bounded progress and timeout loops. Qwen reads `GET /api/v2/chats/<id>` and establishes completeness only for the current active branch. Kimi reads structured `ListMessages` rows and reports a full 100-message page as incomplete because the page exposes no continuation cursor. ChatGPT, GLM, and Grok do not report complete when an indexed cell, parent/root, active leaf, or visible response body is missing.
 
 A resumed conversation skips the setup handshake. It therefore assumes that the original conversation already contains a compatible portal tool protocol. Current Skill and MCP connections exist locally, but newly configured names are not injected as a new catalog turn. The resume path also does not attach the freshly read project-instruction snapshot to the resumed `RuntimeCore`, so it neither resends always-on instructions nor performs target-aware instruction activation for later tool calls in that thread.
 
@@ -198,9 +198,9 @@ Three stores serve different purposes:
 | `TerminalController` cache   | Current process | One home timeline plus one rendered timeline per open thread             |
 | `ThreadStore` / `threads.db` | Persistent      | Provider, normalized conversation URL, title, created/last-used times    |
 
-Switching a thread first saves the visible timeline under the previous key and restores the target array. It does not navigate or request remote history again. `detach` clears active selection and returns to the home timeline. Closing the active thread removes its cache and also returns home; closing a background thread keeps the current timeline visible.
+Switching a thread first saves the visible timeline under the previous key and restores the target array. It does not navigate or request remote history again. `detach` clears active selection and returns to the home timeline. Closing the active thread removes its cache and also returns home; closing a background thread keeps the current timeline visible. The same behavior applies when the user closes a provider tab directly. Any active operation is cancelled first, concurrent close requests share one close task, and portal makes two bounded settlement waits before force-closing the logical thread if the operation remains stuck. Page close events caused by portal shutdown are ignored by this thread-level path.
 
-Remote resume history is rendered directly into the thread timeline. It is not converted into `ThreadRegistry` turns, so local turn counts represent only inputs submitted during the current process. After startup completes, the home timeline receives one in-memory welcome entry; it is cached and restored like other home timeline entries.
+Remote resume history is rendered directly into the thread timeline. Its hydration is registered as a thread operation, so closing the provider page cancels hydration before removing the thread. History is not converted into `ThreadRegistry` turns, so local turn counts represent only inputs submitted during the current process. After startup completes, the home timeline receives one in-memory welcome entry; it is cached and restored like other home timeline entries.
 
 The SQLite database is an index for reopening conversations, not a transcript database. The provider website remains the source of conversation content.
 

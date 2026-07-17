@@ -16,8 +16,11 @@ export type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
 export interface ProviderPage {
   close(): Promise<void>
   pause(): Promise<void>
-  on?(event: 'response', listener: (response: Response) => void): unknown
-  off?(event: 'response', listener: (response: Response) => void): unknown
+  on(event: 'response', listener: (response: Response) => void): unknown
+  on(event: 'close', listener: () => void): unknown
+  off(event: 'response', listener: (response: Response) => void): unknown
+  off(event: 'close', listener: () => void): unknown
+  isClosed(): boolean
   addInitScript?(script: unknown): Promise<unknown>
   evaluate?(pageFunction: unknown, argument?: unknown): Promise<unknown>
 }
@@ -56,6 +59,9 @@ function isCapturedFetchEntry(value: unknown): value is CapturedFetchEntry {
     (typeof value.status === 'number' || value.status === null) &&
     Array.isArray(value.chunks) &&
     value.chunks.every((chunk) => typeof chunk === 'string') &&
+    (value.requestBody === undefined ||
+      value.requestBody === null ||
+      typeof value.requestBody === 'string') &&
     typeof value.done === 'boolean' &&
     (typeof value.error === 'string' || value.error === null)
   )
@@ -290,6 +296,7 @@ export interface CapturedFetchEntry {
   id: number
   url: string
   method: string
+  requestBody?: string | null
   status: number | null
   chunks: string[]
   done: boolean
@@ -326,6 +333,21 @@ const FETCH_CAPTURE_INIT_SCRIPT = String.raw`
     const registerEntry = (entry) => {
       globalObject.__portalFetchCaptureEntries?.push(entry);
       return entry;
+    };
+
+    const readRequestBody = (body) => {
+      if (typeof body === 'string') {
+        return body;
+      }
+      if (body instanceof ArrayBuffer) {
+        return new TextDecoder('utf-8').decode(new Uint8Array(body));
+      }
+      if (ArrayBuffer.isView(body)) {
+        return new TextDecoder('utf-8').decode(
+          new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
+        );
+      }
+      return null;
     };
 
     globalObject.__portalGetFetchCaptureEntries = (startIndex = 0) => {
@@ -382,12 +404,14 @@ const FETCH_CAPTURE_INIT_SCRIPT = String.raw`
         (requestLike instanceof Request ? requestLike.method : null) ??
         'GET'
       ).toUpperCase();
+      const requestBody = readRequestBody(init?.body);
 
       const response = await globalObject.__portalOriginalFetch(...args);
       const entry = registerEntry({
         id: globalObject.__portalFetchCaptureNextEntryId,
         url,
         method,
+        requestBody,
         status: Number.isFinite(response.status) ? response.status : null,
         chunks: [],
         done: false,
@@ -473,6 +497,7 @@ const FETCH_CAPTURE_INIT_SCRIPT = String.raw`
           id: globalObject.__portalFetchCaptureNextEntryId,
           url: this.__portalUrl ?? '',
           method: this.__portalMethod ?? 'GET',
+          requestBody: readRequestBody(body),
           status: null,
           chunks: [],
           done: false,
@@ -568,6 +593,7 @@ export abstract class ProviderAdapter<
     Promise<{ body: string; error: string | null }>
   >()
   private pageResponseListener: ((response: Response) => void) | null = null
+  private portalClosing = false
   private cdpSession: TSession | null = null
   private cdpCacheDisabled = false
   private nextCdpResponseId = 1
@@ -631,7 +657,40 @@ export abstract class ProviderAdapter<
     await this.ensureFetchCaptureInstalled()
   }
 
+  public onUnexpectedPageClose(listener: () => void): () => void {
+    let subscribed = true
+    let closeObserved = false
+    const onClose = () => {
+      if (!subscribed || closeObserved) {
+        return
+      }
+      closeObserved = true
+      this.page.off('close', onClose)
+      queueMicrotask(() => {
+        if (!subscribed || this.portalClosing) {
+          return
+        }
+        subscribed = false
+        listener()
+      })
+    }
+
+    this.page.on('close', onClose)
+    if (this.page.isClosed()) {
+      onClose()
+    }
+
+    return () => {
+      if (!subscribed) {
+        return
+      }
+      subscribed = false
+      this.page.off('close', onClose)
+    }
+  }
+
   public async close() {
+    this.portalClosing = true
     if (!this.page) {
       return
     }
@@ -880,6 +939,7 @@ export abstract class ProviderAdapter<
             id: number
             url: string
             method: string
+            requestBody?: string | null
             status: number | null
             chunks: string[]
             done: boolean
@@ -1272,7 +1332,7 @@ export abstract class ProviderAdapter<
       pollInFlight = true
       try {
         const currentText = await readCurrentText()
-        if (!currentText || currentText === lastEmittedText) {
+        if (stopped || !currentText || currentText === lastEmittedText) {
           return
         }
         lastEmittedText = currentText

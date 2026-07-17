@@ -6,3 +6,4 @@ export type ProviderId =
   | 'grok'
   | 'glm'
   | 'qwen'
+  | 'kimi'

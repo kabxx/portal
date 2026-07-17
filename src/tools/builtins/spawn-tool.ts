@@ -20,7 +20,7 @@ interface SpawnInput {
     '',
     'Use spawn only when a focused side task should be completed independently and its result is needed for the current user task.',
     'Do not use spawn for work you can complete directly, and do not delegate the entire user task.',
-    'Pass the task instructions in prompt. Optionally pass provider to choose chatgpt, gemini, deepseek, doubao, grok, glm, or qwen; when omitted, the current provider is used.',
+    'Pass the task instructions in prompt. Optionally pass provider to choose chatgpt, gemini, deepseek, doubao, grok, glm, qwen, or kimi; when omitted, the current provider is used.',
     'Do not include cwd, shell commands, process arguments, model names, or lifecycle controls.',
     'The portal runtime creates a child browser conversation, sends the normal setup prompt, waits for READY, submits prompt, and returns the worker output as an observation.',
   ].join('\n'),
@@ -42,6 +42,7 @@ interface SpawnInput {
           'grok',
           'glm',
           'qwen',
+          'kimi',
         ],
         description:
           'Optional provider for the worker. Defaults to the current provider.',
