@@ -1781,8 +1781,18 @@ export async function run(argv = process.argv): Promise<void> {
         return
       }
       ui.setBrowserConnected(false)
-      ui.renderError('error', String(error))
       process.exitCode = 1
+      const message = String(error)
+      try {
+        ui.renderError('error', message)
+        await inkApp.waitUntilRenderFlush()
+      } catch {
+        try {
+          process.stderr.write(`${message}\n`)
+        } catch {
+          // The terminal may already be unavailable during shutdown.
+        }
+      }
       return
     }
     if (exitRequested) {
