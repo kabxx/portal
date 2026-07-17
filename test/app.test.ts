@@ -11,6 +11,8 @@ import {
   closeWithTimeout,
   createIdempotentAsyncTask,
   createPortalRuntimeSettings,
+  handleUnexpectedThreadPageClose,
+  loadResumedThreadHistory,
   setApiProviderCapability,
   showPendingThreadTimeline,
   shouldRenderFallbackThreadError,
@@ -20,6 +22,11 @@ import {
 import { createDefaultAdvancedConfig } from '../src/config/portal-config.ts'
 import { TerminalController } from '../src/terminal-ui/terminal-controller.ts'
 import { ThreadManager } from '../src/threads/thread-manager.ts'
+import { ThreadOperationCoordinator } from '../src/threads/thread-operation-coordinator.ts'
+import {
+  isAbortError,
+  throwIfAborted,
+} from '../src/runtime/runtime-cancellation.ts'
 import {
   createFakeRuntime,
   createProviderAdapterStub,
@@ -407,4 +414,230 @@ test('successful pending thread initialization keeps its isolated timeline', () 
   ui.showThreadTimeline(second.id)
 
   assert.equal(ui.getState().timeline.at(-1)?.body, 'warning for b')
+})
+
+test('unexpected page close waits for cancellation, closes the thread, and returns home', async () => {
+  let releaseStop!: () => void
+  const stopBlocked = new Promise<void>((resolve) => {
+    releaseStop = resolve
+  })
+  const lifecycle: string[] = []
+  const manager = new ThreadManager()
+  const thread = manager.addThread({
+    id: 't-page-close',
+    provider: 'chatgpt',
+    runtime: createFakeRuntime({
+      close: async () => {
+        lifecycle.push('closed')
+      },
+    }),
+    createdAt: 1,
+  })
+  const ui = new TerminalController()
+  ui.bindThreadManager(manager)
+  ui.showThreadTimeline(thread.id)
+  const operations = new ThreadOperationCoordinator(100)
+  const operation = operations.tryStart(
+    thread.id,
+    {
+      stopGeneration: async () => {
+        lifecycle.push('stop')
+        await stopBlocked
+      },
+    },
+    async ({ signal }) => {
+      await new Promise<void>((resolve) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            lifecycle.push('aborted')
+            resolve()
+          },
+          { once: true }
+        )
+      })
+    }
+  )
+  assert.equal(operation.accepted, true)
+  const terminalEvents: string[] = []
+
+  const closing = handleUnexpectedThreadPageClose({
+    threadId: thread.id,
+    threadManager: manager,
+    threadOperations: operations,
+    ui,
+    shouldIgnore: () => false,
+    onClosed: () => {
+      terminalEvents.push('thread.closed')
+    },
+  })
+  await new Promise<void>((resolve) => setTimeout(resolve, 15))
+  assert.ok(manager.getThread(thread.id))
+
+  releaseStop()
+  assert.equal(await closing, true)
+
+  assert.equal(manager.getThread(thread.id), null)
+  assert.equal(manager.getActiveThread(), null)
+  assert.deepEqual(terminalEvents, ['thread.closed'])
+  assert.ok(lifecycle.indexOf('closed') > lifecycle.indexOf('stop'))
+  assert.ok(lifecycle.indexOf('closed') > lifecycle.indexOf('aborted'))
+  assert.match(
+    ui.getState().timeline.at(-1)?.body ?? '',
+    /browser page was closed/
+  )
+})
+
+test('resumed history hydration is cancelled before page-close cleanup', async () => {
+  let emitPageClose = () => {}
+  let markHistoryStarted!: () => void
+  const historyStarted = new Promise<void>((resolve) => {
+    markHistoryStarted = resolve
+  })
+  const lifecycle: string[] = []
+  const runtime = createFakeRuntime({
+    onUnexpectedPageClose: (listener) => {
+      emitPageClose = listener
+      return () => {
+        emitPageClose = () => {}
+      }
+    },
+    loadHistory: async ({ signal } = {}) => {
+      lifecycle.push('history started')
+      markHistoryStarted()
+      await new Promise<void>((resolve) => {
+        signal?.addEventListener('abort', () => resolve(), { once: true })
+      })
+      lifecycle.push('history aborted')
+      throwIfAborted(signal)
+      throw new Error('history unexpectedly continued')
+    },
+    stopGeneration: async () => {
+      lifecycle.push('stop')
+    },
+    close: async () => {
+      lifecycle.push('closed')
+    },
+  })
+  const manager = new ThreadManager()
+  const thread = manager.addThread({
+    id: 't-resume-history',
+    provider: 'chatgpt',
+    runtime,
+    createdAt: 1,
+  })
+  const ui = new TerminalController()
+  ui.bindThreadManager(manager)
+  ui.showThreadTimeline(thread.id)
+  const operations = new ThreadOperationCoordinator(100)
+  let closePromise: Promise<boolean> = Promise.resolve(false)
+  manager.onThreadPageClosed((threadId) => {
+    closePromise = handleUnexpectedThreadPageClose({
+      threadId,
+      threadManager: manager,
+      threadOperations: operations,
+      ui,
+      shouldIgnore: () => false,
+    })
+  })
+
+  const history = loadResumedThreadHistory(thread.id, runtime, operations)
+  await historyStarted
+  emitPageClose()
+
+  await assert.rejects(history, (error: unknown) => isAbortError(error))
+  assert.equal(await closePromise, true)
+  assert.equal(manager.getThread(thread.id), null)
+  assert.ok(lifecycle.indexOf('closed') > lifecycle.indexOf('history aborted'))
+})
+
+test('unexpected page close force-closes the logical thread after two bounded waits', async () => {
+  const stopNever = new Promise<void>(() => {})
+  let releaseRunner!: () => void
+  const runnerBlocked = new Promise<void>((resolve) => {
+    releaseRunner = resolve
+  })
+  let closeCalls = 0
+  const manager = new ThreadManager()
+  const thread = manager.addThread({
+    id: 't-stuck-operation',
+    provider: 'gemini',
+    runtime: createFakeRuntime({
+      close: async () => {
+        closeCalls += 1
+      },
+    }),
+    createdAt: 1,
+  })
+  const ui = new TerminalController()
+  ui.bindThreadManager(manager)
+  ui.showThreadTimeline(thread.id)
+  const operations = new ThreadOperationCoordinator(5)
+  const operation = operations.tryStart(
+    thread.id,
+    {
+      stopGeneration: async () => await stopNever,
+    },
+    async () => {
+      await runnerBlocked
+      ui.setThreadBusy(thread.id, false)
+    }
+  )
+  assert.equal(operation.accepted, true)
+
+  assert.equal(
+    await handleUnexpectedThreadPageClose({
+      threadId: thread.id,
+      threadManager: manager,
+      threadOperations: operations,
+      ui,
+      shouldIgnore: () => false,
+    }),
+    true
+  )
+  assert.equal(closeCalls, 1)
+  assert.equal(manager.getThread(thread.id), null)
+  assert.equal(manager.getActiveThread(), null)
+  assert.equal(operations.get(thread.id), null)
+  assert.deepEqual(operations.list(), [])
+  const timelineViews: unknown = Reflect.get(ui, 'timelineViews')
+  assert.ok(timelineViews instanceof Map)
+  assert.equal(timelineViews.has(thread.id), false)
+
+  releaseRunner()
+  if (operation.accepted) {
+    await operation.operation.done
+  }
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(timelineViews.has(thread.id), false)
+})
+
+test('unexpected page close defers to broader browser lifecycle shutdown', async () => {
+  let closeCalls = 0
+  const manager = new ThreadManager()
+  const thread = manager.addThread({
+    id: 't-context-close',
+    provider: 'gemini',
+    runtime: createFakeRuntime({
+      close: async () => {
+        closeCalls += 1
+      },
+    }),
+    createdAt: 1,
+  })
+  const ui = new TerminalController()
+  ui.bindThreadManager(manager)
+
+  assert.equal(
+    await handleUnexpectedThreadPageClose({
+      threadId: thread.id,
+      threadManager: manager,
+      threadOperations: new ThreadOperationCoordinator(),
+      ui,
+      shouldIgnore: () => true,
+    }),
+    false
+  )
+  assert.equal(closeCalls, 0)
+  assert.ok(manager.getThread(thread.id))
 })
