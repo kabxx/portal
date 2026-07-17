@@ -1,4 +1,5 @@
 import { extractToolCall } from '../tools/core/tool-registry.ts'
+import { normalizeChatGptEntityMarkers } from './chatgpt-response-parser.ts'
 
 export type ConversationHistoryRole = 'user' | 'assistant'
 
@@ -414,12 +415,17 @@ export function parseChatGptHistory(raw: string): ConversationHistoryResult {
       ) {
         return null
       }
-      const text = readText(content?.parts)
+      const rawText = readText(content?.parts)
+      const toolCall = role === 'assistant' ? extractToolCall(rawText) : null
+      const text =
+        role === 'assistant' && toolCall === null
+          ? normalizeChatGptEntityMarkers(rawText)
+          : rawText
       if (!text) return null
       if (
         role === 'assistant' &&
         message.end_turn === false &&
-        extractToolCall(text) === null
+        toolCall === null
       ) {
         return null
       }
