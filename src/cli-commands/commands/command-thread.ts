@@ -127,6 +127,7 @@ function isSupportedProviderModel(
     | 'gemini'
     | 'grok'
     | 'glm'
+    | 'qwen'
     | 'kimi',
   model: string
 ): boolean {

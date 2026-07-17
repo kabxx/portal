@@ -4,7 +4,7 @@
 
 Adding or maintaining an integration? Follow the end-to-end [Provider Development](provider-development.md) guide.
 
-portal supports seven web AI products through provider-specific adapters. Every adapter drives the normal website in a real Chromium page; portal does not call provider model APIs.
+portal supports eight web AI products through provider-specific adapters. Every adapter drives the normal website in a real Chromium page; portal does not call provider model APIs.
 
 ## Support matrix
 
@@ -16,6 +16,7 @@ portal supports seven web AI products through provider-specific adapters. Every 
 | `doubao`    | `www.doubao.com`    | Yes            | Yes    | `N`                 | Dynamic page actions                      |
 | `grok`      | `grok.com`          | Yes            | Yes    | `N`                 | None exposed by `/thread capability`      |
 | `glm`       | `chat.z.ai`         | Yes            | Yes    | `N`                 | `thinking`, `search`, `advanced_search`   |
+| `qwen`      | `chat.qwen.ai`      | Yes            | Yes    | `N`                 | None exposed by `/thread capability`      |
 | `kimi`      | `www.kimi.com`      | Yes            | Yes    | `N`                 | None exposed by `/thread capability`      |
 
 `N` and `M` are one-based positions in the menus visible to the current account. They are not stable model identifiers. Provider experiments, subscription state, and regional differences can change both menu order and capability availability.
@@ -33,6 +34,7 @@ Examples:
 ```text
 /thread open glm
 /thread open deepseek 2
+/thread open qwen 1
 /thread open chatgpt 1+2
 /thread open gemini 1+extended
 /thread open kimi 1
@@ -54,6 +56,7 @@ If login is required, portal keeps the same adapter page open and waits for the 
 | Doubao   | `https://www.doubao.com/chat/<conversation-id>`   |
 | Grok     | `https://grok.com/chat/<id>` or `/c/<id>`         |
 | GLM      | `https://chat.z.ai/c/<conversation-id>`           |
+| Qwen     | `https://chat.qwen.ai/c/<id>`                     |
 | Kimi     | `https://www.kimi.com/chat/<conversation-id>`     |
 
 ChatGPT `chat.openai.com` links normalize to `chatgpt.com`; Doubao links without `www` and Gemini ids prefixed with `c_` are also normalized.
@@ -85,7 +88,7 @@ ChatGPT, Gemini, and Doubao expose action-style controls discovered from the cur
 /thread capability none
 ```
 
-Action names are account- and page-dependent. `none` clears the selected action when the adapter supports clearing. Grok currently returns no capability controls.
+Action names are account- and page-dependent. `none` clears the selected action when the adapter supports clearing. Grok, Qwen, and Kimi currently return no capability controls.
 
 ## Response capture
 
@@ -99,6 +102,7 @@ Adapters use different provider completion signals:
 | Doubao   | Completion SSE plus provider error events                      |
 | Grok     | WebSocket chunks ending in `response.done`                     |
 | GLM      | Completion stream events with answer/reasoning separation      |
+| Qwen     | SSE from `POST /api/v2/chat/completions`                       |
 | Kimi     | Connect JSON patches ending in `MESSAGE_STATUS_COMPLETED`      |
 
 Every adapter separately verifies composer readiness after completion. Submit polling can emit status warnings when a provider request has not started, and adapter errors are classified for bounded retry, page restore, login wait, or terminal failure.
@@ -130,6 +134,7 @@ The provider-specific history paths currently include:
 | Doubao   | Paginated `chain/single` responses, loaded until `has_more=false`                         |
 | Grok     | `response-node` graph joined with `load-responses` bodies and root/leaf checks            |
 | GLM      | Chat metadata/current node joined with accumulated `messages/batch` pages                 |
+| Qwen     | `GET /api/v2/chats/<id>`; completeness is established only for the current active branch  |
 | Kimi     | Newest-first `ListMessages` rows; a full 100-message page remains explicitly incomplete   |
 
 The adapter base installs page and one-time CDP history capture before resume navigation. It waits briefly for delayed history requests, reads only matching response bodies, restores browser cache behavior, and releases the CDP session after loading. Gemini, Doubao, and GLM drive the provider page toward older history while new pages make progress, with bounded total and per-page timeouts. Graph-based parsers mark history complete only after a verified root/active branch; ambiguous branches and missing response bodies remain incomplete.
@@ -140,7 +145,7 @@ These history endpoints are private web implementation details, not public APIs.
 
 ## Upload behavior
 
-`attach_image` delegates to the active adapter's upload controls. All seven adapters implement file/image attachment, but the website can hide or disable upload for a particular model, account, conversation, or subscription. Some providers can fail silently after a file chooser interaction; the tool result therefore reports an attempted attachment rather than claiming the model received the file.
+`attach_image` delegates to the active adapter's upload controls. All eight adapters implement file/image attachment, but the website can hide or disable upload for a particular model, account, conversation, or subscription. Some providers can fail silently after a file chooser interaction; the tool result therefore reports an attempted attachment rather than claiming the model received the file.
 
 ## Provider-specific setup
 

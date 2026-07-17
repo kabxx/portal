@@ -83,6 +83,7 @@ const PROVIDER_CAPABILITIES: Record<ProviderId, readonly ProviderCapability[]> =
         kind: 'toggle',
       },
     ],
+    qwen: [],
     kimi: [],
   }
 
@@ -411,6 +412,7 @@ function formatProviderName(provider: ProviderId): string {
     doubao: 'Doubao',
     grok: 'Grok',
     glm: 'GLM',
+    qwen: 'Qwen',
     kimi: 'Kimi',
   }
   return names[provider]
