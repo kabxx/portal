@@ -32,19 +32,6 @@ export function buildRuntimeRecoveryPlan(
     }
   }
 
-  if (error.detailCode === 'claude_account_restricted') {
-    return {
-      title: 'account restricted',
-      lines: [
-        'Claude account access is restricted.',
-        'This thread cannot continue until the account restriction is resolved. Use another provider in the meantime.',
-      ],
-      canRetry: false,
-      requiresLogin: false,
-      showFallbackError: false,
-    }
-  }
-
   if (error.kind === 'auth') {
     return {
       title: 'login required',

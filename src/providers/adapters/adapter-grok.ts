@@ -22,6 +22,8 @@ const GROK_SIGNED_OUT_ACTIONS_SELECTOR =
   '[data-testid="drop-ui"] main > div:first-child button[aria-haspopup="menu"] + button[data-slot="button"] + button[data-slot="button"]'
 const GROK_INPUT_SELECTOR =
   '[data-testid="chat-input"] [role="textbox"][contenteditable="true"]'
+const GROK_VOICE_MODE_READY_SELECTOR =
+  'form:has([data-testid="chat-input"]) div:has(> [data-query-bar-mode-select]) button[type="button"]:has(> div > div:nth-child(6):last-child)'
 const GROK_SUBMIT_BUTTON_SELECTOR = '[data-testid="chat-submit"]'
 const GROK_FILE_INPUT_SELECTOR = 'input[type="file"][name="files"]'
 const GROK_MODEL_TRIGGER_SELECTOR = '#model-select-trigger'
@@ -73,17 +75,22 @@ export class GrokAdapter extends ProviderAdapter {
     return this.page.locator(GROK_SUBMIT_BUTTON_SELECTOR).first()
   }
 
-  private async waitForComposerReady(
+  private async waitForVoiceModeReady(
     action: 'restore' | 'submit',
     timeoutMs: number,
     signal?: AbortSignal
   ): Promise<void> {
-    const input = this.getInput()
+    const voiceModeButton = this.page.locator(GROK_VOICE_MODE_READY_SELECTOR)
     await waitAsync(
-      async () =>
-        (await input.isVisible().catch(() => false)) &&
-        (await input.getAttribute('aria-disabled').catch(() => null)) !==
-          'true',
+      async () => {
+        if ((await voiceModeButton.count().catch(() => 0)) !== 1) {
+          return false
+        }
+        return await voiceModeButton
+          .first()
+          .isVisible()
+          .catch(() => false)
+      },
       {
         timeoutMs,
         signal,
@@ -91,14 +98,14 @@ export class GrokAdapter extends ProviderAdapter {
           throw new ProviderAdapterError(
             action,
             action === 'restore'
-              ? 'Grok did not become ready after loading.'
-              : 'Grok finished responding, but the page did not become ready for the next message.',
+              ? 'Grok voice mode control did not become ready after loading.'
+              : 'Grok finished responding, but its voice mode control did not become ready for the next message.',
             {
               kind: 'ui',
               recovery: 'none',
               retryable: false,
               maxAttempts: 1,
-              detailCode: 'grok_composer_missing',
+              detailCode: 'grok_voice_mode_ready_missing',
             }
           )
         },
@@ -210,7 +217,7 @@ export class GrokAdapter extends ProviderAdapter {
           }
         )
       }
-      await this.waitForComposerReady(
+      await this.waitForVoiceModeReady(
         'restore',
         this.getRestoreTimeoutMs(),
         signal
@@ -334,7 +341,7 @@ export class GrokAdapter extends ProviderAdapter {
 
   public override async stopGeneration(): Promise<void> {
     const stopButton = this.page.locator(
-      `button:has(svg[viewBox="0 0 24 24"] path[d^="${GROK_STOP_ICON_PATH_PREFIX}"])`
+      `button:has(svg[viewBox^="0 0 24"] path[d^="${GROK_STOP_ICON_PATH_PREFIX}"])`
     )
     await this.clickLocatorIfReady(stopButton)
   }
@@ -512,7 +519,7 @@ export class GrokAdapter extends ProviderAdapter {
             timeoutMs: this.getSubmitResponseTimeoutMs(),
             signal,
           })
-          await this.waitForComposerReady(
+          await this.waitForVoiceModeReady(
             'submit',
             this.getSubmitResponseTimeoutMs(),
             signal

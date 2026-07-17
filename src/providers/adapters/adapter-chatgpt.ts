@@ -489,22 +489,25 @@ export class ChatGPTAdapter extends ProviderAdapter {
   }
 
   private getComposerSpeechButton() {
-    return this.page
-      .locator('button[style*="--vt-composer-speech-button"]')
-      .first()
+    return this.page.locator('button[style*="--vt-composer-speech-button"]')
   }
 
   private getComposerDataTestIdSendButton() {
-    return this.page.locator('button[data-testid="send-button"]').first()
+    return this.page.locator('button[data-testid="send-button"]')
   }
 
   private async isLocatorReady(locator: {
-    isVisible: () => Promise<boolean>
-    isEnabled: () => Promise<boolean>
+    count: () => Promise<number>
+    first: () => {
+      isVisible: () => Promise<boolean>
+      isEnabled: () => Promise<boolean>
+    }
   }): Promise<boolean> {
+    if ((await locator.count().catch(() => 0)) !== 1) return false
+    const target = locator.first()
     return (
-      (await locator.isVisible().catch(() => false)) &&
-      (await locator.isEnabled().catch(() => false))
+      (await target.isVisible().catch(() => false)) &&
+      (await target.isEnabled().catch(() => false))
     )
   }
 

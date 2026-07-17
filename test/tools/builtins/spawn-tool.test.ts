@@ -26,7 +26,6 @@ test('SpawnTool exposes prompt and optional provider as input', () => {
   assert.deepEqual(schema.required, ['prompt'])
   assert.deepEqual(provider.enum, [
     'chatgpt',
-    'claude',
     'gemini',
     'deepseek',
     'doubao',
