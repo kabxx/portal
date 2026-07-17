@@ -747,6 +747,27 @@ test('ApiEventHub cleans up closed subscribers and releases thread sequences', (
   hub.close()
 })
 
+test('ApiEventHub publishes thread.closed before ending thread subscribers', () => {
+  const hub = new ApiEventHub(60_000)
+  const response = new FakeSseResponse()
+  hub.subscribe('t-1', response)
+
+  hub.closeThread('t-1', { reason: 'provider_page_closed' })
+
+  assert.match(response.writes[1] ?? '', /event: thread\.closed/)
+  assert.match(response.writes[1] ?? '', /"reason":"provider_page_closed"/)
+  assert.equal(response.endCalls, 1)
+
+  hub.publish('t-1', { type: 'status', data: { phase: 'ignored' } })
+  assert.equal(response.writes.length, 2)
+
+  const replacement = new FakeSseResponse()
+  hub.subscribe('t-1', replacement)
+  hub.publish('t-1', { type: 'status', data: { phase: 'replacement' } })
+  assert.match(replacement.writes[1] ?? '', /^id: 1\n/)
+  hub.close()
+})
+
 test('ApiEventHub rolls back a subscriber when the connected write fails', () => {
   const hub = new ApiEventHub(60_000)
   const response = new FakeSseResponse()

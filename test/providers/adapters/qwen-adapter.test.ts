@@ -5,6 +5,7 @@ import assert from 'node:assert/strict'
 import {
   ProviderAdapterError,
   ProviderAdapterUnsupportedError,
+  ProviderResponseTimeoutError,
   type CapturedFetchEntry,
 } from '../../../src/providers/adapters/adapter-base.ts'
 import { QwenAdapter } from '../../../src/providers/adapters/adapter-qwen.ts'
@@ -22,11 +23,21 @@ type QwenAdapterHarness = Pick<QwenAdapter, keyof QwenAdapter> & {
   ) => Promise<CapturedFetchEntry[]>
   getSubmitRequestStartGraceMs: () => number
   getSubmitResponseTimeoutMs: () => number
+  getSubmitResponseStartTimeoutMs: () => number
+  getSubmitResponseStallTimeoutMs: () => number
   getHistoryLoadTimeoutMs: () => number
 }
 
-function createTestQwenAdapter(): QwenAdapterHarness {
+function createTestQwenAdapter(cdpSession?: unknown): QwenAdapterHarness {
   const adapter = new QwenAdapter(createBrowserContextStub())
+  if (cdpSession !== undefined) {
+    Reflect.set(adapter, 'context', {
+      newPage: async () => {
+        throw new Error('The test injects its page directly.')
+      },
+      newCDPSession: async () => cdpSession,
+    })
+  }
   return Object.assign(adapter, {
     page: undefined,
     conversationIdVal: 'chat-1',
@@ -35,6 +46,8 @@ function createTestQwenAdapter(): QwenAdapterHarness {
     getCapturedFetchEntries: async () => [],
     getSubmitRequestStartGraceMs: () => 5,
     getSubmitResponseTimeoutMs: () => 500,
+    getSubmitResponseStartTimeoutMs: () => 500,
+    getSubmitResponseStallTimeoutMs: () => 500,
     getHistoryLoadTimeoutMs: () => 500,
   })
 }
@@ -182,7 +195,8 @@ test('QwenAdapter ignores stale same-chat stream text from another user message'
         text: 'STALE STREAM',
         parentId: 'different-user',
         responseId: 'stale-response',
-      })
+      }),
+      { userMessageId: 'different-user' }
     ),
     createCompletionEntry(2, createResponseBody()),
   ]
@@ -192,6 +206,296 @@ test('QwenAdapter ignores stale same-chat stream text from another user message'
   assert.equal(await adapter.submit(), 'Qwen answer')
   assert.equal(emitted.includes('STALE STREAM'), false)
   assert.equal(emitted.at(-1), 'Qwen answer')
+})
+
+test('QwenAdapter streams the unique owned capture and keeps an active long response alive', async () => {
+  const adapter = createTestQwenAdapter()
+  adapter.getSubmitResponseStartTimeoutMs = () => 90
+  adapter.getSubmitResponseStallTimeoutMs = () => 90
+  const emitted: string[] = []
+  adapter.setSubmitTextReporter((text) => {
+    emitted.push(text)
+  })
+  const chunks = createStreamingResponseChunks()
+  let reads = 0
+  adapter.getCapturedFetchEntries = async () => {
+    reads += 1
+    const visibleChunks = chunks.slice(0, Math.min(reads, chunks.length))
+    return [
+      createCompletionEntry(1, visibleChunks.join(''), {
+        chunks: visibleChunks,
+        done: visibleChunks.length === chunks.length,
+      }),
+    ]
+  }
+  adapter.page = createSubmitPage({ responseTextDelayMs: 260 })
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submitWithResponseTimeout(), 'Qwen answer')
+  assert.ok(emitted.includes('Qwen '))
+  assert.equal(emitted.at(-1), 'Qwen answer')
+  assert.equal(
+    emitted.some((text) => text.includes('PRIVATE THINKING')),
+    false
+  )
+})
+
+test('QwenAdapter binds CDP bytes to the exact request and counts pre-identity thinking as activity', async () => {
+  const cdp = Object.assign(new EventEmitter(), {
+    detached: false,
+    send: async (method: string) => {
+      if (method === 'Network.streamResourceContent') {
+        const chunks = createStreamingResponseChunks()
+        chunks.forEach((chunk, index) => {
+          setTimeout(
+            () => {
+              cdp.emit('Network.dataReceived', {
+                requestId: 'cdp-owned',
+                data: Buffer.from(chunk).toString('base64'),
+              })
+            },
+            30 + index * 40
+          )
+        })
+        return {
+          bufferedData: Buffer.from(': provider keepalive\n\n').toString(
+            'base64'
+          ),
+        }
+      }
+      return {}
+    },
+    detach: async () => {
+      cdp.detached = true
+    },
+  })
+  const adapter = createTestQwenAdapter(cdp)
+  adapter.getSubmitResponseStartTimeoutMs = () => 90
+  adapter.getSubmitResponseStallTimeoutMs = () => 90
+  const emitted: string[] = []
+  adapter.setSubmitTextReporter((text) => {
+    emitted.push(text)
+  })
+  adapter.page = createSubmitPage({
+    responseTextDelayMs: 280,
+    onOwnedRequest: (rawBody) => {
+      cdp.emit('Network.requestWillBeSent', {
+        requestId: 'cdp-owned',
+        request: {
+          method: 'POST',
+          url: QWEN_COMPLETION_URL,
+          postData: rawBody,
+        },
+      })
+      cdp.emit('Network.responseReceived', { requestId: 'cdp-owned' })
+    },
+  })
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submitWithResponseTimeout(), 'Qwen answer')
+  assert.ok(emitted.includes('Qwen '))
+  assert.equal(emitted.at(-1), 'Qwen answer')
+  assert.equal(
+    emitted.some((text) => text.includes('PRIVATE THINKING')),
+    false
+  )
+  assert.equal(cdp.detached, true)
+})
+
+test('QwenAdapter orders buffered CDP bytes before data received during stream setup', async () => {
+  const streamed = Buffer.from(
+    createResponseBody({ text: '汉', responseId: 'cdp-response' })
+  )
+  const characterStart = streamed.indexOf(Buffer.from('汉'))
+  assert.ok(characterStart >= 0)
+  const splitAt = characterStart + 1
+  const cdp = Object.assign(new EventEmitter(), {
+    send: async (method: string) => {
+      if (method !== 'Network.streamResourceContent') return {}
+      cdp.emit('Network.dataReceived', {
+        requestId: 'cdp-owned',
+        data: streamed.subarray(splitAt).toString('base64'),
+      })
+      return {
+        bufferedData: streamed.subarray(0, splitAt).toString('base64'),
+      }
+    },
+    detach: async () => {},
+  })
+  const adapter = createTestQwenAdapter(cdp)
+  const emitted: string[] = []
+  adapter.setSubmitTextReporter((text) => {
+    emitted.push(text)
+  })
+  adapter.page = createSubmitPage({
+    responseTextDelayMs: 80,
+    onOwnedRequest: (rawBody) => {
+      cdp.emit('Network.requestWillBeSent', {
+        requestId: 'cdp-owned',
+        request: {
+          method: 'POST',
+          url: QWEN_COMPLETION_URL,
+          postData: rawBody,
+        },
+      })
+      cdp.emit('Network.responseReceived', { requestId: 'cdp-owned' })
+    },
+  })
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'Qwen answer')
+  assert.ok(emitted.includes('汉'))
+  assert.equal(emitted.at(-1), 'Qwen answer')
+})
+
+test('QwenAdapter disables page capture fallback after ambiguous CDP ownership', async () => {
+  const cdp = Object.assign(new EventEmitter(), {
+    send: async () => ({}),
+    detach: async () => {},
+  })
+  const adapter = createTestQwenAdapter(cdp)
+  const emitted: string[] = []
+  adapter.setSubmitTextReporter((text) => {
+    emitted.push(text)
+  })
+  adapter.getCapturedFetchEntries = async () => [
+    createCompletionEntry(1, createResponseBody({ text: 'UNSAFE FALLBACK' })),
+  ]
+  adapter.page = createSubmitPage({
+    responseTextDelayMs: 80,
+    onOwnedRequest: (rawBody) => {
+      for (const requestId of ['cdp-first', 'cdp-second']) {
+        cdp.emit('Network.requestWillBeSent', {
+          requestId,
+          request: {
+            method: 'POST',
+            url: QWEN_COMPLETION_URL,
+            postData: rawBody,
+          },
+        })
+      }
+    },
+  })
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'Qwen answer')
+  assert.deepEqual(emitted, ['Qwen answer'])
+})
+
+test('QwenAdapter aborts while creating its CDP stream session', async () => {
+  const adapter = createTestQwenAdapter(new Promise(() => {}))
+  const page = createSubmitPage()
+  adapter.page = page
+  await adapter.attachText('Portal request')
+  const controller = new AbortController()
+  const pending = adapter.submit({ signal: controller.signal })
+  setTimeout(() => controller.abort(), 10)
+
+  await assert.rejects(pending, (error: unknown) => {
+    return error instanceof Error && error.name === 'AbortError'
+  })
+  assert.equal(page.listenerCount('request'), 0)
+})
+
+test('QwenAdapter does not let a stale capture refresh the response watchdog', async () => {
+  const adapter = createTestQwenAdapter()
+  adapter.getSubmitResponseStartTimeoutMs = () => 70
+  adapter.getSubmitResponseStallTimeoutMs = () => 70
+  adapter.stopGeneration = async () => {}
+  let reads = 0
+  adapter.getCapturedFetchEntries = async () => {
+    reads += 1
+    return [
+      createCompletionEntry(1, createResponseBody({ parentId: 'stale-user' }), {
+        userMessageId: 'stale-user',
+        chunks: Array.from({ length: reads }, () => ': keepalive\n\n'),
+        done: false,
+      }),
+    ]
+  }
+  adapter.page = createSubmitPage({ responseTextDelayMs: 220 })
+  await adapter.attachText('Portal request')
+
+  await assert.rejects(
+    adapter.submitWithResponseTimeout(),
+    (error: unknown) =>
+      error instanceof ProviderResponseTimeoutError &&
+      error.message.includes('had no activity')
+  )
+})
+
+test('QwenAdapter fails closed when multiple captures claim the same request identity', async () => {
+  const adapter = createTestQwenAdapter()
+  const emitted: string[] = []
+  adapter.setSubmitTextReporter((text) => {
+    emitted.push(text)
+  })
+  adapter.getCapturedFetchEntries = async () => [
+    createCompletionEntry(1, createResponseBody({ text: 'FIRST' })),
+    createCompletionEntry(2, createResponseBody({ text: 'SECOND' })),
+  ]
+  adapter.page = createSubmitPage({ responseTextDelayMs: 80 })
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'Qwen answer')
+  assert.deepEqual(emitted, ['Qwen answer'])
+})
+
+test('QwenAdapter rejects an exact final response without a parent identity', async () => {
+  const adapter = createTestQwenAdapter()
+  adapter.page = createSubmitPage({ responseParentId: null })
+  await adapter.attachText('Portal request')
+
+  await assert.rejects(adapter.submit(), (error: unknown) => {
+    return (
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'qwen_response_identity_mismatch'
+    )
+  })
+})
+
+test('QwenAdapter rejects another parent when the request exposes a string message id', async () => {
+  const adapter = createTestQwenAdapter()
+  adapter.page = createSubmitPage({ responseParentId: 'different-user' })
+  await adapter.attachText('Portal request')
+
+  await assert.rejects(adapter.submit(), (error: unknown) => {
+    return (
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'qwen_response_identity_mismatch'
+    )
+  })
+})
+
+test('QwenAdapter suppresses an in-flight polling result after abort cleanup', async () => {
+  const adapter = createTestQwenAdapter()
+  const emitted: string[] = []
+  adapter.setSubmitTextReporter((text) => {
+    emitted.push(text)
+  })
+  let captureStarted = false
+  let resolveEntries: (entries: CapturedFetchEntry[]) => void = () => {
+    throw new Error('Capture polling did not start.')
+  }
+  adapter.getCapturedFetchEntries = async () =>
+    await new Promise<CapturedFetchEntry[]>((resolve) => {
+      captureStarted = true
+      resolveEntries = resolve
+    })
+  adapter.page = createSubmitPage({ omitResponse: true })
+  await adapter.attachText('Portal request')
+  const controller = new AbortController()
+  const pending = adapter.submit({ signal: controller.signal })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  controller.abort()
+
+  await assert.rejects(pending, (error: unknown) => {
+    return error instanceof Error && error.name === 'AbortError'
+  })
+  assert.equal(captureStarted, true)
+  resolveEntries([createCompletionEntry(1, createResponseBody())])
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.deepEqual(emitted, [])
 })
 
 test('QwenAdapter classifies strict login status responses', async () => {
@@ -348,8 +652,10 @@ interface SubmitPageOptions {
   requestFailed?: boolean
   responseStatus?: number
   responseTextDelayMs?: number
+  responseParentId?: string | null
   loggedIn?: boolean
   authStates?: boolean[]
+  onOwnedRequest?: (rawBody: string) => void
 }
 
 function createSubmitPage(options: SubmitPageOptions = {}) {
@@ -377,6 +683,7 @@ function createSubmitPage(options: SubmitPageOptions = {}) {
 
       const owned = createRequest(composerValue)
       composerValue = ''
+      options.onOwnedRequest?.(owned.postData())
       emitter.emit('request', owned)
       if (options.requestFailed === true) {
         emitter.emit('requestfailed', owned)
@@ -413,14 +720,12 @@ function createSubmitPage(options: SubmitPageOptions = {}) {
 }
 
 function createRequest(content: string) {
+  const payload = createCompletionRequestPayload(content)
   return {
     method: () => 'POST',
     url: () => QWEN_COMPLETION_URL,
-    postDataJSON: () => ({
-      stream: true,
-      chat_id: 'chat-1',
-      messages: [{ id: 'user-1', role: 'user', content }],
-    }),
+    postData: () => JSON.stringify(payload),
+    postDataJSON: () => payload,
     failure: () => ({ errorText: 'connection reset' }),
   }
 }
@@ -430,7 +735,12 @@ function createResponse(
   finished: boolean,
   options: SubmitPageOptions
 ) {
-  const raw = createResponseBody({ finished })
+  const raw = createResponseBody({
+    finished,
+    ...(!Object.hasOwn(options, 'responseParentId')
+      ? {}
+      : { parentId: options.responseParentId }),
+  })
   return {
     request: () => request,
     status: () => options.responseStatus ?? 200,
@@ -452,12 +762,18 @@ function createResponseBody({
   finished = true,
 }: {
   text?: string
-  parentId?: string
+  parentId?: string | null
   responseId?: string
   finished?: boolean
 } = {}): string {
   return [
-    `data: {"response.created":{"chat_id":"chat-1","response_id":"${responseId}","parent_id":"${parentId}"}}`,
+    `data: ${JSON.stringify({
+      'response.created': {
+        chat_id: 'chat-1',
+        response_id: responseId,
+        ...(parentId === null ? {} : { parent_id: parentId }),
+      },
+    })}`,
     '',
     `data: {"choices":[{"delta":{"content":"${text}","phase":"answer","status":"typing"}}],"response_id":"${responseId}"}`,
     '',
@@ -567,16 +883,52 @@ function createCapturedEntry(url: string, body: string): CapturedFetchEntry {
   }
 }
 
-function createCompletionEntry(id: number, body: string): CapturedFetchEntry {
+function createCompletionEntry(
+  id: number,
+  body: string,
+  options: {
+    userMessageId?: string
+    userText?: string
+    chunks?: string[]
+    done?: boolean
+  } = {}
+): CapturedFetchEntry {
   return {
     id,
     url: QWEN_COMPLETION_URL,
     method: 'POST',
+    requestBody: JSON.stringify(
+      createCompletionRequestPayload(
+        options.userText ?? 'Portal request',
+        options.userMessageId
+      )
+    ),
     status: 200,
-    chunks: [body],
-    done: true,
+    chunks: options.chunks ?? [body],
+    done: options.done ?? true,
     error: null,
   }
+}
+
+function createCompletionRequestPayload(
+  content: string,
+  userMessageId = 'user-1'
+) {
+  return {
+    stream: true,
+    chat_id: 'chat-1',
+    messages: [{ id: userMessageId, role: 'user', content }],
+  }
+}
+
+function createStreamingResponseChunks(): string[] {
+  return [
+    'data: {"response.created":{"chat_id":"chat-1","response_id":"response-1","parent_id":"user-1"}}\n\n',
+    'data: {"choices":[{"delta":{"content":"PRIVATE THINKING","phase":"thinking_summary","status":"typing"}}],"response_id":"response-1"}\n\n',
+    'data: {"choices":[{"delta":{"content":"Qwen ","phase":"answer","status":"typing"}}],"response_id":"response-1"}\n\n',
+    'data: {"choices":[{"delta":{"content":"answer","phase":"answer","status":"typing"}}],"response_id":"response-1"}\n\n',
+    'data: {"choices":[{"delta":{"content":"","phase":"answer","status":"finished"}}],"response_id":"response-1"}\n\n',
+  ]
 }
 
 function createHistoryResponse(): string {

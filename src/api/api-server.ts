@@ -70,6 +70,7 @@ export interface ApiEvent {
     | 'message.completed'
     | 'message.failed'
     | 'message.cancelled'
+    | 'thread.closed'
     | 'thread.action'
     | 'hook.execution'
   data: unknown
@@ -145,6 +146,18 @@ export class ApiEventHub {
       this.remove(threadId, subscriber)
     }
     return subscriber.onClose
+  }
+
+  public closeThread(threadId: string, data: unknown): void {
+    this.publish(threadId, { type: 'thread.closed', data })
+    const subscribers = this.subscribers.get(threadId)
+    if (subscribers === undefined) {
+      this.sequences.delete(threadId)
+      return
+    }
+    for (const subscriber of [...subscribers]) {
+      this.remove(threadId, subscriber)
+    }
   }
 
   public close(): void {

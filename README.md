@@ -13,7 +13,7 @@ portal does **not** call provider model APIs. It does not bypass provider accoun
 
 ## Core capabilities
 
-- **Seven web providers.** ChatGPT, Gemini, DeepSeek, Doubao, Grok, GLM, and Qwen share one local thread model.
+- **Eight web providers.** ChatGPT, Gemini, DeepSeek, Doubao, Grok, GLM, Qwen, and Kimi share one local thread model.
 - **Real browser sessions.** A dedicated browser profile preserves login state and account-specific web features.
 - **Local tools.** Models can inspect a workspace, run commands, edit files, attach images, and delegate focused tasks.
 - **Resumable conversations.** portal stores conversation URLs and reloads visible provider history when a conversation is resumed.
@@ -49,6 +49,7 @@ See [Architecture](docs/architecture.md) for the runtime, thread, resume, and sh
 | Grok     | Yes       | Yes               | Yes               | Yes             | None currently exposed            |
 | GLM      | Yes       | Yes               | Yes               | Yes             | Thinking, search, advanced search |
 | Qwen     | Yes       | Yes               | Yes               | Yes             | None currently exposed            |
+| Kimi     | Yes       | Yes               | Yes               | Yes             | None currently exposed            |
 
 Support means that an adapter exists in this repository. Actual availability depends on the account, region, subscription, provider experiment, and current page structure. Model numbers and page actions are based on the menus visible to the current account.
 
@@ -83,7 +84,7 @@ npm run dev -- --browser-engine chromium --browser-executable-path "<browser exe
 
 The only supported browser engine is `chromium`. portal automatically checks common Edge, Chrome, Chromium, Brave, Vivaldi, Opera, Opera GX, and Arc locations where those browsers are available. Portable and non-standard installations can be selected with `browser.executablePath`. Both `browser.executablePath` and `browser.profilePath` accept absolute or relative paths; generated defaults are absolute, while configured relative values resolve from portal's working directory. Run `npm run dev -- --help` for all startup options.
 
-The dedicated browser and portal share one lifecycle. Closing or crashing the browser process, or losing its CDP connection, triggers portal's controlled shutdown and stops active threads, jobs, API, and MCP services. Closing one provider tab does not exit portal.
+The dedicated browser and portal share one lifecycle. Closing or crashing the browser process, or losing its CDP connection, triggers portal's controlled shutdown and stops active threads, jobs, API, and MCP services. Closing one provider tab does not exit portal; it cancels any active operation and closes only the thread bound to that page. If that thread was active, the TUI returns home.
 
 portal opens on the command help screen. Create a thread and enter a normal task:
 
@@ -283,4 +284,4 @@ portal is available under the [MIT License](LICENSE).
 
 ## Disclaimer
 
-portal is an independent project and is not affiliated with, endorsed by, or sponsored by OpenAI, Anthropic, Google, DeepSeek, ByteDance, xAI, Zhipu AI, or the supported web products. Users are responsible for complying with provider terms and applicable law.
+portal is an independent project and is not affiliated with, endorsed by, or sponsored by OpenAI, Anthropic, Google, DeepSeek, ByteDance, xAI, Zhipu AI, Moonshot AI, or the supported web products. Users are responsible for complying with provider terms and applicable law.

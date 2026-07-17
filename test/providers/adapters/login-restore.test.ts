@@ -12,6 +12,7 @@ import { DeepSeekAdapter } from '../../../src/providers/adapters/adapter-deepsee
 import { DoubaoAdapter } from '../../../src/providers/adapters/adapter-doubao.ts'
 import { GrokAdapter } from '../../../src/providers/adapters/adapter-grok.ts'
 import { GlmAdapter } from '../../../src/providers/adapters/adapter-glm.ts'
+import { KimiAdapter } from '../../../src/providers/adapters/adapter-kimi.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 interface RestoreTestLocator {
@@ -355,6 +356,31 @@ test('GlmAdapter.restore gives signed-out state priority over ready', async () =
       visibleByLocator: {
         '#send-message-button': true,
         'div.pointer-events-auto.px-1\\.5.pb-3\\.5 > button > svg[viewBox^="0 0 20"] path[fill-rule="evenodd"][clip-rule="evenodd"]': true,
+      },
+    })
+  )
+
+  let capturedError: unknown
+  try {
+    await adapter.restore()
+  } catch (error) {
+    capturedError = error
+  }
+
+  assert.ok(capturedError instanceof ProviderAdapterError)
+  assert.equal(capturedError.kind, 'auth')
+})
+
+test('KimiAdapter.restore gives the signed-out entry priority over its Composer', async () => {
+  const adapter = createRestorableAdapter(
+    KimiAdapter,
+    createMockPage({
+      afterGotoUrl: 'https://www.kimi.com/',
+      visibleByLocator: {
+        'button.next-sidebar-history-list__login': true,
+        '.chat-editor .chat-input-editor[contenteditable="true"]': true,
+        '.chat-editor .send-button-container': true,
+        '.chat-editor .current-model': true,
       },
     })
   )
