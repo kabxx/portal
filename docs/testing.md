@@ -23,11 +23,11 @@ npm run test:browser
 
 The smoke tests use temporary profiles and cover both an exact fixed CDP port and Chromium's dynamic port selection. They verify startup, connection, repeated close calls, and process cleanup without opening a provider website or using an account.
 
-## 2026-07-16 audit
+## 2026-07-17 audit
 
-The source inventory contains 97 TypeScript or TSX files. `provider-id.ts` is type-only, and the process entry point `index.ts` is intentionally not imported by the test process. Other modules only appear in the coverage report when an application or test entry point loads them, so the console report does not replace this static inventory.
+The source inventory contains 96 TypeScript or TSX files. `provider-id.ts` is type-only, and the process entry point `index.ts` is intentionally not imported by the test process. Other modules only appear in the coverage report when an application or test entry point loads them, so the console report does not replace this static inventory.
 
-The audited Node 24.13.0 run in a clean dedicated worktree contained 677 tests: 676 passed, 1 was skipped by a platform condition, and none failed. The loaded source baseline was 86.47% lines, 79.74% branches, and 80.99% functions. CI runs the same coverage command on Node 24, so compare trends within the same Node and operating-system environment rather than treating small cross-environment changes as regressions.
+The audited Node 24.13.0 run in a clean dedicated worktree contained 691 tests: 690 passed, 1 was skipped by a platform condition, and none failed. The loaded source baseline was 90.78% lines, 80.57% branches, and 81.99% functions. CI runs the same coverage command on Node 24, so compare trends within the same Node and operating-system environment rather than treating small cross-environment changes as regressions.
 
 On the audited Windows machine, `npm test` completed in about 11 seconds. The ChatGPT submit test file fell from about 41.4 seconds to 2.8 seconds by using short test-only timing overrides and controlled response events; production settle timing remains 1,000 ms. Doubao and GLM submit tests no longer keep the process alive for their default 30-second request-start grace timers.
 
