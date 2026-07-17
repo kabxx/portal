@@ -176,8 +176,64 @@ function collectReferenceUrls(value: unknown): Map<string, string> {
   return results
 }
 
+export function normalizeChatGptEntityMarkers(text: string): string {
+  const prefix = '\uE200entity'
+  const separator = '\uE202'
+  const terminator = '\uE201'
+  let cursor = 0
+  let normalized = ''
+
+  while (cursor < text.length) {
+    const markerStart = text.indexOf(prefix, cursor)
+    if (markerStart === -1) {
+      normalized += text.slice(cursor)
+      break
+    }
+
+    normalized += text.slice(cursor, markerStart)
+    let payloadStart = markerStart + prefix.length
+    if (text[payloadStart] === separator) {
+      payloadStart++
+    }
+    if (text[payloadStart] !== '[') {
+      normalized += prefix
+      cursor = markerStart + prefix.length
+      continue
+    }
+
+    const markerEnd = text.indexOf(terminator, payloadStart)
+    if (markerEnd === -1) {
+      normalized += text.slice(markerStart)
+      break
+    }
+
+    const payloadEnd =
+      text[markerEnd - 1] === separator ? markerEnd - 1 : markerEnd
+    const originalMarker = text.slice(markerStart, markerEnd + 1)
+    let payload: unknown
+    try {
+      payload = JSON.parse(text.slice(payloadStart, payloadEnd))
+    } catch {
+      normalized += originalMarker
+      cursor = markerEnd + 1
+      continue
+    }
+
+    const entityFields = Array.isArray(payload) ? (payload as unknown[]) : null
+    const displayName = entityFields?.[1]
+    if (typeof displayName !== 'string' || displayName.length === 0) {
+      normalized += originalMarker
+    } else {
+      normalized += displayName
+    }
+    cursor = markerEnd + 1
+  }
+
+  return normalized
+}
+
 function stripInlineReferenceMarkers(text: string): string {
-  return text
+  return normalizeChatGptEntityMarkers(text)
     .replace(
       /\uE200(?:cite|i)\uE202(?:turn[^\s\uE200\uE201\uE202]+\uE202?)+\uE201?/g,
       ''
