@@ -21,6 +21,7 @@ import { DeepSeekAdapter } from './providers/adapters/adapter-deepseek.ts'
 import { DoubaoAdapter } from './providers/adapters/adapter-doubao.ts'
 import { GrokAdapter } from './providers/adapters/adapter-grok.ts'
 import { GlmAdapter } from './providers/adapters/adapter-glm.ts'
+import { QwenAdapter } from './providers/adapters/adapter-qwen.ts'
 import { KimiAdapter } from './providers/adapters/adapter-kimi.ts'
 import {
   buildRuntimeRecoveryPlan,
@@ -363,13 +364,14 @@ interface Options {
   browserRemoteDebuggingPort?: string
 }
 
-const PROVIDERS: ProviderId[] = [
+export const PROVIDERS: ProviderId[] = [
   'chatgpt',
   'gemini',
   'deepseek',
   'doubao',
   'grok',
   'glm',
+  'qwen',
   'kimi',
 ]
 const SHUTDOWN_CLOSE_TIMEOUT_MS = 3000
@@ -500,6 +502,7 @@ function normalizeProviderId(value: string): ProviderId | null {
     doubao: 'doubao',
     grok: 'grok',
     glm: 'glm',
+    qwen: 'qwen',
     kimi: 'kimi',
   }
 
@@ -761,6 +764,8 @@ async function createAdapterForProvider(
       return await GrokAdapter.create(context, options)
     case 'glm':
       return await GlmAdapter.create(context, options)
+    case 'qwen':
+      return await QwenAdapter.create(context, options)
     case 'kimi':
       return await KimiAdapter.create(context, options)
   }
