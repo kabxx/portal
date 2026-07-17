@@ -184,6 +184,7 @@ export function parseKimiConnectResponse(raw: string): KimiParsedResponse {
   const statuses = new Set<string>()
   let assistantMessageId: string | null = null
   let streamError: KimiStreamError | null = null
+  let hasDoneFrame = false
 
   const visit = (value: unknown): void => {
     if (Array.isArray(value)) {
@@ -223,9 +224,18 @@ export function parseKimiConnectResponse(raw: string): KimiParsedResponse {
     Object.values(value).forEach(visit)
   }
 
-  extractKimiJsonObjects(raw).forEach(visit)
+  for (const frame of extractKimiJsonObjects(raw)) {
+    if (
+      isRecord(frame) &&
+      isRecord(frame.done) &&
+      Object.keys(frame.done).length === 0
+    ) {
+      hasDoneFrame = true
+    }
+    visit(frame)
+  }
   return {
-    isFinished: statuses.has('MESSAGE_STATUS_COMPLETED'),
+    isFinished: hasDoneFrame || statuses.has('MESSAGE_STATUS_COMPLETED'),
     statuses: [...statuses],
     error: streamError,
   }
@@ -1090,28 +1100,47 @@ export class KimiAdapter extends ProviderAdapter {
 
       const parsed = parseKimiConnectResponse(completed.chunks.join(''))
       if (parsed.error !== null) throw this.createStreamError(parsed.error)
-      if (!parsed.isFinished) {
-        throw new ProviderAdapterError(
-          'submit',
-          'Kimi response ended without an assistant completion status.',
+      let text: string | null = null
+      if (parsed.isFinished) {
+        await waitAsync(
+          async () =>
+            (await this.isReady()) &&
+            !(await this.page.locator(KIMI_STOP_SELECTOR).count()),
+          { timeoutMs: this.getSubmitResponseTimeoutMs(), signal }
+        )
+        text = await this.readCurrentAssistantText(assistantCountBeforeSubmit)
+      } else {
+        await waitAsync(
+          async () => {
+            if (
+              !(await this.isReady()) ||
+              (await this.page.locator(KIMI_STOP_SELECTOR).count())
+            ) {
+              return false
+            }
+            text = await this.readCurrentAssistantText(
+              assistantCountBeforeSubmit
+            )
+            return text !== null
+          },
           {
-            kind: 'protocol',
-            recovery: 'none',
-            retryable: false,
-            detailCode: 'kimi_response_incomplete',
+            timeoutMs: this.getSubmitResponseTimeoutMs(),
+            signal,
+            onTimeout: async () => {
+              throw new ProviderAdapterError(
+                'submit',
+                'Kimi response ended without terminal protocol evidence or a verified final response.',
+                {
+                  kind: 'protocol',
+                  recovery: 'none',
+                  retryable: false,
+                  detailCode: 'kimi_response_incomplete',
+                }
+              )
+            },
           }
         )
       }
-
-      await waitAsync(
-        async () =>
-          (await this.isReady()) &&
-          !(await this.page.locator(KIMI_STOP_SELECTOR).count()),
-        { timeoutMs: this.getSubmitResponseTimeoutMs(), signal }
-      )
-      const text = await this.readCurrentAssistantText(
-        assistantCountBeforeSubmit
-      )
       if (text === null) {
         throw new ProviderAdapterError(
           'submit',
