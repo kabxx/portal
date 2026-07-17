@@ -106,6 +106,19 @@ function resolveProviderFromUrl(url: URL): ResolvedConversationUrl | null {
         }
   }
 
+  if (
+    url.hostname === 'chat.qwen.ai' &&
+    /^\/c\/[^/?#]+\/?$/.test(url.pathname)
+  ) {
+    const conversationId = readPathSegment(url, 1)
+    return conversationId === null
+      ? null
+      : {
+          provider: 'qwen',
+          conversationUrl: `https://chat.qwen.ai/c/${encodeURIComponent(conversationId)}`,
+        }
+  }
+
   return null
 }
 

@@ -253,6 +253,7 @@ test('completeThreadProvider completes only unique provider prefixes', () => {
     'doubao',
     'grok',
     'glm',
+    'qwen',
   ] as const
 
   assert.equal(
@@ -262,6 +263,10 @@ test('completeThreadProvider completes only unique provider prefixes', () => {
   assert.equal(
     completeThreadProvider('/thread open gemini', providers),
     '/thread open gemini '
+  )
+  assert.equal(
+    completeThreadProvider('/thread open qwe', providers),
+    '/thread open qwen '
   )
   assert.equal(
     completeThreadProvider('/thread open d', providers),

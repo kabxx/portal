@@ -186,6 +186,140 @@ export function parseGlmHistory(
   }
 }
 
+export function parseQwenHistory(raw: string): ConversationHistoryResult {
+  const root = asRecord(parseJson(raw))
+  const history = asRecord(asRecord(asRecord(root?.data)?.chat)?.history)
+  const rawMessages = asRecord(history?.messages)
+  if (history === null || rawMessages === null) {
+    return emptyHistoryResult(
+      'Qwen history response did not contain a history graph.'
+    )
+  }
+
+  const nodes = new Map<string, Record<string, unknown>>()
+  for (const [key, value] of Object.entries(rawMessages)) {
+    const node = asRecord(value)
+    const id = stringValue(node?.id)
+    if (node === null || id === null || id !== key || nodes.has(id)) {
+      return emptyHistoryResult(
+        'Qwen history graph contained an invalid or duplicate message id.'
+      )
+    }
+    nodes.set(id, node)
+  }
+  if (nodes.size === 0) {
+    return emptyHistoryResult('Qwen history contained no message nodes.')
+  }
+
+  const currentId = stringValue(history.currentId)
+  const currentResponseIds = asArray(history.currentResponseIds)
+    .map(stringValue)
+    .filter((value): value is string => value !== null)
+  if (currentId === null || !nodes.has(currentId)) {
+    return emptyHistoryResult(
+      'Qwen history graph did not identify a valid current message.'
+    )
+  }
+
+  const warnings: string[] = []
+  if (
+    currentResponseIds.length !== 1 ||
+    currentResponseIds[0] !== currentId ||
+    new Set(currentResponseIds).size !== currentResponseIds.length
+  ) {
+    warnings.push(
+      'Qwen history did not identify one unambiguous current response.'
+    )
+  }
+
+  const chain: Record<string, unknown>[] = []
+  const visited = new Set<string>()
+  let nextId: string | null = currentId
+  let reachedRoot = false
+  while (nextId !== null) {
+    if (visited.has(nextId)) {
+      warnings.push(
+        'Qwen history graph contained a cycle on the active branch.'
+      )
+      break
+    }
+    visited.add(nextId)
+    const node = nodes.get(nextId)
+    if (node === undefined) {
+      warnings.push('Qwen history active branch referenced a missing parent.')
+      break
+    }
+    chain.push(node)
+    const parentId = nullableString(node.parentId)
+    if (parentId === null) {
+      reachedRoot = true
+      break
+    }
+    const parent = nodes.get(parentId)
+    const children = asArray(parent?.childrenIds)
+      .map(stringValue)
+      .filter((value): value is string => value !== null)
+    if (parent === undefined || !children.includes(nextId)) {
+      warnings.push(
+        'Qwen history active branch contained an inconsistent parent-child edge.'
+      )
+      break
+    }
+    nextId = parentId
+  }
+  chain.reverse()
+
+  const current = nodes.get(currentId)!
+  if (asArray(current.childrenIds).length !== 0) {
+    warnings.push('Qwen history current response was not a leaf message.')
+  }
+
+  const messages: ConversationHistoryMessage[] = []
+  for (const node of chain) {
+    const rawRole = stringValue(node.role)?.toLowerCase()
+    const role =
+      rawRole === 'user' ? 'user' : rawRole === 'assistant' ? 'assistant' : null
+    if (role === null) {
+      warnings.push(
+        'Qwen history active branch contained an unknown message role.'
+      )
+      continue
+    }
+
+    if (role === 'assistant' && (node.done !== true || node.error !== null)) {
+      warnings.push(
+        'Qwen history contained an unfinished or failed assistant response.'
+      )
+    }
+    const text =
+      role === 'user' ? readText(node.content) : readQwenAssistantText(node)
+    if (!text) {
+      warnings.push(
+        'Qwen history contained a message without supported text content.'
+      )
+      continue
+    }
+    messages.push(
+      historyMessage({
+        id: stringValue(node.id)!,
+        parentId: nullableString(node.parentId),
+        role,
+        text,
+        createdAt: timestamp(node.timestamp),
+      })
+    )
+  }
+
+  if (!reachedRoot) {
+    warnings.push('Qwen history active branch did not reach its root message.')
+  }
+  return {
+    messages,
+    complete: reachedRoot && warnings.length === 0,
+    warning: warnings.length === 0 ? null : [...new Set(warnings)].join(' '),
+  }
+}
+
 export function parseGrokHistory(
   nodeRaw: string,
   responsesRaw: string
@@ -568,6 +702,19 @@ function readGlmText(
       .join('\n\n')
       .trim() || readText(node.content)
   )
+}
+
+function readQwenAssistantText(node: Record<string, unknown>): string {
+  const contentList = asArray(node.content_list)
+  const answerItems = contentList.filter(
+    (item) => stringValue(asRecord(item)?.phase) === 'answer'
+  )
+  if (answerItems.length === 0) return ''
+  return answerItems
+    .map((item) => readText(asRecord(item)?.content))
+    .filter(Boolean)
+    .join('')
+    .trim()
 }
 
 function readDoubaoText(message: Record<string, unknown>): string {

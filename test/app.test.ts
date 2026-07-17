@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   GROK_PROVIDER_PROMPT,
+  PROVIDERS,
   canRunCommandWhileThreadBusy,
   clearInteractiveTerminal,
   clearApiProviderCapability,
@@ -24,6 +25,18 @@ import {
   createFakeRuntime,
   createProviderAdapterStub,
 } from './helpers/fakes.ts'
+
+test('application provider registry includes every supported provider', () => {
+  assert.deepEqual(PROVIDERS, [
+    'chatgpt',
+    'gemini',
+    'deepseek',
+    'doubao',
+    'grok',
+    'glm',
+    'qwen',
+  ])
+})
 
 test('transitionLoginWaitWarning renders only when entering login wait', () => {
   assert.deepEqual(transitionLoginWaitWarning(false, true), {
