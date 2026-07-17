@@ -278,7 +278,93 @@ test('parseChatGptHistory follows current_node and filters hidden/tool nodes', (
   assert.equal(result.complete, true)
 })
 
+test('parseChatGptHistory renders assistant entities without changing user or citation markers', () => {
+  const entityMarker =
+    '\uE200entity\uE202["known_celebrity","蔡徐坤","Chinese singer"]\uE201'
+  const citationMarker = '\uE200cite\uE202turn0search0\uE202\uE201'
+  const node = (
+    id: string,
+    parent: string | null,
+    role: 'user' | 'assistant',
+    text: string
+  ) => ({
+    id,
+    parent,
+    message: {
+      id,
+      author: { role },
+      content: { content_type: 'text', parts: [text] },
+      metadata: {},
+      recipient: 'all',
+      end_turn: true,
+      create_time: 1,
+    },
+  })
+  const result = parseChatGptHistory(
+    JSON.stringify({
+      current_node: 'a1',
+      mapping: {
+        root: { id: 'root', parent: null, message: null },
+        u1: node('u1', 'root', 'user', entityMarker),
+        a1: node(
+          'a1',
+          'u1',
+          'assistant',
+          `网页显示的是${entityMarker}。${citationMarker}`
+        ),
+      },
+    })
+  )
+
+  assert.deepEqual(
+    result.messages.map(({ role, text }) => ({ role, text })),
+    [
+      { role: 'user', text: entityMarker },
+      {
+        role: 'assistant',
+        text: `网页显示的是蔡徐坤。${citationMarker}`,
+      },
+    ]
+  )
+})
+
+for (const [name, marker] of [
+  [
+    'incomplete',
+    '\uE200entity\uE202["known_celebrity","蔡徐坤","Chinese singer"]',
+  ],
+  ['invalid', '\uE200entity\uE202["known_celebrity",]\uE201'],
+] as const) {
+  test(`parseChatGptHistory preserves an ${name} assistant entity marker`, () => {
+    const result = parseChatGptHistory(
+      JSON.stringify({
+        current_node: 'a1',
+        mapping: {
+          root: { id: 'root', parent: null, message: null },
+          a1: {
+            id: 'a1',
+            parent: 'root',
+            message: {
+              id: 'a1',
+              author: { role: 'assistant' },
+              content: { content_type: 'text', parts: [marker] },
+              metadata: {},
+              recipient: 'all',
+              end_turn: true,
+            },
+          },
+        },
+      })
+    )
+
+    assert.equal(result.messages[0]?.text, marker)
+  })
+}
+
 test('parseChatGptHistory keeps Portal tool calls from incomplete assistant turns', () => {
+  const entityMarker =
+    '\uE200entity\uE202["known_celebrity","蔡徐坤","Chinese singer"]\uE201'
+  const toolCall = `<tool name="apply_patch">before ${entityMarker} after</tool>`
   const node = (
     id: string,
     parent: string | null,
@@ -306,13 +392,7 @@ test('parseChatGptHistory keeps Portal tool calls from incomplete assistant turn
       mapping: {
         root: { id: 'root', parent: null, message: null },
         u1: node('u1', 'root', 'user', 'question'),
-        a1: node(
-          'a1',
-          'u1',
-          'assistant',
-          '<tool>{"tool":"run_command","params":{"command":"dir"}}</tool>',
-          { end_turn: false }
-        ),
+        a1: node('a1', 'u1', 'assistant', toolCall, { end_turn: false }),
         u2: node('u2', 'a1', 'user', '### Tool Result ###\nok'),
         a2: node('a2', 'u2', 'assistant', 'done'),
       },
@@ -325,7 +405,7 @@ test('parseChatGptHistory keeps Portal tool calls from incomplete assistant turn
       { role: 'user', text: 'question' },
       {
         role: 'assistant',
-        text: '<tool>{"tool":"run_command","params":{"command":"dir"}}</tool>',
+        text: toolCall,
       },
       { role: 'user', text: '### Tool Result ###\nok' },
       { role: 'assistant', text: 'done' },
