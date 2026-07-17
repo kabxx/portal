@@ -128,10 +128,14 @@ function createChatGPTPage(sendButton: {
         return sendButton
       }
       if (selector === 'button[style*="--vt-composer-speech-button"]') {
-        return speechButton
+        return {
+          count: async () => 1,
+          first: () => speechButton,
+        }
       }
       if (selector === 'button[data-testid="send-button"]') {
         return {
+          count: async () => 0,
           first() {
             return this
           },
