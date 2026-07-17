@@ -250,25 +250,32 @@ export function awaitWithTimeout<T>(
   onTimeout: () => Error,
   options: AbortOptions = {}
 ): Promise<T> {
-  return abortable(
-    new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(onTimeout())
-      }, timeoutMs)
+  let timer: NodeJS.Timeout | null = null
+  const timedPromise = new Promise<T>((resolve, reject) => {
+    timer = setTimeout(() => {
+      timer = null
+      reject(onTimeout())
+    }, timeoutMs)
 
-      void promise.then(
-        (value) => {
-          clearTimeout(timer)
-          resolve(value)
-        },
-        (error) => {
-          clearTimeout(timer)
-          reject(toError(error, 'Provider operation failed.'))
-        }
-      )
-    }),
-    options.signal
-  )
+    void promise.then(
+      (value) => {
+        if (timer !== null) clearTimeout(timer)
+        timer = null
+        resolve(value)
+      },
+      (error) => {
+        if (timer !== null) clearTimeout(timer)
+        timer = null
+        reject(toError(error, 'Provider operation failed.'))
+      }
+    )
+  })
+  return abortable(timedPromise, options.signal).finally(() => {
+    if (timer !== null) {
+      clearTimeout(timer)
+      timer = null
+    }
+  })
 }
 
 export function buildSubmitBlockedWarningMessage(providerName: string): string {
