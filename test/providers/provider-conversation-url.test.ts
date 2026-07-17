@@ -40,6 +40,10 @@ test('resolveConversationUrl detects supported provider conversation URLs', () =
     provider: 'glm',
     conversationUrl: 'https://chat.z.ai/c/glm-conv',
   })
+  assert.deepEqual(resolveConversationUrl('https://chat.qwen.ai/c/qwen-conv'), {
+    provider: 'qwen',
+    conversationUrl: 'https://chat.qwen.ai/c/qwen-conv',
+  })
   assert.deepEqual(
     resolveConversationUrl('https://www.kimi.com/chat/kimi-conv'),
     {
@@ -78,6 +82,13 @@ test('resolveConversationUrl normalizes provider URL variants', () => {
     }
   )
   assert.deepEqual(
+    resolveConversationUrl('https://chat.qwen.ai/c/qwen%20conv?model=x#top'),
+    {
+      provider: 'qwen',
+      conversationUrl: 'https://chat.qwen.ai/c/qwen%20conv',
+    }
+  )
+  assert.deepEqual(
     resolveConversationUrl('https://www.kimi.com/chat/kimi-conv/?x=1#top'),
     {
       provider: 'kimi',
@@ -96,6 +107,12 @@ test('resolveConversationUrl rejects unsupported URLs', () => {
     resolveConversationUrl('https://example.com/c/chatgpt-conv'),
     null
   )
+  assert.equal(resolveConversationUrl('https://qwen.ai/c/qwen-conv'), null)
+  assert.equal(
+    resolveConversationUrl('https://chat.qwen.ai/chat/qwen-conv'),
+    null
+  )
+  assert.equal(resolveConversationUrl('https://chat.qwen.ai/c/one/extra'), null)
   assert.equal(resolveConversationUrl('https://kimi.com/chat/kimi-conv'), null)
   assert.equal(
     resolveConversationUrl('https://www.kimi.com/chat/history'),
@@ -110,5 +127,6 @@ test('resolveConversationUrl rejects malformed path encoding', () => {
     resolveConversationUrl('https://gemini.google.com/app/%E0%A4%A'),
     null
   )
+  assert.equal(resolveConversationUrl('https://chat.qwen.ai/c/%ZZ'), null)
   assert.equal(resolveConversationUrl('https://www.kimi.com/chat/%ZZ'), null)
 })
