@@ -34,7 +34,11 @@ import {
   type RunCommandJobManagerOptions,
 } from './processes/run-command-job-manager.ts'
 import { initializeRuntimeWithLoginWait } from './runtime/runtime-initializer.ts'
-import { isAbortError, throwIfAborted } from './runtime/runtime-cancellation.ts'
+import {
+  PortalAbortError,
+  isAbortError,
+  throwIfAborted,
+} from './runtime/runtime-cancellation.ts'
 import { sleepWithAbortAsync } from './shared/sleep.ts'
 import { ThreadManager } from './threads/thread-manager.ts'
 import {
@@ -788,6 +792,84 @@ export function showPendingThreadTimeline(
   }
 }
 
+export async function handleUnexpectedThreadPageClose({
+  threadId,
+  threadManager,
+  threadOperations,
+  ui,
+  shouldIgnore,
+  onClosed,
+}: {
+  threadId: string
+  threadManager: ThreadManager
+  threadOperations: ThreadOperationCoordinator
+  ui: TerminalController
+  shouldIgnore: () => boolean
+  onClosed?: () => void
+}): Promise<boolean> {
+  if (shouldIgnore() || threadManager.getThread(threadId) === null) {
+    return false
+  }
+
+  ui.setThreadBusy(threadId, true)
+  let failure: { error: unknown } | null = null
+  try {
+    while (!shouldIgnore() && threadManager.getThread(threadId) !== null) {
+      try {
+        await threadOperations.close(
+          threadId,
+          async () => await threadManager.closeThread(threadId)
+        )
+        break
+      } catch (error) {
+        if (!(error instanceof ThreadCloseTimeoutError)) {
+          throw error
+        }
+        const settled = await threadOperations.waitForIdle(threadId)
+        if (
+          !settled &&
+          !shouldIgnore() &&
+          threadManager.getThread(threadId) !== null
+        ) {
+          try {
+            await threadManager.closeThread(threadId)
+          } finally {
+            const lateSettlement = threadOperations.abandon(threadId)
+            if (lateSettlement !== null) {
+              void lateSettlement.then(() => {
+                if (threadManager.getThread(threadId) === null) {
+                  ui.removeThreadTimeline(threadId)
+                }
+              })
+            }
+          }
+          break
+        }
+      }
+    }
+  } catch (error) {
+    failure = { error }
+  } finally {
+    ui.setThreadBusy(threadId, false)
+  }
+
+  const removed = threadManager.getThread(threadId) === null
+  if (removed) {
+    ui.removeThreadTimeline(threadId)
+    if (!shouldIgnore()) {
+      onClosed?.()
+      ui.renderWarning(
+        'thread',
+        `Thread ${threadId} was closed because its browser page was closed.`
+      )
+    }
+  }
+  if (failure !== null) {
+    throw failure.error
+  }
+  return removed
+}
+
 async function openThread(
   ui: TerminalController,
   threadManager: ThreadManager,
@@ -929,9 +1011,59 @@ async function openThread(
   }
 }
 
+export async function loadResumedThreadHistory(
+  threadId: string,
+  runtime: RuntimeCore,
+  threadOperations: ThreadOperationCoordinator,
+  signal?: AbortSignal
+): Promise<ConversationHistoryResult> {
+  const result: { history: ConversationHistoryResult | null } = {
+    history: null,
+  }
+  const startResult = threadOperations.tryStart(
+    threadId,
+    runtime,
+    async ({ signal: operationSignal }) => {
+      const loadSignal =
+        signal === undefined
+          ? operationSignal
+          : AbortSignal.any([signal, operationSignal])
+      throwIfAborted(loadSignal)
+      try {
+        result.history = await runtime.loadHistory({ signal: loadSignal })
+        throwIfAborted(loadSignal)
+      } catch (error) {
+        throwIfAborted(loadSignal)
+        if (isAbortError(error)) {
+          throw error
+        }
+        result.history = {
+          messages: [],
+          complete: false,
+          warning: `Could not load remote conversation history: ${String(error)}`,
+        }
+      }
+    }
+  )
+  if (!startResult.accepted) {
+    throw new PortalAbortError(
+      `Thread ${threadId} is ${startResult.reason === 'closing' ? 'closing' : 'busy'}.`
+    )
+  }
+
+  await startResult.operation.done
+  if (result.history === null) {
+    throw new PortalAbortError(
+      `History loading stopped for thread ${threadId}.`
+    )
+  }
+  return result.history
+}
+
 async function resumeThread(
   ui: TerminalController,
   threadManager: ThreadManager,
+  threadOperations: ThreadOperationCoordinator,
   skillLibrary: SkillLibrary,
   mcpLibrary: McpLibrary,
   runCommandJobs: RunCommandJobManager,
@@ -1065,18 +1197,20 @@ async function resumeThread(
         `Conversation URL: ${runtime.conversationUrl}`,
       ].join('\n')
     )
-    let history: ConversationHistoryResult
-    try {
-      history = await runtime.loadHistory({ signal })
-    } catch (error) {
-      if (isAbortError(error)) {
-        throw error
-      }
-      history = {
-        messages: [],
-        complete: false,
-        warning: `Could not load remote conversation history: ${String(error)}`,
-      }
+    const history = await loadResumedThreadHistory(
+      thread.id,
+      runtime,
+      threadOperations,
+      signal
+    )
+    throwIfAborted(signal)
+    if (
+      threadManager.getThread(thread.id) === null ||
+      threadOperations.get(thread.id)?.phase === 'closing'
+    ) {
+      throw new PortalAbortError(
+        `Thread ${thread.id} closed while its history was loading.`
+      )
     }
     ui.renderConversationHistory(thread, history.messages)
     if (history.warning !== null) {
@@ -1205,8 +1339,11 @@ export async function run(argv = process.argv): Promise<void> {
   let browserStartupPromise: ReturnType<typeof launchBrowser> | null = null
   let apiServer: PortalApiServer | null = null
   let mcpServer: PortalMcpServer | null = null
+  let unsubscribeThreadPageClose: (() => void) | null = null
   let exitRequested = false
   const shutdown = createIdempotentAsyncTask(async () => {
+    unsubscribeThreadPageClose?.()
+    unsubscribeThreadPageClose = null
     keybindingCatalog.stop()
     browserStartupController?.abort()
     await browserStartupPromise?.catch(() => {})
@@ -1648,6 +1785,31 @@ export async function run(argv = process.argv): Promise<void> {
       return
     }
     const context = browserLaunch.context
+    const shouldIgnoreThreadPageClose = () =>
+      exitRequested || context.isClosed()
+    unsubscribeThreadPageClose = threadManager.onThreadPageClosed(
+      (threadId) => {
+        void handleUnexpectedThreadPageClose({
+          threadId,
+          threadManager,
+          threadOperations,
+          ui,
+          shouldIgnore: shouldIgnoreThreadPageClose,
+          onClosed: () => {
+            apiServer?.eventHub.closeThread(threadId, {
+              reason: 'provider_page_closed',
+            })
+          },
+        }).catch((error) => {
+          if (!shouldIgnoreThreadPageClose()) {
+            ui.renderError(
+              'thread',
+              `Failed to clean up ${threadId} after its browser page closed: ${String(error)}`
+            )
+          }
+        })
+      }
+    )
 
     hookDispatcher.setModelExecutor(
       new ChildRuntimeFactory(
@@ -2100,6 +2262,7 @@ export async function run(argv = process.argv): Promise<void> {
             const historyEntry = await resumeThread(
               ui,
               threadManager,
+              threadOperations,
               skillLibrary,
               mcpLibrary,
               runCommandJobs,
@@ -2154,6 +2317,9 @@ export async function run(argv = process.argv): Promise<void> {
         } finally {
           if (threadOperations.get(threadId) === null) {
             ui.setThreadBusy(threadId, false)
+          }
+          if (threadManager.getThread(threadId) === null) {
+            ui.removeThreadTimeline(threadId)
           }
         }
       },
@@ -2384,6 +2550,7 @@ export async function run(argv = process.argv): Promise<void> {
             const resumed = await resumeThread(
               ui,
               threadManager,
+              threadOperations,
               skillLibrary,
               mcpLibrary,
               runCommandJobs,
@@ -2397,10 +2564,16 @@ export async function run(argv = process.argv): Promise<void> {
               setStopTarget,
               'mcp',
               async (threadId) => {
-                await threadOperations.close(
-                  threadId,
-                  async () => await threadManager.closeThread(threadId, 'mcp')
-                )
+                try {
+                  await threadOperations.close(
+                    threadId,
+                    async () => await threadManager.closeThread(threadId, 'mcp')
+                  )
+                } finally {
+                  if (threadManager.getThread(threadId) === null) {
+                    ui.removeThreadTimeline(threadId)
+                  }
+                }
               }
             )
             if (resumed === null) {
@@ -2432,6 +2605,9 @@ export async function run(argv = process.argv): Promise<void> {
         } finally {
           if (threadOperations.get(threadId) === null) {
             ui.setThreadBusy(threadId, false)
+          }
+          if (threadManager.getThread(threadId) === null) {
+            ui.removeThreadTimeline(threadId)
           }
         }
       },
@@ -2660,6 +2836,7 @@ export async function run(argv = process.argv): Promise<void> {
           const historyEntry = await resumeThread(
             ui,
             threadManager,
+            threadOperations,
             skillLibrary,
             mcpLibrary,
             runCommandJobs,
@@ -2704,6 +2881,9 @@ export async function run(argv = process.argv): Promise<void> {
         } finally {
           if (threadOperations.get(threadId) === null) {
             ui.setThreadBusy(threadId, false)
+          }
+          if (threadManager.getThread(threadId) === null) {
+            ui.removeThreadTimeline(threadId)
           }
         }
       },

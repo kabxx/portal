@@ -67,6 +67,12 @@ provider page without creating a turn or changing the local title/history.
 Subscribe to the SSE endpoint before sending the reload request when the
 `thread.action` `started` event must not be missed.
 
+Closing a thread can return `409 THREAD_CLOSE_TIMEOUT` when its active operation
+does not settle in time. If the logical thread was removed but one or more
+runtime or Hook cleanup steps failed, it returns
+`500 THREAD_CLOSED_WITH_CLEANUP_ERRORS`; the thread is already closed in that
+case.
+
 ## Skills
 
 `POST /v1/threads/:threadId/skill` with `{ "name": "skill-name" }` starts the
@@ -123,7 +129,16 @@ The event names are:
 
 `message.started`, `assistant.delta`, `assistant.message`, `status`,
 `tool.started`, `tool.output`, `tool.completed`, `message.completed`,
-`message.failed`, `message.cancelled`, `thread.action`, and `hook.execution`.
+`message.failed`, `message.cancelled`, `thread.closed`, `thread.action`, and
+`hook.execution`.
+
+`thread.closed` is the terminal event for a thread whose Provider page was
+closed outside portal. Its data contains `reason: "provider_page_closed"`.
+When an active message settles during coordinated cancellation,
+`message.cancelled` is emitted first. If cancellation reaches its bounded
+force-close fallback, `thread.closed` can be the only terminal event. After
+publishing `thread.closed`, portal ends every SSE response subscribed to that
+thread.
 
 `hook.execution` is emitted when a configured Hook handler starts and finishes.
 Its data contains `hookRunId`, `phase`, `event`, `handler`, `handlerType`,
