@@ -40,7 +40,7 @@ test('transitionLoginWaitWarning renders only when entering login wait', () => {
   })
 })
 
-test('API capability helpers route Claude web_search through toggle semantics', async () => {
+test('API capability helpers route DeepSeek search through toggle semantics', async () => {
   const states: string[] = []
   const adapter = createProviderAdapterStub()
   Object.assign(adapter, {
@@ -56,12 +56,12 @@ test('API capability helpers route Claude web_search through toggle semantics', 
   })
 
   assert.deepEqual(
-    await setApiProviderCapability('claude', runtime, 'web_search', 'off'),
-    { name: 'web_search', state: 'claude.web_search: off' }
+    await setApiProviderCapability('deepseek', runtime, 'search', 'off'),
+    { name: 'search', state: 'deepseek.search: off' }
   )
   assert.deepEqual(
-    await clearApiProviderCapability('claude', runtime, 'web_search'),
-    { name: 'web_search', cleared: true }
+    await clearApiProviderCapability('deepseek', runtime, 'search'),
+    { name: 'search', cleared: true }
   )
   assert.deepEqual(states, ['off', 'off'])
 })

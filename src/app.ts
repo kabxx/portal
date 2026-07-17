@@ -16,7 +16,6 @@ import {
   type ProviderTimingOptions,
 } from './providers/adapters/adapter-base.ts'
 import { ChatGPTAdapter } from './providers/adapters/adapter-chatgpt.ts'
-import { ClaudeAdapter } from './providers/adapters/adapter-claude.ts'
 import { GeminiAdapter } from './providers/adapters/adapter-gemini.ts'
 import { DeepSeekAdapter } from './providers/adapters/adapter-deepseek.ts'
 import { DoubaoAdapter } from './providers/adapters/adapter-doubao.ts'
@@ -361,7 +360,6 @@ interface Options {
 
 const PROVIDERS: ProviderId[] = [
   'chatgpt',
-  'claude',
   'gemini',
   'deepseek',
   'doubao',
@@ -491,7 +489,6 @@ function normalizeProviderId(value: string): ProviderId | null {
   const aliases: Record<string, ProviderId> = {
     chatgpt: 'chatgpt',
     gpt: 'chatgpt',
-    claude: 'claude',
     gemini: 'gemini',
     deepseek: 'deepseek',
     doubao: 'doubao',
@@ -747,8 +744,6 @@ async function createAdapterForProvider(
   switch (provider) {
     case 'chatgpt':
       return await ChatGPTAdapter.create(context, options)
-    case 'claude':
-      return await ClaudeAdapter.create(context, options)
     case 'gemini':
       return await GeminiAdapter.create(context, options)
     case 'deepseek':
