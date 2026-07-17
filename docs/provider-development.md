@@ -175,8 +175,8 @@ Selector and readiness rules are review gates, not preferences.
 3. Do not use rendered `width`, `height`, coordinates, spacing, or screen position. They change with responsive layout, zoom, fonts, and experiments.
 4. SVG matching must be scoped to the owning component and use only a verified stable prefix. Prefer `svg[viewBox^="0 0 21.2"]` over an exact match to the full SVG attribute or path.
 5. `viewBox` is an intrinsic icon signature, not a rendered responsive width or height. Do not substitute CSS dimensions for it.
-6. Require a unique target. Separately verify `count === 1`, visibility, enabled state, and `aria-disabled !== "true"` when that state exists.
-7. `aria-disabled` is state data and may be read after identity is established; it must not be used as the control's identity.
+6. Require a unique, visible target. Verify `count === 1` before selecting the target. Check enabled or accessibility state only when the Provider's verified control semantics require it; an empty Composer may intentionally keep its send button disabled while the page is ready.
+7. `aria-disabled` is optional state data. It may be read after identity is established, but it is neither required on every site nor valid as the control's identity.
 8. Scope selectors to a stable owner such as the Composer, model menu, or response article. Do not search the whole page for a common icon or role.
 9. Generated CSS class names and exact class strings are fragile. Use a stable class fragment only when verified and when no stronger signal exists.
 10. If only text or responsive geometry is available, stop and document the limitation for review instead of silently adding the selector.
@@ -187,11 +187,7 @@ Example of a structurally scoped icon signal:
 const controls = composer.locator('button:has(svg[viewBox^="0 0 21.2"])')
 if ((await controls.count()) !== 1) return false
 const control = controls.first()
-return (
-  (await control.isVisible()) &&
-  (await control.isEnabled()) &&
-  (await control.getAttribute('aria-disabled')) !== 'true'
-)
+return await control.isVisible()
 ```
 
 ### State separation
@@ -221,7 +217,7 @@ The submit path must keep three states separate: the UI action succeeded, the ad
 3. Filter captured traffic by method, endpoint, conversation, request shape, and capture id as available.
 4. While no owned request exists, continue checking redirects and blocked UI state.
 5. After an owned request exists, do not reclassify an empty poll as authentication failure and do not submit again.
-6. Call `emitSubmitSent` at the adapter's Provider-specific dispatch point so the base response-start timeout begins. Most current adapters use a successful click or Enter press; Claude currently waits for an owned completion capture. This reporter does not have one universal meaning and must not be treated as owned-request evidence.
+6. Call `emitSubmitSent` at the adapter's Provider-specific dispatch point so the base response-start timeout begins. Most current adapters use a successful click or Enter press. This reporter does not have one universal meaning and must not be treated as owned-request evidence.
 7. Emit activity only for real network, stream, or text progress. `emitSubmitText` already counts as activity. UI polling must not extend the stall timeout.
 8. Stream monotonic text snapshots through `emitSubmitText`; do not make the terminal wait for the final response when safe incremental text exists.
 9. Require Provider-specific terminal evidence such as an SSE terminal event, WebSocket done event, terminal stop reason, or verified final response. DOM text stability alone is not a protocol completion signal when a stronger event exists.
@@ -355,7 +351,7 @@ Final review:
 - [ ] Required adapter methods exist; unsupported operations fail explicitly.
 - [ ] Login, restricted access, Ready, request start, streaming, completion, and post-completion readiness are separate.
 - [ ] No selector depends on text, `aria-label`, Accessible Name, rendered size, coordinates, or responsive position.
-- [ ] SVG identity is scoped and prefix-matched; targets are unique, visible, enabled, and not aria-disabled.
+- [ ] SVG identity is scoped and prefix-matched; targets are unique and visible, with Provider-specific enabled state handled according to verified page semantics.
 - [ ] Submit ownership excludes stale/unrelated traffic and uncertain outcomes cannot duplicate messages.
 - [ ] Streaming, continuation, completion, cancellation, and cleanup use real protocol evidence.
 - [ ] Resume history proves completeness when reported complete; otherwise it warns, filters non-message content, and remains display-only.
