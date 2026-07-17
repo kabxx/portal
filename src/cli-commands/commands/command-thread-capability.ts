@@ -83,6 +83,7 @@ const PROVIDER_CAPABILITIES: Record<ProviderId, readonly ProviderCapability[]> =
         kind: 'toggle',
       },
     ],
+    qwen: [],
   }
 
 export async function executeThreadCapability(
@@ -410,6 +411,7 @@ function formatProviderName(provider: ProviderId): string {
     doubao: 'Doubao',
     grok: 'Grok',
     glm: 'GLM',
+    qwen: 'Qwen',
   }
   return names[provider]
 }

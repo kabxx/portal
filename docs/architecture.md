@@ -20,7 +20,7 @@ Provider-specific website behavior stays behind adapters. The runtime understand
 | MCP Server        | `src/mcp-server/`                       | Expose selected thread operations through an independent Streamable HTTP MCP listener               |
 | Browser platform  | `src/platform/`                         | Launch Chromium, connect over CDP, and manage platform-specific process lifetime                    |
 | Provider adapters | `src/providers/adapters/`               | Navigate pages, detect login/readiness, submit, stream, upload, select models, and stop output      |
-| History parsing   | `src/providers/conversation-history.ts` | Convert six provider history formats into visible user/assistant messages                           |
+| History parsing   | `src/providers/conversation-history.ts` | Convert seven provider history formats into visible user/assistant messages                         |
 | Runtime           | `src/runtime/`                          | Build setup prompts, initialize runtimes, execute tool loops, retry, recover, and cancel            |
 | Threads           | `src/threads/`                          | Track open threads and local turns in memory; persist URL history metadata in SQLite                |
 | Commands          | `src/cli-commands/`                     | Tokenize and dispatch slash commands                                                                |
@@ -109,7 +109,7 @@ The resumed web conversation already contains its provider-side context. Sending
 
 Resume creates one-time page/CDP history capture before navigation. The base adapter waits up to a short bounded interval for matching responses, reads their bodies, restores cache behavior, and releases the capture session. Individual parsers rebuild the provider's current branch and filter setup, tool, reasoning, partial, and control records. DeepSeek can return a nonempty `MERGE` cache delta; its adapter treats only `REPLACE` as complete and repeats a read-only full-history request inside the authenticated page using the original request headers when necessary.
 
-Gemini follows its continuation cursor, Doubao follows `has_more`, and GLM accumulates `messages/batch` pages until the selected chain reaches the root, all under bounded progress and timeout loops. ChatGPT, GLM, and Grok do not report complete when an indexed cell, parent/root, active leaf, or visible response body is missing.
+Gemini follows its continuation cursor, Doubao follows `has_more`, and GLM accumulates `messages/batch` pages until the selected chain reaches the root, all under bounded progress and timeout loops. Qwen reads `GET /api/v2/chats/<id>` and establishes completeness only for the current active branch. ChatGPT, GLM, and Grok do not report complete when an indexed cell, parent/root, active leaf, or visible response body is missing.
 
 A resumed conversation skips the setup handshake. It therefore assumes that the original conversation already contains a compatible portal tool protocol. Current Skill and MCP connections exist locally, but newly configured names are not injected as a new catalog turn. The resume path also does not attach the freshly read project-instruction snapshot to the resumed `RuntimeCore`, so it neither resends always-on instructions nor performs target-aware instruction activation for later tool calls in that thread.
 
