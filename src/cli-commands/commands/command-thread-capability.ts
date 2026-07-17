@@ -84,6 +84,7 @@ const PROVIDER_CAPABILITIES: Record<ProviderId, readonly ProviderCapability[]> =
       },
     ],
     qwen: [],
+    kimi: [],
   }
 
 export async function executeThreadCapability(
@@ -412,6 +413,7 @@ function formatProviderName(provider: ProviderId): string {
     grok: 'Grok',
     glm: 'GLM',
     qwen: 'Qwen',
+    kimi: 'Kimi',
   }
   return names[provider]
 }

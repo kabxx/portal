@@ -3,7 +3,10 @@ import assert from 'node:assert/strict'
 
 import { ThreadCommand } from '../../../src/cli-commands/commands/command-thread.ts'
 import type { ProviderId } from '../../../src/providers/provider-id.ts'
-import { ThreadManager } from '../../../src/threads/thread-manager.ts'
+import {
+  ThreadCloseCleanupError,
+  ThreadManager,
+} from '../../../src/threads/thread-manager.ts'
 import { TerminalController } from '../../../src/terminal-ui/terminal-controller.ts'
 import {
   createCliCommandContext,
@@ -194,6 +197,7 @@ test('ThreadCommand open forwards supported provider models', async () => {
   await ThreadCommand.execute(context, ['open', 'grok'])
   await ThreadCommand.execute(context, ['open', 'glm', '2'])
   await ThreadCommand.execute(context, ['open', 'qwen', '2'])
+  await ThreadCommand.execute(context, ['open', 'kimi', '1'])
 
   assert.deepEqual(createdThreads, [
     { provider: 'gemini', model: '3+extended' },
@@ -203,6 +207,7 @@ test('ThreadCommand open forwards supported provider models', async () => {
     { provider: 'grok', model: null },
     { provider: 'glm', model: '2' },
     { provider: 'qwen', model: '2' },
+    { provider: 'kimi', model: '1' },
   ])
 })
 
@@ -371,6 +376,31 @@ test('ThreadCommand close defaults to the active thread', async () => {
   ui.showThreadTimeline(thread.id)
 
   await ThreadCommand.execute(context, ['close'])
+
+  assert.equal(threadManager.getThread(thread.id), null)
+  assert.equal(threadManager.getActiveThread(), null)
+  assert.equal(getLatestTimelineEntry(ui).body, 'Home timeline marker.')
+})
+
+test('ThreadCommand removes a logically closed timeline when cleanup fails', async () => {
+  const { context, threadManager, ui } = await createCommandContext()
+  const thread = threadManager.addThread({
+    id: 't-cleanup-failure',
+    provider: 'chatgpt',
+    runtime: createFakeRuntime({
+      close: async () => {
+        throw new Error('cleanup failed')
+      },
+    }),
+    createdAt: 1,
+  })
+  ui.renderInfo('home', 'Home timeline marker.')
+  ui.showThreadTimeline(thread.id)
+
+  await assert.rejects(
+    ThreadCommand.execute(context, ['close']),
+    ThreadCloseCleanupError
+  )
 
   assert.equal(threadManager.getThread(thread.id), null)
   assert.equal(threadManager.getActiveThread(), null)

@@ -1,7 +1,9 @@
 import type { Request, Response } from 'playwright'
+import { StringDecoder } from 'node:string_decoder'
 import {
   ProviderAdapter,
   type AbortOptions,
+  type CapturedFetchEntry,
   awaitWithTimeout,
   buildSubmitBlockedWarningMessage,
   createDeferred,
@@ -39,6 +41,7 @@ const QWEN_UPLOAD_MENU_ITEM_SELECTOR =
 const QWEN_FILE_CARD_SELECTOR = '.file-card-list .fileitem-btn'
 const QWEN_FILE_PARSE_STATUS_PATH = '/api/v2/files/parse/status'
 const QWEN_UPLOAD_TIMEOUT_MS = 60_000
+const QWEN_CDP_SETUP_TIMEOUT_MS = 5_000
 const QWEN_MODEL_TRIGGER_SELECTOR =
   '#qwen-chat-header-left [role="button"][aria-haspopup="listbox"]'
 const QWEN_MODEL_LISTBOX_SELECTOR = '[role="listbox"]'
@@ -47,6 +50,16 @@ const QWEN_MODEL_OPTION_SELECTOR = '[role="option"]'
 interface QwenOwnedRequest {
   request: Request
   chatId: string
+  rawRequestBody: string
+  userMessageId: string | null
+  userText: string
+}
+
+interface QwenCdpStreamCapture {
+  setOwnedRequestBody(body: string): void
+  readResponseBody(): string | null
+  isAmbiguous(): boolean
+  stop(): Promise<void>
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -555,11 +568,14 @@ export class QwenAdapter extends ProviderAdapter {
         await this.ensureSubmitAuth(signal)
         const requestStarted = createDeferred<void>()
         const targetResponse = createDeferred<Response>()
+        const captureStartIndex = await this.getCapturedFetchEntryCount()
+        const cdpStreamCapture = await this.createCdpSubmitStreamCapture(signal)
         let ownedRequest: QwenOwnedRequest | null = null
         let requestObserved = false
         let responseObserved = false
         let terminalError: unknown = null
         let warningTimer: NodeJS.Timeout | null = null
+        let stopTextPolling: (() => void) | null = null
         let settled = false
 
         const stopWarningTimer = () => {
@@ -689,6 +705,36 @@ export class QwenAdapter extends ProviderAdapter {
           }
 
           const submittedRequest = this.requireOwnedRequest(ownedRequest)
+          cdpStreamCapture?.setOwnedRequestBody(submittedRequest.rawRequestBody)
+          let lastCdpResponseLength = 0
+          stopTextPolling = this.startSubmitTextPolling(async () => {
+            const cdpBody = cdpStreamCapture?.readResponseBody() ?? null
+            if (cdpBody !== null) {
+              if (cdpBody.length !== lastCdpResponseLength) {
+                lastCdpResponseLength = cdpBody.length
+                this.emitSubmitActivitySafely()
+              }
+              const parsed = parseQwenResponse(cdpBody)
+              if (this.isOwnedStreamingResponse(parsed, submittedRequest)) {
+                return parsed.text || null
+              }
+            }
+            if (cdpStreamCapture?.isAmbiguous() === true) return null
+            const entries = (
+              await this.getCapturedFetchEntries(captureStartIndex)
+            ).filter((entry) =>
+              this.isOwnedCapturedRequest(entry, submittedRequest)
+            )
+            if (entries.length !== 1) return null
+            const entry = entries[0]!
+            const rawResponse = entry.chunks.join('')
+            const parsed = parseQwenResponse(rawResponse)
+            if (!this.isOwnedStreamingResponse(parsed, submittedRequest)) {
+              return null
+            }
+            this.reportCapturedSubmitActivity([entry])
+            return parsed.text || null
+          })
           const response = await awaitWithTimeout(
             targetResponse.promise,
             this.getSubmitResponseTimeoutMs(),
@@ -723,7 +769,9 @@ export class QwenAdapter extends ProviderAdapter {
             kind: 'reject',
             error: new Error('Qwen submit ended before the response settled.'),
           })
+          stopTextPolling?.()
           stopWarningTimer()
+          await cdpStreamCapture?.stop()
           this.page.off('request', onRequest)
           this.page.off('requestfailed', onRequestFailed)
           this.page.off('response', onResponse)
@@ -769,6 +817,10 @@ export class QwenAdapter extends ProviderAdapter {
     pendingText: string
   ): QwenOwnedRequest | null {
     if (!this.isTargetCompletionRequest(request)) return null
+    const rawRequestBody = request.postData()
+    if (typeof rawRequestBody !== 'string' || rawRequestBody.length === 0) {
+      return null
+    }
     let body: unknown
     try {
       body = request.postDataJSON()
@@ -791,6 +843,10 @@ export class QwenAdapter extends ProviderAdapter {
       : []
     const lastValue: unknown = messages.at(-1)
     const lastMessage = isRecord(lastValue) ? lastValue : null
+    const userMessageId =
+      typeof lastMessage?.id === 'string' && lastMessage.id.length > 0
+        ? lastMessage.id
+        : null
     if (
       lastMessage === null ||
       lastMessage.role !== 'user' ||
@@ -798,7 +854,206 @@ export class QwenAdapter extends ProviderAdapter {
     ) {
       return null
     }
-    return { request, chatId }
+    return {
+      request,
+      chatId,
+      rawRequestBody,
+      userMessageId,
+      userText: pendingText,
+    }
+  }
+
+  private isOwnedCapturedRequest(
+    entry: CapturedFetchEntry,
+    ownedRequest: QwenOwnedRequest
+  ): boolean {
+    if (
+      entry.method !== 'POST' ||
+      !isQwenApiUrl(entry.url, QWEN_COMPLETION_PATH) ||
+      entry.requestBody !== ownedRequest.rawRequestBody
+    ) {
+      return false
+    }
+    return true
+  }
+
+  private isOwnedStreamingResponse(
+    parsed: QwenParsedResponse | null,
+    ownedRequest: QwenOwnedRequest
+  ): parsed is QwenParsedResponse {
+    return (
+      parsed !== null &&
+      parsed.error === null &&
+      parsed.identityConsistent &&
+      parsed.chatId === ownedRequest.chatId &&
+      (ownedRequest.userMessageId === null
+        ? parsed.parentId !== null
+        : parsed.parentId === ownedRequest.userMessageId) &&
+      parsed.responseId !== null
+    )
+  }
+
+  private async createCdpSubmitStreamCapture(
+    signal?: AbortSignal
+  ): Promise<QwenCdpStreamCapture | null> {
+    if (typeof this.context.newCDPSession !== 'function') return null
+    let session: Awaited<
+      ReturnType<NonNullable<typeof this.context.newCDPSession>>
+    >
+    const sessionPromise = this.context.newCDPSession(this.page)
+    try {
+      session = await awaitWithTimeout(
+        sessionPromise,
+        QWEN_CDP_SETUP_TIMEOUT_MS,
+        () => new Error('Timed out creating the Qwen CDP stream session.'),
+        { signal }
+      )
+    } catch (error) {
+      void sessionPromise.then(
+        (lateSession) => lateSession.detach().catch(() => {}),
+        () => {}
+      )
+      if (isAbortError(error)) throw error
+      return null
+    }
+
+    const requests = new Map<string, string>()
+    const responses = new Set<string>()
+    const decoder = new StringDecoder('utf8')
+    let ownedRequestBody: string | null = null
+    let targetRequestId: string | null = null
+    let streamedRequestId: string | null = null
+    let streamState: 'idle' | 'pending' | 'ready' | 'failed' = 'idle'
+    let pendingData: string[] = []
+    let responseBody = ''
+    let ambiguous = false
+    let stopped = false
+
+    const appendBase64 = (value: unknown) => {
+      if (stopped || ambiguous || typeof value !== 'string' || !value) return
+      responseBody += decoder.write(Buffer.from(value, 'base64'))
+    }
+    const startStreaming = (requestId: string) => {
+      if (
+        stopped ||
+        ambiguous ||
+        targetRequestId !== requestId ||
+        streamedRequestId === requestId
+      ) {
+        return
+      }
+      streamedRequestId = requestId
+      streamState = 'pending'
+      void session
+        .send('Network.streamResourceContent', { requestId })
+        .then((result) => {
+          if (
+            !isRecord(result) ||
+            stopped ||
+            ambiguous ||
+            targetRequestId !== requestId
+          ) {
+            return
+          }
+          appendBase64(result.bufferedData)
+          for (const data of pendingData) appendBase64(data)
+          pendingData = []
+          streamState = 'ready'
+        })
+        .catch(() => {
+          pendingData = []
+          streamState = 'failed'
+        })
+    }
+    const bindOwnedRequest = () => {
+      if (stopped || ambiguous || ownedRequestBody === null) return
+      const matches = [...requests.entries()].filter(
+        ([, postData]) => postData === ownedRequestBody
+      )
+      if (matches.length > 1) {
+        ambiguous = true
+        targetRequestId = null
+        responseBody = ''
+        pendingData = []
+        streamState = 'failed'
+        return
+      }
+      const requestId = matches[0]?.[0] ?? null
+      if (requestId === null) return
+      targetRequestId = requestId
+      if (responses.has(requestId)) startStreaming(requestId)
+    }
+
+    session.on('Network.requestWillBeSent', (event: unknown) => {
+      if (stopped || !isRecord(event) || !isRecord(event.request)) return
+      const requestId = event.requestId
+      const request = event.request
+      if (
+        typeof requestId !== 'string' ||
+        request.method !== 'POST' ||
+        typeof request.url !== 'string' ||
+        !isQwenApiUrl(request.url, QWEN_COMPLETION_PATH) ||
+        typeof request.postData !== 'string'
+      ) {
+        return
+      }
+      requests.set(requestId, request.postData)
+      bindOwnedRequest()
+    })
+    session.on('Network.responseReceived', (event: unknown) => {
+      if (stopped || !isRecord(event) || typeof event.requestId !== 'string') {
+        return
+      }
+      responses.add(event.requestId)
+      bindOwnedRequest()
+      if (targetRequestId === event.requestId) startStreaming(event.requestId)
+    })
+    session.on('Network.dataReceived', (event: unknown) => {
+      if (
+        stopped ||
+        ambiguous ||
+        !isRecord(event) ||
+        event.requestId !== targetRequestId
+      ) {
+        return
+      }
+      if (typeof event.data !== 'string' || !event.data) return
+      if (streamState === 'pending') {
+        pendingData.push(event.data)
+      } else if (streamState === 'ready') {
+        appendBase64(event.data)
+      }
+    })
+
+    try {
+      await awaitWithTimeout(
+        session.send('Network.enable'),
+        QWEN_CDP_SETUP_TIMEOUT_MS,
+        () => new Error('Timed out enabling the Qwen CDP network stream.'),
+        { signal }
+      )
+    } catch (error) {
+      await session.detach().catch(() => {})
+      if (isAbortError(error)) throw error
+      return null
+    }
+
+    return {
+      setOwnedRequestBody: (body) => {
+        if (stopped || ambiguous) return
+        ownedRequestBody = body
+        bindOwnedRequest()
+      },
+      readResponseBody: () => (responseBody ? responseBody : null),
+      isAmbiguous: () => ambiguous,
+      stop: async () => {
+        if (stopped) return
+        stopped = true
+        pendingData = []
+        decoder.end()
+        await session.detach().catch(() => {})
+      },
+    }
   }
 
   private isTargetCompletionRequest(request: Request): boolean {
@@ -846,6 +1101,9 @@ export class QwenAdapter extends ProviderAdapter {
     if (
       !parsed.identityConsistent ||
       parsed.chatId !== ownedRequest.chatId ||
+      (ownedRequest.userMessageId === null
+        ? parsed.parentId === null
+        : parsed.parentId !== ownedRequest.userMessageId) ||
       parsed.responseId === null
     ) {
       throw new ProviderAdapterError(
