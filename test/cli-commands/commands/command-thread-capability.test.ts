@@ -1,22 +1,27 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import os from 'node:os'
-import path from 'node:path'
 
 import { ThreadCommand } from '../../../src/cli-commands/commands/command-thread.ts'
 import { isToggleCapabilityProvider } from '../../../src/cli-commands/commands/command-thread-capability.ts'
 import type { CliCommandContext } from '../../../src/cli-commands/core/command-types.ts'
 import { ThreadManager } from '../../../src/threads/thread-manager.ts'
-import type { ProviderId } from '../../../src/providers/provider-id.ts'
-import { ThreadStore } from '../../../src/threads/thread-store.ts'
 import { TerminalController } from '../../../src/terminal-ui/terminal-controller.ts'
+import {
+  createCliCommandContext,
+  TEST_PROVIDER_IDS,
+} from '../../helpers/cli-command-context.ts'
 import {
   createFakeRuntime,
   createProviderAdapterStub,
 } from '../../helpers/fakes.ts'
 import { latestTimelineEntry } from '../../helpers/ui.ts'
-import type { SkillLibrary } from '../../../src/skills/skill-library.ts'
-import type { McpLibrary } from '../../../src/mcp/mcp-library.ts'
+
+const fixtureCleanups = new Set<() => void>()
+
+test.afterEach(() => {
+  for (const cleanup of fixtureCleanups) cleanup()
+  fixtureCleanups.clear()
+})
 
 type ToggleCapability = 'thinking' | 'search' | 'advanced_search' | 'web_search'
 type ToggleState = 'on' | 'off'
@@ -58,45 +63,24 @@ async function executeCapability(
 function createCommandContext() {
   const ui = new TerminalController()
   const threadManager = new ThreadManager()
-  const storagePath = path.join(
-    os.tmpdir(),
-    `portal-cap-${process.pid}-${Date.now()}-${Math.random()}.db`
-  )
-  const context: CliCommandContext = {
+  const { context, cleanup } = createCliCommandContext({
     threadManager,
-    threadStore: new ThreadStore(storagePath),
-    skillLibrary: {} as SkillLibrary,
-    mcpLibrary: {} as McpLibrary,
     ui,
     browserProfileDir: 'C:\\profiles\\chrome',
-    providers: [
-      'chatgpt',
-      'claude',
-      'gemini',
-      'deepseek',
-      'doubao',
-      'grok',
-      'glm',
-    ],
-    resolveProvider: (value) => {
-      const normalized = value.trim().toLowerCase()
-      return context.providers.includes(normalized as ProviderId)
-        ? (normalized as ProviderId)
-        : null
-    },
+    providers: TEST_PROVIDER_IDS,
     createThread: async () => {
       return undefined
     },
     resumeThread: async () => {
       return undefined
     },
-    closeThread: async (threadId) => await threadManager.closeThread(threadId),
     addSkill: async () => {
       throw new Error('not used in capability command tests')
     },
     submitThreadInput: async () => {},
     listCommands: () => [ThreadCommand],
-  }
+  })
+  fixtureCleanups.add(cleanup)
 
   return { context, threadManager, ui }
 }

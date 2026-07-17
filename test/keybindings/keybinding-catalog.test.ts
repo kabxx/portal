@@ -20,31 +20,27 @@ type MutablePortalDocument = Record<string, unknown> & {
   keybindings: Record<string, unknown>
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function parsePortalDocument(value: string): MutablePortalDocument {
   const document = parseRecord(value)
   const keybindings = document.keybindings
-  if (
-    keybindings === null ||
-    typeof keybindings !== 'object' ||
-    Array.isArray(keybindings)
-  ) {
+  if (!isRecord(keybindings)) {
     throw new Error('Expected keybindings to be an object.')
   }
   return Object.assign(document, {
-    keybindings: keybindings as Record<string, unknown>,
+    keybindings,
   })
 }
 
 function parseRecord(value: string): Record<string, unknown> {
   const document: unknown = parse(value)
-  if (
-    document === null ||
-    typeof document !== 'object' ||
-    Array.isArray(document)
-  ) {
+  if (!isRecord(document)) {
     throw new Error('Expected the YAML document root to be an object.')
   }
-  return document as Record<string, unknown>
+  return document
 }
 
 test('watch filename filtering accepts directory rescan events', () => {

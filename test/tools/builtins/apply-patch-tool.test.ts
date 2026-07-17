@@ -18,8 +18,11 @@ function expectSuccess(output: ToolOutput) {
 
 function expectError(output: ToolOutput): string {
   assert.equal(output.outcome, 'error')
-  assert.equal(typeof output.result.message, 'string')
-  return output.result.message as string
+  const message = output.result.message
+  if (typeof message !== 'string') {
+    assert.fail('Expected an error message string.')
+  }
+  return message
 }
 
 async function exists(filePath: string): Promise<boolean> {

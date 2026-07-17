@@ -1,4 +1,4 @@
-import type { BrowserContext, CDPSession, Page, Response } from 'playwright'
+import type { CDPSession, Page, Response } from 'playwright'
 import {
   abortable,
   type AbortOptions,
@@ -13,12 +13,53 @@ import {
 
 export type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
 
+export interface ProviderPage {
+  close(): Promise<void>
+  pause(): Promise<void>
+  on?(event: 'response', listener: (response: Response) => void): unknown
+  off?(event: 'response', listener: (response: Response) => void): unknown
+  addInitScript?(script: unknown): Promise<unknown>
+  evaluate?(pageFunction: unknown, argument?: unknown): Promise<unknown>
+}
+
+export interface ProviderCdpSession {
+  on(event: string, listener: (event: unknown) => void): unknown
+  send(method: string, params?: Record<string, unknown>): Promise<unknown>
+  detach(): Promise<void>
+}
+
+export interface ProviderBrowserContext<
+  TPage extends ProviderPage = Page,
+  TSession extends ProviderCdpSession = CDPSession,
+> {
+  newPage(): Promise<TPage>
+  newCDPSession?(page: TPage): Promise<TSession>
+}
+
 export const DEFAULT_SUBMIT_REQUEST_START_GRACE_MS = 30000
 export const DEFAULT_SUBMIT_BLOCKED_WARNING_INTERVAL_MS = 30000
 export const DEFAULT_RESPONSE_START_TIMEOUT_MS = 30000
 export const DEFAULT_RESPONSE_STALL_TIMEOUT_MS = 30000
 const MAX_INTERNAL_SUBMIT_WAIT_MS = 2_147_483_647
 const HISTORY_CAPTURE_POLL_MS = 100
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isCapturedFetchEntry(value: unknown): value is CapturedFetchEntry {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'number' &&
+    typeof value.url === 'string' &&
+    typeof value.method === 'string' &&
+    (typeof value.status === 'number' || value.status === null) &&
+    Array.isArray(value.chunks) &&
+    value.chunks.every((chunk) => typeof chunk === 'string') &&
+    typeof value.done === 'boolean' &&
+    (typeof value.error === 'string' || value.error === null)
+  )
+}
 
 export type ProviderAdapterErrorKind =
   | 'unsupported'
@@ -35,8 +76,14 @@ export type ProviderAdapterRecoveryAction =
   | 'restore'
   | 'reload'
 
+export interface RecoverableProviderAdapter {
+  close(): Promise<void>
+  isLoggedIn(): Promise<boolean>
+  restore(options?: AbortOptions): Promise<void>
+}
+
 export interface ProviderAdapterErrorOptions {
-  adapter?: ProviderAdapter | null
+  adapter?: RecoverableProviderAdapter | null
   kind?: ProviderAdapterErrorKind
   recovery?: ProviderAdapterRecoveryAction
   retryable?: boolean
@@ -51,7 +98,7 @@ export class ProviderAdapterError extends Error {
   public retryable: boolean
   public maxAttempts: number
   public detailCode: string | null
-  public adapter: ProviderAdapter | null
+  public adapter: RecoverableProviderAdapter | null
   public readonly cause?: unknown
 
   constructor(
@@ -492,9 +539,12 @@ const FETCH_CAPTURE_INIT_SCRIPT = String.raw`
 })();
 `
 
-export abstract class ProviderAdapter {
-  protected context: BrowserContext
-  protected page!: Page
+export abstract class ProviderAdapter<
+  TPage extends ProviderPage = Page,
+  TSession extends ProviderCdpSession = CDPSession,
+> {
+  protected context: ProviderBrowserContext<TPage, TSession>
+  protected page!: TPage
   private submitStatusReporter:
     | ((message: string) => void | Promise<void>)
     | null = null
@@ -511,7 +561,7 @@ export abstract class ProviderAdapter {
     Promise<{ body: string; error: string | null }>
   >()
   private pageResponseListener: ((response: Response) => void) | null = null
-  private cdpSession: CDPSession | null = null
+  private cdpSession: TSession | null = null
   private cdpCacheDisabled = false
   private nextCdpResponseId = 1
   private readonly capturedCdpRequests = new Map<
@@ -525,18 +575,22 @@ export abstract class ProviderAdapter {
   >()
 
   public constructor(
-    context: BrowserContext,
+    context: ProviderBrowserContext<TPage, TSession>,
     protected readonly options: ProviderAdapterCreateOptions = {}
   ) {
     this.context = context
   }
 
-  public static async create<T extends ProviderAdapter>(
+  public static async create<
+    TPage extends ProviderPage,
+    TSession extends ProviderCdpSession,
+    T extends ProviderAdapter<TPage, TSession>,
+  >(
     this: new (
-      context: BrowserContext,
+      context: ProviderBrowserContext<TPage, TSession>,
       options?: ProviderAdapterCreateOptions
     ) => T,
-    context: BrowserContext,
+    context: ProviderBrowserContext<TPage, TSession>,
     options: ProviderAdapterCreateOptions = {}
   ): Promise<T> {
     const instance = new this(context, options)
@@ -819,7 +873,7 @@ export abstract class ProviderAdapter {
     }
 
     const entries = await this.page
-      .evaluate((startIndex) => {
+      .evaluate((startIndex: number) => {
         const globalObject = globalThis as typeof globalThis & {
           __portalGetFetchCaptureEntries?: (startIndex?: number) => Array<{
             id: number
@@ -835,7 +889,7 @@ export abstract class ProviderAdapter {
       }, startIndex)
       .catch(() => [])
 
-    return Array.isArray(entries) ? entries : []
+    return Array.isArray(entries) ? entries.filter(isCapturedFetchEntry) : []
   }
 
   protected async getCapturedHistoryEntries(
@@ -983,19 +1037,23 @@ export abstract class ProviderAdapter {
       const session = await this.context.newCDPSession(this.page)
       this.cdpSession = session
       session.on('Network.requestWillBeSent', (event) => {
-        const request = event as {
-          requestId: string
-          request: {
-            url: string
-            method: string
-            headers: Record<string, string | number>
-          }
+        if (!isRecord(event) || !isRecord(event.request)) {
+          return
         }
-        this.capturedCdpRequests.set(request.requestId, {
-          url: request.request.url,
-          method: request.request.method,
+        const { requestId, request } = event
+        if (
+          typeof requestId !== 'string' ||
+          typeof request.url !== 'string' ||
+          typeof request.method !== 'string' ||
+          !isRecord(request.headers)
+        ) {
+          return
+        }
+        this.capturedCdpRequests.set(requestId, {
+          url: request.url,
+          method: request.method,
           headers: Object.fromEntries(
-            Object.entries(request.request.headers).map(([name, value]) => [
+            Object.entries(request.headers).map(([name, value]) => [
               name,
               String(value),
             ])
@@ -1003,33 +1061,48 @@ export abstract class ProviderAdapter {
         })
       })
       session.on('Network.responseReceived', (event) => {
-        const received = event as {
-          requestId: string
-          response: { url: string; status: number }
+        if (!isRecord(event) || !isRecord(event.response)) {
+          return
         }
-        const request = this.capturedCdpRequests.get(received.requestId)
-        const existing = this.capturedCdpResponses.get(received.requestId)
+        const { requestId, response } = event
+        if (
+          typeof requestId !== 'string' ||
+          typeof response.url !== 'string' ||
+          typeof response.status !== 'number'
+        ) {
+          return
+        }
+        const request = this.capturedCdpRequests.get(requestId)
+        const existing = this.capturedCdpResponses.get(requestId)
         existing?.completed.resolve()
-        this.capturedCdpResponses.set(received.requestId, {
+        this.capturedCdpResponses.set(requestId, {
           id: this.nextCdpResponseId++,
-          requestId: received.requestId,
-          url: received.response.url,
+          requestId,
+          url: response.url,
           method: request?.method ?? 'GET',
-          status: received.response.status,
+          status: response.status,
           completed: createDeferred<void>(),
           error: null,
         })
         this.trimCapturedCdpResponses()
       })
       session.on('Network.loadingFinished', (event) => {
-        const finished = event as { requestId: string }
-        this.capturedCdpResponses.get(finished.requestId)?.completed.resolve()
+        if (!isRecord(event) || typeof event.requestId !== 'string') {
+          return
+        }
+        this.capturedCdpResponses.get(event.requestId)?.completed.resolve()
       })
       session.on('Network.loadingFailed', (event) => {
-        const failed = event as { requestId: string; errorText: string }
-        const response = this.capturedCdpResponses.get(failed.requestId)
+        if (
+          !isRecord(event) ||
+          typeof event.requestId !== 'string' ||
+          typeof event.errorText !== 'string'
+        ) {
+          return
+        }
+        const response = this.capturedCdpResponses.get(event.requestId)
         if (response !== undefined) {
-          response.error = failed.errorText
+          response.error = event.errorText
           response.completed.resolve()
         }
       })
@@ -1076,11 +1149,17 @@ export abstract class ProviderAdapter {
             .send('Network.getResponseBody', { requestId: response.requestId })
             .then(
               (value) => {
-                const result = value
+                if (
+                  !isRecord(value) ||
+                  typeof value.body !== 'string' ||
+                  typeof value.base64Encoded !== 'boolean'
+                ) {
+                  throw new Error('CDP returned an invalid response body.')
+                }
                 return {
-                  body: result.base64Encoded
-                    ? Buffer.from(result.body, 'base64').toString('utf8')
-                    : result.body,
+                  body: value.base64Encoded
+                    ? Buffer.from(value.body, 'base64').toString('utf8')
+                    : value.body,
                   error: null,
                 }
               },

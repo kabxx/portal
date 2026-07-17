@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 
 import { ChatGPTAdapter } from '../../../src/providers/adapters/adapter-chatgpt.ts'
 import { createDeferred } from '../../../src/providers/adapters/adapter-base.ts'
-import { createPrototypeObject } from '../../helpers/fakes.ts'
+import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 type MockButton = {
   first: () => unknown
@@ -28,12 +28,45 @@ type ChatGPTAdapterHarness = Pick<ChatGPTAdapter, keyof ChatGPTAdapter> & {
 }
 
 function createTestChatGPTAdapter(): ChatGPTAdapterHarness {
-  const adapter = createPrototypeObject(
-    ChatGPTAdapter.prototype
-  ) as ChatGPTAdapterHarness
-  adapter.getFinishedResponseSettleMs = () => 50
-  adapter.getSubmitRequestStartGraceMs = () => 5
-  return adapter
+  const adapter = new ChatGPTAdapter(createBrowserContextStub())
+  const candidate: object = adapter
+  if (
+    !('isTargetConversationRequest' in candidate) ||
+    typeof candidate.isTargetConversationRequest !== 'function' ||
+    !('getCapturedFetchEntryCount' in candidate) ||
+    typeof candidate.getCapturedFetchEntryCount !== 'function' ||
+    !('readCurrentCapturedResponse' in candidate) ||
+    typeof candidate.readCurrentCapturedResponse !== 'function'
+  ) {
+    throw new Error('ChatGPT adapter is missing submit harness methods.')
+  }
+  const isTargetConversationRequest = candidate.isTargetConversationRequest
+  const websocketFrames: string[] = []
+
+  return Object.assign(adapter, {
+    page: undefined,
+    websocketFrames,
+    isTargetConversationRequest(request: {
+      method(): string
+      url(): string
+    }): boolean {
+      const matched: unknown = Reflect.apply(
+        isTargetConversationRequest,
+        adapter,
+        [request]
+      )
+      if (typeof matched !== 'boolean') {
+        throw new Error('ChatGPT request matcher returned a non-boolean value.')
+      }
+      return matched
+    },
+    getCapturedFetchEntryCount: candidate.getCapturedFetchEntryCount,
+    readCurrentCapturedResponse: candidate.readCurrentCapturedResponse,
+    getFinishedResponseSettleMs: (): number => 50,
+    getSubmitRequestStartGraceMs: (): number => 5,
+    getSubmitBlockedWarningIntervalMs: (): number => 30_000,
+    getSubmitResponseIdleTimeoutMs: (): number => 30_000,
+  })
 }
 
 function createChatGptHttpResponse(

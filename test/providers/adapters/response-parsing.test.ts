@@ -6,28 +6,80 @@ import { DoubaoAdapter } from '../../../src/providers/adapters/adapter-doubao.ts
 import { GeminiAdapter } from '../../../src/providers/adapters/adapter-gemini.ts'
 import { createPrototypeObject } from '../../helpers/fakes.ts'
 
-interface ParsedResponse {
-  conversationId?: string
-  messageId?: string | number
-  parentId?: number
-  text: string
-  isFinished: boolean
-}
-
 interface SyncParserHarness {
-  parseResponse(raw: string): ParsedResponse | null
+  parseResponse(raw: string): unknown
 }
 
 interface AsyncParserHarness {
-  parseResponse(raw: string): Promise<ParsedResponse | null>
+  parseResponse(raw: string): Promise<unknown>
 }
 
 interface DoubaoParserHarness extends SyncParserHarness {
-  readStreamError(raw: string): {
-    detailCode: string
-    kind: string
-    message: string
-  } | null
+  readStreamError(raw: string): unknown
+}
+
+function createSyncParserHarness(prototype: object): SyncParserHarness {
+  const candidate = createPrototypeObject(prototype)
+  if (
+    candidate === null ||
+    typeof candidate !== 'object' ||
+    !('parseResponse' in candidate) ||
+    typeof candidate.parseResponse !== 'function'
+  ) {
+    throw new Error('Parser prototype does not provide parseResponse().')
+  }
+  const parseResponse = candidate.parseResponse
+  return {
+    parseResponse(raw: string): unknown {
+      const parsed: unknown = Reflect.apply(parseResponse, candidate, [raw])
+      return parsed
+    },
+  }
+}
+
+function createDoubaoParserHarness(): DoubaoParserHarness {
+  const candidate = createPrototypeObject(DoubaoAdapter.prototype)
+  if (
+    candidate === null ||
+    typeof candidate !== 'object' ||
+    !('parseResponse' in candidate) ||
+    typeof candidate.parseResponse !== 'function' ||
+    !('readStreamError' in candidate) ||
+    typeof candidate.readStreamError !== 'function'
+  ) {
+    throw new Error('Doubao parser prototype is missing required methods.')
+  }
+  const parseResponse = candidate.parseResponse
+  const readStreamError = candidate.readStreamError
+  return {
+    parseResponse(raw: string): unknown {
+      const parsed: unknown = Reflect.apply(parseResponse, candidate, [raw])
+      return parsed
+    },
+    readStreamError(raw: string): unknown {
+      const error: unknown = Reflect.apply(readStreamError, candidate, [raw])
+      return error
+    },
+  }
+}
+
+function createAsyncParserHarness(prototype: object): AsyncParserHarness {
+  const candidate = createPrototypeObject(prototype)
+  if (
+    candidate === null ||
+    typeof candidate !== 'object' ||
+    !('parseResponse' in candidate) ||
+    typeof candidate.parseResponse !== 'function'
+  ) {
+    throw new Error('Parser prototype does not provide parseResponse().')
+  }
+  const parseResponse = candidate.parseResponse
+  return {
+    async parseResponse(raw: string): Promise<unknown> {
+      const parsed: unknown = Reflect.apply(parseResponse, candidate, [raw])
+      return await Promise.resolve(parsed)
+    },
+  }
 }
 
 test('DeepSeek parser reads a sanitized SSE sample', () => {
@@ -36,9 +88,7 @@ test('DeepSeek parser reads a sanitized SSE sample', () => {
     'data: {"v":"呀"}',
     'data: {"p":"response/status","o":"SET","v":"FINISHED"}',
   ].join('\n')
-  const adapter = createPrototypeObject(
-    DeepSeekAdapter.prototype
-  ) as SyncParserHarness
+  const adapter = createSyncParserHarness(DeepSeekAdapter.prototype)
   const parsed = adapter.parseResponse(raw)
 
   assert.deepEqual(parsed, {
@@ -54,24 +104,24 @@ test('DeepSeek parser hides thinking fragments and keeps response prefix', () =>
     'data: {"v":{"response":{"message_id":12,"parent_id":11,"fragments":[{"type":"THINK","content":"用户说 AI"},{"type":"RESPONSE","content":"哈哈"}]}}}',
     'data: {"p":"response/status","o":"SET","v":"FINISHED"}',
   ].join('\n')
-  const adapter = createPrototypeObject(
-    DeepSeekAdapter.prototype
-  ) as SyncParserHarness
+  const adapter = createSyncParserHarness(DeepSeekAdapter.prototype)
   const parsed = adapter.parseResponse(raw)
 
-  assert.ok(parsed)
+  assert.ok(parsed !== null && typeof parsed === 'object')
+  assert.ok('messageId' in parsed)
   assert.equal(parsed.messageId, 12)
+  assert.ok('parentId' in parsed)
   assert.equal(parsed.parentId, 11)
+  assert.ok('isFinished' in parsed)
   assert.equal(parsed.isFinished, true)
+  assert.ok('text' in parsed && typeof parsed.text === 'string')
   assert.ok(parsed.text.startsWith('\u54c8\u54c8'))
   assert.equal(parsed.text.includes('\u7528\u6237\u8bf4'), false)
   assert.equal(parsed.text.includes('AI'), false)
 })
 
 test('DeepSeek parser ignores a null SSE payload', () => {
-  const adapter = createPrototypeObject(
-    DeepSeekAdapter.prototype
-  ) as SyncParserHarness
+  const adapter = createSyncParserHarness(DeepSeekAdapter.prototype)
 
   assert.equal(adapter.parseResponse('data: null'), null)
 })
@@ -82,9 +132,7 @@ test('DeepSeek parser ignores null between valid SSE payloads', () => {
     'data: null',
     'data: {"p":"response/status","o":"SET","v":"FINISHED"}',
   ].join('\n')
-  const adapter = createPrototypeObject(
-    DeepSeekAdapter.prototype
-  ) as SyncParserHarness
+  const adapter = createSyncParserHarness(DeepSeekAdapter.prototype)
 
   assert.deepEqual(adapter.parseResponse(raw), {
     messageId: 4,
@@ -100,9 +148,7 @@ test('Doubao parser reads a sanitized SSE sample', () => {
     'event: CHUNK_DELTA\ndata: {"text":"😆"}',
     'event: SSE_REPLY_END\ndata: {"end_type":1}',
   ].join('\n\n')
-  const adapter = createPrototypeObject(
-    DoubaoAdapter.prototype
-  ) as DoubaoParserHarness
+  const adapter = createDoubaoParserHarness()
   const parsed = adapter.parseResponse(raw)
 
   assert.deepEqual(parsed, {
@@ -152,9 +198,7 @@ test('Doubao parser prefers a sanitized final creation snapshot', () => {
     })}`,
     'event: SSE_REPLY_END\ndata: {"end_type":1}',
   ].join('\n\n')
-  const adapter = createPrototypeObject(
-    DoubaoAdapter.prototype
-  ) as DoubaoParserHarness
+  const adapter = createDoubaoParserHarness()
   const parsed = adapter.parseResponse(raw)
 
   assert.deepEqual(parsed, {
@@ -166,9 +210,7 @@ test('Doubao parser prefers a sanitized final creation snapshot', () => {
 })
 
 test('Doubao English rate limit errors are marked as rate limits', () => {
-  const adapter = createPrototypeObject(
-    DoubaoAdapter.prototype
-  ) as DoubaoParserHarness
+  const adapter = createDoubaoParserHarness()
   const streamError = adapter.readStreamError(`id: 0
 event: STREAM_ERROR
 data: {"error_code":710022004,"error_msg":"rate limited","extra":{"ack":"1"}}`)
@@ -190,9 +232,7 @@ data: {"content":{"content_block":[{"block_type":10000,"content":{"text_block":{
 id: 1
 event: SSE_REPLY_END
 data: {"end_type":1}`
-  const adapter = createPrototypeObject(
-    DoubaoAdapter.prototype
-  ) as DoubaoParserHarness
+  const adapter = createDoubaoParserHarness()
   const parsed = adapter.parseResponse(raw)
 
   assert.deepEqual(parsed, {
@@ -215,9 +255,7 @@ data: {"end_type":1}
 id: 2
 event: STREAM_MSG_NOTIFY
 data: {"content":{"content_block":[{"block_type":10000,"content":{"text_block":{"text":"after end"}}}]},"meta":{"message_id":"2","conversation_id":"c2"}}`
-  const adapter = createPrototypeObject(
-    DoubaoAdapter.prototype
-  ) as DoubaoParserHarness
+  const adapter = createDoubaoParserHarness()
   const parsed = adapter.parseResponse(raw)
 
   assert.deepEqual(parsed, {
@@ -268,13 +306,13 @@ test('Gemini parser reads a framed response and replaces image placeholders', as
   ]
   const frame = JSON.stringify([['wrb.fr', null, JSON.stringify(inner)]])
   const raw = `)]}'\n${Buffer.byteLength(frame)}\n${frame}`
-  const adapter = createPrototypeObject(
-    GeminiAdapter.prototype
-  ) as AsyncParserHarness
+  const adapter = createAsyncParserHarness(GeminiAdapter.prototype)
   const parsed = await adapter.parseResponse(raw)
 
-  assert.ok(parsed)
+  assert.ok(parsed !== null && typeof parsed === 'object')
+  assert.ok('text' in parsed && typeof parsed.text === 'string')
   assert.equal(parsed.text.includes(placeholderUrl), false)
   assert.equal(parsed.text, `Here is the image:\n${realImageUrl}`)
+  assert.ok('isFinished' in parsed)
   assert.equal(parsed.isFinished, true)
 })

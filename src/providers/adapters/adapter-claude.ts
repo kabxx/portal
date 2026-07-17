@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import type { Locator } from 'playwright'
+import type { Page } from 'playwright'
 
 import {
   ProviderAdapter,
@@ -9,6 +9,7 @@ import {
   delayAsync,
   ProviderAdapterError,
   ProviderAdapterUnsupportedError,
+  type ProviderPage,
 } from './adapter-base.ts'
 import {
   isAbortError,
@@ -84,6 +85,41 @@ interface ClaudeHistoryViewportSnapshot {
   atBottom: boolean
 }
 
+export interface ClaudeLocator {
+  count(): Promise<number>
+  first(): ClaudeLocator
+  last(): ClaudeLocator
+  nth(index: number): ClaudeLocator
+  filter(options: object): ClaudeLocator
+  locator(selector: string): ClaudeLocator
+  isVisible(): Promise<boolean>
+  isEnabled(): Promise<boolean>
+  click(): Promise<void>
+  fill(text: string): Promise<void>
+  focus(): Promise<void>
+  press(key: string): Promise<void>
+  getAttribute(name: string): Promise<string | null>
+  innerText(): Promise<string>
+  setInputFiles(paths: string[]): Promise<void>
+}
+
+export interface ClaudePage extends ProviderPage {
+  keyboard: {
+    press(key: string): Promise<void>
+  }
+  goto(
+    url: string,
+    options: { waitUntil: 'domcontentloaded'; timeout: number }
+  ): Promise<unknown>
+  url(): string
+  locator(selector: string): ClaudeLocator
+  getByRole(
+    role: string,
+    options: { name: string; exact: boolean }
+  ): ClaudeLocator
+  evaluate(pageFunction: unknown, argument?: unknown): Promise<unknown>
+}
+
 interface TurndownServiceInstance {
   addRule(
     key: string,
@@ -125,7 +161,9 @@ if (!isTurndownServiceConstructor(turndownModule)) {
 }
 const TurndownService = turndownModule
 
-export class ClaudeAdapter extends ProviderAdapter {
+export class ClaudeAdapterBase<
+  TPage extends ClaudePage = Page,
+> extends ProviderAdapter<TPage> {
   private conversationIdVal: string | null = null
 
   protected override async init(options: AbortOptions = {}): Promise<void> {
@@ -445,7 +483,7 @@ export class ClaudeAdapter extends ProviderAdapter {
     const candidates = root.locator(
       'button[data-cds="Button"][aria-label="Stop response"]'
     )
-    const visible: Locator[] = []
+    const visible: ClaudeLocator[] = []
     for (let index = 0; index < (await candidates.count()); index += 1) {
       const candidate = candidates.nth(index)
       if (await candidate.isVisible().catch(() => false)) {
@@ -722,11 +760,11 @@ export class ClaudeAdapter extends ProviderAdapter {
     }
   }
 
-  private getInput(): Locator {
+  private getInput(): ClaudeLocator {
     return this.page.locator(CLAUDE_INPUT_SELECTOR).first()
   }
 
-  private getComposerRoot(): Locator {
+  private getComposerRoot(): ClaudeLocator {
     return this.getInput().locator(
       'xpath=ancestor::div[.//input[@data-testid="file-upload"] and .//*[@data-testid="model-selector-dropdown"]][1]'
     )
@@ -819,7 +857,7 @@ export class ClaudeAdapter extends ProviderAdapter {
     )
   }
 
-  private getWebSearchItems(): Locator {
+  private getWebSearchItems(): ClaudeLocator {
     return this.page.getByRole('menuitemcheckbox', {
       name: CLAUDE_WEB_SEARCH_ACCESSIBLE_NAME,
       exact: true,
@@ -855,7 +893,7 @@ export class ClaudeAdapter extends ProviderAdapter {
   }
 
   private async readWebSearchSnapshot(): Promise<{
-    item: Locator
+    item: ClaudeLocator
     state: ClaudeToggleState
   } | null> {
     const items = this.getWebSearchItems()
@@ -924,7 +962,7 @@ export class ClaudeAdapter extends ProviderAdapter {
     )
   }
 
-  private async openModelRadios(): Promise<Locator[]> {
+  private async openModelRadios(): Promise<ClaudeLocator[]> {
     const mainMenu = this.page
       .locator('[role="menu"]:visible')
       .filter({
@@ -970,7 +1008,7 @@ export class ClaudeAdapter extends ProviderAdapter {
     return items
   }
 
-  private getOpenRadioSubmenu(): Locator {
+  private getOpenRadioSubmenu(): ClaudeLocator {
     return this.page
       .locator('[role="menu"]:visible')
       .filter({
@@ -980,7 +1018,7 @@ export class ClaudeAdapter extends ProviderAdapter {
       .last()
   }
 
-  private getOpenEffortMenu(): Locator {
+  private getOpenEffortMenu(): ClaudeLocator {
     return this.page
       .locator('[role="menu"]:visible')
       .filter({
@@ -989,7 +1027,7 @@ export class ClaudeAdapter extends ProviderAdapter {
       .last()
   }
 
-  private async openEffortRadios(): Promise<Locator[]> {
+  private async openEffortRadios(): Promise<ClaudeLocator[]> {
     const effortMenu = this.getOpenEffortMenu()
     await waitAsync(
       async () =>
@@ -1010,7 +1048,7 @@ export class ClaudeAdapter extends ProviderAdapter {
   }
 
   private async verifyRadioSelection(
-    items: readonly Locator[],
+    items: readonly ClaudeLocator[],
     expectedText: string,
     kind: 'model' | 'effort',
     index: number
@@ -1039,8 +1077,10 @@ export class ClaudeAdapter extends ProviderAdapter {
     )
   }
 
-  private async collectLocators(locator: Locator): Promise<Locator[]> {
-    const items: Locator[] = []
+  private async collectLocators(
+    locator: ClaudeLocator
+  ): Promise<ClaudeLocator[]> {
+    const items: ClaudeLocator[] = []
     for (let index = 0; index < (await locator.count()); index += 1) {
       items.push(locator.nth(index))
     }
@@ -1062,7 +1102,9 @@ export class ClaudeAdapter extends ProviderAdapter {
     )
   }
 
-  private async waitForModelTriggerReady(trigger: Locator): Promise<void> {
+  private async waitForModelTriggerReady(
+    trigger: ClaudeLocator
+  ): Promise<void> {
     await waitAsync(
       async () =>
         (await trigger.isVisible().catch(() => false)) &&
@@ -1083,7 +1125,7 @@ export class ClaudeAdapter extends ProviderAdapter {
     )
   }
 
-  private async waitForEffortTrigger(trigger: Locator): Promise<void> {
+  private async waitForEffortTrigger(trigger: ClaudeLocator): Promise<void> {
     await waitAsync(async () => await trigger.isVisible().catch(() => false), {
       timeoutMs: 2000,
       onTimeout: async () => {
@@ -1204,7 +1246,14 @@ export class ClaudeAdapter extends ProviderAdapter {
   private async readHistoryViewport(
     action: 'bottom' | 'previous' | 'current'
   ): Promise<ClaudeHistoryViewportSnapshot> {
-    return await this.page.evaluate((requestedAction) => {
+    const snapshot = await this.page.evaluate((requestedAction: unknown) => {
+      if (
+        requestedAction !== 'bottom' &&
+        requestedAction !== 'previous' &&
+        requestedAction !== 'current'
+      ) {
+        throw new Error('Unsupported Claude history viewport action.')
+      }
       const feed = document.querySelector('[role="feed"]')
       if (!(feed instanceof HTMLElement)) {
         return {
@@ -1269,7 +1318,51 @@ export class ClaudeAdapter extends ProviderAdapter {
           scroller.scrollHeight - 2,
       }
     }, action)
+    if (!isClaudeHistoryViewportSnapshot(snapshot)) {
+      throw new Error('Claude returned an invalid history viewport snapshot.')
+    }
+    return snapshot
   }
+}
+
+export class ClaudeAdapter extends ClaudeAdapterBase<Page> {}
+
+function isClaudeHistoryViewportSnapshot(
+  value: unknown
+): value is ClaudeHistoryViewportSnapshot {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.cells) &&
+    value.cells.every(isClaudeHistoryCellSnapshot) &&
+    typeof value.scrollTop === 'number' &&
+    typeof value.scrollHeight === 'number' &&
+    typeof value.clientHeight === 'number' &&
+    typeof value.atBottom === 'boolean'
+  )
+}
+
+function isClaudeHistoryCellSnapshot(
+  value: unknown
+): value is ClaudeHistoryCellSnapshot {
+  return (
+    isRecord(value) &&
+    typeof value.index === 'number' &&
+    Array.isArray(value.articles) &&
+    value.articles.every(isClaudeHistoryArticleSnapshot)
+  )
+}
+
+function isClaudeHistoryArticleSnapshot(
+  value: unknown
+): value is ClaudeHistoryArticleSnapshot {
+  return (
+    isRecord(value) &&
+    (value.role === 'user' ||
+      value.role === 'assistant' ||
+      value.role === 'unknown') &&
+    typeof value.text === 'string' &&
+    (typeof value.html === 'string' || value.html === null)
+  )
 }
 
 export function buildClaudeHistoryResult(

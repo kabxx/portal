@@ -1,19 +1,23 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import fs from 'fs/promises'
-import os from 'os'
-import path from 'path'
 
 import { ThreadCommand } from '../../../src/cli-commands/commands/command-thread.ts'
-import type { CliCommandContext } from '../../../src/cli-commands/core/command-types.ts'
 import type { ProviderId } from '../../../src/providers/provider-id.ts'
 import { ThreadManager } from '../../../src/threads/thread-manager.ts'
-import { ThreadStore } from '../../../src/threads/thread-store.ts'
 import { TerminalController } from '../../../src/terminal-ui/terminal-controller.ts'
+import {
+  createCliCommandContext,
+  TEST_PROVIDER_IDS,
+} from '../../helpers/cli-command-context.ts'
 import { createFakeRuntime } from '../../helpers/fakes.ts'
 import { latestTimelineEntry } from '../../helpers/ui.ts'
-import type { SkillLibrary } from '../../../src/skills/skill-library.ts'
-import type { McpLibrary } from '../../../src/mcp/mcp-library.ts'
+
+const fixtureCleanups = new Set<() => void>()
+
+test.afterEach(() => {
+  for (const cleanup of fixtureCleanups) cleanup()
+  fixtureCleanups.clear()
+})
 
 function getLatestTimelineEntry(ui: TerminalController) {
   const entry = latestTimelineEntry(ui)
@@ -22,36 +26,17 @@ function getLatestTimelineEntry(ui: TerminalController) {
 }
 
 async function createCommandContext() {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'portal-thread-command-'))
   const ui = new TerminalController()
   const threadManager = new ThreadManager()
-  const threadStore = new ThreadStore(path.join(dir, 'threads.db'))
   const createdThreads: Array<{ provider: ProviderId; model: string | null }> =
     []
   const resumedUrls: string[] = []
   const reloadedThreadIds: string[] = []
-  const context: CliCommandContext = {
+  const { context, cleanup } = createCliCommandContext({
     threadManager,
-    threadStore,
-    skillLibrary: {} as SkillLibrary,
-    mcpLibrary: {} as McpLibrary,
     ui,
     browserProfileDir: 'C:\\profiles\\chrome',
-    providers: [
-      'chatgpt',
-      'claude',
-      'gemini',
-      'deepseek',
-      'doubao',
-      'grok',
-      'glm',
-    ],
-    resolveProvider: (value) => {
-      const normalized = value.trim().toLowerCase()
-      return context.providers.includes(normalized as ProviderId)
-        ? (normalized as ProviderId)
-        : null
-    },
+    providers: TEST_PROVIDER_IDS,
     createThread: async (provider, model) => {
       createdThreads.push({ provider, model })
     },
@@ -61,13 +46,13 @@ async function createCommandContext() {
     reloadThread: async (threadId) => {
       reloadedThreadIds.push(threadId)
     },
-    closeThread: async (threadId) => await threadManager.closeThread(threadId),
     addSkill: async () => {
       throw new Error('not used in thread command tests')
     },
     submitThreadInput: async () => {},
     listCommands: () => [ThreadCommand],
-  }
+  })
+  fixtureCleanups.add(cleanup)
 
   return {
     context,
@@ -75,7 +60,7 @@ async function createCommandContext() {
     resumedUrls,
     reloadedThreadIds,
     threadManager,
-    threadStore,
+    threadStore: context.threadStore,
     ui,
   }
 }

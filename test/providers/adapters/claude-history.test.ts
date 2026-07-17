@@ -2,9 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  ClaudeAdapter,
+  ClaudeAdapterBase,
   buildClaudeHistoryResult,
   type ClaudeHistoryCellSnapshot,
+  type ClaudeLocator,
+  type ClaudePage,
 } from '../../../src/providers/adapters/adapter-claude.ts'
 import type { ProviderTimingOptions } from '../../../src/providers/adapters/adapter-base.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
@@ -19,11 +21,12 @@ interface ClaudeHistoryViewportSnapshot {
   atBottom: boolean
 }
 
-class ClaudeHistoryTestAdapter extends ClaudeAdapter {
+class ClaudeHistoryTestAdapter extends ClaudeAdapterBase<ClaudePage> {
   public finishHistoryCaptureCalls = 0
 
-  protected override async init(): Promise<void> {
-    this.page = await this.context.newPage()
+  public constructor(page: ClaudePage, timings: ProviderTimingOptions) {
+    super(createBrowserContextStub(page), { timings })
+    this.page = page
   }
 
   public override async finishHistoryCapture(): Promise<void> {
@@ -38,19 +41,51 @@ async function createHistoryAdapter(
   historyLoadTimeoutMs: number,
   historyPageTimeoutMs: number
 ): Promise<ClaudeHistoryTestAdapter> {
-  const page = {
-    evaluate: (
-      _pageFunction: unknown,
-      action: ClaudeHistoryAction
-    ): Promise<ClaudeHistoryViewportSnapshot> =>
-      Promise.resolve(readHistoryViewport(action)),
+  const unusedLocator = createUnusedLocator()
+  const page: ClaudePage = {
+    close: async () => undefined,
+    pause: async () => undefined,
+    goto: async () => null,
+    url: () => 'https://claude.ai/chat/conversation-1',
+    keyboard: { press: async () => undefined },
+    locator: () => unusedLocator,
+    getByRole: () => unusedLocator,
+    evaluate: async (_pageFunction, action) => {
+      if (
+        action !== 'bottom' &&
+        action !== 'previous' &&
+        action !== 'current'
+      ) {
+        throw new Error('Unexpected Claude history action.')
+      }
+      return readHistoryViewport(action)
+    },
   }
-  return await ClaudeHistoryTestAdapter.create(
-    createBrowserContextStub({ newPage: async () => page }),
-    {
-      timings: historyTimings(historyLoadTimeoutMs, historyPageTimeoutMs),
-    }
+  return new ClaudeHistoryTestAdapter(
+    page,
+    historyTimings(historyLoadTimeoutMs, historyPageTimeoutMs)
   )
+}
+
+function createUnusedLocator(): ClaudeLocator {
+  const locator: ClaudeLocator = {
+    count: async () => 0,
+    first: () => locator,
+    last: () => locator,
+    nth: () => locator,
+    filter: () => locator,
+    locator: () => locator,
+    isVisible: async () => false,
+    isEnabled: async () => false,
+    click: async () => undefined,
+    fill: async () => undefined,
+    focus: async () => undefined,
+    press: async () => undefined,
+    getAttribute: async () => null,
+    innerText: async () => '',
+    setInputFiles: async () => undefined,
+  }
+  return locator
 }
 
 function historyTimings(

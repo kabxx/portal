@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 
 import { ProviderAdapterError } from '../../../src/providers/adapters/adapter-base.ts'
 import { GeminiAdapter } from '../../../src/providers/adapters/adapter-gemini.ts'
-import { createPrototypeObject } from '../../helpers/fakes.ts'
+import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 type GeminiAdapterHarness = Pick<GeminiAdapter, keyof GeminiAdapter> & {
   page: unknown
@@ -17,7 +17,21 @@ type GeminiAdapterHarness = Pick<GeminiAdapter, keyof GeminiAdapter> & {
 }
 
 function createTestGeminiAdapter(): GeminiAdapterHarness {
-  return createPrototypeObject(GeminiAdapter.prototype) as GeminiAdapterHarness
+  return Object.assign(new GeminiAdapter(createBrowserContextStub()), {
+    page: undefined,
+    lastParsedResponse: null,
+    parseResponse: async (): Promise<unknown> => {
+      throw new Error('Response parser was not configured for this test.')
+    },
+    readCurrentStreamedResponseText: async (): Promise<string> => {
+      throw new Error(
+        'Streamed response reader was not configured for this test.'
+      )
+    },
+    getSubmitRequestStartGraceMs: (): number => 30_000,
+    getSubmitBlockedWarningIntervalMs: (): number => 30_000,
+    getSubmitResponseTimeoutMs: (): number => 30_000,
+  })
 }
 
 test('GeminiAdapter normalizes conversationId and conversationUrl at the source', () => {

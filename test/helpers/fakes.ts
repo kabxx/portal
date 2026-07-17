@@ -1,7 +1,16 @@
-import type { RuntimeCore } from '../../src/runtime/runtime-core.ts'
-import { ProviderAdapter } from '../../src/providers/adapters/adapter-base.ts'
+import {
+  RuntimeCore,
+  type RuntimeCoreHandlers,
+} from '../../src/runtime/runtime-core.ts'
+import {
+  ProviderAdapter,
+  type ProviderBrowserContext,
+  type ProviderCdpSession,
+  type ProviderPage,
+} from '../../src/providers/adapters/adapter-base.ts'
 import type { ThreadMcpSession } from '../../src/mcp/thread-mcp-session.ts'
-import type { BrowserContext } from 'playwright'
+import type { CDPSession, Page } from 'playwright'
+import { ToolRegistry } from '../../src/tools/core/tool-registry.ts'
 
 export interface FakeRuntimeOptions {
   conversationId?: string | null
@@ -18,16 +27,6 @@ export interface FakeRuntimeOptions {
 export function createPrototypeObject(prototype: object): unknown {
   const instance: unknown = Object.create(prototype)
   return instance
-}
-
-export function setTestProperty(
-  target: object,
-  key: PropertyKey,
-  value: unknown
-): void {
-  if (!Reflect.set(target, key, value)) {
-    throw new Error(`Failed to set test property: ${String(key)}`)
-  }
 }
 
 class StubProviderAdapter extends ProviderAdapter {
@@ -67,54 +66,135 @@ export function createProviderAdapterStub(): ProviderAdapter {
 }
 
 interface BrowserContextStubOverrides {
-  newPage?: () => Promise<unknown>
-  newCDPSession?: (page: unknown) => Promise<unknown>
+  newPage?: () => Promise<Partial<ProviderPage>>
+  newCDPSession?: (page: ProviderPage) => Promise<Partial<ProviderCdpSession>>
 }
 
+export function createBrowserContextStub(): ProviderBrowserContext<
+  Page,
+  CDPSession
+>
+export function createBrowserContextStub<TPage extends ProviderPage>(
+  page: TPage
+): ProviderBrowserContext<TPage, CDPSession>
 export function createBrowserContextStub(
-  overrides: BrowserContextStubOverrides = {}
-): BrowserContext {
-  return overrides as BrowserContext
+  page?: ProviderPage
+): ProviderBrowserContext<ProviderPage, CDPSession> {
+  return {
+    newPage: async () => {
+      if (page === undefined) {
+        throw new Error('The test browser context has no page factory.')
+      }
+      return page
+    },
+  }
+}
+
+export function createProviderContextStub(
+  overrides: BrowserContextStubOverrides
+): ProviderBrowserContext<ProviderPage, ProviderCdpSession>
+export function createProviderContextStub(
+  overrides: BrowserContextStubOverrides
+): ProviderBrowserContext<ProviderPage, ProviderCdpSession> {
+  return {
+    newPage: async () => normalizeProviderPage(await overrides.newPage?.()),
+    ...(overrides.newCDPSession === undefined
+      ? {}
+      : {
+          newCDPSession: async (page: ProviderPage) =>
+            normalizeProviderCdpSession(await overrides.newCDPSession?.(page)),
+        }),
+  }
+}
+
+function normalizeProviderPage(
+  page: Partial<ProviderPage> | undefined
+): ProviderPage {
+  return {
+    close: page?.close ?? (async () => {}),
+    pause: page?.pause ?? (async () => {}),
+    ...(page?.on === undefined ? {} : { on: page.on }),
+    ...(page?.off === undefined ? {} : { off: page.off }),
+    ...(page?.addInitScript === undefined
+      ? {}
+      : { addInitScript: page.addInitScript }),
+    ...(page?.evaluate === undefined ? {} : { evaluate: page.evaluate }),
+  }
+}
+
+function normalizeProviderCdpSession(
+  session: Partial<ProviderCdpSession> | undefined
+): ProviderCdpSession {
+  return {
+    on: session?.on ?? (() => {}),
+    send: session?.send ?? (async () => ({})),
+    detach: session?.detach ?? (async () => {}),
+  }
 }
 
 export function createFakeRuntime(
   options: FakeRuntimeOptions = {}
 ): RuntimeCore {
-  const assistantText = options.assistantText ?? 'assistant reply'
+  return new FakeRuntime(options)
+}
 
-  return {
-    conversationId: options.conversationId ?? null,
-    conversationUrl: options.conversationUrl ?? 'https://example.com/thread',
-    submitUserInput:
-      options.submitUserInput ??
-      (async (_input, handlers) => {
-        await handlers?.onAssistantText?.(assistantText)
-        return assistantText
-      }),
-    close:
-      options.close ??
-      (async () => {
-        return undefined
-      }),
-    pause: async () => {
-      return undefined
-    },
-    stopGeneration:
-      options.stopGeneration ??
-      (async () => {
-        return undefined
-      }),
-    init: async () => {
-      return undefined
-    },
-    getAdapter: () => {
-      if (options.adapter === undefined) {
-        throw new Error('Fake runtime has no adapter.')
-      }
-      return options.adapter
-    },
-    getMcpSession: () => options.mcpSession ?? null,
-    availableManualSkillNames: options.manualSkillNames ?? [],
-    prompt: '',
-  } as RuntimeCore
+class FakeRuntime extends RuntimeCore {
+  private readonly adapter: ProviderAdapter
+
+  public constructor(private readonly fakeOptions: FakeRuntimeOptions) {
+    const adapter = fakeOptions.adapter ?? createProviderAdapterStub()
+    super(adapter, new ToolRegistry(adapter, []))
+    this.adapter = adapter
+  }
+
+  public override get conversationId(): string | null {
+    return this.fakeOptions.conversationId ?? null
+  }
+
+  public override get conversationUrl(): string {
+    return this.fakeOptions.conversationUrl ?? 'https://example.com/thread'
+  }
+
+  public override get availableManualSkillNames(): readonly string[] {
+    return this.fakeOptions.manualSkillNames ?? []
+  }
+
+  public override get prompt(): string {
+    return ''
+  }
+
+  public override getAdapter(): ProviderAdapter {
+    if (this.fakeOptions.adapter === undefined) {
+      throw new Error('Fake runtime has no adapter.')
+    }
+    return this.adapter
+  }
+
+  public override getMcpSession(): ThreadMcpSession | null {
+    return this.fakeOptions.mcpSession ?? null
+  }
+
+  public override async init(): Promise<void> {}
+
+  public override async submitUserInput(
+    input: string,
+    handlers: RuntimeCoreHandlers = {}
+  ): Promise<string> {
+    if (this.fakeOptions.submitUserInput !== undefined) {
+      return await this.fakeOptions.submitUserInput(input, handlers)
+    }
+    const assistantText = this.fakeOptions.assistantText ?? 'assistant reply'
+    await handlers.onAssistantText?.(assistantText)
+    return assistantText
+  }
+
+  public override async pause(): Promise<void> {}
+
+  public override async stopGeneration(): Promise<void> {
+    await this.fakeOptions.stopGeneration?.()
+  }
+
+  public override async close(): Promise<void> {
+    await this.fakeOptions.close?.()
+  }
 }

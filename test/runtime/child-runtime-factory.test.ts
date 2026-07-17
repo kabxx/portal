@@ -24,7 +24,7 @@ function scope(): HookExecutionScope {
 }
 
 test('ChildRuntimeFactory gives prompt hooks no tools and one model turn', async () => {
-  const requests: unknown[] = []
+  const requests: Array<{ allowedTools: readonly string[] }> = []
   let handlers: RuntimeCoreHandlers | undefined
   const factory = new ChildRuntimeFactory('chatgpt', async (request) => {
     requests.push(request)
@@ -64,10 +64,7 @@ test('ChildRuntimeFactory gives prompt hooks no tools and one model turn', async
     controller.signal
   )
 
-  assert.deepEqual(
-    (requests[0] as { allowedTools: readonly string[] }).allowedTools,
-    []
-  )
+  assert.deepEqual(requests[0]?.allowedTools, [])
   assert.equal(handlers?.maxToolCalls, 0)
   assert.equal(handlers?.executionScope?.hookDepth, 1)
   assert.equal(handlers?.executionScope?.originatingHandlerId, 'prompt-check')

@@ -474,8 +474,24 @@ async function connectClient(url: string, token?: string): Promise<Client> {
       ? {}
       : { requestInit: { headers: { Authorization: `Bearer ${token}` } } }),
   })
-  await client.connect(transport as Transport)
+  if (!isTransport(transport)) {
+    throw new Error('MCP SDK returned an invalid test transport.')
+  }
+  await client.connect(transport)
   return client
+}
+
+function isTransport(value: unknown): value is Transport {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'start' in value &&
+    typeof value.start === 'function' &&
+    'send' in value &&
+    typeof value.send === 'function' &&
+    'close' in value &&
+    typeof value.close === 'function'
+  )
 }
 
 function initializeRequest(): string {

@@ -21,6 +21,10 @@ import {
 import { loadProjectInstructions } from '../../src/instructions/project-instructions.ts'
 import { createBrowserContextStub } from '../helpers/fakes.ts'
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 interface FakeAdapterOptions {
   failChangeModel?: boolean
   failSubmit?: boolean
@@ -256,13 +260,11 @@ test('createRuntimeFromAdapter catalogs enabled skills into setup and load_skill
     )
 
     await enabledRuntime.submitUserInput('Load runtime-skill.')
-    const loadedResult = JSON.parse(
+    const loadedResult: unknown = JSON.parse(
       enabledAdapter.attachedTexts[2]!.slice('### Tool Result ###\n'.length)
-    ) as {
-      tool: string
-      outcome: string
-      result: Record<string, unknown>
-    }
+    )
+    assert.ok(isRecord(loadedResult))
+    assert.ok(isRecord(loadedResult.result))
     assert.equal(loadedResult.tool, 'load_skill')
     assert.equal(loadedResult.outcome, 'success')
     assert.equal(loadedResult.result.name, 'runtime-skill')
@@ -429,13 +431,11 @@ test('createRuntimeFromAdapter snapshots MCP names and loads exact tool definiti
 
     await runtime.submitUserInput('Load the echo definition.')
     const toolResultMessage = adapter.attachedTexts[2] ?? ''
-    const toolResult = JSON.parse(
+    const toolResult: unknown = JSON.parse(
       toolResultMessage.slice('### Tool Result ###\n'.length)
-    ) as {
-      tool: string
-      outcome: string
-      result: Record<string, unknown>
-    }
+    )
+    assert.ok(isRecord(toolResult))
+    assert.ok(isRecord(toolResult.result))
     assert.equal(toolResult.tool, 'mcp_search_tool')
     assert.equal(toolResult.outcome, 'success')
     assert.equal(toolResult.result.server, 'example')

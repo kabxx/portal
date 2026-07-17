@@ -24,8 +24,7 @@ function defaultConfig() {
 }
 
 async function writeConfig(pathname: string, skills: unknown): Promise<void> {
-  const config = defaultConfig()
-  config.skills = skills as Record<string, unknown>
+  const config = { ...defaultConfig(), skills }
   await writeFile(pathname, stringifyYaml(config), 'utf8')
 }
 

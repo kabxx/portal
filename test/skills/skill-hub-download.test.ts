@@ -1,7 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, type RequestListener } from 'node:http'
-import type { AddressInfo } from 'node:net'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -20,7 +19,10 @@ async function withServer(
     server.once('error', reject)
     server.listen(0, '127.0.0.1', resolve)
   })
-  const address = server.address() as AddressInfo
+  const address = server.address()
+  if (address === null || typeof address === 'string') {
+    throw new Error('Expected the test server to listen on a TCP address.')
+  }
   try {
     await run(new URL(`http://127.0.0.1:${address.port}/registry/`))
   } finally {
@@ -123,7 +125,7 @@ test('downloadSkillFromHub rejects unsafe discovery and version metadata', async
       },
       expected: /Skill registry returned an invalid version/,
     },
-  ] as const
+  ]
 
   try {
     for (const scenario of scenarios) {

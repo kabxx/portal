@@ -7,13 +7,13 @@ import { access, mkdtemp, rm } from 'node:fs/promises'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
-import type { Browser } from 'playwright'
 
 import {
   buildBrowserLaunchArguments,
   connectBrowserOverCDP,
   createBrowserProcessFailureMonitor,
   createBrowserDisconnectSignal,
+  type BrowserConnection,
   type BrowserConnectionEvents,
   type BrowserConnector,
   launchBrowser,
@@ -93,7 +93,8 @@ test('buildBrowserLaunchArguments passes port zero through to Chromium', () => {
 
 test('launchBrowser rejects unsupported browser engines before launch', async () => {
   await assert.rejects(
-    launchBrowser('firefox' as never, 'missing-browser', 9222, 'profile'),
+    // @ts-expect-error Verify the runtime boundary rejects unsupported engines.
+    launchBrowser('firefox', 'missing-browser', 9222, 'profile'),
     /Unsupported browser engine: firefox/
   )
 })
@@ -280,8 +281,12 @@ test('waitForBrowserDevToolsEndpoint supports timeout and cancellation', async (
 })
 
 test('connectBrowserOverCDP closes a connection that succeeds after cancellation', async () => {
-  let resolveConnection!: (browser: Browser) => void
-  const connection = new Promise<Browser>((resolve) => {
+  interface ClosableBrowser {
+    close(): Promise<void>
+  }
+
+  let resolveConnection!: (browser: ClosableBrowser) => void
+  const connection = new Promise<ClosableBrowser>((resolve) => {
     resolveConnection = resolve
   })
   let closed = false
@@ -289,8 +294,8 @@ test('connectBrowserOverCDP closes a connection that succeeds after cancellation
     close: async () => {
       closed = true
     },
-  } as Browser
-  const connector: BrowserConnector = {
+  }
+  const connector: BrowserConnector<ClosableBrowser> = {
     connectOverCDP: async () => await connection,
   }
   const controller = new AbortController()
@@ -312,8 +317,8 @@ test('connectBrowserOverCDP closes a connection that succeeds after cancellation
 test('connectBrowserOverCDP fails when its browser exits after the CDP marker', async () => {
   const child = spawnNode('setTimeout(() => process.exit(17), 20)')
   const processFailure = createBrowserProcessFailureMonitor(child)
-  const connector: BrowserConnector = {
-    connectOverCDP: async () => await new Promise<Browser>(() => {}),
+  const connector: BrowserConnector<BrowserConnection> = {
+    connectOverCDP: async () => await new Promise<BrowserConnection>(() => {}),
   }
 
   try {

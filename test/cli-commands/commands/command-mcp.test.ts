@@ -6,14 +6,12 @@ import path from 'path'
 
 import { McpCommand } from '../../../src/cli-commands/commands/command-mcp.ts'
 import { CommandRegistry } from '../../../src/cli-commands/core/command-registry.ts'
-import type { CliCommandContext } from '../../../src/cli-commands/core/command-types.ts'
 import type { McpConnection } from '../../../src/mcp/mcp-connection.ts'
 import { McpLibrary } from '../../../src/mcp/mcp-library.ts'
 import { ThreadMcpSession } from '../../../src/mcp/thread-mcp-session.ts'
-import type { SkillLibrary } from '../../../src/skills/skill-library.ts'
 import { TerminalController } from '../../../src/terminal-ui/terminal-controller.ts'
 import { ThreadManager } from '../../../src/threads/thread-manager.ts'
-import { ThreadStore } from '../../../src/threads/thread-store.ts'
+import { createCliCommandContext } from '../../helpers/cli-command-context.ts'
 import { createFakeRuntime } from '../../helpers/fakes.ts'
 import { latestTimelineEntry } from '../../helpers/ui.ts'
 import { parseYamlRecord } from '../../helpers/yaml.ts'
@@ -24,18 +22,13 @@ async function createMcpCommandContext(root: string) {
   const mcpLibrary = new McpLibrary(path.join(root, 'config.yaml'))
   const registry = new CommandRegistry([McpCommand])
   const submitted: Array<{ input: string; displayInput?: string }> = []
-  const context: CliCommandContext = {
+  const { context, cleanup } = createCliCommandContext({
     threadManager,
-    threadStore: new ThreadStore(path.join(root, 'threads.db')),
-    skillLibrary: {} as SkillLibrary,
     mcpLibrary,
     ui,
     browserProfileDir: path.join(root, 'profile'),
     providers: [],
     resolveProvider: () => null,
-    createThread: async () => {},
-    resumeThread: async () => {},
-    closeThread: async (threadId) => await threadManager.closeThread(threadId),
     addSkill: async () => {
       throw new Error('not used')
     },
@@ -46,13 +39,21 @@ async function createMcpCommandContext(root: string) {
       })
     },
     listCommands: () => registry.list(),
+  })
+  return {
+    cleanup,
+    context,
+    mcpLibrary,
+    registry,
+    submitted,
+    threadManager,
+    ui,
   }
-  return { context, mcpLibrary, registry, submitted, threadManager, ui }
 }
 
 test('McpCommand adds minimal HTTP and stdio server configs', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-mcp-command-'))
-  const { context, registry } = await createMcpCommandContext(root)
+  const { cleanup, context, registry } = await createMcpCommandContext(root)
 
   try {
     await registry.execute(
@@ -83,14 +84,15 @@ test('McpCommand adds minimal HTTP and stdio server configs', async () => {
       /Added and enabled/
     )
   } finally {
-    context.threadStore.close()
+    cleanup()
     await rm(root, { recursive: true, force: true })
   }
 })
 
 test('McpCommand manages configured servers and renders list state', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-mcp-manage-'))
-  const { context, mcpLibrary, registry } = await createMcpCommandContext(root)
+  const { cleanup, context, mcpLibrary, registry } =
+    await createMcpCommandContext(root)
 
   try {
     await registry.execute('/mcp list', context)
@@ -124,14 +126,14 @@ test('McpCommand manages configured servers and renders list state', async () =>
     assert.match(latestTimelineEntry(context.ui)?.body ?? '', /Removed remote/)
     assert.deepEqual((await mcpLibrary.list()).servers, [])
   } finally {
-    context.threadStore.close()
+    cleanup()
     await rm(root, { recursive: true, force: true })
   }
 })
 
 test('McpCommand validates management arguments and HTTP headers', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-mcp-validation-'))
-  const { context, registry } = await createMcpCommandContext(root)
+  const { cleanup, context, registry } = await createMcpCommandContext(root)
 
   async function expectMessage(input: string, pattern: RegExp) {
     await registry.execute(input, context)
@@ -161,14 +163,14 @@ test('McpCommand validates management arguments and HTTP headers', async () => {
     await expectMessage('/mcp remove', /Usage: \/mcp remove/)
     await expectMessage('/mcp remove missing', /Unknown MCP server/)
   } finally {
-    context.threadStore.close()
+    cleanup()
     await rm(root, { recursive: true, force: true })
   }
 })
 
 test('McpCommand requires an active thread and configured MCP session', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-mcp-session-'))
-  const { context, registry, threadManager } =
+  const { cleanup, context, registry, threadManager } =
     await createMcpCommandContext(root)
 
   try {
@@ -188,14 +190,14 @@ test('McpCommand requires an active thread and configured MCP session', async ()
       'MCP is not configured in this runtime.'
     )
   } finally {
-    context.threadStore.close()
+    cleanup()
     await rm(root, { recursive: true, force: true })
   }
 })
 
 test('McpCommand validates resource and prompt attachment arguments', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-mcp-arguments-'))
-  const { context, registry, threadManager } =
+  const { cleanup, context, registry, threadManager } =
     await createMcpCommandContext(root)
   const session = new ThreadMcpSession(new Map())
   threadManager.addThread({
@@ -230,14 +232,14 @@ test('McpCommand validates resource and prompt attachment arguments', async () =
     await expectMessage('/mcp resource list', /No MCP resources found/)
     await expectMessage('/mcp prompt list', /No MCP prompts found/)
   } finally {
-    context.threadStore.close()
+    cleanup()
     await rm(root, { recursive: true, force: true })
   }
 })
 
 test('McpCommand attaches prompt and resource content as separate thread inputs', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-mcp-attach-'))
-  const { context, registry, submitted, threadManager } =
+  const { cleanup, context, registry, submitted, threadManager } =
     await createMcpCommandContext(root)
   const connection = {
     name: 'server',
@@ -281,7 +283,7 @@ test('McpCommand attaches prompt and resource content as separate thread inputs'
     assert.match(submitted[1]?.input ?? '', /RESOURCE TEXT/)
     assert.equal(context.ui.getState().busy, false)
   } finally {
-    context.threadStore.close()
+    cleanup()
     await rm(root, { recursive: true, force: true })
   }
 })

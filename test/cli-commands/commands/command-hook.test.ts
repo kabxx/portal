@@ -2,20 +2,58 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { HookCommand } from '../../../src/cli-commands/commands/command-hook.ts'
-import type { CliCommandContext } from '../../../src/cli-commands/core/command-types.ts'
+import {
+  createDefaultHooksConfig,
+  createHookSnapshot,
+} from '../../../src/hooks/hook-config.ts'
+import { HookCatalog } from '../../../src/hooks/hook-catalog.ts'
+import type { HookSnapshot } from '../../../src/hooks/hook-types.ts'
 import { TerminalController } from '../../../src/terminal-ui/terminal-controller.ts'
+import { createCliCommandContext } from '../../helpers/cli-command-context.ts'
 import { latestTimelineEntry } from '../../helpers/ui.ts'
 
-function createContext(hookCatalog?: unknown) {
+function createContext(hookCatalog?: HookCatalog) {
   const ui = new TerminalController()
+  const { context, cleanup } = createCliCommandContext({
+    ui,
+    ...(hookCatalog === undefined ? {} : { hookCatalog }),
+  })
   return {
-    context: { ui, hookCatalog } as CliCommandContext,
+    cleanup,
+    context,
     ui,
   }
 }
 
-test('HookCommand reports unavailable Hooks', async () => {
-  const { context, ui } = createContext()
+function createHookCatalog(): HookCatalog {
+  return new HookCatalog(
+    'test-data/config.yaml',
+    createHookSnapshot(createDefaultHooksConfig())
+  )
+}
+
+function createSnapshotWithAuditHandler(enabled = true): HookSnapshot {
+  return createHookSnapshot({
+    enabled,
+    maxDepth: 1,
+    handlers: [
+      {
+        name: 'audit',
+        enabled: true,
+        type: 'command',
+        events: ['turn.completed'],
+        match: {},
+        timeoutMs: 5_000,
+        onError: 'continue',
+        command: ['audit'],
+      },
+    ],
+  })
+}
+
+test('HookCommand reports unavailable Hooks', async (t) => {
+  const { cleanup, context, ui } = createContext()
+  t.after(cleanup)
 
   await HookCommand.execute(context, [])
 
@@ -23,16 +61,17 @@ test('HookCommand reports unavailable Hooks', async () => {
   assert.equal(latestTimelineEntry(ui)?.body, 'Hooks are not configured.')
 })
 
-test('HookCommand renders status by default', async () => {
-  const { context, ui } = createContext({
-    status: () => ({
-      enabled: true,
-      activeHandlers: 2,
-      handlers: 3,
-      revision: 'revision-1',
-      loadedAt: 0,
-    }),
+test('HookCommand renders status by default', async (t) => {
+  const hookCatalog = createHookCatalog()
+  hookCatalog.status = () => ({
+    enabled: true,
+    activeHandlers: 2,
+    handlers: 3,
+    revision: 'revision-1',
+    loadedAt: 0,
   })
+  const { cleanup, context, ui } = createContext(hookCatalog)
+  t.after(cleanup)
 
   await HookCommand.execute(context, [])
 
@@ -47,15 +86,16 @@ test('HookCommand renders status by default', async () => {
   )
 })
 
-test('HookCommand reloads and toggles Hooks for new turns', async () => {
+test('HookCommand reloads and toggles Hooks for new turns', async (t) => {
   const toggles: boolean[] = []
-  const { context, ui } = createContext({
-    reload: async () => ({ handlers: [{ name: 'audit' }] }),
-    setEnabled: async (enabled: boolean) => {
-      toggles.push(enabled)
-      return { enabled }
-    },
-  })
+  const hookCatalog = createHookCatalog()
+  hookCatalog.reload = async () => createSnapshotWithAuditHandler()
+  hookCatalog.setEnabled = async (enabled) => {
+    toggles.push(enabled)
+    return createSnapshotWithAuditHandler(enabled)
+  }
+  const { cleanup, context, ui } = createContext(hookCatalog)
+  t.after(cleanup)
 
   await HookCommand.execute(context, ['reload'])
   assert.equal(
@@ -77,15 +117,16 @@ test('HookCommand reloads and toggles Hooks for new turns', async () => {
   assert.deepEqual(toggles, [true, false])
 })
 
-test('HookCommand reports unknown actions and operation failures', async () => {
-  const { context, ui } = createContext({
-    reload: async () => {
-      throw new Error('reload failed')
-    },
-    setEnabled: async () => {
-      throw new Error('toggle failed')
-    },
-  })
+test('HookCommand reports unknown actions and operation failures', async (t) => {
+  const hookCatalog = createHookCatalog()
+  hookCatalog.reload = async () => {
+    throw new Error('reload failed')
+  }
+  hookCatalog.setEnabled = async () => {
+    throw new Error('toggle failed')
+  }
+  const { cleanup, context, ui } = createContext(hookCatalog)
+  t.after(cleanup)
 
   await HookCommand.execute(context, ['unknown'])
   assert.match(latestTimelineEntry(ui)?.body ?? '', /Usage: \/hook/)

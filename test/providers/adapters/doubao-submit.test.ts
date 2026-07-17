@@ -3,7 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { DoubaoAdapter } from '../../../src/providers/adapters/adapter-doubao.ts'
-import { createPrototypeObject } from '../../helpers/fakes.ts'
+import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 const DOUBAO_DESKTOP_PROMOTION_CLOSE_SELECTOR =
   'xpath=//img[contains(@src, "/obj/flow-doubao/samantha/jianti.png")]/preceding-sibling::button[@type="button"][1]'
@@ -30,11 +30,41 @@ function isWebpackRuntimeCallback(
 }
 
 function createTestDoubaoAdapter(): DoubaoAdapterHarness {
-  const adapter = createPrototypeObject(
-    DoubaoAdapter.prototype
-  ) as DoubaoAdapterHarness
-  adapter.getSubmitRequestStartGraceMs = (): number => 5
-  return adapter
+  const adapter = new DoubaoAdapter(createBrowserContextStub())
+  const candidate: object = adapter
+  if (
+    !('getActionCapabilityState' in candidate) ||
+    typeof candidate.getActionCapabilityState !== 'function'
+  ) {
+    throw new Error('Doubao adapter is missing getActionCapabilityState().')
+  }
+  const getActionCapabilityState = candidate.getActionCapabilityState
+  return Object.assign(adapter, {
+    page: undefined,
+    getCapturedFetchEntryCount: async (): Promise<number> => {
+      throw new Error('Captured fetch count was not configured for this test.')
+    },
+    getLatestCapturedFetchBody: async (): Promise<string> => {
+      throw new Error('Captured fetch body was not configured for this test.')
+    },
+    async getActionCapabilityState(capability: string): Promise<string> {
+      const state: unknown = await Promise.resolve(
+        Reflect.apply(getActionCapabilityState, adapter, [capability])
+      )
+      if (typeof state !== 'string') {
+        throw new Error('Doubao action capability state was not a string.')
+      }
+      return state
+    },
+    getSubmitRequestStartGraceMs: (): number => 5,
+    getSubmitBlockedWarningIntervalMs: (): number => 30_000,
+    getSubmitResponseTimeoutMs: (): number => 30_000,
+    readCurrentStreamedResponseText: async (): Promise<string> => {
+      throw new Error(
+        'Streamed response reader was not configured for this test.'
+      )
+    },
+  })
 }
 
 test('DoubaoAdapter.submit handles request failure before a failed click settles', async () => {

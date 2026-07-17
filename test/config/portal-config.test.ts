@@ -25,16 +25,16 @@ import {
 } from '../../src/config/portal-config.ts'
 import { createDefaultKeybindings } from '../../src/keybindings/keybinding-config.ts'
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function parseConfigYaml(value: string): Record<string, unknown> {
   const document: unknown = parseYaml(value)
-  if (
-    document === null ||
-    typeof document !== 'object' ||
-    Array.isArray(document)
-  ) {
+  if (!isRecord(document)) {
     throw new Error('Expected the YAML document root to be an object.')
   }
-  return document as Record<string, unknown>
+  return document
 }
 
 function readConfigSection(
@@ -42,14 +42,10 @@ function readConfigSection(
   name: string
 ): Record<string, unknown> {
   const section = document[name]
-  if (
-    section === null ||
-    typeof section !== 'object' ||
-    Array.isArray(section)
-  ) {
+  if (!isRecord(section)) {
     throw new Error(`Expected ${name} to be an object.`)
   }
-  return section as Record<string, unknown>
+  return section
 }
 
 test('ensurePortalConfig creates one YAML file with concrete defaults', async () => {
