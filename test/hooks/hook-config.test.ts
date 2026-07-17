@@ -24,7 +24,7 @@ test('parseHooksConfig accepts command, prompt, and agent handlers', () => {
         name: 'review-turn',
         type: 'prompt',
         events: ['turn.completed'],
-        match: { provider: 'claude' },
+        match: { provider: 'deepseek' },
         prompt: 'Review the event.',
       },
       {
@@ -42,7 +42,7 @@ test('parseHooksConfig accepts command, prompt, and agent handlers', () => {
   assert.equal(config.maxDepth, 2)
   assert.equal(config.handlers[0]?.onError, 'deny')
   assert.equal(config.handlers[1]?.onError, 'continue')
-  assert.deepEqual(config.handlers[1]?.match, { provider: 'claude' })
+  assert.deepEqual(config.handlers[1]?.match, { provider: 'deepseek' })
   assert.deepEqual(config.handlers[2], {
     name: 'inspect-change',
     enabled: true,

@@ -179,6 +179,16 @@ class PollingAdapter extends ProviderAdapter<ProviderPage, ProviderCdpSession> {
     await this.emitSubmitStatusSafely(message)
   }
 
+  public async clickTestLocator(locator: {
+    count: () => Promise<number>
+    first: () => {
+      isVisible: () => Promise<boolean>
+      click: () => Promise<void>
+    }
+  }): Promise<boolean> {
+    return await this.clickLocatorIfReady(locator)
+  }
+
   public async restore() {
     return undefined
   }
@@ -476,6 +486,42 @@ test('ProviderAdapter.stopGeneration is a no-op extension point by default', asy
   const adapter = new PollingAdapter(createProviderContextStub({}))
 
   await adapter.stopGeneration()
+})
+
+test('ProviderAdapter clicks only one visible locator without forcing', async () => {
+  const adapter = new PollingAdapter(createBrowserContextStub())
+  const calls: unknown[] = []
+  const createLocator = (
+    count: number,
+    visible: boolean,
+    click: () => Promise<void> = async () => {
+      calls.push(undefined)
+    }
+  ) => ({
+    count: async () => count,
+    first: () => ({
+      isVisible: async () => visible,
+      click,
+    }),
+  })
+
+  assert.equal(await adapter.clickTestLocator(createLocator(0, true)), false)
+  assert.equal(await adapter.clickTestLocator(createLocator(2, true)), false)
+  assert.equal(await adapter.clickTestLocator(createLocator(1, false)), false)
+  assert.equal(await adapter.clickTestLocator(createLocator(1, true)), true)
+  assert.equal(calls.length, 1)
+
+  const clickArguments: unknown[][] = []
+  assert.equal(
+    await adapter.clickTestLocator(
+      createLocator(1, true, async (...args: unknown[]) => {
+        clickArguments.push(args)
+        throw new Error('click failed')
+      })
+    ),
+    false
+  )
+  assert.deepEqual(clickArguments, [[]])
 })
 
 test('ProviderAdapter captures matching Playwright response bodies for history', async () => {

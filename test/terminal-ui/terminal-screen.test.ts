@@ -248,7 +248,6 @@ test('completeSlashCommand completes unique command and subcommand prefixes', ()
 test('completeThreadProvider completes only unique provider prefixes', () => {
   const providers = [
     'chatgpt',
-    'claude',
     'gemini',
     'deepseek',
     'doubao',
@@ -259,10 +258,6 @@ test('completeThreadProvider completes only unique provider prefixes', () => {
   assert.equal(
     completeThreadProvider('/thread open gem', providers),
     '/thread open gemini '
-  )
-  assert.equal(
-    completeThreadProvider('/thread open cla', providers),
-    '/thread open claude '
   )
   assert.equal(
     completeThreadProvider('/thread open gemini', providers),

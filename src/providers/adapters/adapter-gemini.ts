@@ -738,7 +738,7 @@ export class GeminiAdapter extends ProviderAdapter {
   }
 
   private getMicrophoneButton() {
-    return this.page.locator(GEMINI_MICROPHONE_BUTTON_SELECTOR).first()
+    return this.page.locator(GEMINI_MICROPHONE_BUTTON_SELECTOR)
   }
 
   public override async stopGeneration(): Promise<void> {
@@ -757,11 +757,16 @@ export class GeminiAdapter extends ProviderAdapter {
     timeoutMs: number,
     signal?: AbortSignal
   ): Promise<void> {
-    const microphoneButton = this.getMicrophoneButton()
     await waitAsync(
-      async () =>
-        (await microphoneButton.isVisible().catch(() => false)) &&
-        (await microphoneButton.isEnabled().catch(() => false)),
+      async () => {
+        const microphoneButtons = this.getMicrophoneButton()
+        if ((await microphoneButtons.count().catch(() => 0)) !== 1) return false
+        const microphoneButton = microphoneButtons.first()
+        return (
+          (await microphoneButton.isVisible().catch(() => false)) &&
+          (await microphoneButton.isEnabled().catch(() => false))
+        )
+      },
       {
         timeoutMs,
         signal,
