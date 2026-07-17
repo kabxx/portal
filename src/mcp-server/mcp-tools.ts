@@ -210,13 +210,13 @@ export function createPortalMcpProtocolServer(
   return server
 }
 
-async function runTool<T extends object>(
+async function runTool<T extends Record<string, unknown>>(
   operation: () => Promise<T> | T
 ): Promise<CallToolResult> {
   try {
     const result = await operation()
     return {
-      structuredContent: result as Record<string, unknown>,
+      structuredContent: result,
       content: [{ type: 'text', text: JSON.stringify(result) }],
     }
   } catch (error) {

@@ -68,6 +68,32 @@ test('DeepSeek parser hides thinking fragments and keeps response prefix', () =>
   assert.equal(parsed.text.includes('AI'), false)
 })
 
+test('DeepSeek parser ignores a null SSE payload', () => {
+  const adapter = createPrototypeObject(
+    DeepSeekAdapter.prototype
+  ) as SyncParserHarness
+
+  assert.equal(adapter.parseResponse('data: null'), null)
+})
+
+test('DeepSeek parser ignores null between valid SSE payloads', () => {
+  const raw = [
+    'data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"type":"RESPONSE","content":"hello"}]}}}',
+    'data: null',
+    'data: {"p":"response/status","o":"SET","v":"FINISHED"}',
+  ].join('\n')
+  const adapter = createPrototypeObject(
+    DeepSeekAdapter.prototype
+  ) as SyncParserHarness
+
+  assert.deepEqual(adapter.parseResponse(raw), {
+    messageId: 4,
+    parentId: 3,
+    text: 'hello',
+    isFinished: true,
+  })
+})
+
 test('Doubao parser reads a sanitized SSE sample', () => {
   const raw = [
     'event: STREAM_MSG_NOTIFY\ndata: {"content":{"content_block":[{"content":{"text_block":{"text":"123"}}}]},"meta":{"message_id":"message-1","conversation_id":"conversation-1"}}',

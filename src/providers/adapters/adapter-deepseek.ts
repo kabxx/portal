@@ -48,6 +48,10 @@ type DeepSeekResponseFragment = {
   content: string
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
 function readDeepSeekConversationIdFromUrl(
   value: string | null | undefined
 ): string | undefined {
@@ -769,35 +773,23 @@ export class DeepSeekAdapter extends ProviderAdapter {
         return
       }
       for (const fragment of value) {
-        if (
-          !fragment ||
-          typeof fragment !== 'object' ||
-          Array.isArray(fragment)
-        ) {
+        if (!isRecord(fragment)) {
           continue
         }
-        const fragmentRecord = fragment as Record<string, unknown>
         fragments.push({
-          type:
-            typeof fragmentRecord.type === 'string'
-              ? fragmentRecord.type
-              : null,
-          content:
-            typeof fragmentRecord.content === 'string'
-              ? fragmentRecord.content
-              : '',
+          type: typeof fragment.type === 'string' ? fragment.type : null,
+          content: typeof fragment.content === 'string' ? fragment.content : '',
         })
       }
     }
 
     const applyPatch = (patch: unknown): void => {
-      if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+      if (!isRecord(patch)) {
         return
       }
-      const record = patch as Record<string, unknown>
-      const path = typeof record.p === 'string' ? record.p : ''
-      const op = typeof record.o === 'string' ? record.o : ''
-      const value = record.v
+      const path = typeof patch.p === 'string' ? patch.p : ''
+      const op = typeof patch.o === 'string' ? patch.o : ''
+      const value = patch.v
 
       if (path === 'response/fragments/-1/content') {
         appendTextToLastFragment(value)
@@ -836,26 +828,19 @@ export class DeepSeekAdapter extends ProviderAdapter {
           continue
         }
 
-        const record = parsed as Record<string, unknown>
-        if (
-          record.v &&
-          typeof record.v === 'object' &&
-          !Array.isArray(record.v)
-        ) {
-          const response = (record.v as Record<string, unknown>).response
-          if (
-            response &&
-            typeof response === 'object' &&
-            !Array.isArray(response)
-          ) {
-            const responseRecord = response as Record<string, unknown>
-            if (typeof responseRecord.message_id === 'number') {
-              messageId = responseRecord.message_id
+        if (!isRecord(parsed)) {
+          continue
+        }
+        if (isRecord(parsed.v)) {
+          const response = parsed.v.response
+          if (isRecord(response)) {
+            if (typeof response.message_id === 'number') {
+              messageId = response.message_id
             }
-            if (typeof responseRecord.parent_id === 'number') {
-              parentId = responseRecord.parent_id
+            if (typeof response.parent_id === 'number') {
+              parentId = response.parent_id
             }
-            const fragmentsValue = responseRecord.fragments
+            const fragmentsValue = response.fragments
             if (Array.isArray(fragmentsValue)) {
               appendFragments(fragmentsValue)
             }
@@ -863,13 +848,13 @@ export class DeepSeekAdapter extends ProviderAdapter {
           continue
         }
 
-        if (record.p || record.o) {
-          applyPatch(record)
+        if (parsed.p || parsed.o) {
+          applyPatch(parsed)
           continue
         }
 
-        if (typeof record.v === 'string') {
-          appendTextToLastFragment(record.v)
+        if (typeof parsed.v === 'string') {
+          appendTextToLastFragment(parsed.v)
         }
       }
     }

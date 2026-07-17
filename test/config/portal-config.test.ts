@@ -628,7 +628,7 @@ test('parsePortalConfig rejects invalid browser, MCP, and Skill sections', () =>
     }).browser.remoteDebuggingPort,
     0
   )
-  for (const remoteDebuggingPort of [-1, 65_536, 1.5]) {
+  for (const remoteDebuggingPort of [-1, 65_536, 1.5, null, '9222']) {
     assert.throws(
       () =>
         parsePortalConfig({

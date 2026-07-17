@@ -1090,8 +1090,12 @@ export class TerminalController {
       return summarizeApplyPatch(rawPayload)
     }
     try {
-      const parsed = JSON.parse(rawPayload) as {
-        params?: Record<string, unknown>
+      const parsed: unknown = JSON.parse(rawPayload)
+      if (
+        !isRecord(parsed) ||
+        (parsed.params !== undefined && !isRecord(parsed.params))
+      ) {
+        return [`payload: ${truncatePreview(rawPayload, 600)}`]
       }
       const params = parsed.params ?? {}
       switch (toolName) {
@@ -1361,6 +1365,10 @@ function toLines(body: string | readonly string[]): string[] {
 
 function firstLine(value: string): string {
   return value.split(/\r?\n/)[0] ?? ''
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function displayScalar(value: unknown, fallback: string): string {

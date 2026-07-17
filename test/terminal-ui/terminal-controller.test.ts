@@ -1041,6 +1041,22 @@ test('TerminalController summarizes every remaining tool call without raw envelo
   }
 })
 
+test('TerminalController falls back to the raw payload for invalid tool params', () => {
+  const manager = new ThreadManager()
+  const thread = manager.addThread({
+    id: manager.createThreadId(),
+    provider: 'gemini',
+    runtime: createFakeRuntime(),
+    createdAt: 1,
+  })
+  const ui = new TerminalController()
+  const payload = JSON.stringify({ tool: 'run_command', params: null })
+
+  ui.renderToolCall(thread, 'run_command', payload)
+
+  assert.equal(ui.getState().timeline.at(-1)?.body, `payload: ${payload}`)
+})
+
 test('TerminalController renders error and unknown tool outcomes distinctly', () => {
   const manager = new ThreadManager()
   const thread = manager.addThread({

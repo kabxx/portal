@@ -747,16 +747,12 @@ function timestamp(value: unknown): number | null {
   return null
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null
 }
 
-function isRecord(
-  value: Record<string, unknown> | null
-): value is Record<string, unknown> {
-  return value !== null
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return isRecord(value) ? value : null
 }
 
 function asArray(value: unknown): unknown[] {

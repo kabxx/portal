@@ -100,9 +100,22 @@ import type {
 
 const LOGIN_CHECK_INTERVAL_MS = 1000
 const CLEAR_TERMINAL_ESCAPE = '\u001B[2J\u001B[3J\u001B[H'
-const PORTAL_VERSION = (
-  createRequire(import.meta.url)('../package.json') as { version: string }
-).version
+const PORTAL_VERSION = readPortalVersion()
+
+function readPortalVersion(): string {
+  const packageMetadata: unknown = createRequire(import.meta.url)(
+    '../package.json'
+  )
+  if (
+    typeof packageMetadata !== 'object' ||
+    packageMetadata === null ||
+    !('version' in packageMetadata) ||
+    typeof packageMetadata.version !== 'string'
+  ) {
+    throw new Error('package.json must contain a string version.')
+  }
+  return packageMetadata.version
+}
 
 export async function setApiProviderCapability(
   provider: ProviderId,
@@ -2274,11 +2287,11 @@ export async function run(argv = process.argv): Promise<void> {
         }
       },
       addMcpServer: async (name, config) => {
-        await mcpLibrary.add(name, config as McpServerConfig)
+        await mcpLibrary.add(name, config)
         return { name, added: true }
       },
       setMcpServer: async (name, config) => {
-        await mcpLibrary.set(name, config as McpServerConfig)
+        await mcpLibrary.set(name, config)
         return { name, updated: true }
       },
       removeMcpServer: async (name) => {
@@ -2607,7 +2620,6 @@ export async function run(argv = process.argv): Promise<void> {
     })
 
     const commandContext: CliCommandContext = {
-      readline: {} as CliCommandContext['readline'],
       threadManager,
       threadStore,
       skillLibrary,

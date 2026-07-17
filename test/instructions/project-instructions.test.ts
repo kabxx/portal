@@ -372,6 +372,30 @@ test('activates global path rules for project tool targets', async () => {
   }
 })
 
+test('rejects non-object Claude rule frontmatter', async () => {
+  const root = await createWorkspace()
+  try {
+    await writeText(
+      path.join(root, '.claude', 'rules', 'invalid.md'),
+      ['---', '- "src/**"', '---', 'invalid path rule'].join('\n')
+    )
+
+    const result = await loadProjectInstructions({
+      cwd: root,
+      config: createConfig({ claudeLocal: true, codexLocal: false }),
+    })
+
+    assert.equal(result.instructions.prompt, null)
+    assert.ok(
+      result.warnings.some(({ message }) =>
+        /Claude Code rule frontmatter must be an object/.test(message)
+      )
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('global imports stay inside the configured global directory', async () => {
   const root = await createWorkspace()
   const home = await mkdtemp(

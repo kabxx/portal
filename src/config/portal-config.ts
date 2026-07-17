@@ -393,9 +393,9 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
     )
   }
   if (
-    !Number.isSafeInteger(browser.remoteDebuggingPort) ||
-    (browser.remoteDebuggingPort as number) < 0 ||
-    (browser.remoteDebuggingPort as number) > 65_535
+    !isSafeInteger(browser.remoteDebuggingPort) ||
+    browser.remoteDebuggingPort < 0 ||
+    browser.remoteDebuggingPort > 65_535
   ) {
     throw new PortalConfigError(
       'browser.remoteDebuggingPort must be an integer from 0 to 65535'
@@ -521,7 +521,7 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
       engine: browser.engine,
       executablePath: browser.executablePath,
       profilePath: browser.profilePath,
-      remoteDebuggingPort: browser.remoteDebuggingPort as number,
+      remoteDebuggingPort: browser.remoteDebuggingPort,
     },
     agentInstructions: { claude, codex },
     listeners: {
@@ -782,26 +782,35 @@ async function hasCompleteManagedSections(
 ): Promise<boolean> {
   const contents = await readFile(configPath, 'utf8')
   const document: unknown = parse(contents.replace(/^\uFEFF/, ''))
-  const listeners = isRecord(document) ? document.listeners : undefined
+  if (!isRecord(document)) {
+    return false
+  }
+  const listeners = document.listeners
+  if (!isRecord(listeners)) {
+    return false
+  }
+  const api = listeners.api
+  const mcp = listeners.mcp
+  const hooks = document.hooks
+  const keybindings = document.keybindings
+  const advanced = document.advanced
   if (
-    !isRecord(document) ||
-    !isRecord(listeners) ||
-    !isRecord(listeners.api) ||
-    !isRecord(listeners.mcp) ||
-    !isRecord(document.hooks) ||
-    !isRecord(document.keybindings) ||
-    !isRecord(document.advanced)
+    !isRecord(api) ||
+    !isRecord(mcp) ||
+    !isRecord(hooks) ||
+    !isRecord(keybindings) ||
+    !isRecord(advanced)
   ) {
     return false
   }
   const apiComplete = ['host', 'port', 'token'].every((field) =>
-    Object.hasOwn(listeners.api as Record<string, unknown>, field)
+    Object.hasOwn(api, field)
   )
   const mcpServerComplete = ['host', 'port', 'token'].every((field) =>
-    Object.hasOwn(listeners.mcp as Record<string, unknown>, field)
+    Object.hasOwn(mcp, field)
   )
   const keybindingsComplete = KEYBINDING_ACTIONS.every((action) =>
-    Object.hasOwn(document.keybindings as Record<string, unknown>, action)
+    Object.hasOwn(keybindings, action)
   )
   const advancedSections: Array<
     readonly [name: string, fields: ReadonlySet<string>]
@@ -816,7 +825,7 @@ async function hasCompleteManagedSections(
     ['hooks', ADVANCED_HOOKS_FIELDS],
   ]
   const advancedComplete = advancedSections.every(([name, fields]) => {
-    const section = (document.advanced as Record<string, unknown>)[name]
+    const section = advanced[name]
     return (
       isRecord(section) &&
       [...fields].every((field) => Object.hasOwn(section, field))
@@ -1457,10 +1466,10 @@ function parsePositiveInteger(
   label: string
 ): number {
   const parsed = value === undefined ? fallback : value
-  if (!Number.isSafeInteger(parsed) || (parsed as number) <= 0) {
+  if (!isSafeInteger(parsed) || parsed <= 0) {
     throw new PortalConfigError(`${label} must be a positive integer`)
   }
-  return parsed as number
+  return parsed
 }
 
 function parseNonNegativeInteger(
@@ -1469,10 +1478,10 @@ function parseNonNegativeInteger(
   label: string
 ): number {
   const parsed = value === undefined ? fallback : value
-  if (!Number.isSafeInteger(parsed) || (parsed as number) < 0) {
+  if (!isSafeInteger(parsed) || parsed < 0) {
     throw new PortalConfigError(`${label} must be a non-negative integer`)
   }
-  return parsed as number
+  return parsed
 }
 
 function parsePositiveNumber(
@@ -1518,4 +1527,8 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value)
 }

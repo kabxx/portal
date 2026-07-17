@@ -22,10 +22,6 @@ interface ToolMetadata {
   examples?: ToolMetadataExample[]
 }
 
-interface ToolMetadataCarrier {
-  [TOOL_METADATA_SYMBOL]?: ToolMetadata
-}
-
 type ToolOutcome = 'success' | 'error' | 'unknown'
 
 interface ToolOutput {
@@ -90,9 +86,40 @@ type SpawnTaskResult =
 
 function defineToolMetadata(metadata: ToolMetadata) {
   return function (target: object) {
-    const carrier = target as ToolMetadataCarrier
-    carrier[TOOL_METADATA_SYMBOL] = metadata
+    Object.defineProperty(target, TOOL_METADATA_SYMBOL, {
+      configurable: true,
+      enumerable: true,
+      value: metadata,
+      writable: true,
+    })
   }
+}
+
+function isToolMetadata(value: unknown): value is ToolMetadata {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false
+  }
+  if (
+    !('name' in value) ||
+    typeof value.name !== 'string' ||
+    !('description' in value) ||
+    typeof value.description !== 'string'
+  ) {
+    return false
+  }
+  if (
+    'inputFormat' in value &&
+    value.inputFormat !== undefined &&
+    value.inputFormat !== 'json' &&
+    value.inputFormat !== 'freeform'
+  ) {
+    return false
+  }
+  return !(
+    'examples' in value &&
+    value.examples !== undefined &&
+    !Array.isArray(value.examples)
+  )
 }
 
 abstract class Tool<TInput = unknown, TOutput extends ToolOutput = ToolOutput> {
@@ -104,9 +131,11 @@ abstract class Tool<TInput = unknown, TOutput extends ToolOutput = ToolOutput> {
   abstract call(input: TInput, options?: ToolExecutionOptions): Promise<TOutput>
 
   public get metadata(): ToolMetadata {
-    const carrier = this.constructor as unknown as ToolMetadataCarrier
-    const metadata = carrier[TOOL_METADATA_SYMBOL]
-    if (!metadata) {
+    const metadata: unknown = Reflect.get(
+      this.constructor,
+      TOOL_METADATA_SYMBOL
+    )
+    if (!isToolMetadata(metadata)) {
       throw new Error(`Missing @defineToolMetadata on ${this.constructor.name}`)
     }
     return metadata

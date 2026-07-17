@@ -1,4 +1,4 @@
-export interface PortalMcpThreadSummary {
+export type PortalMcpThreadSummary = {
   id: string
   provider: string
   title: string | null
@@ -15,7 +15,7 @@ export type PortalMcpMessageStatus =
   | 'failed'
   | 'cancelled'
 
-export interface PortalMcpMessageOperation {
+export type PortalMcpMessageOperation = {
   operationId: string
   threadId: string
   status: PortalMcpMessageStatus

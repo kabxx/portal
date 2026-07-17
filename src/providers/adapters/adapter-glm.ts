@@ -60,6 +60,10 @@ interface GlmAdvancedSearchSnapshot {
   state: GlmToggleState
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
 function readGlmConversationIdFromUrl(
   value: string | null | undefined
 ): string | undefined {
@@ -128,10 +132,15 @@ export class GlmAdapter extends ProviderAdapter {
       const button = await this.findAdvancedSearchSwitch()
       if (button !== null) {
         const snapshot = await button
-          .evaluate((element) => ({
-            enabled: !(element as HTMLButtonElement).disabled,
-            checked: element.getAttribute('aria-checked') === 'true',
-          }))
+          .evaluate((element) => {
+            if (!(element instanceof HTMLButtonElement)) {
+              throw new TypeError('Expected an advanced search button.')
+            }
+            return {
+              enabled: !element.disabled,
+              checked: element.getAttribute('aria-checked') === 'true',
+            }
+          })
           .catch(() => null)
         if (snapshot !== null) {
           return {
@@ -153,16 +162,16 @@ export class GlmAdapter extends ProviderAdapter {
       if (button !== null) {
         const result = await button
           .evaluate((element, target) => {
-            const targetButton = element as HTMLButtonElement
-            if (targetButton.disabled) {
+            if (!(element instanceof HTMLButtonElement)) {
+              throw new TypeError('Expected an advanced search button.')
+            }
+            if (element.disabled) {
               return { enabled: false }
             }
             const currentState =
-              targetButton.getAttribute('aria-checked') === 'true'
-                ? 'on'
-                : 'off'
+              element.getAttribute('aria-checked') === 'true' ? 'on' : 'off'
             if (currentState !== target) {
-              targetButton.click()
+              element.click()
             }
             return { enabled: true }
           }, targetState)
@@ -952,26 +961,21 @@ export class GlmAdapter extends ProviderAdapter {
       } catch {
         continue
       }
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      if (!isRecord(parsed)) {
         continue
       }
-      const record = parsed as Record<string, unknown>
-      if (record.data === '[DONE]') {
+      if (parsed.data === '[DONE]') {
         isFinished = true
         continue
       }
-      if (record.type !== 'chat:completion') {
+      if (parsed.type !== 'chat:completion') {
         continue
       }
-      if (
-        !record.data ||
-        typeof record.data !== 'object' ||
-        Array.isArray(record.data)
-      ) {
+      if (!isRecord(parsed.data)) {
         continue
       }
 
-      const data = record.data as Record<string, unknown>
+      const data = parsed.data
       const phase = typeof data.phase === 'string' ? data.phase : null
       if (phase === 'answer' && typeof data.delta_content === 'string') {
         text += data.delta_content
@@ -983,17 +987,12 @@ export class GlmAdapter extends ProviderAdapter {
         text += data.content
       }
 
-      if (
-        data.error &&
-        typeof data.error === 'object' &&
-        !Array.isArray(data.error)
-      ) {
-        const errorRecord = data.error as Record<string, unknown>
+      if (isRecord(data.error)) {
         streamError = {
           code:
-            typeof errorRecord.code === 'string' ? errorRecord.code : 'UNKNOWN',
+            typeof data.error.code === 'string' ? data.error.code : 'UNKNOWN',
           detail:
-            typeof errorRecord.detail === 'string' ? errorRecord.detail : null,
+            typeof data.error.detail === 'string' ? data.error.detail : null,
         }
       }
       if (phase === 'done' || data.done === true) {

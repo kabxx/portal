@@ -78,8 +78,11 @@ export class ThreadStore {
 
   public async getById(id: number): Promise<ThreadHistoryEntry | null> {
     const row = this.database
-      .prepare('SELECT * FROM thread_history WHERE id = ?')
-      .get(id) as ThreadHistoryRow | undefined
+      .prepare<
+        [number],
+        ThreadHistoryRow
+      >('SELECT * FROM thread_history WHERE id = ?')
+      .get(id)
 
     return row === undefined ? null : mapRow(row)
   }
@@ -89,14 +92,11 @@ export class ThreadStore {
   ): Promise<ThreadHistoryEntry[]> {
     const safeLimit = normalizeLimit(limit)
     const rows = this.database
-      .prepare(
-        [
-          'SELECT * FROM thread_history',
-          'ORDER BY last_used_at DESC, id DESC',
-          'LIMIT ?',
-        ].join(' ')
-      )
-      .all(safeLimit) as ThreadHistoryRow[]
+      .prepare<
+        [number],
+        ThreadHistoryRow
+      >(['SELECT * FROM thread_history', 'ORDER BY last_used_at DESC, id DESC', 'LIMIT ?'].join(' '))
+      .all(safeLimit)
 
     return rows.map(mapRow)
   }
@@ -136,8 +136,14 @@ export class ThreadStore {
         })
 
       const row = this.database
-        .prepare('SELECT * FROM thread_history WHERE conversation_url = ?')
-        .get(input.conversationUrl) as ThreadHistoryRow
+        .prepare<
+          [string],
+          ThreadHistoryRow
+        >('SELECT * FROM thread_history WHERE conversation_url = ?')
+        .get(input.conversationUrl)
+      if (row === undefined) {
+        throw new Error('Thread history upsert did not return a row.')
+      }
       return mapRow(row)
     })
 

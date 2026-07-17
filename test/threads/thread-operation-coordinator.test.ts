@@ -136,6 +136,7 @@ test('coordinator close blocks new work, waits for cancellation, then closes', a
         reason: 'closing',
       }
     )
+    return true
   })
 
   assert.deepEqual(events, ['settled', 'closed'])
@@ -150,11 +151,11 @@ test('coordinator reuses an in-flight close for the same thread', async () => {
   const first = coordinator.close('a', async () => {
     closeCalls += 1
     await closeDone.promise
-    return 'closed'
+    return true
   })
   const second = coordinator.close('a', async () => {
     closeCalls += 1
-    return 'duplicate'
+    return false
   })
 
   await new Promise<void>((resolve) => setImmediate(resolve))
@@ -168,9 +169,18 @@ test('coordinator reuses an in-flight close for the same thread', async () => {
   )
 
   closeDone.resolve()
-  assert.equal(await first, 'closed')
-  assert.equal(await second, 'closed')
+  assert.equal(await first, true)
+  assert.equal(await second, true)
   assert.equal(closeCalls, 1)
+})
+
+test('coordinator close accepts only the shared boolean domain result', () => {
+  const coordinator = new ThreadOperationCoordinator()
+  const invalidClose = () =>
+    // @ts-expect-error close results are shared, so callers cannot choose T.
+    coordinator.close('a', async () => 'closed')
+
+  assert.equal(typeof invalidClose, 'function')
 })
 
 test('coordinator shares cancellation and keeps closing as the strongest phase', async () => {

@@ -99,6 +99,81 @@ test('parseHooksConfig rejects duplicate names and spawn in agent hooks', () => 
   )
 })
 
+test('parseHooksConfig rejects invalid integer and enum fields', () => {
+  for (const maxDepth of ['1', -1, 9, 1.5]) {
+    assert.throws(
+      () => parseHooksConfig({ maxDepth }),
+      /hooks\.maxDepth must be an integer from 0 to 8/
+    )
+  }
+
+  for (const timeoutMs of ['5000', 0, 300_001, 1.5]) {
+    assert.throws(
+      () =>
+        parseHooksConfig({
+          handlers: [
+            {
+              name: 'prompt',
+              type: 'prompt',
+              events: ['turn.started'],
+              prompt: 'check',
+              timeoutMs,
+            },
+          ],
+        }),
+      /timeoutMs must be an integer from 1 to 300000/
+    )
+  }
+
+  for (const maxTurns of ['8', 0, 33, 1.5]) {
+    assert.throws(
+      () =>
+        parseHooksConfig({
+          handlers: [
+            {
+              name: 'agent',
+              type: 'agent',
+              events: ['tool.before'],
+              prompt: 'check',
+              maxTurns,
+            },
+          ],
+        }),
+      /maxTurns must be an integer from 1 to 32/
+    )
+  }
+
+  assert.throws(
+    () =>
+      parseHooksConfig({
+        handlers: [
+          {
+            name: 'event',
+            type: 'prompt',
+            events: ['turn.unknown'],
+            prompt: 'check',
+          },
+        ],
+      }),
+    /not a supported hook event/
+  )
+  assert.throws(
+    () =>
+      parseHooksConfig({
+        handlers: [
+          {
+            name: 'provider',
+            type: 'prompt',
+            events: ['turn.started'],
+            provider: 'unknown',
+            prompt: 'check',
+          },
+        ],
+      }),
+    /not a supported provider/
+  )
+})
+
 test('createHookSnapshot deeply freezes a detached revision', () => {
   const config = parseHooksConfig({
     enabled: true,

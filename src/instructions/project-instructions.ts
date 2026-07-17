@@ -774,11 +774,7 @@ function parseRuleMetadata(
     )
     return { body: content, patterns: null, invalid: true }
   }
-  if (
-    metadata === null ||
-    typeof metadata !== 'object' ||
-    Array.isArray(metadata)
-  ) {
+  if (!isRecord(metadata)) {
     addWarning(
       context,
       sourcePath,
@@ -786,8 +782,7 @@ function parseRuleMetadata(
     )
     return { body: content, patterns: null, invalid: true }
   }
-  const record = metadata as Record<string, unknown>
-  const rawPatterns = record.paths ?? record.globs
+  const rawPatterns = metadata.paths ?? metadata.globs
   if (rawPatterns === undefined) {
     return {
       body: content.slice(match[0].length),

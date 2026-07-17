@@ -142,9 +142,12 @@ export async function connectMcpServer(
       }
     )
     const transport = createTransport(config)
+    if (!isTransport(transport)) {
+      throw new Error('MCP SDK returned an invalid client transport.')
+    }
     const connection = new SdkMcpConnection(name, client, config, redactions)
     refreshTools = async () => await connection.refreshTools()
-    await client.connect(transport as Transport, {
+    await client.connect(transport, {
       ...(options.signal !== undefined ? { signal: options.signal } : {}),
       timeout: config.connectTimeoutMs ?? DEFAULT_MCP_CONNECT_TIMEOUT_MS,
     })
@@ -154,6 +157,19 @@ export async function connectMcpServer(
     await client?.close().catch(() => {})
     throw new McpConnectionError(redactMcpError(error, redactions))
   }
+}
+
+function isTransport(value: unknown): value is Transport {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'start' in value &&
+    typeof value.start === 'function' &&
+    'send' in value &&
+    typeof value.send === 'function' &&
+    'close' in value &&
+    typeof value.close === 'function'
+  )
 }
 
 class SdkMcpConnection implements McpConnection {
