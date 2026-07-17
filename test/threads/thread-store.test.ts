@@ -76,7 +76,7 @@ test('ThreadStore stores entries with stable ids and lists by last use', async (
   store.close()
 })
 
-test('ThreadStore upserts by URL and preserves an existing title', async () => {
+test('ThreadStore upserts by URL without consuming ids or replacing titles', async () => {
   const store = await createStore()
 
   await store.append({
@@ -93,13 +93,32 @@ test('ThreadStore upserts by URL and preserves an existing title', async () => {
     createdAt: '2026-07-08T01:00:00.000Z',
     lastUsedAt: '2026-07-08T01:00:00.000Z',
   })
+  await store.append({
+    provider: 'gemini',
+    conversationUrl: 'https://gemini.google.com/app/def',
+    title: 'second title',
+    createdAt: '2026-07-09T01:00:00.000Z',
+    lastUsedAt: '2026-07-09T01:00:00.000Z',
+  })
+  await store.append({
+    provider: 'gemini',
+    conversationUrl: 'https://gemini.google.com/app/def',
+    title: 'replacement title',
+    createdAt: '2026-07-10T01:00:00.000Z',
+    lastUsedAt: '2026-07-10T01:00:00.000Z',
+  })
 
   const entries = await store.list()
-  assert.equal(entries.length, 1)
-  assert.equal(entries[0]?.id, 1)
-  assert.equal(entries[0]?.title, 'first title')
-  assert.equal(entries[0]?.createdAt, '2026-07-07T01:00:00.000Z')
-  assert.equal(entries[0]?.lastUsedAt, '2026-07-08T01:00:00.000Z')
+  assert.equal(entries.length, 2)
+  assert.equal((await store.getById(1))?.title, 'first title')
+  assert.equal((await store.getById(1))?.createdAt, '2026-07-07T01:00:00.000Z')
+  assert.equal((await store.getById(1))?.lastUsedAt, '2026-07-08T01:00:00.000Z')
+  assert.equal(
+    (await store.getById(2))?.conversationUrl,
+    'https://gemini.google.com/app/def'
+  )
+  assert.equal((await store.getById(2))?.title, 'second title')
+  assert.equal((await store.getById(2))?.lastUsedAt, '2026-07-10T01:00:00.000Z')
   store.close()
 })
 
