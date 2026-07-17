@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   ThreadAlreadyRunningError,
+  ThreadCloseCleanupError,
   ThreadManager,
 } from '../../src/threads/thread-manager.ts'
 import { PortalAbortError } from '../../src/runtime/runtime-cancellation.ts'
@@ -336,4 +337,90 @@ test('ThreadManager rejects concurrent turns in the same thread', async () => {
   release()
   await first
   assert.equal(manager.isThreadRunning(thread.id), false)
+})
+
+test('ThreadManager forwards unexpected page close and unsubscribes before close', async () => {
+  let emitPageClose = () => {}
+  const manager = new ThreadManager()
+  const observed: string[] = []
+  manager.onThreadPageClosed(() => {
+    throw new Error('listener failed')
+  })
+  manager.onThreadPageClosed((threadId) => {
+    observed.push(threadId)
+  })
+  const thread = manager.addThread({
+    id: 't-page-close',
+    provider: 'chatgpt',
+    runtime: createFakeRuntime({
+      onUnexpectedPageClose: (listener) => {
+        emitPageClose = listener
+        return () => {
+          emitPageClose = () => {}
+        }
+      },
+      close: async () => {
+        emitPageClose()
+      },
+    }),
+    createdAt: 1,
+  })
+
+  emitPageClose()
+  assert.deepEqual(observed, [thread.id])
+  observed.length = 0
+
+  await manager.closeThread(thread.id)
+  assert.deepEqual(observed, [])
+})
+
+test('ThreadManager deduplicates concurrent closes', async () => {
+  let releaseClose!: () => void
+  const closeBlocked = new Promise<void>((resolve) => {
+    releaseClose = resolve
+  })
+  let closeCalls = 0
+  const manager = new ThreadManager()
+  const thread = manager.addThread({
+    id: 't-concurrent-close',
+    provider: 'chatgpt',
+    runtime: createFakeRuntime({
+      close: async () => {
+        closeCalls += 1
+        await closeBlocked
+      },
+    }),
+    createdAt: 1,
+  })
+
+  const first = manager.closeThread(thread.id)
+  const second = manager.closeThread(thread.id)
+  releaseClose()
+
+  assert.deepEqual(await Promise.all([first, second]), [true, true])
+  assert.equal(closeCalls, 1)
+  assert.equal(manager.getThread(thread.id), null)
+})
+
+test('ThreadManager removes a closed thread when runtime cleanup fails', async () => {
+  const manager = new ThreadManager()
+  const thread = manager.addThread({
+    id: 't-close-failure',
+    provider: 'chatgpt',
+    runtime: createFakeRuntime({
+      close: async () => {
+        throw new Error('cleanup failed')
+      },
+    }),
+    createdAt: 1,
+  })
+
+  await assert.rejects(manager.closeThread(thread.id), (error: unknown) => {
+    assert.ok(error instanceof ThreadCloseCleanupError)
+    assert.equal(error.threadId, thread.id)
+    assert.equal(error.cleanupErrors.length, 1)
+    assert.match(String(error.cleanupErrors[0]), /cleanup failed/)
+    return true
+  })
+  assert.equal(manager.getThread(thread.id), null)
 })
