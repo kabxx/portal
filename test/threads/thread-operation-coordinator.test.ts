@@ -234,6 +234,7 @@ test('coordinator bounds cancellation waits without releasing a stuck operation'
 
   assert.equal(stopCalls, 1)
   assert.equal(coordinator.get('a')?.phase, 'cancelling')
+  assert.equal(await coordinator.waitForIdle('a'), false)
   assert.deepEqual(
     coordinator.tryStart('a', null, async () => {}),
     {
@@ -241,6 +242,35 @@ test('coordinator bounds cancellation waits without releasing a stuck operation'
       reason: 'running',
     }
   )
+})
+
+test('coordinator abandons a stuck operation but exposes late runner settlement', async () => {
+  const coordinator = new ThreadOperationCoordinator(5)
+  const stopNever = new Promise<void>(() => {})
+  const runnerDone = deferred()
+  const operation = coordinator.tryStart(
+    'a',
+    {
+      stopGeneration: async () => await stopNever,
+    },
+    async () => await runnerDone.promise
+  )
+  assert.equal(operation.accepted, true)
+
+  await coordinator.cancel('a')
+  const lateSettlement = coordinator.abandon('a')
+
+  assert.ok(lateSettlement)
+  assert.equal(coordinator.get('a'), null)
+  assert.deepEqual(coordinator.list(), [])
+  assert.equal(coordinator.abandon('missing'), null)
+
+  runnerDone.resolve()
+  await lateSettlement
+  if (operation.accepted) {
+    await operation.operation.done
+  }
+  assert.equal(coordinator.get('a'), null)
 })
 
 test('coordinator does not close a thread when cancellation times out', async () => {
@@ -288,8 +318,16 @@ test('coordinator does not close a thread when cancellation times out', async ()
     }
   )
 
+  let idle = false
+  const idlePromise = coordinator.waitForIdle('a').then((settled) => {
+    idle = true
+    return settled
+  })
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(idle, false)
+
   stopDone.resolve()
-  await coordinator.cancel('a')
+  assert.equal(await idlePromise, true)
   assert.equal(coordinator.get('a'), null)
   assert.equal(
     await coordinator.close('a', async () => {
