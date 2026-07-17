@@ -21,6 +21,7 @@ import { DeepSeekAdapter } from './providers/adapters/adapter-deepseek.ts'
 import { DoubaoAdapter } from './providers/adapters/adapter-doubao.ts'
 import { GrokAdapter } from './providers/adapters/adapter-grok.ts'
 import { GlmAdapter } from './providers/adapters/adapter-glm.ts'
+import { KimiAdapter } from './providers/adapters/adapter-kimi.ts'
 import {
   buildRuntimeRecoveryPlan,
   tryRestoreRuntimeForRecovery,
@@ -365,6 +366,7 @@ const PROVIDERS: ProviderId[] = [
   'doubao',
   'grok',
   'glm',
+  'kimi',
 ]
 const SHUTDOWN_CLOSE_TIMEOUT_MS = 3000
 
@@ -494,6 +496,7 @@ function normalizeProviderId(value: string): ProviderId | null {
     doubao: 'doubao',
     grok: 'grok',
     glm: 'glm',
+    kimi: 'kimi',
   }
 
   return aliases[normalized] ?? null
@@ -754,6 +757,8 @@ async function createAdapterForProvider(
       return await GrokAdapter.create(context, options)
     case 'glm':
       return await GlmAdapter.create(context, options)
+    case 'kimi':
+      return await KimiAdapter.create(context, options)
   }
 }
 
