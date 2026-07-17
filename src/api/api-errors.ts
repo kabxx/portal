@@ -1,4 +1,5 @@
 import { McpConfigError } from '../mcp/mcp-config.ts'
+import { ThreadCloseCleanupError } from '../threads/thread-manager.ts'
 export { parseBearerToken } from '../shared/http-auth.ts'
 
 export class ApiHttpError extends Error {
@@ -46,6 +47,14 @@ export function mapApiError(error: unknown): ApiErrorDescriptor {
     return {
       statusCode: 500,
       code: 'MCP_CONFIG_INVALID',
+      message: 'Internal server error.',
+    }
+  }
+
+  if (error instanceof ThreadCloseCleanupError) {
+    return {
+      statusCode: 500,
+      code: 'THREAD_CLOSED_WITH_CLEANUP_ERRORS',
       message: 'Internal server error.',
     }
   }

@@ -11,6 +11,7 @@ import {
   McpDuplicateNameError,
   McpStoredConfigError,
 } from '../../src/mcp/mcp-config.ts'
+import { ThreadCloseCleanupError } from '../../src/threads/thread-manager.ts'
 
 test('mapApiError preserves API errors and hides server messages', () => {
   assert.deepEqual(
@@ -63,6 +64,19 @@ test('mapApiError maps MCP and Fastify boundary errors', () => {
     code: 'REQUEST_TOO_LARGE',
     message: 'Request body is too large.',
   })
+})
+
+test('mapApiError reports that a thread closed despite cleanup errors', () => {
+  assert.deepEqual(
+    mapApiError(
+      new ThreadCloseCleanupError('t-1', [new Error('private detail')])
+    ),
+    {
+      statusCode: 500,
+      code: 'THREAD_CLOSED_WITH_CLEANUP_ERRORS',
+      message: 'Internal server error.',
+    }
+  )
 })
 
 test('parseBearerToken ignores scheme case but preserves credentials', () => {

@@ -156,6 +156,10 @@ export class RuntimeCore {
     return this.mcpSession
   }
 
+  public onUnexpectedPageClose(listener: () => void): () => void {
+    return this.agentAdapter.onUnexpectedPageClose(listener)
+  }
+
   private async retryAsync<T>(
     fn: () => Promise<T>,
     options: AbortOptions = {}
