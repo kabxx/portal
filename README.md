@@ -49,7 +49,7 @@ See [Architecture](docs/architecture.md) for the runtime, thread, resume, and sh
 | Grok     | Yes       | Yes               | Yes               | Yes             | None currently exposed            |
 | GLM      | Yes       | Yes               | Yes               | Yes             | Thinking, search, advanced search |
 | Qwen     | Yes       | Yes               | Yes               | Yes             | Dynamic page actions              |
-| Kimi     | Yes       | Yes               | Yes               | Yes             | None currently exposed            |
+| Kimi     | Yes       | Yes               | Yes               | Yes             | Search                            |
 
 Support means that an adapter exists in this repository. Actual availability depends on the account, region, subscription, provider experiment, and current page structure. Model numbers and page actions are based on the menus visible to the current account.
 

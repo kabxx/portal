@@ -114,26 +114,38 @@ export class ThreadStore {
         ? null
         : normalizeTitle(input.title)
 
+    const values = {
+      provider: input.provider,
+      conversationUrl: input.conversationUrl,
+      title,
+      createdAt,
+      lastUsedAt,
+    }
+
     const transaction = this.database.transaction(() => {
-      this.database
+      const update = this.database
         .prepare(
           [
-            'INSERT INTO thread_history',
-            '(provider, conversation_url, title, created_at, last_used_at)',
-            'VALUES (@provider, @conversationUrl, @title, @createdAt, @lastUsedAt)',
-            'ON CONFLICT(conversation_url) DO UPDATE SET',
-            'provider = excluded.provider,',
-            'title = COALESCE(thread_history.title, excluded.title),',
-            'last_used_at = excluded.last_used_at',
+            'UPDATE thread_history',
+            'SET provider = @provider,',
+            'title = COALESCE(title, @title),',
+            'last_used_at = @lastUsedAt',
+            'WHERE conversation_url = @conversationUrl',
           ].join(' ')
         )
-        .run({
-          provider: input.provider,
-          conversationUrl: input.conversationUrl,
-          title,
-          createdAt,
-          lastUsedAt,
-        })
+        .run(values)
+
+      if (update.changes === 0) {
+        this.database
+          .prepare(
+            [
+              'INSERT INTO thread_history',
+              '(provider, conversation_url, title, created_at, last_used_at)',
+              'VALUES (@provider, @conversationUrl, @title, @createdAt, @lastUsedAt)',
+            ].join(' ')
+          )
+          .run(values)
+      }
 
       const row = this.database
         .prepare<

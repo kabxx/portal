@@ -336,6 +336,73 @@ test('ThreadCommand capability lists and executes GLM toggle capabilities', asyn
   })
 })
 
+test('ThreadCommand capability lists and executes Kimi search', async () => {
+  let state: ToggleState = 'off'
+  const setCalls: ToggleState[] = []
+  const adapter: CapabilityAdapterOverrides = {
+    hasToggleCapability: async (name) => name === 'search',
+    getToggleState: async () => state,
+    setToggleState: async (_name, target) => {
+      setCalls.push(target)
+      state = target
+      return state
+    },
+  }
+  const { context, threadManager, ui } = createCommandContext()
+  threadManager.addThread({
+    id: threadManager.createThreadId(),
+    provider: 'kimi',
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
+    createdAt: 1,
+  })
+
+  await executeCapability(context, [])
+  assert.deepEqual(latestTimelineEntry(ui), {
+    tone: 'info',
+    label: '/thread capability',
+    body: [
+      'Provider: kimi',
+      '',
+      'Capabilities:',
+      '  search  off',
+      '',
+      'Usage:',
+      '  /thread capability <capability> <on|off|status>',
+    ].join('\n'),
+    format: 'plain',
+  })
+
+  await executeCapability(context, ['search', 'status'])
+  assert.equal(latestTimelineEntry(ui)?.body, 'kimi.search: off')
+  await executeCapability(context, ['search', 'on'])
+  await executeCapability(context, ['search', 'off'])
+  assert.deepEqual(setCalls, ['on', 'off'])
+  assert.equal(latestTimelineEntry(ui)?.body, 'kimi.search: off')
+})
+
+test('ThreadCommand capability hides unavailable Kimi search', async () => {
+  const adapter: CapabilityAdapterOverrides = {
+    hasToggleCapability: async () => false,
+    getToggleState: async () => 'off',
+    setToggleState: async (_name, target) => target,
+  }
+  const { context, threadManager, ui } = createCommandContext()
+  threadManager.addThread({
+    id: threadManager.createThreadId(),
+    provider: 'kimi',
+    runtime: createFakeRuntime({ adapter: createCapabilityAdapter(adapter) }),
+    createdAt: 1,
+  })
+
+  await executeCapability(context, [])
+  assert.deepEqual(latestTimelineEntry(ui), {
+    tone: 'warning',
+    label: '/thread capability',
+    body: 'No capabilities available for kimi.',
+    format: 'plain',
+  })
+})
+
 test('ThreadCommand capability hides unavailable DeepSeek search capability', async () => {
   const { context, threadManager, ui } = createCommandContext()
   const adapter: CapabilityAdapterOverrides = {

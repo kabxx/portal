@@ -84,7 +84,13 @@ const PROVIDER_CAPABILITIES: Record<ProviderId, readonly ProviderCapability[]> =
       },
     ],
     qwen: [],
-    kimi: [],
+    kimi: [
+      {
+        name: 'search',
+        description: 'Web search mode.',
+        kind: 'toggle',
+      },
+    ],
   }
 
 export async function executeThreadCapability(
@@ -448,8 +454,8 @@ function isToggleCapability(value: string): value is ToggleCapability {
 
 export function isToggleCapabilityProvider(
   provider: ProviderId
-): provider is 'deepseek' | 'glm' {
-  return provider === 'deepseek' || provider === 'glm'
+): provider is 'deepseek' | 'glm' | 'kimi' {
+  return provider === 'deepseek' || provider === 'glm' || provider === 'kimi'
 }
 
 function isActionCapabilityAdapter(adapter: unknown): adapter is {
