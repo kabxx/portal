@@ -106,9 +106,11 @@ Adapters use different provider completion signals:
 | Grok     | WebSocket chunks ending in `response.done`                     |
 | GLM      | Completion stream events with answer/reasoning separation      |
 | Qwen     | SSE from `POST /api/v2/chat/completions`                       |
-| Kimi     | Connect JSON patches ending in `MESSAGE_STATUS_COMPLETED`      |
+| Kimi     | Message completion, root `done: {}`, or verified clean EOF     |
 
 Every adapter separately verifies composer readiness after completion. Submit polling can emit status warnings when a provider request has not started, and adapter errors are classified for bounded retry, page restore, login wait, or terminal failure.
+
+Kimi's clean-EOF fallback requires an owned HTTP 200 response with no stream error, a ready Composer with no stop control, and a new non-empty assistant response.
 
 Grok treats the unique visible Voice Mode control in its Composer as the Ready signal. An editable Grok input alone is not sufficient because it can appear before the rest of the query controls have finished loading.
 
