@@ -56,8 +56,8 @@ const QWEN_MODEL_OPTION_SELECTOR = '[role="option"]'
 
 export type QwenActionCapability =
   | 'deep_research'
-  | 't2i'
-  | 't2v'
+  | 'image_generation'
+  | 'video_generation'
   | 'web_dev'
   | 'slides'
   | 'search'
@@ -79,8 +79,8 @@ export interface QwenActionCapabilityInfo {
 
 const QWEN_ACTION_CAPABILITIES: readonly QwenActionCapability[] = [
   'deep_research',
-  't2i',
-  't2v',
+  'image_generation',
+  'video_generation',
   'web_dev',
   'slides',
   'search',
@@ -88,6 +88,17 @@ const QWEN_ACTION_CAPABILITIES: readonly QwenActionCapability[] = [
   'learn',
   'travel',
 ]
+const QWEN_ACTION_CAPABILITY_MENU_IDS: Record<QwenActionCapability, string> = {
+  deep_research: 'deep_research',
+  image_generation: 't2i',
+  video_generation: 't2v',
+  web_dev: 'web_dev',
+  slides: 'slides',
+  search: 'search',
+  artifacts: 'artifacts',
+  learn: 'learn',
+  travel: 'travel',
+}
 const QWEN_NESTED_ACTION_CAPABILITIES: readonly QwenActionCapability[] = [
   'search',
   'artifacts',
@@ -764,10 +775,9 @@ export class QwenAdapter extends ProviderAdapter {
   ) {
     const isNested = QWEN_NESTED_ACTION_CAPABILITIES.includes(capability)
     const scope = isNested && nestedMenu !== null ? nestedMenu : rootMenu
+    const menuId = QWEN_ACTION_CAPABILITY_MENU_IDS[capability]
     return scope
-      .locator(
-        `${QWEN_MODE_MENU_ITEM_SELECTOR}[data-menu-id$="-${capability}"]`
-      )
+      .locator(`${QWEN_MODE_MENU_ITEM_SELECTOR}[data-menu-id$="-${menuId}"]`)
       .filter({ visible: true })
   }
 
