@@ -10,6 +10,7 @@ import type {
 import {
   extractToolCall,
   parseToolCallPayload,
+  projectStreamingAssistantText,
 } from '../tools/core/tool-registry.ts'
 import { getDefaultShell } from '../platform/platform-defaults.ts'
 
@@ -568,7 +569,14 @@ export class TerminalController {
 
   public renderAssistantStream(thread: ThreadHandle, message: string) {
     const view = this.getThreadTimelineView(thread.id)
-    const displayMessage = escapeToolTagsForMarkdown(message)
+    const displayMessage = projectStreamingAssistantText(message)
+    if (!displayMessage) {
+      if (view.liveAssistant !== null) {
+        this.discardLiveAssistant(view)
+        this.emitView(view)
+      }
+      return
+    }
     const existing =
       view.liveAssistant?.label ===
       `assistant ${this.formatThreadTarget(thread)}`

@@ -28,6 +28,8 @@ export interface ToolResult {
   displayText?: string
 }
 
+const TOOL_TAG_PREFIX = '<tool'
+
 export type PreparedToolCall =
   | {
       ok: true
@@ -50,6 +52,76 @@ export function extractToolCall(response: string): ExtractedToolCall | null {
     rawPayload: match[4] ?? '',
     trailingText: match[5] ?? '',
   }
+}
+
+export function projectStreamingAssistantText(response: string): string {
+  const extracted = extractToolCall(response)
+  if (extracted !== null) {
+    return extracted.leadingText.trim()
+  }
+
+  const normalized = maskMarkdownCode(response).toLowerCase()
+  let searchFrom = 0
+
+  while (searchFrom < normalized.length) {
+    const toolStart = normalized.indexOf(TOOL_TAG_PREFIX, searchFrom)
+    if (toolStart === -1) {
+      break
+    }
+
+    const nextCharacter = normalized[toolStart + TOOL_TAG_PREFIX.length]
+    if (
+      nextCharacter === undefined ||
+      nextCharacter === '>' ||
+      /\s/.test(nextCharacter)
+    ) {
+      return response.slice(0, toolStart).trim()
+    }
+
+    searchFrom = toolStart + TOOL_TAG_PREFIX.length
+  }
+
+  for (let length = TOOL_TAG_PREFIX.length - 1; length > 0; length -= 1) {
+    if (normalized.endsWith(TOOL_TAG_PREFIX.slice(0, length))) {
+      return response.slice(0, -length).trim()
+    }
+  }
+
+  return response
+}
+
+function maskMarkdownCode(value: string): string {
+  let delimiterLength: number | null = null
+  let masked = ''
+
+  for (let index = 0; index < value.length; ) {
+    if (value[index] !== '`') {
+      const character = value[index]!
+      masked += delimiterLength === null || character === '\n' ? character : ' '
+      index += 1
+      continue
+    }
+
+    let runEnd = index + 1
+    while (value[runEnd] === '`') {
+      runEnd += 1
+    }
+    const runLength = runEnd - index
+    masked += ' '.repeat(runLength)
+
+    if (delimiterLength === null) {
+      delimiterLength = runLength
+    } else if (
+      runLength === delimiterLength ||
+      (delimiterLength >= 3 && runLength > delimiterLength)
+    ) {
+      delimiterLength = null
+    }
+
+    index = runEnd
+  }
+
+  return masked
 }
 
 export function parseToolCallPayload(
