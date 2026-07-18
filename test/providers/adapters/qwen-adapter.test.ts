@@ -6,6 +6,7 @@ import {
   ProviderAdapterError,
   ProviderAdapterUnsupportedError,
   ProviderResponseTimeoutError,
+  createDeferred,
   type CapturedFetchEntry,
 } from '../../../src/providers/adapters/adapter-base.ts'
 import { QwenAdapter } from '../../../src/providers/adapters/adapter-qwen.ts'
@@ -241,21 +242,28 @@ test('QwenAdapter streams the unique owned capture and keeps an active long resp
 })
 
 test('QwenAdapter binds CDP bytes to the exact request and counts pre-identity thinking as activity', async () => {
+  const partialTextObserved = createDeferred<void>()
+  const finalTextObserved = createDeferred<void>()
   const cdp = Object.assign(new EventEmitter(), {
     detached: false,
     send: async (method: string) => {
       if (method === 'Network.streamResourceContent') {
         const chunks = createStreamingResponseChunks()
-        chunks.forEach((chunk, index) => {
-          setTimeout(
-            () => {
+        setImmediate(() => {
+          for (const chunk of chunks.slice(0, 3)) {
+            cdp.emit('Network.dataReceived', {
+              requestId: 'cdp-owned',
+              data: Buffer.from(chunk).toString('base64'),
+            })
+          }
+          void partialTextObserved.promise.then(() => {
+            for (const chunk of chunks.slice(3)) {
               cdp.emit('Network.dataReceived', {
                 requestId: 'cdp-owned',
                 data: Buffer.from(chunk).toString('base64'),
               })
-            },
-            30 + index * 40
-          )
+            }
+          })
         })
         return {
           bufferedData: Buffer.from(': provider keepalive\n\n').toString(
@@ -275,9 +283,11 @@ test('QwenAdapter binds CDP bytes to the exact request and counts pre-identity t
   const emitted: string[] = []
   adapter.setSubmitTextReporter((text) => {
     emitted.push(text)
+    if (text === 'Qwen ') partialTextObserved.resolve()
+    if (text === 'Qwen answer') finalTextObserved.resolve()
   })
   adapter.page = createSubmitPage({
-    responseTextDelayMs: 280,
+    responseTextReady: finalTextObserved.promise,
     onOwnedRequest: (rawBody) => {
       cdp.emit('Network.requestWillBeSent', {
         requestId: 'cdp-owned',
@@ -931,6 +941,7 @@ interface SubmitPageOptions {
   requestFailed?: boolean
   responseStatus?: number
   responseTextDelayMs?: number
+  responseTextReady?: Promise<void>
   responseParentId?: string | null
   loggedIn?: boolean
   authStates?: boolean[]
@@ -1024,7 +1035,9 @@ function createResponse(
     request: () => request,
     status: () => options.responseStatus ?? 200,
     text: async () => {
-      if (options.responseTextDelayMs !== undefined) {
+      if (options.responseTextReady !== undefined) {
+        await options.responseTextReady
+      } else if (options.responseTextDelayMs !== undefined) {
         await new Promise((resolve) =>
           setTimeout(resolve, options.responseTextDelayMs)
         )
