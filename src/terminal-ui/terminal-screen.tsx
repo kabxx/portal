@@ -88,6 +88,10 @@ const TONE_LABEL: Record<TimelineEntry['tone'], string> = {
   user: 'user',
 }
 
+export function calculateBubbleWidth(columns: number): number {
+  return Math.max(MIN_MESSAGE_WIDTH, columns - CHAT_PADDING_X * 2)
+}
+
 export function shouldShowWaitingIndicator(_state: TerminalState): boolean {
   return false
 }
@@ -1090,10 +1094,7 @@ export function TerminalScreen({
     Math.max(2, estimateDisplayWidth(inputDisplay.labelText)),
     Math.max(2, columns - INPUT_PADDING_X * 2 - 2)
   )
-  const bubbleWidth = Math.max(
-    MIN_MESSAGE_WIDTH,
-    columns - CHAT_PADDING_X * 2 - 1
-  )
+  const bubbleWidth = calculateBubbleWidth(columns)
   const connectingWelcome =
     state.timeline.find(
       (entry) => entry.welcome?.browserStatus === 'connecting'

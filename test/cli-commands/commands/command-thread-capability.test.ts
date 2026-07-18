@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { ThreadCommand } from '../../../src/cli-commands/commands/command-thread.ts'
+import { ProviderAdapterUnsupportedError } from '../../../src/providers/adapters/adapter-base.ts'
 import type { CliCommandContext } from '../../../src/cli-commands/core/command-types.ts'
 import { ThreadManager } from '../../../src/threads/thread-manager.ts'
 import { TerminalController } from '../../../src/terminal-ui/terminal-controller.ts'
@@ -338,10 +339,18 @@ test('ThreadCommand capability lists and executes GLM toggle capabilities', asyn
 
 test('ThreadCommand capability lists and executes Kimi search', async () => {
   let state: ToggleState = 'off'
+  let availabilityChecks = 0
+  let stateReads = 0
   const setCalls: ToggleState[] = []
   const adapter: CapabilityAdapterOverrides = {
-    hasToggleCapability: async (name) => name === 'search',
-    getToggleState: async () => state,
+    hasToggleCapability: async () => {
+      availabilityChecks += 1
+      return true
+    },
+    getToggleState: async () => {
+      stateReads += 1
+      return state
+    },
     setToggleState: async (_name, target) => {
       setCalls.push(target)
       state = target
@@ -378,12 +387,23 @@ test('ThreadCommand capability lists and executes Kimi search', async () => {
   await executeCapability(context, ['search', 'off'])
   assert.deepEqual(setCalls, ['on', 'off'])
   assert.equal(latestTimelineEntry(ui)?.body, 'kimi.search: off')
+  assert.equal(availabilityChecks, 0)
+  assert.equal(stateReads, 2)
 })
 
 test('ThreadCommand capability hides unavailable Kimi search', async () => {
   const adapter: CapabilityAdapterOverrides = {
-    hasToggleCapability: async () => false,
-    getToggleState: async () => 'off',
+    hasToggleCapability: async () => {
+      throw new Error(
+        'Kimi capability listing must not preflight availability.'
+      )
+    },
+    getToggleState: async () => {
+      throw new ProviderAdapterUnsupportedError(
+        'searchStatus',
+        'Kimi search is unavailable.'
+      )
+    },
     setToggleState: async (_name, target) => target,
   }
   const { context, threadManager, ui } = createCommandContext()
@@ -630,7 +650,7 @@ test('ThreadCommand capability lists, selects, and clears Qwen actions', async (
   const adapter: CapabilityAdapterOverrides = {
     listActionCapabilities: async () => [
       { name: 'deep_research', state: 'available' },
-      { name: 't2v', state: 'disabled' },
+      { name: 'video_generation', state: 'disabled' },
       { name: 'search', state: 'available' },
     ],
     selectActionCapability: async (name: string) => {
@@ -656,9 +676,9 @@ test('ThreadCommand capability lists, selects, and clears Qwen actions', async (
       'Provider: qwen',
       '',
       'Capabilities:',
-      '  deep_research  available',
-      '  t2v            disabled',
-      '  search         available',
+      '  deep_research     available',
+      '  video_generation  disabled',
+      '  search            available',
       '',
       'Usage:',
       '  /thread capability <capability>',

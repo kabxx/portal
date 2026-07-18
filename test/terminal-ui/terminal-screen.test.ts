@@ -5,6 +5,7 @@ import type { CliCommand } from '../../src/cli-commands/core/command-types.ts'
 import {
   INPUT_CURSOR,
   buildWelcomeRows,
+  calculateBubbleWidth,
   canSubmitInput,
   clearInput,
   completeManualSkill,
@@ -67,6 +68,11 @@ test('normalizePastedInput preserves multiline layout with Unix newlines', () =>
     normalizePastedInput('first\r\n\r\n\tsecond\rthird'),
     'first\n\n\tsecond\nthird'
   )
+})
+
+test('calculateBubbleWidth uses the full terminal width without right margin', () => {
+  assert.equal(calculateBubbleWidth(80), 80)
+  assert.equal(calculateBubbleWidth(120), 120)
 })
 
 test('formatInputForDisplay expands tabs without changing line breaks', () => {

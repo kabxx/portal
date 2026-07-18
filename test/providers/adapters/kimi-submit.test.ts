@@ -18,7 +18,6 @@ type KimiAdapterHarness = Pick<KimiAdapter, keyof KimiAdapter> & {
   getCapturedFetchEntryCount(): Promise<number>
   getCapturedFetchEntries(startIndex?: number): Promise<unknown[]>
   reportCapturedSubmitActivity(entries: readonly unknown[]): void
-  startSubmitTextPolling(read: () => Promise<string | null>): () => void
   getSubmitResponseTimeoutMs(): number
 }
 
@@ -32,8 +31,6 @@ function createTestKimiAdapter(): KimiAdapterHarness {
     typeof candidate.getCapturedFetchEntries !== 'function' ||
     !('reportCapturedSubmitActivity' in candidate) ||
     typeof candidate.reportCapturedSubmitActivity !== 'function' ||
-    !('startSubmitTextPolling' in candidate) ||
-    typeof candidate.startSubmitTextPolling !== 'function' ||
     !('getSubmitResponseTimeoutMs' in candidate) ||
     typeof candidate.getSubmitResponseTimeoutMs !== 'function'
   ) {
@@ -46,7 +43,6 @@ function createTestKimiAdapter(): KimiAdapterHarness {
     getCapturedFetchEntryCount: candidate.getCapturedFetchEntryCount,
     getCapturedFetchEntries: candidate.getCapturedFetchEntries,
     reportCapturedSubmitActivity: candidate.reportCapturedSubmitActivity,
-    startSubmitTextPolling: candidate.startSubmitTextPolling,
     getSubmitResponseTimeoutMs: candidate.getSubmitResponseTimeoutMs,
   })
 }
@@ -69,6 +65,7 @@ function createKimiCapabilityPage({
   initialState = 'off',
   onOptionIndex = 0,
   triggerCount = 1,
+  toolkitOpens = true,
   triggerVisible = true,
   triggerEnabled = true,
   searchCount = 1,
@@ -85,6 +82,7 @@ function createKimiCapabilityPage({
   initialState?: 'on' | 'off'
   onOptionIndex?: 0 | 1
   triggerCount?: number
+  toolkitOpens?: boolean
   triggerVisible?: boolean
   triggerEnabled?: boolean
   searchCount?: number
@@ -110,11 +108,14 @@ function createKimiCapabilityPage({
     first() {
       return this
     },
+    nth() {
+      return this
+    },
     isVisible: async () => triggerVisible,
     isEnabled: async () => triggerEnabled,
     click: async () => {
       triggerClicks += 1
-      toolkitOpen = true
+      if (toolkitOpens) toolkitOpen = true
     },
     getAttribute: async (name: string) =>
       name === 'class' && toolkitOpen
@@ -126,14 +127,22 @@ function createKimiCapabilityPage({
     first() {
       return this
     },
+    nth() {
+      return this
+    },
     isVisible: async () => toolkitOpen,
+    locator: () => search,
   }
   const searchPopover = {
     count: async () => (searchOpen ? 1 : 0),
     first() {
       return this
     },
+    nth() {
+      return this
+    },
     isVisible: async () => searchOpen,
+    locator: () => options,
   }
   const search = {
     count: async () => (toolkitOpen ? searchCount : 0),
@@ -255,10 +264,9 @@ function createKimiCapabilityPage({
 function createKimiCapturedSubmitPage() {
   let currentUrl = 'https://www.kimi.com/'
   let sendClicks = 0
-  let assistantCount = 0
   let requestText = ''
   let responseRaw = ''
-  let addAssistantOnClick = true
+  let responseDone = true
   let keepStopVisible = false
   let stopVisible = false
 
@@ -266,9 +274,6 @@ function createKimiCapturedSubmitPage() {
     count: async () => {
       if (selector === '.chat-editor .send-button-container.stop') {
         return stopVisible ? 1 : 0
-      }
-      if (selector === '.segment.segment-assistant .markdown') {
-        return assistantCount
       }
       return 1
     },
@@ -283,13 +288,8 @@ function createKimiCapturedSubmitPage() {
       if (!selector.includes(':not(.disabled)')) return
       sendClicks += 1
       currentUrl = 'https://www.kimi.com/chat/conversation-1'
-      if (addAssistantOnClick) assistantCount += 1
       stopVisible = keepStopVisible
     },
-    textContent: async () =>
-      selector === '.segment.segment-assistant .markdown'
-        ? 'assistant answer'
-        : '',
   })
   const adapter = createTestKimiAdapter()
   adapter.page = {
@@ -308,12 +308,11 @@ function createKimiCapturedSubmitPage() {
       requestBody: kimiRequestFrame(requestText),
       status: 200,
       chunks: [responseRaw],
-      done: true,
+      done: responseDone,
       error: null,
     },
   ]
   adapter.reportCapturedSubmitActivity = () => {}
-  adapter.startSubmitTextPolling = () => () => {}
 
   return {
     adapter,
@@ -321,13 +320,13 @@ function createKimiCapturedSubmitPage() {
       text: string,
       raw: string,
       {
-        addAssistant = true,
+        done = true,
         keepStop = false,
-      }: { addAssistant?: boolean; keepStop?: boolean } = {}
+      }: { done?: boolean; keepStop?: boolean } = {}
     ) {
       requestText = text
       responseRaw = raw
-      addAssistantOnClick = addAssistant
+      responseDone = done
       keepStopVisible = keepStop
       stopVisible = false
       adapter.pendingTextVal = text
@@ -370,14 +369,156 @@ test('Kimi Connect parser extracts concatenated JSON frames and completion', () 
   assert.deepEqual(parseKimiConnectResponse(raw), {
     isFinished: true,
     statuses: ['MESSAGE_STATUS_GENERATING', 'MESSAGE_STATUS_COMPLETED'],
+    text: null,
     error: null,
   })
+})
+
+test('Kimi Connect parser appends owned text block frames without prefix guessing', () => {
+  const raw = [
+    connectFrame({
+      message: {
+        id: 'user-1',
+        role: 'user',
+        blocks: [{ text: { content: 'ignore user text' } }],
+      },
+    }),
+    connectFrame({
+      message: {
+        id: 'assistant-1',
+        role: 'assistant',
+        status: 'MESSAGE_STATUS_GENERATING',
+        blocks: [
+          {
+            id: 'text-1',
+            messageId: 'assistant-1',
+            text: { content: '#' },
+          },
+        ],
+      },
+    }),
+    connectFrame({
+      message: {
+        id: 'assistant-2',
+        role: 'assistant',
+        blocks: [
+          {
+            id: 'text-2',
+            messageId: 'assistant-2',
+            text: { content: 'ignore concurrent assistant' },
+          },
+        ],
+      },
+    }),
+    connectFrame({
+      op: 'append',
+      block: {
+        id: 'text-1',
+        messageId: 'assistant-1',
+        text: { content: '# Heading\n\n- one' },
+      },
+    }),
+    connectFrame({
+      op: 'OPERATOR_APPEND',
+      event: {
+        case: 'block',
+        value: {
+          id: 'text-1',
+          messageId: 'assistant-1',
+          content: {
+            case: 'text',
+            value: { content: '\n- two\n\n```ts\nconst x = 1\n```' },
+          },
+        },
+      },
+    }),
+    connectFrame({
+      message: {
+        id: 'assistant-1',
+        status: 'MESSAGE_STATUS_COMPLETED',
+      },
+    }),
+  ].join('')
+
+  assert.deepEqual(parseKimiConnectResponse(raw), {
+    isFinished: true,
+    statuses: ['MESSAGE_STATUS_GENERATING', 'MESSAGE_STATUS_COMPLETED'],
+    text: '## Heading\n\n- one\n- two\n\n```ts\nconst x = 1\n```',
+    error: null,
+  })
+})
+
+test('Kimi Connect parser replaces a text block only for a whole-block set', () => {
+  const raw = [
+    connectFrame({
+      message: {
+        id: 'assistant-1',
+        role: 'assistant',
+        status: 'MESSAGE_STATUS_GENERATING',
+        blocks: [
+          {
+            id: 'text-1',
+            messageId: 'assistant-1',
+            text: { content: 'old text' },
+          },
+        ],
+      },
+    }),
+    connectFrame({
+      op: 'OPERATOR_SET',
+      mask: { paths: ['block'] },
+      block: {
+        id: 'text-1',
+        messageId: 'assistant-1',
+        text: { content: '# Replacement' },
+      },
+    }),
+    connectFrame({
+      message: {
+        id: 'assistant-1',
+        status: 'MESSAGE_STATUS_COMPLETED',
+      },
+    }),
+  ].join('')
+
+  assert.equal(parseKimiConnectResponse(raw).text, '# Replacement')
+})
+
+test('Kimi Connect parser accepts id-owned blocks and ignores unowned blocks without message ids', () => {
+  const raw = [
+    connectFrame({
+      message: {
+        id: 'assistant-1',
+        role: 'assistant',
+        status: 'MESSAGE_STATUS_GENERATING',
+        blocks: [{ id: 'owned-text', text: { content: '#' } }],
+      },
+    }),
+    connectFrame({
+      block: { id: 'owned-text', text: { content: '# Heading' } },
+    }),
+    connectFrame({
+      block: { id: 'foreign-text', text: { content: ' ignore me' } },
+    }),
+    connectFrame({
+      block: { text: { content: ' ignore anonymous' } },
+    }),
+    connectFrame({
+      message: {
+        id: 'assistant-1',
+        status: 'MESSAGE_STATUS_COMPLETED',
+      },
+    }),
+  ].join('')
+
+  assert.equal(parseKimiConnectResponse(raw).text, '## Heading')
 })
 
 test('Kimi Connect parser accepts only an empty root done frame', () => {
   assert.deepEqual(parseKimiConnectResponse(connectFrame({ done: {} })), {
     isFinished: true,
     statuses: [],
+    text: null,
     error: null,
   })
 
@@ -391,6 +532,7 @@ test('Kimi Connect parser accepts only an empty root done frame', () => {
     assert.deepEqual(parseKimiConnectResponse(raw), {
       isFinished: false,
       statuses: [],
+      text: null,
       error: null,
     })
   }
@@ -405,6 +547,7 @@ test('Kimi Connect parser preserves stream errors alongside a done frame', () =>
   assert.deepEqual(parseKimiConnectResponse(raw), {
     isFinished: true,
     statuses: [],
+    text: null,
     error: { code: 'MODEL_RATE_LIMIT', detail: 'busy' },
   })
 })
@@ -417,6 +560,7 @@ test('Kimi Connect parser preserves structured stream errors', () => {
   assert.deepEqual(parseKimiConnectResponse(raw), {
     isFinished: false,
     statuses: [],
+    text: null,
     error: { code: 'MODEL_RATE_LIMIT', detail: 'busy' },
   })
 })
@@ -433,6 +577,7 @@ test('Kimi Connect parser reads block exception reasons', () => {
   assert.deepEqual(parseKimiConnectResponse(raw), {
     isFinished: false,
     statuses: [],
+    text: null,
     error: { code: 'REASON_COMPLETION_OVERLOADED', detail: null },
   })
 })
@@ -450,6 +595,7 @@ test('Kimi Connect parser ignores empty error metadata', () => {
   assert.deepEqual(parseKimiConnectResponse(raw), {
     isFinished: true,
     statuses: ['MESSAGE_STATUS_COMPLETED'],
+    text: null,
     error: null,
   })
 })
@@ -481,11 +627,12 @@ test('Kimi Connect parser requires completion from the owned assistant id', () =
   assert.deepEqual(parseKimiConnectResponse(raw), {
     isFinished: false,
     statuses: ['MESSAGE_STATUS_GENERATING'],
+    text: null,
     error: null,
   })
 })
 
-test('KimiAdapter accepts protocol and verified clean-EOF completion', async () => {
+test('KimiAdapter returns Markdown from terminal network protocol frames', async () => {
   const controls = createKimiCapturedSubmitPage()
   const doneRaw = [
     connectFrame({
@@ -493,22 +640,24 @@ test('KimiAdapter accepts protocol and verified clean-EOF completion', async () 
         id: 'assistant-1',
         role: 'assistant',
         status: 'MESSAGE_STATUS_GENERATING',
+        blocks: [{ text: { content: '# Assistant answer\n\n- item' } }],
       },
     }),
     connectFrame({ done: {} }),
   ].join('')
   controls.setTurn('owned done prompt', doneRaw)
-  assert.equal(await controls.adapter.submit(), 'assistant answer')
+  assert.equal(await controls.adapter.submit(), '# Assistant answer\n\n- item')
 
-  const cleanEofRaw = connectFrame({
+  const completedRaw = connectFrame({
     message: {
       id: 'assistant-2',
       role: 'assistant',
-      status: 'MESSAGE_STATUS_GENERATING',
+      status: 'MESSAGE_STATUS_COMPLETED',
+      blocks: [{ text: { content: '`network only`' } }],
     },
   })
-  controls.setTurn('owned clean EOF prompt', cleanEofRaw)
-  assert.equal(await controls.adapter.submit(), 'assistant answer')
+  controls.setTurn('owned completed prompt', completedRaw)
+  assert.equal(await controls.adapter.submit(), '`network only`')
   assert.equal(controls.sendClicks, 2)
   assert.equal(controls.adapter.conversationId, 'conversation-1')
 })
@@ -536,10 +685,7 @@ test('KimiAdapter rejects errors and unverified clean-EOF responses', async () =
     },
   })
   controls.setResponseTimeout(1)
-  for (const options of [
-    { addAssistant: false, keepStop: false },
-    { addAssistant: true, keepStop: true },
-  ]) {
+  for (const options of [{ keepStop: false }, { keepStop: true }]) {
     controls.setTurn('owned incomplete prompt', incompleteRaw, options)
     await assert.rejects(
       controls.adapter.submit(),
@@ -557,9 +703,7 @@ test('KimiAdapter rejects errors and unverified clean-EOF responses', async () =
       status: 'MESSAGE_STATUS_COMPLETED',
     },
   })
-  controls.setTurn('owned missing text prompt', completedRaw, {
-    addAssistant: false,
-  })
+  controls.setTurn('owned missing text prompt', completedRaw)
   await assert.rejects(
     controls.adapter.submit(),
     (error: unknown) =>
@@ -570,6 +714,7 @@ test('KimiAdapter rejects errors and unverified clean-EOF responses', async () =
 
   controls.setResponseTimeout(1000)
   controls.setTurn('owned aborted prompt', incompleteRaw, {
+    done: false,
     keepStop: true,
   })
   const abortController = new AbortController()
@@ -585,7 +730,6 @@ test('KimiAdapter rejects errors and unverified clean-EOF responses', async () =
 
 test('KimiAdapter page fallback ignores a concurrent POST with different text', async () => {
   let currentUrl = 'https://www.kimi.com/'
-  let sendClicks = 0
   let staleTextReads = 0
   let freshTextReads = 0
   const requestListeners = new Set<(value: unknown) => void>()
@@ -606,6 +750,7 @@ test('KimiAdapter page fallback ignores a concurrent POST with different text', 
         id: 'assistant-fallback',
         role: 'assistant',
         status: 'MESSAGE_STATUS_GENERATING',
+        blocks: [{ text: { content: '# Fallback answer' } }],
       },
     }),
     connectFrame({
@@ -618,9 +763,6 @@ test('KimiAdapter page fallback ignores a concurrent POST with different text', 
   const locator = (selector: string) => ({
     count: async () => {
       if (selector === '.chat-editor .send-button-container.stop') return 0
-      if (selector === '.segment.segment-assistant .markdown') {
-        return sendClicks === 0 ? 0 : 1
-      }
       return 1
     },
     first() {
@@ -632,7 +774,6 @@ test('KimiAdapter page fallback ignores a concurrent POST with different text', 
     isVisible: async () => true,
     click: async () => {
       if (!selector.includes(':not(.disabled)')) return
-      sendClicks += 1
       currentUrl = 'https://www.kimi.com/chat/fallback-conversation'
       const staleResponse = {
         request: () => staleRequest,
@@ -657,10 +798,6 @@ test('KimiAdapter page fallback ignores a concurrent POST with different text', 
       }
       responseListeners.forEach((listener) => listener(freshResponse))
     },
-    textContent: async () =>
-      selector === '.segment.segment-assistant .markdown'
-        ? 'fallback answer'
-        : '',
   })
   const page = {
     locator,
@@ -681,9 +818,8 @@ test('KimiAdapter page fallback ignores a concurrent POST with different text', 
   adapter.getCapturedFetchEntryCount = async () => 0
   adapter.getCapturedFetchEntries = async () => []
   adapter.reportCapturedSubmitActivity = () => {}
-  adapter.startSubmitTextPolling = () => () => {}
 
-  assert.equal(await adapter.submit(), 'fallback answer')
+  assert.equal(await adapter.submit(), '# Fallback answer')
   assert.equal(staleTextReads, 0)
   assert.equal(freshTextReads, 1)
   assert.equal(requestListeners.size, 0)
@@ -756,6 +892,22 @@ test('KimiAdapter closes the toolkit through the Composer when Escape is ignored
   assert.equal(await adapter.hasToggleCapability('search'), true)
   assert.equal(controls.menuOpen, false)
   assert.ok(controls.composerClicks > 0)
+})
+
+test('KimiAdapter reports a toolkit open timeout instead of hiding the capability', async () => {
+  const controls = createKimiCapabilityPage({ toolkitOpens: false })
+  const adapter = createTestKimiAdapter()
+  adapter.page = controls.page
+  Object.assign(adapter, { getCapabilityUiTimeoutMs: () => 1 })
+
+  await assert.rejects(
+    adapter.hasToggleCapability('search'),
+    (error: unknown) =>
+      error instanceof Error &&
+      'detailCode' in error &&
+      error.detailCode === 'kimi_toolkit_open_timeout'
+  )
+  assert.equal(controls.menuOpen, false)
 })
 
 test('KimiAdapter rejects search state changes that the page does not apply', async () => {
