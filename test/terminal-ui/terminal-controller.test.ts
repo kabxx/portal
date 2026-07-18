@@ -1166,7 +1166,7 @@ test('TerminalController keeps a live assistant bubble until the final assistant
   assert.equal(state.timeline[0]?.format, 'markdown')
 })
 
-test('TerminalController keeps streaming tool tags visible as assistant text', () => {
+test('TerminalController does not render a tool-only stream as assistant text', () => {
   const manager = new ThreadManager()
   const thread = manager.addThread({
     id: manager.createThreadId(),
@@ -1178,13 +1178,10 @@ test('TerminalController keeps streaming tool tags visible as assistant text', (
 
   ui.renderAssistantStream(thread, '<tool>\n{"tool":"run_command"}\n</tool>')
 
-  assert.equal(
-    ui.getState().liveAssistant?.body,
-    '\\<tool>\n{"tool":"run_command"}\n\\</tool>'
-  )
+  assert.equal(ui.getState().liveAssistant, null)
 })
 
-test('TerminalController escapes named freeform tool tags while streaming', () => {
+test('TerminalController keeps only assistant text before a streaming tool call', () => {
   const manager = new ThreadManager()
   const thread = manager.addThread({
     id: manager.createThreadId(),
@@ -1196,13 +1193,10 @@ test('TerminalController escapes named freeform tool tags while streaming', () =
 
   ui.renderAssistantStream(
     thread,
-    '<tool name="apply_patch">\n*** Begin Patch\n</tool>'
+    'I will update the file.\n<tool name="apply_patch">\n*** Begin Patch\n</tool>'
   )
 
-  assert.equal(
-    ui.getState().liveAssistant?.body,
-    '\\<tool name="apply_patch">\n*** Begin Patch\n\\</tool>'
-  )
+  assert.equal(ui.getState().liveAssistant?.body, 'I will update the file.')
 })
 
 test('TerminalController leaves ordinary streaming Markdown unchanged', () => {
@@ -1218,12 +1212,6 @@ test('TerminalController leaves ordinary streaming Markdown unchanged', () => {
   ui.renderAssistantStream(thread, '**partial reply**')
 
   assert.equal(ui.getState().liveAssistant?.body, '**partial reply**')
-})
-
-test('renderBubbleBody keeps an escaped streaming tool tag visible', () => {
-  const rendered = renderBubbleBody('\\<tool>\n', 'markdown', 100)
-
-  assert.match(rendered, /<tool>/)
 })
 
 test('TerminalController keeps an incomplete final tool tag visible after a tool call', () => {
