@@ -229,7 +229,6 @@ export function parseKimiConnectResponse(raw: string): KimiParsedResponse {
   const statuses = new Set<string>()
   const blockOrder: string[] = []
   const blockTexts = new Map<string, string>()
-  const ownedBlockIds = new Set<string>()
   let assistantMessageId: string | null = null
   let streamError: KimiStreamError | null = null
   let hasDoneFrame = false
@@ -272,7 +271,6 @@ export function parseKimiConnectResponse(raw: string): KimiParsedResponse {
       const block = isRecord(candidate) ? candidate : null
       if (block === null) continue
       const explicitBlockId = readString(block.id)
-      if (explicitBlockId !== null) ownedBlockIds.add(explicitBlockId)
       const text = readKimiBlockText(block)
       if (text === null) continue
       const blockId = explicitBlockId ?? `${messageId}:inline:${index}`
@@ -288,17 +286,10 @@ export function parseKimiConnectResponse(raw: string): KimiParsedResponse {
     const messageId = readKimiBlockMessageId(block)
     if (messageId !== null && messageId !== assistantMessageId) return
     const explicitBlockId = readString(block.id)
-    if (messageId === null) {
-      if (explicitBlockId === null || !ownedBlockIds.has(explicitBlockId))
-        return
-    } else if (explicitBlockId !== null) {
-      ownedBlockIds.add(explicitBlockId)
-    }
+    if (explicitBlockId === null) return
     const text = readKimiBlockText(block)
     if (text === null) return
-    const blockId =
-      explicitBlockId ?? `${assistantMessageId}:block:${blockOrder.length}`
-    writeBlockText(blockId, text, isKimiWholeBlockSet(frame))
+    writeBlockText(explicitBlockId, text, isKimiWholeBlockSet(frame))
   }
 
   const visit = (value: unknown, frame: Record<string, unknown>): void => {
