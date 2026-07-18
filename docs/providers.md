@@ -89,7 +89,7 @@ ChatGPT, Gemini, Doubao, and Qwen expose action-style controls discovered from t
 /thread capability none
 ```
 
-Qwen currently recognizes `deep_research`, `t2i`, `t2v`, `web_dev`, `slides`, `search`, `artifacts`, `learn`, and `travel` when those actions are present in the current account's mode menu. Upload is handled separately; Qwen's tools menu is not exposed as a capability.
+Qwen currently recognizes `deep_research`, `image_generation`, `video_generation`, `web_dev`, `slides`, `search`, `artifacts`, `learn`, and `travel` when those actions are present in the current account's mode menu. Upload is handled separately; Qwen's tools menu is not exposed as a capability.
 
 Action names are account- and page-dependent. `none` clears the selected action when the adapter supports clearing. Grok currently returns no capability controls.
 
@@ -106,11 +106,11 @@ Adapters use different provider completion signals:
 | Grok     | WebSocket chunks ending in `response.done`                     |
 | GLM      | Completion stream events with answer/reasoning separation      |
 | Qwen     | SSE from `POST /api/v2/chat/completions`                       |
-| Kimi     | Message completion, root `done: {}`, or verified clean EOF     |
+| Kimi     | Connect assistant blocks ending in completion or root `done`   |
 
 Every adapter separately verifies composer readiness after completion. Submit polling can emit status warnings when a provider request has not started, and adapter errors are classified for bounded retry, page restore, login wait, or terminal failure.
 
-Kimi's clean-EOF fallback requires an owned HTTP 200 response with no stream error, a ready Composer with no stop control, and a new non-empty assistant response.
+Kimi reads Markdown text only from assistant blocks in the owned `ChatService/Chat` network response. It does not use rendered message DOM as a response fallback.
 
 Grok treats the unique visible Voice Mode control in its Composer as the Ready signal. An editable Grok input alone is not sufficient because it can appear before the rest of the query controls have finished loading.
 

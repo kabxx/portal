@@ -665,8 +665,8 @@ test('QwenAdapter lists discovered action capabilities and closes the menu', asy
 
   assert.deepEqual(await adapter.listActionCapabilities(), [
     { name: 'deep_research', state: 'available' },
-    { name: 't2i', state: 'available' },
-    { name: 't2v', state: 'disabled' },
+    { name: 'image_generation', state: 'available' },
+    { name: 'video_generation', state: 'disabled' },
     { name: 'web_dev', state: 'available' },
     { name: 'slides', state: 'available' },
     { name: 'search', state: 'available' },
@@ -691,7 +691,10 @@ test('QwenAdapter selects and clears an action capability', async () => {
   )
   await adapter.clearActionCapability()
   assert.equal(page.selectedCapability(), null)
-  assert.equal(await adapter.selectActionCapability('t2v'), 'disabled')
+  assert.equal(
+    await adapter.selectActionCapability('video_generation'),
+    'disabled'
+  )
 })
 
 test('QwenAdapter preserves the selected action for unavailable targets', async () => {
@@ -703,7 +706,10 @@ test('QwenAdapter preserves the selected action for unavailable targets', async 
   })
   adapter.page = page
 
-  assert.equal(await adapter.selectActionCapability('t2v'), 'disabled')
+  assert.equal(
+    await adapter.selectActionCapability('video_generation'),
+    'disabled'
+  )
   assert.equal(page.selectedCapability(), 'deep_research')
   assert.equal(await adapter.selectActionCapability('travel'), 'unavailable')
   assert.equal(page.selectedCapability(), 'deep_research')

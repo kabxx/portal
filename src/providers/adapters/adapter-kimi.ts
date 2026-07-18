@@ -32,16 +32,14 @@ const KIMI_MODEL_MENU_SELECTOR = '.models-popover'
 const KIMI_MODEL_ITEM_SELECTOR = '.models-popover .model-item'
 const KIMI_TOOLKIT_TRIGGER_SELECTOR = '.chat-editor .toolkit-trigger-btn'
 const KIMI_TOOLKIT_POPOVER_SELECTOR = '.toolkit-popover'
-const KIMI_SEARCH_ITEM_SELECTOR =
-  '.toolkit-popover .toolkit-item:has(svg[name="InternetOn"])'
+const KIMI_SEARCH_ITEM_SELECTOR = '.toolkit-item:has(svg[name="InternetOn"])'
 const KIMI_SEARCH_POPOVER_SELECTOR = '.connect-popover'
-const KIMI_SEARCH_OPTION_SELECTOR = '.connect-popover .connect-item'
+const KIMI_SEARCH_OPTION_SELECTOR = '.connect-item'
 const KIMI_SELECTED_OPTION_ICON_SELECTOR = 'svg[name="Check"]'
 const KIMI_SEARCH_STORAGE_KEY = 'selectSearch'
 const KIMI_FILE_INPUT_SELECTOR = '.toolkit-popover input[type="file"]'
 const KIMI_FILE_CARD_SELECTOR = '.chat-editor .file-card-container'
 const KIMI_SIGNED_OUT_SELECTOR = 'button.next-sidebar-history-list__login'
-const KIMI_ASSISTANT_TEXT_SELECTOR = '.segment.segment-assistant .markdown'
 const KIMI_CHAT_REQUEST_PATH = '/apiv2/kimi.gateway.chat.v1.ChatService/Chat'
 const KIMI_HISTORY_REQUEST_PATH =
   '/apiv2/kimi.gateway.chat.v1.ChatService/ListMessages'
@@ -69,6 +67,7 @@ interface KimiPageResponseResult {
 export interface KimiParsedResponse {
   isFinished: boolean
   statuses: string[]
+  text: string | null
   error: KimiStreamError | null
 }
 
@@ -113,7 +112,9 @@ function readKimiSubmittedText(raw: string | null | undefined): string | null {
   for (const value of extractKimiJsonObjects(raw)) {
     const message = isRecord(value) ? value.message : null
     if (!isRecord(message) || message.role !== 'user') continue
-    const blocks = Array.isArray(message.blocks) ? message.blocks : []
+    const blocks: unknown[] = Array.isArray(message.blocks)
+      ? (message.blocks as unknown[])
+      : []
     return blocks
       .map((block) => {
         const text = isRecord(block) ? block.text : null
@@ -131,6 +132,50 @@ function isOwnedKimiRequestBody(
   submittedText: string
 ): boolean {
   return readKimiSubmittedText(raw) === submittedText
+}
+
+function nonEmptyKimiText(value: string | null): string | null {
+  return value !== null && value.trim().length > 0 ? value : null
+}
+
+function readKimiBlockText(block: Record<string, unknown>): string | null {
+  const directText = isRecord(block.text) ? block.text : null
+  if (directText !== null && typeof directText.content === 'string') {
+    return directText.content
+  }
+
+  const content = isRecord(block.content) ? block.content : null
+  const contentValue =
+    content !== null && isRecord(content.value) ? content.value : null
+  if (
+    content?.case === 'text' &&
+    contentValue !== null &&
+    typeof contentValue.content === 'string'
+  ) {
+    return contentValue.content
+  }
+  const nestedText =
+    content !== null && isRecord(content.text) ? content.text : null
+  return nestedText !== null && typeof nestedText.content === 'string'
+    ? nestedText.content
+    : null
+}
+
+function isKimiAssistantRole(value: unknown): boolean {
+  return value === 'assistant' || value === 'ROLE_ASSISTANT' || value === 2
+}
+
+function readKimiBlockMessageId(block: Record<string, unknown>): string | null {
+  return readString(block.messageId) ?? readString(block.message_id)
+}
+
+function isKimiWholeBlockSet(frame: Record<string, unknown>): boolean {
+  const operation = frame.op
+  const isSet =
+    operation === 1 || operation === 'set' || operation === 'OPERATOR_SET'
+  const mask = isRecord(frame.mask) ? frame.mask : null
+  const paths = Array.isArray(mask?.paths) ? mask.paths : []
+  return isSet && paths[0] === 'block'
 }
 
 export function extractKimiJsonObjects(raw: string): unknown[] {
@@ -182,30 +227,99 @@ export function extractKimiJsonObjects(raw: string): unknown[] {
 
 export function parseKimiConnectResponse(raw: string): KimiParsedResponse {
   const statuses = new Set<string>()
+  const blockOrder: string[] = []
+  const blockTexts = new Map<string, string>()
+  const ownedBlockIds = new Set<string>()
   let assistantMessageId: string | null = null
   let streamError: KimiStreamError | null = null
   let hasDoneFrame = false
 
-  const visit = (value: unknown): void => {
+  const writeBlockText = (
+    key: string,
+    text: string,
+    replace: boolean
+  ): void => {
+    if (!blockTexts.has(key)) {
+      blockOrder.push(key)
+      blockTexts.set(key, text)
+      return
+    }
+    blockTexts.set(key, replace ? text : blockTexts.get(key)! + text)
+  }
+
+  const processMessage = (
+    message: Record<string, unknown>,
+    frame: Record<string, unknown>
+  ): void => {
+    const messageId = readString(message.id)
+    if (
+      isKimiAssistantRole(message.role) &&
+      messageId !== null &&
+      assistantMessageId === null
+    ) {
+      assistantMessageId = messageId
+    }
+    if (messageId === null || messageId !== assistantMessageId) return
+
+    const status = readString(message.status)
+    if (status?.startsWith('MESSAGE_STATUS_')) statuses.add(status)
+
+    const blocks = Array.isArray(message.blocks)
+      ? (message.blocks as unknown[])
+      : []
+    for (let index = 0; index < blocks.length; index += 1) {
+      const candidate = blocks[index]
+      const block = isRecord(candidate) ? candidate : null
+      if (block === null) continue
+      const explicitBlockId = readString(block.id)
+      if (explicitBlockId !== null) ownedBlockIds.add(explicitBlockId)
+      const text = readKimiBlockText(block)
+      if (text === null) continue
+      const blockId = explicitBlockId ?? `${messageId}:inline:${index}`
+      writeBlockText(blockId, text, isKimiWholeBlockSet(frame))
+    }
+  }
+
+  const processBlock = (
+    block: Record<string, unknown>,
+    frame: Record<string, unknown>
+  ): void => {
+    if (assistantMessageId === null) return
+    const messageId = readKimiBlockMessageId(block)
+    if (messageId !== null && messageId !== assistantMessageId) return
+    const explicitBlockId = readString(block.id)
+    if (messageId === null) {
+      if (explicitBlockId === null || !ownedBlockIds.has(explicitBlockId))
+        return
+    } else if (explicitBlockId !== null) {
+      ownedBlockIds.add(explicitBlockId)
+    }
+    const text = readKimiBlockText(block)
+    if (text === null) return
+    const blockId =
+      explicitBlockId ?? `${assistantMessageId}:block:${blockOrder.length}`
+    writeBlockText(blockId, text, isKimiWholeBlockSet(frame))
+  }
+
+  const visit = (value: unknown, frame: Record<string, unknown>): void => {
     if (Array.isArray(value)) {
-      value.forEach(visit)
+      value.forEach((item) => visit(item, frame))
       return
     }
     if (!isRecord(value)) return
 
-    const messageId = readString(value.id)
-    const isAssistant = value.role === 'assistant'
-    if (isAssistant && messageId !== null && assistantMessageId === null) {
-      assistantMessageId = messageId
+    if (isRecord(value.message)) {
+      processMessage(value.message, frame)
     }
-    const status = readString(value.status)
-    if (
-      status?.startsWith('MESSAGE_STATUS_') &&
-      messageId !== null &&
-      messageId === assistantMessageId
-    ) {
-      statuses.add(status)
+    if (isRecord(value.block)) {
+      processBlock(value.block, frame)
     }
+    if (value.case === 'message' && isRecord(value.value)) {
+      processMessage(value.value, frame)
+    } else if (value.case === 'block' && isRecord(value.value)) {
+      processBlock(value.value, frame)
+    }
+
     const error = isRecord(value.error) ? value.error : null
     if (error !== null) {
       const code =
@@ -221,7 +335,7 @@ export function parseKimiConnectResponse(raw: string): KimiParsedResponse {
         }
       }
     }
-    Object.values(value).forEach(visit)
+    Object.values(value).forEach((item) => visit(item, frame))
   }
 
   for (const frame of extractKimiJsonObjects(raw)) {
@@ -232,11 +346,15 @@ export function parseKimiConnectResponse(raw: string): KimiParsedResponse {
     ) {
       hasDoneFrame = true
     }
-    visit(frame)
+    if (isRecord(frame)) visit(frame, frame)
   }
+  const assistantText = blockOrder
+    .map((id) => blockTexts.get(id) ?? '')
+    .join('')
   return {
     isFinished: hasDoneFrame || statuses.has('MESSAGE_STATUS_COMPLETED'),
     statuses: [...statuses],
+    text: nonEmptyKimiText(assistantText),
     error: streamError,
   }
 }
@@ -244,6 +362,10 @@ export function parseKimiConnectResponse(raw: string): KimiParsedResponse {
 export class KimiAdapter extends ProviderAdapter {
   private conversationIdVal!: string | null
   private pendingTextVal = ''
+
+  protected getCapabilityUiTimeoutMs(): number {
+    return KIMI_CAPABILITY_UI_TIMEOUT_MS
+  }
 
   protected override async init(options: AbortOptions = {}): Promise<void> {
     await super.init(options)
@@ -493,19 +615,23 @@ export class KimiAdapter extends ProviderAdapter {
         KIMI_SEARCH_POPOVER_SELECTOR,
       ]) {
         const popovers = this.page.locator(selector)
-        if (
-          (await popovers.count().catch(() => 0)) > 0 &&
-          (await popovers
-            .first()
-            .isVisible()
-            .catch(() => false))
-        ) {
-          return false
+        const count = await popovers.count().catch(() => 0)
+        for (let index = 0; index < count; index += 1) {
+          if (
+            await popovers
+              .nth(index)
+              .isVisible()
+              .catch(() => false)
+          ) {
+            return false
+          }
         }
       }
       return true
     }
+    if (await isClosed()) return
     await this.page.keyboard.press('Escape').catch(() => {})
+    if (await isClosed()) return
     const composers = this.page.locator(KIMI_INPUT_SELECTOR)
     if (
       (await composers.count().catch(() => 0)) === 1 &&
@@ -516,39 +642,51 @@ export class KimiAdapter extends ProviderAdapter {
     ) {
       await composers.first().click()
     }
-    await waitAsync(isClosed, { timeoutMs: KIMI_CAPABILITY_UI_TIMEOUT_MS })
-    await delayAsync(100)
+    await waitAsync(isClosed, { timeoutMs: this.getCapabilityUiTimeoutMs() })
   }
 
-  private async openSearchOptions(): Promise<Locator | null> {
+  private async openSearchOptions(
+    action: 'searchAvailable' | 'searchStatus' | 'searchSet'
+  ): Promise<Locator | null> {
     await this.closeToolkitMenu()
-    const trigger = this.page.locator(KIMI_TOOLKIT_TRIGGER_SELECTOR)
-    if ((await trigger.count().catch(() => 0)) !== 1) return null
-    const triggerTarget = trigger.first()
+    const triggerTarget = await this.getUniqueVisibleLocator(
+      KIMI_TOOLKIT_TRIGGER_SELECTOR
+    )
     if (
-      !(await triggerTarget.isVisible().catch(() => false)) ||
+      triggerTarget === null ||
       !(await triggerTarget.isEnabled().catch(() => false))
     ) {
       return null
     }
     await triggerTarget.click()
+    let toolkitPopover: Locator | null = null
     await waitAsync(
       async () => {
-        const popovers = this.page.locator(KIMI_TOOLKIT_POPOVER_SELECTOR)
-        return (
-          (await popovers.count().catch(() => 0)) === 1 &&
-          (await popovers
-            .first()
-            .isVisible()
-            .catch(() => false))
+        toolkitPopover = await this.getUniqueVisibleLocator(
+          KIMI_TOOLKIT_POPOVER_SELECTOR
         )
+        return toolkitPopover !== null
       },
       {
-        timeoutMs: KIMI_CAPABILITY_UI_TIMEOUT_MS,
-        onTimeout: async () => {},
+        timeoutMs: this.getCapabilityUiTimeoutMs(),
+        onTimeout: async () => {
+          throw new ProviderAdapterError(
+            action,
+            'Kimi toolkit did not open before the capability timeout.',
+            {
+              kind: 'ui',
+              recovery: 'none',
+              retryable: false,
+              detailCode: 'kimi_toolkit_open_timeout',
+            }
+          )
+        },
       }
     )
-    const searchItems = this.page.locator(KIMI_SEARCH_ITEM_SELECTOR)
+    if (toolkitPopover === null) return null
+    const searchItems = (toolkitPopover as Locator).locator(
+      KIMI_SEARCH_ITEM_SELECTOR
+    )
     if ((await searchItems.count().catch(() => 0)) !== 1) return null
     const searchItem = searchItems.first()
     if (
@@ -558,23 +696,34 @@ export class KimiAdapter extends ProviderAdapter {
       return null
     }
     await searchItem.click()
+    let searchPopover: Locator | null = null
     await waitAsync(
       async () => {
-        const popovers = this.page.locator(KIMI_SEARCH_POPOVER_SELECTOR)
-        return (
-          (await popovers.count().catch(() => 0)) === 1 &&
-          (await popovers
-            .first()
-            .isVisible()
-            .catch(() => false))
+        searchPopover = await this.getUniqueVisibleLocator(
+          KIMI_SEARCH_POPOVER_SELECTOR
         )
+        return searchPopover !== null
       },
       {
-        timeoutMs: KIMI_CAPABILITY_UI_TIMEOUT_MS,
-        onTimeout: async () => {},
+        timeoutMs: this.getCapabilityUiTimeoutMs(),
+        onTimeout: async () => {
+          throw new ProviderAdapterError(
+            action,
+            'Kimi search options did not open before the capability timeout.',
+            {
+              kind: 'ui',
+              recovery: 'none',
+              retryable: false,
+              detailCode: 'kimi_search_options_open_timeout',
+            }
+          )
+        },
       }
     )
-    const options = this.page.locator(KIMI_SEARCH_OPTION_SELECTOR)
+    if (searchPopover === null) return null
+    const options = (searchPopover as Locator).locator(
+      KIMI_SEARCH_OPTION_SELECTOR
+    )
     if ((await options.count().catch(() => 0)) !== 2) return null
     for (let index = 0; index < 2; index += 1) {
       const option = options.nth(index)
@@ -643,7 +792,7 @@ export class KimiAdapter extends ProviderAdapter {
       'searchAvailable',
       async () => {
         try {
-          const options = await this.openSearchOptions()
+          const options = await this.openSearchOptions('searchAvailable')
           return (
             options !== null &&
             (await this.readSearchToggleSnapshot(options)) !== null
@@ -664,7 +813,7 @@ export class KimiAdapter extends ProviderAdapter {
     }
     return await this.wrapAdapterActionErrorAsync('searchStatus', async () => {
       try {
-        const options = await this.openSearchOptions()
+        const options = await this.openSearchOptions('searchStatus')
         if (options === null) {
           throw new ProviderAdapterUnsupportedError(
             'searchStatus',
@@ -694,7 +843,7 @@ export class KimiAdapter extends ProviderAdapter {
     }
     return await this.wrapAdapterActionErrorAsync('searchSet', async () => {
       try {
-        const options = await this.openSearchOptions()
+        const options = await this.openSearchOptions('searchSet')
         if (options === null) {
           throw new ProviderAdapterUnsupportedError(
             'searchSet',
@@ -719,7 +868,7 @@ export class KimiAdapter extends ProviderAdapter {
             )
           },
           {
-            timeoutMs: KIMI_CAPABILITY_UI_TIMEOUT_MS,
+            timeoutMs: this.getCapabilityUiTimeoutMs(),
             onTimeout: async () => {
               throw new ProviderAdapterError(
                 'searchSet',
@@ -745,9 +894,15 @@ export class KimiAdapter extends ProviderAdapter {
     selector: string
   ): Promise<Locator | null> {
     const targets = this.page.locator(selector)
-    if ((await targets.count().catch(() => 0)) !== 1) return null
-    const target = targets.first()
-    return (await target.isVisible().catch(() => false)) ? target : null
+    const count = await targets.count().catch(() => 0)
+    let visibleTarget: Locator | null = null
+    for (let index = 0; index < count; index += 1) {
+      const target = count === 1 ? targets.first() : targets.nth(index)
+      if (!(await target.isVisible().catch(() => false))) continue
+      if (visibleTarget !== null) return null
+      visibleTarget = target
+    }
+    return visibleTarget
   }
 
   public async attachText(text: string): Promise<void> {
@@ -853,22 +1008,6 @@ export class KimiAdapter extends ProviderAdapter {
     return buildSubmitBlockedWarningMessage('Kimi')
   }
 
-  private async readCurrentAssistantText(
-    assistantCountBeforeSubmit: number
-  ): Promise<string | null> {
-    const assistants = this.page.locator(KIMI_ASSISTANT_TEXT_SELECTOR)
-    if ((await assistants.count().catch(() => 0)) <= assistantCountBeforeSubmit)
-      return null
-    const text =
-      (
-        await assistants
-          .last()
-          .textContent()
-          .catch(() => null)
-      )?.trim() ?? ''
-    return text || null
-  }
-
   private async waitForOwnedResponse(
     captureStartIndex: number,
     submittedText: string,
@@ -945,8 +1084,12 @@ export class KimiAdapter extends ProviderAdapter {
       const entries = await this.getCapturedFetchEntries(captureStartIndex)
       this.reportCapturedSubmitActivity(entries)
       const target = entries.find((entry) => entry.id === entryId)
-      if (target?.done) return target
       if (target !== undefined) {
+        const parsed = parseKimiConnectResponse(target.chunks.join(''))
+        if (parsed.text !== null) {
+          await this.emitSubmitText(parsed.text)
+        }
+        if (target.done) return target
         const snapshot = [
           target.status ?? '',
           target.chunks.length,
@@ -994,7 +1137,6 @@ export class KimiAdapter extends ProviderAdapter {
   public async submit(options: AbortOptions = {}): Promise<string> {
     const { signal } = options
     let dispatched = false
-    let stopTextPolling = () => {}
     let onRequest: ((request: import('playwright').Request) => void) | null =
       null
     let onResponse: ((response: import('playwright').Response) => void) | null =
@@ -1018,9 +1160,6 @@ export class KimiAdapter extends ProviderAdapter {
       }
 
       const captureStartIndex = await this.getCapturedFetchEntryCount()
-      const assistantCountBeforeSubmit = await this.page
-        .locator(KIMI_ASSISTANT_TEXT_SELECTOR)
-        .count()
       const pageResponse = createDeferred<KimiPageResponseResult>()
       const submittedText = this.pendingTextVal
       let dispatchStarted = false
@@ -1057,11 +1196,6 @@ export class KimiAdapter extends ProviderAdapter {
       }
       this.page.on('request', onRequest)
       this.page.on('response', onResponse)
-      stopTextPolling = this.startSubmitTextPolling(
-        async () =>
-          await this.readCurrentAssistantText(assistantCountBeforeSubmit)
-      )
-
       dispatchStarted = true
       await send.click()
       dispatched = true
@@ -1100,51 +1234,23 @@ export class KimiAdapter extends ProviderAdapter {
 
       const parsed = parseKimiConnectResponse(completed.chunks.join(''))
       if (parsed.error !== null) throw this.createStreamError(parsed.error)
-      let text: string | null = null
-      if (parsed.isFinished) {
-        await waitAsync(
-          async () =>
-            (await this.isReady()) &&
-            !(await this.page.locator(KIMI_STOP_SELECTOR).count()),
-          { timeoutMs: this.getSubmitResponseTimeoutMs(), signal }
-        )
-        text = await this.readCurrentAssistantText(assistantCountBeforeSubmit)
-      } else {
-        await waitAsync(
-          async () => {
-            if (
-              !(await this.isReady()) ||
-              (await this.page.locator(KIMI_STOP_SELECTOR).count())
-            ) {
-              return false
-            }
-            text = await this.readCurrentAssistantText(
-              assistantCountBeforeSubmit
-            )
-            return text !== null
-          },
+      if (!parsed.isFinished) {
+        throw new ProviderAdapterError(
+          'submit',
+          'Kimi response ended without terminal protocol evidence.',
           {
-            timeoutMs: this.getSubmitResponseTimeoutMs(),
-            signal,
-            onTimeout: async () => {
-              throw new ProviderAdapterError(
-                'submit',
-                'Kimi response ended without terminal protocol evidence or a verified final response.',
-                {
-                  kind: 'protocol',
-                  recovery: 'none',
-                  retryable: false,
-                  detailCode: 'kimi_response_incomplete',
-                }
-              )
-            },
+            kind: 'protocol',
+            recovery: 'none',
+            retryable: false,
+            detailCode: 'kimi_response_incomplete',
           }
         )
       }
+      const text = parsed.text
       if (text === null) {
         throw new ProviderAdapterError(
           'submit',
-          'Kimi completed without visible assistant text.',
+          'Kimi completed without assistant text in the captured response.',
           {
             kind: 'protocol',
             recovery: 'none',
@@ -1153,6 +1259,13 @@ export class KimiAdapter extends ProviderAdapter {
           }
         )
       }
+
+      await waitAsync(
+        async () =>
+          (await this.isReady()) &&
+          !(await this.page.locator(KIMI_STOP_SELECTOR).count()),
+        { timeoutMs: this.getSubmitResponseTimeoutMs(), signal }
+      )
 
       this.conversationIdVal =
         this.conversationIdVal ??
@@ -1181,7 +1294,6 @@ export class KimiAdapter extends ProviderAdapter {
         }
       )
     } finally {
-      stopTextPolling()
       if (onRequest !== null) this.page.off('request', onRequest)
       if (onResponse !== null) this.page.off('response', onResponse)
     }
