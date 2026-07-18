@@ -1,4 +1,5 @@
 import type { ProviderId } from '../../providers/provider-id.ts'
+import { ProviderAdapterUnsupportedError } from '../../providers/adapters/adapter-base.ts'
 import type { RuntimeCore } from '../../runtime/runtime-core.ts'
 import type { CliCommandContext, CommandResult } from '../core/command-types.ts'
 import { getActiveThread } from '../core/command-types.ts'
@@ -185,10 +186,17 @@ export async function listProviderCapabilityStates(
 
     const states: ProviderCapabilityState[] = []
     for (const capability of PROVIDER_CAPABILITIES[provider]) {
-      if (
-        isToggleCapability(capability.name) &&
-        (await adapter.hasToggleCapability(capability.name))
-      ) {
+      if (!isToggleCapability(capability.name)) continue
+      if (provider === 'kimi') {
+        try {
+          states.push({
+            name: capability.name,
+            state: await adapter.getToggleState(capability.name),
+          })
+        } catch (error) {
+          if (!(error instanceof ProviderAdapterUnsupportedError)) throw error
+        }
+      } else if (await adapter.hasToggleCapability(capability.name)) {
         states.push({
           name: capability.name,
           state: await adapter.getToggleState(capability.name),
@@ -281,7 +289,7 @@ export async function executeProviderCapability(
   }
 
   const capability = name
-  if (!(await adapter.hasToggleCapability(capability))) {
+  if (provider !== 'kimi' && !(await adapter.hasToggleCapability(capability))) {
     return {
       status: 'unsupported_provider',
       result: {
@@ -292,10 +300,28 @@ export async function executeProviderCapability(
     }
   }
 
-  const state =
-    action === 'status'
-      ? await adapter.getToggleState(capability)
-      : await adapter.setToggleState(capability, action)
+  let state: ToggleState
+  try {
+    state =
+      action === 'status'
+        ? await adapter.getToggleState(capability)
+        : await adapter.setToggleState(capability, action)
+  } catch (error) {
+    if (
+      provider !== 'kimi' ||
+      !(error instanceof ProviderAdapterUnsupportedError)
+    ) {
+      throw error
+    }
+    return {
+      status: 'unsupported_provider',
+      result: {
+        title: THREAD_CAPABILITY_LABEL,
+        body: `Capability not available for ${provider}: ${name}`,
+        format: 'plain',
+      },
+    }
+  }
 
   return {
     status: 'ok',
