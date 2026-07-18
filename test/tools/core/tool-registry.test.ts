@@ -13,6 +13,7 @@ import {
 import {
   extractToolCall,
   parseToolCallPayload,
+  projectStreamingAssistantText,
   ToolRegistry,
 } from '../../../src/tools/core/tool-registry.ts'
 import { createProviderAdapterStub } from '../../helpers/fakes.ts'
@@ -50,6 +51,57 @@ test('tool extraction preserves named freeform payloads', () => {
   assert.deepEqual(
     parseToolCallPayload(extracted.rawPayload, extracted.declaredToolName),
     { tool: 'apply_patch', params: extracted.rawPayload }
+  )
+})
+
+test('streaming assistant projection hides tool candidates and payloads', () => {
+  assert.equal(
+    projectStreamingAssistantText('Ordinary response'),
+    'Ordinary response'
+  )
+  assert.equal(projectStreamingAssistantText('Before\n<tool'), 'Before')
+  assert.equal(
+    projectStreamingAssistantText(
+      'Before\n<tool name="apply_patch">\n*** Begin Patch'
+    ),
+    'Before'
+  )
+  assert.equal(
+    projectStreamingAssistantText(`<tool>\n${'x'.repeat(100_000)}\n</tool>`),
+    ''
+  )
+})
+
+test('streaming assistant projection buffers partial tool prefixes without hiding ordinary tags', () => {
+  for (const suffix of ['<', '<t', '<to', '<too']) {
+    assert.equal(projectStreamingAssistantText(`Before ${suffix}`), 'Before')
+  }
+
+  assert.equal(
+    projectStreamingAssistantText('Before <toolbar>'),
+    'Before <toolbar>'
+  )
+  assert.equal(
+    projectStreamingAssistantText('Before <toolbox>'),
+    'Before <toolbox>'
+  )
+})
+
+test('streaming assistant projection preserves tool syntax in Markdown code', () => {
+  assert.equal(
+    projectStreamingAssistantText('Use `<tool>` for a tool call.'),
+    'Use `<tool>` for a tool call.'
+  )
+  assert.equal(
+    projectStreamingAssistantText('```xml\n<tool>example\n```'),
+    '```xml\n<tool>example\n```'
+  )
+})
+
+test('streaming assistant projection defers to complete tool extraction', () => {
+  assert.equal(
+    projectStreamingAssistantText('`unfinished code\n<tool>payload</tool>'),
+    '`unfinished code'
   )
 })
 
