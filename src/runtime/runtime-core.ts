@@ -109,7 +109,6 @@ export class RuntimeCore {
         ? []
         : [
             `- A Portal Manual Skill Context is runtime-provided context for the current user turn.`,
-            `- If its "## User Task" section is empty, ask what the user wants to do instead of inventing a task.`,
             `- Do not apply a manually selected skill to later turns unless the user selects it again.`,
           ]
 
