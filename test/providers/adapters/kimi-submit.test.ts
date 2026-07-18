@@ -484,25 +484,37 @@ test('Kimi Connect parser replaces a text block only for a whole-block set', () 
   assert.equal(parseKimiConnectResponse(raw).text, '# Replacement')
 })
 
-test('Kimi Connect parser accepts id-owned blocks and ignores unowned blocks without message ids', () => {
+test('Kimi Connect parser associates stable anonymous blocks with the owned assistant', () => {
   const raw = [
+    connectFrame({
+      block: { id: 'too-early', text: { content: 'ignore before assistant' } },
+    }),
     connectFrame({
       message: {
         id: 'assistant-1',
         role: 'assistant',
         status: 'MESSAGE_STATUS_GENERATING',
-        blocks: [{ id: 'owned-text', text: { content: '#' } }],
       },
     }),
     connectFrame({
-      block: { id: 'owned-text', text: { content: '# Heading' } },
+      op: 'OPERATOR_APPEND',
+      event: {
+        case: 'block',
+        value: { id: 'text-1', text: { content: '#' } },
+      },
     }),
     connectFrame({
-      block: { id: 'foreign-text', text: { content: ' ignore me' } },
+      op: 'OPERATOR_APPEND',
+      block: { id: 'text-1', text: { content: '# Heading' } },
     }),
     connectFrame({
-      block: { text: { content: ' ignore anonymous' } },
+      block: {
+        id: 'text-1',
+        messageId: 'assistant-2',
+        text: { content: ' ignore foreign assistant' },
+      },
     }),
+    connectFrame({ block: { text: { content: ' ignore unstable block' } } }),
     connectFrame({
       message: {
         id: 'assistant-1',
@@ -512,6 +524,33 @@ test('Kimi Connect parser accepts id-owned blocks and ignores unowned blocks wit
   ].join('')
 
   assert.equal(parseKimiConnectResponse(raw).text, '## Heading')
+})
+
+test('Kimi Connect parser replaces an associated anonymous block on whole-block set', () => {
+  const raw = [
+    connectFrame({
+      message: {
+        id: 'assistant-1',
+        role: 'assistant',
+        status: 'MESSAGE_STATUS_GENERATING',
+      },
+    }),
+    connectFrame({
+      op: 'OPERATOR_APPEND',
+      block: { id: 'text-1', text: { content: 'old text' } },
+    }),
+    connectFrame({
+      op: 'OPERATOR_SET',
+      mask: { paths: ['block'] },
+      event: {
+        case: 'block',
+        value: { id: 'text-1', text: { content: '# Replacement' } },
+      },
+    }),
+    connectFrame({ done: {} }),
+  ].join('')
+
+  assert.equal(parseKimiConnectResponse(raw).text, '# Replacement')
 })
 
 test('Kimi Connect parser accepts only an empty root done frame', () => {
@@ -658,7 +697,34 @@ test('KimiAdapter returns Markdown from terminal network protocol frames', async
   })
   controls.setTurn('owned completed prompt', completedRaw)
   assert.equal(await controls.adapter.submit(), '`network only`')
-  assert.equal(controls.sendClicks, 2)
+
+  const anonymousBlockRaw = [
+    connectFrame({
+      message: {
+        id: 'assistant-3',
+        role: 'assistant',
+        status: 'MESSAGE_STATUS_GENERATING',
+      },
+    }),
+    connectFrame({
+      op: 'OPERATOR_APPEND',
+      event: {
+        case: 'block',
+        value: {
+          id: 'text-3',
+          content: {
+            case: 'text',
+            value: { content: '**network Markdown**' },
+          },
+        },
+      },
+    }),
+    connectFrame({ done: {} }),
+  ].join('')
+  controls.setTurn('anonymous block prompt', anonymousBlockRaw)
+  assert.equal(await controls.adapter.submit(), '**network Markdown**')
+
+  assert.equal(controls.sendClicks, 3)
   assert.equal(controls.adapter.conversationId, 'conversation-1')
 })
 
