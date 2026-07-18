@@ -940,10 +940,7 @@ test('TerminalController keeps a live spawn bubble until its result replaces it'
   assert.ok(liveId !== undefined)
   assert.equal(ui.getState().liveCommand?.toolName, 'spawn')
   assert.equal(ui.getState().liveCommand?.fixedLineCount, undefined)
-  assert.match(
-    ui.getState().liveCommand?.body ?? '',
-    /Waiting for child worker/
-  )
+  assert.match(ui.getState().liveCommand?.body ?? '', /Waiting for child agent/)
 
   ui.renderToolResult(
     thread,

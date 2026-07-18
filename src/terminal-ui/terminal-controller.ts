@@ -797,7 +797,7 @@ export class TerminalController {
         label: toolName,
         body:
           toolName === 'spawn'
-            ? 'Waiting for child worker to finish...'
+            ? 'Waiting for child agent to finish...'
             : 'Waiting for command output...',
         format: 'plain',
         toolName,
