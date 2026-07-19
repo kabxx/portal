@@ -1,13 +1,23 @@
 import type { RunCommandJobSnapshot } from '../../processes/run-command-job-manager.ts'
 import type { CliCommand, CommandResult } from '../core/command-types.ts'
+import { commandGuideSubcommands } from '../core/command-types.ts'
 
 const COMMAND_SUMMARY_LENGTH = 120
+
+const JOB_GUIDES = [
+  {
+    path: ['stop'],
+    usage: 'stop <job-id>',
+    description: 'Stop a running command job.',
+  },
+] as const
 
 export const JobCommand: CliCommand = {
   name: '/job',
   usage: '/job [stop <job-id>]',
   description: 'List or stop running command jobs.',
-  subcommands: ['stop'],
+  subcommands: commandGuideSubcommands(JOB_GUIDES),
+  guides: JOB_GUIDES,
   async execute(context, args) {
     if (context.runCommandJobs === undefined) {
       context.ui.renderWarning('/job', 'Job management is not available.')

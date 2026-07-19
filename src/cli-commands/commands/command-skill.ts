@@ -4,25 +4,21 @@ import type {
   CliCommandContext,
   CommandResult,
 } from '../core/command-types.ts'
-
-const SKILL_SUBCOMMANDS = [
-  'add',
-  'list',
-  'enable',
-  'disable',
-  'remove',
-] as const
+import { commandGuideSubcommands } from '../core/command-types.ts'
 
 const SKILL_ADD_HELP = [
   {
+    path: ['add'],
     usage: 'add <local-directory>',
     description: 'Register a skill or skill collection from a local directory.',
   },
   {
+    path: ['add'],
     usage: 'add <url>',
     description: 'Download and install a skill or skill collection.',
   },
   {
+    path: ['add'],
     usage: 'add <name> --registry <url>',
     description: 'Download and install a named skill from a Hub registry.',
   },
@@ -30,16 +26,23 @@ const SKILL_ADD_HELP = [
 
 const SKILL_HELP_ROWS = [
   ...SKILL_ADD_HELP,
-  { usage: 'list', description: 'List registered skills.' },
   {
+    path: ['list'],
+    usage: 'list',
+    description: 'List registered skills.',
+  },
+  {
+    path: ['enable'],
     usage: 'enable <name>',
     description: 'Enable a registered skill for new threads.',
   },
   {
+    path: ['disable'],
     usage: 'disable <name>',
     description: 'Disable a registered skill for new threads.',
   },
   {
+    path: ['remove'],
     usage: 'remove <name>',
     description: 'Remove a registered skill.',
   },
@@ -51,7 +54,8 @@ export const SkillCommand: CliCommand = {
   name: '/skill',
   usage: '/skill <subcommand>',
   description: 'Manage registered skills.',
-  subcommands: SKILL_SUBCOMMANDS,
+  subcommands: commandGuideSubcommands(SKILL_HELP_ROWS),
+  guides: SKILL_HELP_ROWS,
   async execute(context, args) {
     const [subcommand, ...subcommandArgs] = args
     if (subcommand === undefined) {

@@ -25,6 +25,7 @@ import type {
 } from '../instructions/project-instructions.ts'
 import { HookDispatcher } from '../hooks/hook-dispatcher.ts'
 import type { HookExecutionScope } from '../hooks/hook-types.ts'
+import type { ManualSkillSummary } from '../skills/manual-skill-summary.ts'
 
 export interface ManualSkill {
   name: string
@@ -69,6 +70,8 @@ export interface ToolCallMetadata {
 }
 
 export class RuntimeCore {
+  private readonly manualSkills: readonly ManualSkillSummary[]
+
   constructor(
     private readonly agentAdapter: ProviderAdapter,
     private readonly toolRegistry: ToolRegistry,
@@ -78,13 +81,22 @@ export class RuntimeCore {
     private readonly mcpSession: ThreadMcpSession | null = null,
     private readonly manualSkillLoader: ManualSkillLoader | null = null,
     private readonly projectInstructions: ProjectInstructions | null = null,
-    private readonly manualSkillNames: readonly string[] = [],
+    manualSkills: readonly ManualSkillSummary[] = [],
     private readonly hookDispatcher: HookDispatcher | null = null,
     private readonly requestAttemptLimit = 3
-  ) {}
+  ) {
+    this.manualSkills = manualSkills.map(({ name, description }) => ({
+      name,
+      description,
+    }))
+  }
+
+  public get availableManualSkills(): readonly ManualSkillSummary[] {
+    return this.manualSkills
+  }
 
   public get availableManualSkillNames(): readonly string[] {
-    return this.manualSkillNames
+    return this.manualSkills.map(({ name }) => name)
   }
 
   public async init(options: AbortOptions = {}) {

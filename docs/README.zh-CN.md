@@ -87,7 +87,7 @@ flowchart LR
 
 会话 URL 和元信息保存在 `data/threads.db` 中，聊天记录不会写入该数据库。已打开 thread 的终端时间线会在 portal 退出时丢失；`/thread resume` 只重新加载 Provider 当前可见的 user/assistant 历史。
 
-使用 `Ctrl+J` 可靠地输入换行，使用 `Ctrl+C` 取消当前操作。portal busy 时不能提交输入。命令索引和输入控制请参阅 [CLI 指南](cli.md)。
+使用 `Ctrl+J` 可靠地输入换行，使用 `Ctrl+C` 取消当前操作。portal busy 时不能提交输入。输入 `/` 或活动线程中的 `$` 前缀会打开最多五条的上下文提示；`Up` / `Down` 浏览提示，`Tab` 补全选中项，`Enter` 保持默认提交。命令索引和输入控制请参阅 [CLI 指南](cli.md)。
 
 ## 扩展能力
 

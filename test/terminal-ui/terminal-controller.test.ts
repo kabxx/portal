@@ -196,25 +196,49 @@ test('TerminalController exposes the active thread through bound thread state', 
 })
 
 test('TerminalController exposes manual skills from the active thread snapshot', () => {
+  const homeUi = new TerminalController()
+  assert.deepEqual(homeUi.getActiveManualSkills(), [])
+  assert.deepEqual(homeUi.getActiveManualSkillNames(), [])
+
   const manager = new ThreadManager()
   const first = manager.addThread({
     id: manager.createThreadId(),
     provider: 'chatgpt',
-    runtime: createFakeRuntime({ manualSkillNames: ['first-skill'] }),
+    runtime: createFakeRuntime({
+      manualSkills: [
+        { name: 'first-skill', description: 'Use the first workflow.' },
+      ],
+    }),
     createdAt: 1,
   })
-  manager.addThread({
+  const second = manager.addThread({
     id: manager.createThreadId(),
     provider: 'gemini',
-    runtime: createFakeRuntime({ manualSkillNames: ['second-skill'] }),
+    runtime: createFakeRuntime({
+      manualSkills: [
+        { name: 'second-skill', description: 'Use the second workflow.' },
+      ],
+    }),
     createdAt: 2,
   })
   const ui = new TerminalController()
   ui.bindThreadManager(manager)
+  ui.showThreadTimeline(second.id)
 
   assert.deepEqual(ui.getActiveManualSkillNames(), ['second-skill'])
+  assert.deepEqual(ui.getActiveManualSkills(), [
+    { name: 'second-skill', description: 'Use the second workflow.' },
+  ])
   manager.switchThread(first.id)
+  ui.showThreadTimeline(first.id)
   assert.deepEqual(ui.getActiveManualSkillNames(), ['first-skill'])
+  assert.deepEqual(ui.getActiveManualSkills(), [
+    { name: 'first-skill', description: 'Use the first workflow.' },
+  ])
+
+  ui.showHomeTimeline()
+  assert.deepEqual(ui.getActiveManualSkills(), [])
+  assert.deepEqual(ui.getActiveManualSkillNames(), [])
 })
 
 test('TerminalController caches home and thread timelines independently', () => {
