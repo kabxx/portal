@@ -6,52 +6,59 @@ import type {
   CliCommandContext,
   CommandResult,
 } from '../core/command-types.ts'
-import { getActiveThread } from '../core/command-types.ts'
+import {
+  commandGuideSubcommands,
+  getActiveThread,
+} from '../core/command-types.ts'
 
 const MCP_SUBCOMMANDS = [
   {
-    name: 'add',
+    path: ['add'],
     usage: 'add <name> <url> [--header "Name: value"]...',
     description: 'Add and enable an HTTP MCP server.',
   },
   {
-    name: 'add-stdio',
+    path: ['add'],
     usage: 'add <name> -- <command> [args...]',
     description: 'Add and enable a stdio MCP server.',
   },
-  { name: 'list', usage: 'list', description: 'List configured servers.' },
   {
-    name: 'enable',
+    path: ['list'],
+    usage: 'list',
+    description: 'List configured servers.',
+  },
+  {
+    path: ['enable'],
     usage: 'enable <name>',
     description: 'Enable a server for new threads.',
   },
   {
-    name: 'disable',
+    path: ['disable'],
     usage: 'disable <name>',
     description: 'Disable a server for new threads.',
   },
   {
-    name: 'remove',
+    path: ['remove'],
     usage: 'remove <name>',
     description: 'Remove a configured server.',
   },
   {
-    name: 'resource-list',
+    path: ['resource', 'list'],
     usage: 'resource list [server]',
     description: 'List resources in the active thread.',
   },
   {
-    name: 'resource-attach',
+    path: ['resource', 'attach'],
     usage: 'resource attach <server> <uri>',
     description: 'Attach a resource as its own user turn.',
   },
   {
-    name: 'prompt-list',
+    path: ['prompt', 'list'],
     usage: 'prompt list [server]',
     description: 'List prompts in the active thread.',
   },
   {
-    name: 'prompt-attach',
+    path: ['prompt', 'attach'],
     usage: 'prompt attach <server> <prompt> [json-arguments]',
     description: 'Attach a prompt as its own user turn.',
   },
@@ -61,15 +68,8 @@ export const McpCommand: CliCommand = {
   name: '/mcp',
   usage: '/mcp <subcommand>',
   description: 'Manage MCP servers, resources, and prompts.',
-  subcommands: [
-    'add',
-    'list',
-    'enable',
-    'disable',
-    'remove',
-    'resource',
-    'prompt',
-  ],
+  subcommands: commandGuideSubcommands(MCP_SUBCOMMANDS),
+  guides: MCP_SUBCOMMANDS,
   async execute(context, args) {
     const [subcommand, ...subcommandArgs] = args
     if (subcommand === undefined) {

@@ -87,7 +87,7 @@ Common thread operations:
 
 Conversation URLs and metadata are stored in `data/threads.db`; transcripts are not. Open-thread terminal timelines are lost when portal exits. `/thread resume` reloads only the provider's current visible user/assistant history.
 
-Use `Ctrl+J` for a reliable multiline input and `Ctrl+C` to cancel the current operation. Input submission remains unavailable while portal is busy. The command index and input controls are documented in the [CLI guide](docs/cli.md).
+Use `Ctrl+J` for a reliable multiline input and `Ctrl+C` to cancel the current operation. Input submission remains unavailable while portal is busy. Typing `/` or an active-thread `$` prefix opens a five-row contextual hint bubble; `Up` / `Down` browse it, `Tab` completes the selected item, and `Enter` keeps normal submission. The command index and input controls are documented in the [CLI guide](docs/cli.md).
 
 ## Extensions
 

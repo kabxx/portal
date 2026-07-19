@@ -26,6 +26,12 @@ export interface CommandResult {
   continue: boolean
 }
 
+export interface CliCommandGuide {
+  path: readonly string[]
+  usage: string
+  description: string
+}
+
 export interface CliCommandContext {
   threadManager: ThreadManager
   threadStore: ThreadStore
@@ -54,10 +60,23 @@ export interface CliCommand {
   description: string
   usage?: string
   subcommands?: readonly string[]
+  guides?: readonly CliCommandGuide[]
   execute(
     context: CliCommandContext,
     args: readonly string[]
   ): Promise<CommandResult>
+}
+
+export function commandGuideSubcommands(
+  guides: readonly CliCommandGuide[]
+): readonly string[] {
+  return [
+    ...new Set(
+      guides
+        .map(({ path }) => path[0])
+        .filter((name): name is string => name !== undefined)
+    ),
+  ]
 }
 
 export function getActiveThread(

@@ -157,7 +157,7 @@ export async function createRuntimeFromAdapter(
       mcpSession,
       manualSkillLoader,
       options.projectInstructions ?? null,
-      skillCatalog?.names ?? [],
+      skillCatalog?.summaries ?? [],
       options.hookDispatcher ?? null,
       options.requestAttemptLimit ?? 3
     )
