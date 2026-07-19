@@ -1,10 +1,20 @@
 import type { CliCommand } from '../core/command-types.ts'
+import { commandGuideSubcommands } from '../core/command-types.ts'
+
+const KEYBINDING_GUIDES = [
+  {
+    path: ['reset'],
+    usage: 'reset',
+    description: 'Restore platform-default keybindings.',
+  },
+] as const
 
 export const KeybindingCommand: CliCommand = {
   name: '/keybinding',
   description: 'Restore terminal shortcuts to platform defaults.',
   usage: '/keybinding reset',
-  subcommands: ['reset'],
+  subcommands: commandGuideSubcommands(KEYBINDING_GUIDES),
+  guides: KEYBINDING_GUIDES,
   async execute(context, args) {
     if (args[0] !== 'reset' || args.length !== 1) {
       context.ui.renderWarning('/keybinding', 'Usage: /keybinding reset')

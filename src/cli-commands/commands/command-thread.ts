@@ -9,52 +9,55 @@ import type {
   CliCommandContext,
   CommandResult,
 } from '../core/command-types.ts'
-import { getActiveThread } from '../core/command-types.ts'
+import {
+  commandGuideSubcommands,
+  getActiveThread,
+} from '../core/command-types.ts'
 
-const THREAD_SUBCOMMANDS = [
+const THREAD_GUIDES = [
   {
-    name: 'open',
+    path: ['open'],
     usage: 'open <provider> [model-number]',
     description: 'Open a new thread.',
   },
-  { name: 'list', usage: 'list', description: 'List local threads.' },
+  { path: ['list'], usage: 'list', description: 'List local threads.' },
   {
-    name: 'history',
+    path: ['history'],
     usage: 'history [limit]',
     description: 'Show opened thread history.',
   },
   {
-    name: 'resume',
+    path: ['resume'],
     usage: 'resume <conversation-url|#history-id>',
     description: 'Resume a conversation URL or history entry.',
   },
   {
-    name: 'reload',
+    path: ['reload'],
     usage: 'reload',
     description: 'Reload the active provider page.',
   },
   {
-    name: 'switch',
+    path: ['switch'],
     usage: 'switch <thread-id>',
     description: 'Switch to another thread.',
   },
   {
-    name: 'status',
+    path: ['status'],
     usage: 'status',
     description: 'Show active thread status.',
   },
   {
-    name: 'close',
+    path: ['close'],
     usage: 'close [thread-id]',
     description: 'Close a thread.',
   },
   {
-    name: 'detach',
+    path: ['detach'],
     usage: 'detach',
     description: 'Detach from the active thread.',
   },
   {
-    name: 'capability',
+    path: ['capability'],
     usage: 'capability [name] [action]',
     description: 'Show or change active thread capabilities.',
   },
@@ -64,7 +67,8 @@ export const ThreadCommand: CliCommand = {
   name: '/thread',
   usage: '/thread <subcommand>',
   description: 'Manage threads.',
-  subcommands: THREAD_SUBCOMMANDS.map(({ name }) => name),
+  subcommands: commandGuideSubcommands(THREAD_GUIDES),
+  guides: THREAD_GUIDES,
   async execute(context, args) {
     const [subcommand, ...subcommandArgs] = args
     if (subcommand === undefined) {
@@ -104,14 +108,12 @@ export const ThreadCommand: CliCommand = {
 }
 
 function renderThreadHelp(context: CliCommandContext): void {
-  const usageWidth = Math.max(
-    ...THREAD_SUBCOMMANDS.map(({ usage }) => usage.length)
-  )
+  const usageWidth = Math.max(...THREAD_GUIDES.map(({ usage }) => usage.length))
   context.ui.renderInfo(
     '/thread',
     [
       'Subcommands:',
-      ...THREAD_SUBCOMMANDS.map(
+      ...THREAD_GUIDES.map(
         ({ usage, description }) =>
           `  ${usage.padEnd(usageWidth)}  ${description}`
       ),

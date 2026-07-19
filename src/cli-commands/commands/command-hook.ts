@@ -1,10 +1,35 @@
 import type { CliCommand } from '../core/command-types.ts'
+import { commandGuideSubcommands } from '../core/command-types.ts'
+
+const HOOK_GUIDES = [
+  {
+    path: ['status'],
+    usage: 'status',
+    description: 'Show Hook configuration status.',
+  },
+  {
+    path: ['reload'],
+    usage: 'reload',
+    description: 'Reload Hook handlers from disk.',
+  },
+  {
+    path: ['enable'],
+    usage: 'enable',
+    description: 'Enable Hooks for new turns.',
+  },
+  {
+    path: ['disable'],
+    usage: 'disable',
+    description: 'Disable Hooks for new turns.',
+  },
+] as const
 
 export const HookCommand: CliCommand = {
   name: '/hook',
   description: 'Inspect, reload, enable, or disable Hooks.',
   usage: '/hook <status|reload|enable|disable>',
-  subcommands: ['status', 'reload', 'enable', 'disable'],
+  subcommands: commandGuideSubcommands(HOOK_GUIDES),
+  guides: HOOK_GUIDES,
   async execute(context, args) {
     if (context.hookCatalog === undefined) {
       context.ui.renderError('/hook', 'Hooks are not configured.')

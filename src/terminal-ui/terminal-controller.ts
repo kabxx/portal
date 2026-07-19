@@ -2,6 +2,7 @@ import type { CliCommand } from '../cli-commands/core/command-types.ts'
 import type { ThreadHistoryEntry } from '../threads/thread-store.ts'
 import type { ThreadHandle, ThreadManager } from '../threads/thread-manager.ts'
 import type { SkillListResult } from '../skills/skill-library.ts'
+import type { ManualSkillSummary } from '../skills/manual-skill-summary.ts'
 import type { ConversationHistoryMessage } from '../providers/conversation-history.ts'
 import type {
   ToolOutcome,
@@ -174,10 +175,14 @@ export class TerminalController {
   }
 
   public getActiveManualSkillNames(): readonly string[] {
-    return (
-      this.threadManager?.getActiveThread()?.runtime
-        .availableManualSkillNames ?? []
-    )
+    return this.getActiveManualSkills().map(({ name }) => name)
+  }
+
+  public getActiveManualSkills(): readonly ManualSkillSummary[] {
+    const activeThread = this.threadManager?.getActiveThread() ?? null
+    return activeThread !== null && this.activeTimelineKey === activeThread.id
+      ? activeThread.runtime.availableManualSkills
+      : []
   }
 
   public cycleThread(direction: -1 | 1): ThreadHandle | null {

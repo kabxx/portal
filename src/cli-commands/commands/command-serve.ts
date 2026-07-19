@@ -3,6 +3,7 @@ import type {
   CliCommandContext,
   ListenerCommandController,
 } from '../core/command-types.ts'
+import { commandGuideSubcommands } from '../core/command-types.ts'
 import { isUnauthenticatedNonLoopbackListener } from '../core/listener-security.ts'
 
 type ListenerTarget = 'api' | 'mcp'
@@ -29,11 +30,55 @@ const LISTENERS: Record<
   },
 }
 
+const SERVE_GUIDES = [
+  {
+    path: ['api', 'start'],
+    usage: 'api start',
+    description: 'Start the HTTP API server.',
+  },
+  {
+    path: ['api', 'status'],
+    usage: 'api status',
+    description: 'Show HTTP API server status.',
+  },
+  {
+    path: ['api', 'stop'],
+    usage: 'api stop',
+    description: 'Stop the HTTP API server.',
+  },
+  {
+    path: ['api', 'token'],
+    usage: 'api token',
+    description: 'Show the HTTP API token state.',
+  },
+  {
+    path: ['mcp', 'start'],
+    usage: 'mcp start',
+    description: 'Start the Portal MCP Server.',
+  },
+  {
+    path: ['mcp', 'status'],
+    usage: 'mcp status',
+    description: 'Show Portal MCP Server status.',
+  },
+  {
+    path: ['mcp', 'stop'],
+    usage: 'mcp stop',
+    description: 'Stop the Portal MCP Server.',
+  },
+  {
+    path: ['mcp', 'token'],
+    usage: 'mcp token',
+    description: 'Show the Portal MCP token state.',
+  },
+] as const
+
 export const ServeCommand: CliCommand = {
   name: '/serve',
   usage: '/serve <api|mcp> <start|status|stop|token>',
   description: 'Manage Portal network listeners.',
-  subcommands: ['api', 'mcp'],
+  subcommands: commandGuideSubcommands(SERVE_GUIDES),
+  guides: SERVE_GUIDES,
   async execute(context: CliCommandContext, args: readonly string[]) {
     const target = parseListenerTarget(args[0])
     if (target === null) {

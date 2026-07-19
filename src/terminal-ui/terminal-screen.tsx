@@ -3,6 +3,15 @@ import { Box, Static, Text, useInput, usePaste, useWindowSize } from 'ink'
 import type { CliCommand } from '../cli-commands/core/command-types.ts'
 import type { KeybindingCatalog } from '../keybindings/keybinding-catalog.ts'
 import type { ProviderId } from '../providers/provider-id.ts'
+import type { ManualSkillSummary } from '../skills/manual-skill-summary.ts'
+import { resolveCommandHints } from './command-hints.ts'
+import {
+  navigateInputHintSelection,
+  resolveInputHintSelection,
+  sliceInputHintWindow,
+  type InputHint,
+} from './input-hints.ts'
+import { resolveSkillHints } from './skill-hints.ts'
 import {
   type TerminalState,
   type TimelineEntry,
@@ -58,6 +67,18 @@ export interface InputCursorDisplay {
   before: readonly InputDisplayRun[]
   cursor: InputDisplayRun & { inverse: boolean }
   after: readonly InputDisplayRun[]
+}
+
+export interface InputHintLine {
+  usage: string
+  description: string
+  kind: InputHint['kind']
+  selected: boolean
+}
+
+export interface InputHintGroup {
+  title: 'commands' | 'skills'
+  hints: readonly InputHint[]
 }
 
 const INPUT_SYNTAX_COLOR: Record<InputSyntaxKind, string> = {
@@ -559,6 +580,21 @@ export function completeManualSkill(
   }
 }
 
+export function resolveInputHintGroup(
+  value: string,
+  commands: readonly CliCommand[],
+  providers: readonly ProviderId[],
+  manualSkills: readonly ManualSkillSummary[]
+): InputHintGroup | null {
+  const commandHints = resolveCommandHints(value, commands, providers)
+  if (commandHints.length > 0) {
+    return { title: 'commands', hints: commandHints }
+  }
+
+  const skillHints = resolveSkillHints(value, manualSkills)
+  return skillHints.length > 0 ? { title: 'skills', hints: skillHints } : null
+}
+
 export function resolveInputSyntaxHighlight(
   value: string,
   commands: readonly CliCommand[],
@@ -711,6 +747,7 @@ interface InputEditorState {
   value: string
   cursor: number
   preferredColumn: number | null
+  selectedHintCompletion: string | null
 }
 
 export function describeInputPanel(
@@ -767,9 +804,19 @@ export function TerminalScreen({
     value: '',
     cursor: 0,
     preferredColumn: null,
+    selectedHintCompletion: null,
   })
   const [spinnerFrameIndex, setSpinnerFrameIndex] = useState(0)
   const historyRef = useRef(new InputHistory())
+  const inputStateRef = useRef(inputState)
+  const updateInputState = (
+    update: InputEditorState | ((current: InputEditorState) => InputEditorState)
+  ) => {
+    const next =
+      typeof update === 'function' ? update(inputStateRef.current) : update
+    inputStateRef.current = next
+    setInputState(next)
+  }
   const { columns } = useWindowSize()
   const inputValue = inputState.value
 
@@ -781,7 +828,12 @@ export function TerminalScreen({
 
   useEffect(() => {
     if (!state.prompt.active && !state.busy) {
-      setInputState({ value: '', cursor: 0, preferredColumn: null })
+      updateInputState({
+        value: '',
+        cursor: 0,
+        preferredColumn: null,
+        selectedHintCompletion: null,
+      })
       historyRef.current.resetCursor()
     }
   }, [state.prompt.active])
@@ -811,10 +863,11 @@ export function TerminalScreen({
       if (state.busy) {
         onInterrupt()
       } else if (inputValue.length > 0) {
-        setInputState({
+        updateInputState({
           value: clearInput(),
           cursor: 0,
           preferredColumn: null,
+          selectedHintCompletion: null,
         })
         historyRef.current.resetCursor()
       }
@@ -832,11 +885,35 @@ export function TerminalScreen({
       return
     }
 
+    if (action === 'input.moveUp' || action === 'input.moveDown') {
+      const current = inputStateRef.current
+      const hintGroup = resolveInputHintGroup(
+        current.value,
+        commands,
+        providers,
+        ui.getActiveManualSkills()
+      )
+      const selectedHint = navigateInputHintSelection(
+        hintGroup?.hints ?? [],
+        current.value,
+        current.selectedHintCompletion,
+        action === 'input.moveUp' ? 'up' : 'down'
+      )
+      if (selectedHint !== null) {
+        updateInputState({
+          ...current,
+          selectedHintCompletion: selectedHint,
+        })
+        return
+      }
+    }
+
     if (action === 'input.clear') {
-      setInputState({
+      updateInputState({
         value: clearInput(),
         cursor: 0,
         preferredColumn: null,
+        selectedHintCompletion: null,
       })
       historyRef.current.resetCursor()
       return
@@ -844,30 +921,52 @@ export function TerminalScreen({
 
     if (action === 'input.deleteWordBackward') {
       historyRef.current.resetCursor()
-      setInputState((current) => ({
+      updateInputState((current) => ({
         ...deletePreviousWordAtCursor(current.value, current.cursor),
         preferredColumn: null,
+        selectedHintCompletion: null,
       }))
       return
     }
 
     if (action === 'input.complete') {
-      const trimmedInput = inputValue.trimStart()
-      if (
-        state.busy &&
-        !trimmedInput.startsWith('/') &&
-        !trimmedInput.startsWith('$')
-      ) {
-        return
-      }
       historyRef.current.resetCursor()
-      setInputState((current) => {
+      updateInputState((current) => {
+        const trimmedInput = current.value.trimStart()
+        if (
+          state.busy &&
+          !trimmedInput.startsWith('/') &&
+          !trimmedInput.startsWith('$')
+        ) {
+          return current
+        }
+        const currentHintGroup = resolveInputHintGroup(
+          current.value,
+          commands,
+          providers,
+          ui.getActiveManualSkills()
+        )
+        const selected = resolveInputHintSelection(
+          currentHintGroup?.hints ?? [],
+          current.value,
+          current.selectedHintCompletion
+        )
+        if (selected !== null) {
+          return {
+            value: selected,
+            cursor: selected.length,
+            preferredColumn: null,
+            selectedHintCompletion: null,
+          }
+        }
+
         const commandValue = completeSlashCommand(current.value, commands)
         if (commandValue !== current.value) {
           return {
             value: commandValue,
             cursor: commandValue.length,
             preferredColumn: null,
+            selectedHintCompletion: null,
           }
         }
 
@@ -877,6 +976,7 @@ export function TerminalScreen({
             value: providerValue,
             cursor: providerValue.length,
             preferredColumn: null,
+            selectedHintCompletion: null,
           }
         }
 
@@ -885,16 +985,24 @@ export function TerminalScreen({
           current.cursor,
           ui.getActiveManualSkillNames()
         )
-        return { ...skillCompletion, preferredColumn: null }
+        return {
+          ...skillCompletion,
+          preferredColumn: null,
+          selectedHintCompletion:
+            skillCompletion.value === current.value
+              ? current.selectedHintCompletion
+              : null,
+        }
       })
       return
     }
 
     if (action === 'input.newline') {
       historyRef.current.resetCursor()
-      setInputState((current) => ({
+      updateInputState((current) => ({
         ...insertAtCursor(current.value, current.cursor, '\n'),
         preferredColumn: null,
+        selectedHintCompletion: null,
       }))
       return
     }
@@ -909,23 +1017,29 @@ export function TerminalScreen({
       }
       if (!ui.submitInput(inputValue)) return
       historyRef.current.push(inputValue)
-      setInputState({ value: '', cursor: 0, preferredColumn: null })
+      updateInputState({
+        value: '',
+        cursor: 0,
+        preferredColumn: null,
+        selectedHintCompletion: null,
+      })
       return
     }
 
     if (action === 'input.deleteBackward' || action === 'input.deleteForward') {
       historyRef.current.resetCursor()
-      setInputState((current) => ({
+      updateInputState((current) => ({
         ...(action === 'input.deleteBackward'
           ? deleteBackwardAtCursor(current.value, current.cursor)
           : deleteForwardAtCursor(current.value, current.cursor)),
         preferredColumn: null,
+        selectedHintCompletion: null,
       }))
       return
     }
 
     if (action === 'input.lineStart') {
-      setInputState((current) => ({
+      updateInputState((current) => ({
         ...current,
         cursor: moveCursorToLineBoundary(
           current.value,
@@ -938,7 +1052,7 @@ export function TerminalScreen({
     }
 
     if (action === 'input.lineEnd') {
-      setInputState((current) => ({
+      updateInputState((current) => ({
         ...current,
         cursor: moveCursorToLineBoundary(current.value, current.cursor, 'end'),
         preferredColumn: null,
@@ -947,7 +1061,7 @@ export function TerminalScreen({
     }
 
     if (action === 'input.moveLeft') {
-      setInputState((current) => ({
+      updateInputState((current) => ({
         ...current,
         cursor: moveCursorHorizontal(current.value, current.cursor, -1),
         preferredColumn: null,
@@ -956,7 +1070,7 @@ export function TerminalScreen({
     }
 
     if (action === 'input.moveRight') {
-      setInputState((current) => ({
+      updateInputState((current) => ({
         ...current,
         cursor: moveCursorHorizontal(current.value, current.cursor, 1),
         preferredColumn: null,
@@ -966,18 +1080,22 @@ export function TerminalScreen({
 
     if (action === 'input.moveUp') {
       if (
-        shouldNavigateInputHistory(inputValue, historyRef.current.isBrowsing())
+        shouldNavigateInputHistory(
+          inputStateRef.current.value,
+          historyRef.current.isBrowsing()
+        )
       ) {
         const previous = historyRef.current.previous()
         if (previous !== null) {
-          setInputState({
+          updateInputState({
             value: previous,
             cursor: previous.length,
             preferredColumn: null,
+            selectedHintCompletion: null,
           })
         }
       } else {
-        setInputState((current) => {
+        updateInputState((current) => {
           const preferredColumn =
             current.preferredColumn ??
             cursorDisplayColumn(current.value, current.cursor)
@@ -998,16 +1116,20 @@ export function TerminalScreen({
 
     if (action === 'input.moveDown') {
       if (
-        shouldNavigateInputHistory(inputValue, historyRef.current.isBrowsing())
+        shouldNavigateInputHistory(
+          inputStateRef.current.value,
+          historyRef.current.isBrowsing()
+        )
       ) {
         const next = historyRef.current.next()
-        setInputState({
+        updateInputState({
           value: next,
           cursor: next.length,
           preferredColumn: null,
+          selectedHintCompletion: null,
         })
       } else {
-        setInputState((current) => {
+        updateInputState((current) => {
           const preferredColumn =
             current.preferredColumn ??
             cursorDisplayColumn(current.value, current.cursor)
@@ -1051,9 +1173,10 @@ export function TerminalScreen({
     if (input) {
       historyRef.current.resetCursor()
       const text = normalizePastedInput(input)
-      setInputState((current) => ({
+      updateInputState((current) => ({
         ...insertAtCursor(current.value, current.cursor, text),
         preferredColumn: null,
+        selectedHintCompletion: null,
       }))
     }
   })
@@ -1065,9 +1188,10 @@ export function TerminalScreen({
 
     historyRef.current.resetCursor()
     const normalizedText = normalizePastedInput(text)
-    setInputState((current) => ({
+    updateInputState((current) => ({
       ...insertAtCursor(current.value, current.cursor, normalizedText),
       preferredColumn: null,
+      selectedHintCompletion: null,
     }))
   })
 
@@ -1076,15 +1200,27 @@ export function TerminalScreen({
     inputValue,
     SPINNER_FRAMES[spinnerFrameIndex]!
   )
+  const manualSkills = ui.getActiveManualSkills()
   const inputHighlight = resolveInputSyntaxHighlight(
     inputValue,
     commands,
-    ui.getActiveManualSkillNames()
+    manualSkills.map(({ name }) => name)
   )
   const inputCursorDisplay = formatInputAroundCursorWithSyntax(
     inputValue,
     inputState.cursor,
     inputHighlight
+  )
+  const inputHintGroup = resolveInputHintGroup(
+    inputValue,
+    commands,
+    providers,
+    manualSkills
+  )
+  const selectedHintCompletion = resolveInputHintSelection(
+    inputHintGroup?.hints ?? [],
+    inputValue,
+    inputState.selectedHintCompletion
   )
   const inputLabelWidth = Math.min(
     Math.max(2, estimateDisplayWidth(inputDisplay.labelText)),
@@ -1128,8 +1264,109 @@ export function TerminalScreen({
           inputLabelWidth={inputLabelWidth}
           columns={columns}
         />
+        {inputHintGroup !== null ? (
+          <InputHintPanel
+            hints={inputHintGroup.hints}
+            selectedCompletion={selectedHintCompletion}
+            title={inputHintGroup.title}
+            width={bubbleWidth}
+          />
+        ) : null}
       </Box>
     </>
+  )
+}
+
+export function formatInputHintLines(
+  hints: readonly InputHint[],
+  bubbleWidth: number,
+  selectedCompletion: string | null = null
+): readonly InputHintLine[] {
+  const contentWidth = Math.max(1, bubbleWidth - 4)
+  const describedHints = hints.filter(({ description }) => description !== '')
+  const widestUsage = Math.max(
+    0,
+    ...describedHints.map(({ usage }) => estimateDisplayWidth(usage))
+  )
+  const usageWidth = Math.min(
+    widestUsage,
+    Math.max(1, Math.floor(contentWidth * 0.55))
+  )
+  const descriptionWidth = contentWidth - usageWidth - 2
+  const showDescriptions = descriptionWidth >= 12
+
+  return hints.map(({ usage, description, kind, completion }) => {
+    const selected =
+      completion !== undefined && completion === selectedCompletion
+    if (description === '' || !showDescriptions) {
+      return {
+        usage: truncateAnsiLine(usage, contentWidth),
+        description: '',
+        kind,
+        selected,
+      }
+    }
+
+    const visibleUsage = truncateAnsiLine(usage, usageWidth)
+    return {
+      usage: `${visibleUsage}${' '.repeat(
+        Math.max(0, usageWidth - estimateDisplayWidth(visibleUsage))
+      )}`,
+      description: truncateAnsiLine(description, descriptionWidth),
+      kind,
+      selected,
+    }
+  })
+}
+
+export function InputHintPanel({
+  hints,
+  selectedCompletion,
+  title,
+  width,
+}: {
+  hints: readonly InputHint[]
+  selectedCompletion: string | null
+  title: InputHintGroup['title']
+  width: number
+}) {
+  const visibleHints = sliceInputHintWindow(hints, selectedCompletion)
+  const lines = formatInputHintLines(visibleHints, width, selectedCompletion)
+  const contentWidth = Math.max(1, width - 4)
+
+  return (
+    <Box flexDirection="column" width={width}>
+      <Text color="gray">{buildBubbleTopLine(title, width)}</Text>
+      {lines.map((line, index) => {
+        const usageColor =
+          line.kind === 'warning'
+            ? 'yellow'
+            : line.selected
+              ? 'cyan'
+              : line.kind === 'command' || line.kind === 'skill'
+                ? 'white'
+                : 'gray'
+        const descriptionColor = line.selected ? 'cyan' : 'gray'
+        const lineWidth =
+          estimateDisplayWidth(line.usage) +
+          (line.description ? 2 + estimateDisplayWidth(line.description) : 0)
+        return (
+          <Text key={`${line.kind}-${index}`}>
+            <Text color="gray">│ </Text>
+            <Text color={usageColor}>{line.usage}</Text>
+            {line.description ? (
+              <Text color={descriptionColor}>
+                {'  '}
+                {line.description}
+              </Text>
+            ) : null}
+            <Text>{' '.repeat(Math.max(0, contentWidth - lineWidth))}</Text>
+            <Text color="gray"> │</Text>
+          </Text>
+        )
+      })}
+      <Text color="gray">{`└${'─'.repeat(Math.max(0, width - 2))}┘`}</Text>
+    </Box>
   )
 }
 

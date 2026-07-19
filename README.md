@@ -159,6 +159,8 @@ Remote messages loaded by resume are display-only and do not increase the local 
 | `/exit`             | Shut down portal                                     |
 
 Top-level commands and first-level subcommands support unique-prefix completion with `Tab`.
+Typing a slash command also shows a contextual guide below the input. The guide filters command forms as you type, includes key parameters, and shows up to five command rows. `Up` and `Down` move through matching commands with wraparound, while `Tab` completes the selected command. `Enter` always submits the current input.
+With an active thread, typing `$` or a `$prefix` shows up to five enabled Skills and their descriptions in the same style of guide. `Up` and `Down` move through matching Skills with wraparound, and `Tab` completes the selected Skill. `Enter` keeps its normal submit behavior.
 
 ## Input controls
 
@@ -168,8 +170,8 @@ Top-level commands and first-level subcommands support unique-prefix completion 
 | `Shift+Enter` (Windows/Linux) or `Option+Enter` (macOS) | Insert a newline when supported by the terminal              |
 | `Ctrl+J`                                                | Insert a newline; reliable fallback on every platform        |
 | Paste                                                   | Preserve multiline layout and normalize Windows line endings |
-| `Up` / `Down`                                           | Move vertically to input boundaries, or browse input history |
-| `Tab`                                                   | Complete a unique command, subcommand, provider, or `$skill` |
+| `Up` / `Down`                                           | Browse command or Skill hints, input boundaries, or history  |
+| `Tab`                                                   | Complete the selected command hint, Provider, or `$skill`    |
 | `Ctrl+W`                                                | Delete the previous word                                     |
 | `Ctrl+U` or `Esc`                                       | Clear the current input                                      |
 | `Ctrl+C`                                                | Cancel busy work; while idle with input, clear that input    |
