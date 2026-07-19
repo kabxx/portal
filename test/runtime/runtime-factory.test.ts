@@ -244,6 +244,12 @@ test('createRuntimeFromAdapter catalogs enabled skills into setup and load_skill
     assert.deepEqual(enabledRuntime.availableManualSkillNames, [
       'runtime-skill',
     ])
+    assert.deepEqual(enabledRuntime.availableManualSkills, [
+      {
+        name: 'runtime-skill',
+        description: 'Use this runtime skill for setup tests.',
+      },
+    ])
     const enabledPrompt = enabledAdapter.attachedTexts[0] ?? ''
     assert.match(enabledPrompt, /# Skills/)
     assert.match(enabledPrompt, /runtime-skill:/)
@@ -279,12 +285,19 @@ test('createRuntimeFromAdapter catalogs enabled skills into setup and load_skill
     assert.match(enabledAdapter.attachedTexts[3] ?? '', /## User Task\n\n$/)
 
     await skillLibrary.disable('runtime-skill')
+    assert.deepEqual(enabledRuntime.availableManualSkills, [
+      {
+        name: 'runtime-skill',
+        description: 'Use this runtime skill for setup tests.',
+      },
+    ])
     const disabledAdapter = new FakeAdapter()
     const disabledRuntime = await createRuntimeFromAdapter(disabledAdapter, {
       model: null,
       skillLibrary,
     })
     assert.deepEqual(disabledRuntime.availableManualSkillNames, [])
+    assert.deepEqual(disabledRuntime.availableManualSkills, [])
     const disabledPrompt = disabledAdapter.attachedTexts[0] ?? ''
     assert.doesNotMatch(disabledPrompt, /# Skills/)
     assert.doesNotMatch(disabledPrompt, /### load_skill/)

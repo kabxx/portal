@@ -12,6 +12,7 @@ import type { ThreadMcpSession } from '../../src/mcp/thread-mcp-session.ts'
 import type { ConversationHistoryResult } from '../../src/providers/conversation-history.ts'
 import type { CDPSession, Page } from 'playwright'
 import { ToolRegistry } from '../../src/tools/core/tool-registry.ts'
+import type { ManualSkillSummary } from '../../src/skills/manual-skill-summary.ts'
 
 export interface FakeRuntimeOptions {
   conversationId?: string | null
@@ -22,7 +23,7 @@ export interface FakeRuntimeOptions {
   adapter?: ProviderAdapter
   submitUserInput?: RuntimeCore['submitUserInput']
   mcpSession?: ThreadMcpSession | null
-  manualSkillNames?: readonly string[]
+  manualSkills?: readonly ManualSkillSummary[]
   onUnexpectedPageClose?: (listener: () => void) => () => void
   loadHistory?: RuntimeCore['loadHistory']
 }
@@ -159,8 +160,12 @@ class FakeRuntime extends RuntimeCore {
     return this.fakeOptions.conversationUrl ?? 'https://example.com/thread'
   }
 
+  public override get availableManualSkills(): readonly ManualSkillSummary[] {
+    return this.fakeOptions.manualSkills ?? []
+  }
+
   public override get availableManualSkillNames(): readonly string[] {
-    return this.fakeOptions.manualSkillNames ?? []
+    return this.availableManualSkills.map(({ name }) => name)
   }
 
   public override get prompt(): string {

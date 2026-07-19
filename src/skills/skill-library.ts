@@ -14,6 +14,10 @@ import { readSkillManifest, validateSkillName } from './skill-manifest.ts'
 import { listSkillResources } from './skill-files.ts'
 import { DEFAULT_SKILL_POLICY, type SkillPolicy } from './skill-policy.ts'
 import {
+  sanitizeSkillDescription,
+  type ManualSkillSummary,
+} from './manual-skill-summary.ts'
+import {
   readSkillRegistry,
   resolveSkillDirectory,
   ensureSkillRegistry,
@@ -98,7 +102,14 @@ export class SkillCatalogSnapshot {
   }
 
   public get names(): readonly string[] {
-    return [...this.skillsByName.keys()]
+    return this.summaries.map(({ name }) => name)
+  }
+
+  public get summaries(): readonly ManualSkillSummary[] {
+    return [...this.skillsByName.values()].map(({ name, description }) => ({
+      name,
+      description: sanitizeSkillDescription(description),
+    }))
   }
 
   public get prompt(): string | null {
@@ -117,9 +128,8 @@ export class SkillCatalogSnapshot {
       ].join('\n'),
       [
         `## Available Skills`,
-        ...[...this.skillsByName.values()].map(
-          ({ name, description }) =>
-            `- ${name}: ${description.replace(/\s+/g, ' ').trim()}`
+        ...this.summaries.map(
+          ({ name, description }) => `- ${name}: ${description}`
         ),
       ].join('\n'),
     ])
