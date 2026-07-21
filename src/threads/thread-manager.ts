@@ -41,6 +41,7 @@ export interface ThreadInputHandlers {
     message: string,
     turn: TurnRecord
   ) => void | Promise<void>
+  onAssistantStreamReset?: (turn: TurnRecord) => void | Promise<void>
   onManualSkill?: (name: string, turn: TurnRecord) => void | Promise<void>
   onInstructionWarning?: (
     warning: ProjectInstructionWarning,
@@ -338,6 +339,10 @@ export class ThreadManager {
         onAssistantStream: async (message) => {
           throwIfAborted(handlers.signal)
           await handlers.onAssistantStream?.(message, turn)
+        },
+        onAssistantStreamReset: async () => {
+          throwIfAborted(handlers.signal)
+          await handlers.onAssistantStreamReset?.(turn)
         },
         onManualSkill: async (name) => {
           throwIfAborted(handlers.signal)

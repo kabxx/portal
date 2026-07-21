@@ -4,11 +4,13 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { RuntimeCore } from '../../src/runtime/runtime-core.ts'
+import {
+  RuntimeCore,
+  providerRetryDelayMs,
+} from '../../src/runtime/runtime-core.ts'
 import {
   ProviderAdapter,
   ProviderAdapterError,
-  ProviderResponseTimeoutError,
   type AbortOptions,
   type ProviderTimingOptions,
 } from '../../src/providers/adapters/adapter-base.ts'
@@ -16,6 +18,7 @@ import { ToolRegistry } from '../../src/tools/core/tool-registry.ts'
 import {
   Tool,
   defineToolMetadata,
+  type ToolConstructor,
 } from '../../src/tools/core/tool-definition.ts'
 import type {
   ToolExecutionOptions,
@@ -40,8 +43,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 class FakeAdapter extends ProviderAdapter {
   public readonly attachedTexts: string[] = []
+  public readonly retryPreparedTexts: string[] = []
   public readonly submitSignals: Array<AbortSignal | undefined> = []
   public submitTextReporterMessages: string[] = []
+  public retryClearCalls = 0
 
   public constructor(
     private readonly responses: string[],
@@ -74,6 +79,17 @@ class FakeAdapter extends ProviderAdapter {
     this.attachedTexts.push(text)
   }
 
+  protected override async prepareRetrySubmit(
+    text: string,
+    _options: AbortOptions
+  ): Promise<() => Promise<void>> {
+    this.retryPreparedTexts.push(text)
+    this.attachedTexts.push(text)
+    return async () => {
+      this.retryClearCalls += 1
+    }
+  }
+
   public async attachFile(_path: string | readonly string[]): Promise<void> {
     return undefined
   }
@@ -102,8 +118,8 @@ class FakeAdapter extends ProviderAdapter {
 class StallingAdapter extends FakeAdapter {
   public stopCalls = 0
 
-  public constructor() {
-    super([], {
+  public constructor(responses: string[] = []) {
+    super(responses, {
       requestStartWarningAfterMs: 100,
       blockedWarningIntervalMs: 100,
       responseStartTimeoutMs: 10,
@@ -122,6 +138,72 @@ class StallingAdapter extends FakeAdapter {
 
   public override async stopGeneration(): Promise<void> {
     this.stopCalls += 1
+  }
+}
+
+class TimeoutThenSuccessAdapter extends StallingAdapter {
+  private firstSubmit = true
+
+  public constructor() {
+    super(['Done.'])
+  }
+
+  public override async submit(options: AbortOptions = {}): Promise<string> {
+    if (this.firstSubmit) {
+      this.firstSubmit = false
+      return await super.submit(options)
+    }
+    return await FakeAdapter.prototype.submit.call(this, options)
+  }
+}
+
+class RateLimitThenSuccessAdapter extends FakeAdapter {
+  private failuresRemaining: number
+  private readonly streamBeforeFailure: boolean
+
+  public constructor(
+    failures = 1,
+    streamBeforeFailure = false,
+    responses = ['Done.']
+  ) {
+    super(responses)
+    this.failuresRemaining = failures
+    this.streamBeforeFailure = streamBeforeFailure
+  }
+
+  public override async submit(options?: AbortOptions): Promise<string> {
+    this.submitSignals.push(options?.signal)
+    if (this.failuresRemaining > 0) {
+      this.failuresRemaining -= 1
+      if (this.streamBeforeFailure) {
+        await this.emitSubmitText('partial response')
+      }
+      throw new ProviderAdapterError('submit', 'rate limited', {
+        kind: 'rate_limit',
+        recovery: 'retry',
+        retryable: true,
+        maxAttempts: 2,
+      })
+    }
+    return await super.submit(options)
+  }
+}
+
+class RateLimitOnSecondSubmitAdapter extends FakeAdapter {
+  private submitCount = 0
+
+  public override async submit(options?: AbortOptions): Promise<string> {
+    this.submitCount += 1
+    if (this.submitCount === 2) {
+      this.submitSignals.push(options?.signal)
+      throw new ProviderAdapterError('submit', 'rate limited', {
+        kind: 'rate_limit',
+        recovery: 'retry',
+        retryable: true,
+        maxAttempts: 2,
+      })
+    }
+    return await super.submit(options)
   }
 }
 
@@ -149,6 +231,49 @@ class RetryRestoreAdapter extends FakeAdapter {
     this.restoreStarted = true
     this.restoreSignal = options.signal
     await abortable(new Promise<void>(() => {}), options.signal)
+  }
+}
+
+function createRuntimeWithRetryDelays(
+  adapter: ProviderAdapter,
+  tools: ToolConstructor[] = [],
+  delays: readonly number[] = [0]
+): RuntimeCore {
+  return new RuntimeCore(
+    adapter,
+    new ToolRegistry(adapter, tools),
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [],
+    null,
+    3,
+    delays
+  )
+}
+
+let retryCountingToolCalls = 0
+
+@defineToolMetadata({
+  name: 'retry_counting_tool',
+  description: 'Counts executions across provider retries.',
+})
+class RetryCountingTool extends Tool<
+  Record<string, unknown>,
+  { result: { value: string }; displayText: string }
+> {
+  public async call(): Promise<{
+    result: { value: string }
+    displayText: string
+  }> {
+    retryCountingToolCalls += 1
+    return {
+      result: { value: 'tool result' },
+      displayText: 'tool result',
+    }
   }
 }
 
@@ -578,28 +703,91 @@ test('RuntimeCore propagates submit aborts to the adapter watchdog signal', asyn
   assert.equal(submitSignal?.aborted, true)
 })
 
-test('RuntimeCore does not retry a provider response activity timeout', async () => {
-  const adapter = new StallingAdapter()
-  const runtime = new RuntimeCore(
-    adapter,
-    new ToolRegistry(adapter, []),
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    [],
-    null,
-    3
-  )
+test('RuntimeCore retries a provider response timeout through the retry transaction', async () => {
+  const adapter = new TimeoutThenSuccessAdapter()
+  const runtime = createRuntimeWithRetryDelays(adapter)
+  const statuses: string[] = []
 
-  await assert.rejects(
-    runtime.submitUserInput('Wait forever.'),
-    ProviderResponseTimeoutError
-  )
-  assert.equal(adapter.submitSignals.length, 1)
+  const assistant = await runtime.submitUserInput('Wait for recovery.', {
+    onStatus: async (message) => {
+      statuses.push(message)
+    },
+  })
+
+  assert.equal(assistant, 'Done.')
+  assert.equal(adapter.submitSignals.length, 2)
   assert.equal(adapter.stopCalls, 1)
+  assert.deepEqual(adapter.retryPreparedTexts, ['Wait for recovery.'])
+  assert.match(statuses[0] ?? '', /Retrying in 0s.*Ctrl\+C/)
+})
+
+test('RuntimeCore sends rate limits directly to persistent retry without an immediate bounded retry', async () => {
+  const adapter = new RateLimitThenSuccessAdapter()
+  const runtime = createRuntimeWithRetryDelays(adapter)
+
+  assert.equal(await runtime.submitUserInput('Try later.'), 'Done.')
+  assert.deepEqual(adapter.retryPreparedTexts, ['Try later.'])
+  assert.deepEqual(adapter.attachedTexts, ['Try later.', 'Try later.'])
+})
+
+test('RuntimeCore uses 5s, 10s, 20s, then capped 30s persistent retry delays', () => {
+  assert.deepEqual(
+    [0, 1, 2, 3, 4, 20].map((attempt) => providerRetryDelayMs(attempt)),
+    [5_000, 10_000, 20_000, 30_000, 30_000, 30_000]
+  )
+})
+
+test('RuntimeCore cancels a persistent retry while waiting without preparing another submit', async () => {
+  const adapter = new RateLimitThenSuccessAdapter()
+  const runtime = createRuntimeWithRetryDelays(adapter, [], [10_000])
+  const controller = new AbortController()
+  const submission = runtime.submitUserInput('Cancel retry.', {
+    signal: controller.signal,
+    onStatus: async () =>
+      controller.abort(new PortalAbortError('cancel retry')),
+  })
+
+  await assert.rejects(submission, PortalAbortError)
+  assert.deepEqual(adapter.retryPreparedTexts, [])
+})
+
+test('RuntimeCore resets API stream state after a partial failed attempt', async () => {
+  const adapter = new RateLimitThenSuccessAdapter(1, true)
+  const runtime = createRuntimeWithRetryDelays(adapter)
+  const streams: string[] = []
+  let resets = 0
+
+  assert.equal(
+    await runtime.submitUserInput('Stream twice.', {
+      onAssistantStream: async (message) => {
+        streams.push(message)
+      },
+      onAssistantStreamReset: async () => {
+        resets += 1
+      },
+    }),
+    'Done.'
+  )
+  assert.equal(resets, 1)
+  assert.ok(streams.includes('partial response'))
+  assert.equal(streams.at(-1), 'Done.')
+})
+
+test('RuntimeCore re-sends a completed tool result without executing the tool twice', async () => {
+  retryCountingToolCalls = 0
+  const adapter = new RateLimitOnSecondSubmitAdapter([
+    '<tool>{"tool":"retry_counting_tool","params":{}}</tool>',
+    'Finished after retry.',
+  ])
+  const runtime = createRuntimeWithRetryDelays(adapter, [RetryCountingTool])
+
+  assert.equal(
+    await runtime.submitUserInput('Use the tool.'),
+    'Finished after retry.'
+  )
+  assert.equal(retryCountingToolCalls, 1)
+  assert.equal(adapter.retryPreparedTexts.length, 1)
+  assert.match(adapter.retryPreparedTexts[0] ?? '', /^### Tool Result ###/)
 })
 
 test('RuntimeCore cancels an adapter restore during retry recovery', async () => {

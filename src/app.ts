@@ -2055,6 +2055,10 @@ export async function run(argv = process.argv): Promise<void> {
                   })
                   ui.renderAssistantStream(thread, message)
                 },
+                onAssistantStreamReset: async () => {
+                  lastAssistantStream = ''
+                  publishApiEvent(threadId, 'assistant.reset', {})
+                },
                 onManualSkill: async (name) => {
                   publishApiEvent(threadId, 'status', {
                     message: `Using skill: ${name}`,

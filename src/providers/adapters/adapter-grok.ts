@@ -322,6 +322,31 @@ export class GrokAdapter extends ProviderAdapter {
     })
   }
 
+  protected override async prepareRetrySubmit(
+    text: string,
+    options: AbortOptions
+  ): Promise<() => Promise<void>> {
+    const composer = () => this.page.locator(GROK_INPUT_SELECTOR)
+    const stopButton = () =>
+      this.page.locator(
+        `button:has(svg[viewBox^="0 0 24"] path[d^="${GROK_STOP_ICON_PATH_PREFIX}"])`
+      )
+    return await this.prepareRetrySubmitText(text, options, {
+      provider: 'Grok',
+      isComposerReady: async () => await this.isRetryComposerReady(composer()),
+      readComposerText: async () =>
+        await this.readRetryComposerText(composer()),
+      writeText: async () => await this.attachText(text),
+      clearComposer: async () =>
+        await this.clearRetryComposerElements(composer()),
+      isStopActive: async () => await this.isRetryControlActive(stopButton()),
+      isSendReady: async () =>
+        await this.isRetryControlReady(
+          this.page.locator(GROK_SUBMIT_BUTTON_SELECTOR)
+        ),
+    })
+  }
+
   public async attachFile(_path: string | readonly string[]): Promise<void> {
     await this.wrapAdapterActionErrorAsync('attachFile', async () => {
       const fileInput = this.page.locator(GROK_FILE_INPUT_SELECTOR).first()
@@ -443,6 +468,7 @@ export class GrokAdapter extends ProviderAdapter {
           return parsed.text.trim() ? parsed.text : null
         })
         try {
+          this.emitSubmitDispatching(signal)
           await this.getSubmitButton().click()
           this.emitSubmitSent()
           throwIfAborted(signal)

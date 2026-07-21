@@ -62,6 +62,7 @@ export interface ApiEvent {
   type:
     | 'message.started'
     | 'assistant.delta'
+    | 'assistant.reset'
     | 'assistant.message'
     | 'status'
     | 'tool.started'
