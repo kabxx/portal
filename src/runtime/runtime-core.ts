@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto'
 
-import { ProviderAdapter } from '../providers/adapters/adapter-base.ts'
-import { isProviderAdapterError } from '../providers/adapters/adapter-base.ts'
+import {
+  ProviderAdapter,
+  ProviderResponseTimeoutError,
+  isProviderAdapterError,
+} from '../providers/adapters/adapter-base.ts'
 import { formatToolResultMessage } from '../tools/core/tool-registry.ts'
 import type {
   ToolCall,
@@ -11,6 +14,7 @@ import type {
 import type { ToolProgressEvent } from '../tools/core/tool-definition.ts'
 import { joinPromptSections } from '../shared/prompt-sections.ts'
 import { retryAsync } from '../shared/retry.ts'
+import { sleepWithAbortAsync } from '../shared/sleep.ts'
 import {
   abortable,
   type AbortOptions,
@@ -34,8 +38,21 @@ export interface ManualSkill {
 
 export type ManualSkillLoader = (name: string) => Promise<ManualSkill | null>
 
+export const PROVIDER_RETRY_DELAYS_MS = [5_000, 10_000, 20_000, 30_000] as const
+
+export function providerRetryDelayMs(
+  attempt: number,
+  delays: readonly number[] = PROVIDER_RETRY_DELAYS_MS
+): number {
+  if (delays.length === 0) {
+    return 0
+  }
+  return delays[Math.min(attempt, delays.length - 1)] ?? 0
+}
+
 export interface RuntimeCoreHandlers {
   onAssistantStream?: (message: string) => void | Promise<void>
+  onAssistantStreamReset?: () => void | Promise<void>
   onAssistantText?: (message: string) => void | Promise<void>
   onStatus?: (message: string) => void | Promise<void>
   onManualSkill?: (name: string) => void | Promise<void>
@@ -83,7 +100,8 @@ export class RuntimeCore {
     private readonly projectInstructions: ProjectInstructions | null = null,
     manualSkills: readonly ManualSkillSummary[] = [],
     private readonly hookDispatcher: HookDispatcher | null = null,
-    private readonly requestAttemptLimit = 3
+    private readonly requestAttemptLimit = 3,
+    private readonly persistentRetryDelaysMs: readonly number[] = PROVIDER_RETRY_DELAYS_MS
   ) {
     this.manualSkills = manualSkills.map(({ name, description }) => ({
       name,
@@ -173,12 +191,16 @@ export class RuntimeCore {
 
   private async retryAsync<T>(
     fn: () => Promise<T>,
-    options: AbortOptions = {}
+    options: AbortOptions = {},
+    skipPersistentSubmitErrors = false
   ) {
     return await retryAsync(fn, {
       maxAttempts: this.requestAttemptLimit,
       retryIf: async (error, attempt) => {
         if (isAbortError(error) || !isProviderAdapterError(error)) {
+          return false
+        }
+        if (skipPersistentSubmitErrors && this.isPersistentSubmitError(error)) {
           return false
         }
         if (!error.retryable) {
@@ -217,32 +239,7 @@ export class RuntimeCore {
 
     while (true) {
       throwIfAborted(handlers.signal)
-      assistant = await this.retryAsync(
-        async () => {
-          throwIfAborted(handlers.signal)
-          await this.agentAdapter.attachText(user)
-          throwIfAborted(handlers.signal)
-          this.agentAdapter.setSubmitTextReporter(async (message) => {
-            throwIfAborted(handlers.signal)
-            await handlers.onAssistantStream?.(message)
-          })
-          this.agentAdapter.setSubmitStatusReporter(async (message) => {
-            throwIfAborted(handlers.signal)
-            await handlers.onStatus?.(message)
-          })
-          try {
-            const response = await this.agentAdapter.submitWithResponseTimeout({
-              signal: handlers.signal,
-            })
-            throwIfAborted(handlers.signal)
-            return response
-          } finally {
-            this.agentAdapter.setSubmitTextReporter(null)
-            this.agentAdapter.setSubmitStatusReporter(null)
-          }
-        },
-        { signal: handlers.signal }
-      )
+      assistant = await this.submitPayloadWithRetry(user, handlers)
 
       const extractedToolCall =
         await this.toolRegistry.extractToolCall(assistant)
@@ -461,6 +458,85 @@ export class RuntimeCore {
       await handlers.onToolResult?.(toolResult, toolCall, metadata)
       user = formatToolResultMessage(toolCall?.tool ?? 'unknown', toolResult)
     }
+  }
+
+  private async submitPayloadWithRetry(
+    payload: string,
+    handlers: RuntimeCoreHandlers
+  ): Promise<string> {
+    let persistentAttempt = 0
+    let isPersistentRetry = false
+
+    while (true) {
+      throwIfAborted(handlers.signal)
+      let streamed = false
+      const submitAttempt = async () => {
+        throwIfAborted(handlers.signal)
+        this.agentAdapter.setSubmitTextReporter(async (message) => {
+          throwIfAborted(handlers.signal)
+          streamed = true
+          await handlers.onAssistantStream?.(message)
+        })
+        this.agentAdapter.setSubmitStatusReporter(async (message) => {
+          throwIfAborted(handlers.signal)
+          await handlers.onStatus?.(message)
+        })
+        try {
+          if (isPersistentRetry) {
+            return await this.agentAdapter.retrySubmitTextWithResponseTimeout(
+              payload,
+              { signal: handlers.signal }
+            )
+          }
+          await this.agentAdapter.attachText(payload)
+          throwIfAborted(handlers.signal)
+          return await this.agentAdapter.submitWithResponseTimeout({
+            signal: handlers.signal,
+          })
+        } finally {
+          this.agentAdapter.setSubmitTextReporter(null)
+          this.agentAdapter.setSubmitStatusReporter(null)
+        }
+      }
+
+      try {
+        const response = isPersistentRetry
+          ? await submitAttempt()
+          : await this.retryAsync(
+              submitAttempt,
+              { signal: handlers.signal },
+              true
+            )
+        throwIfAborted(handlers.signal)
+        return response
+      } catch (error) {
+        if (isAbortError(error) || !this.isPersistentSubmitError(error)) {
+          throw error
+        }
+        if (streamed) {
+          await handlers.onAssistantStreamReset?.()
+          throwIfAborted(handlers.signal)
+        }
+        const delayMs = providerRetryDelayMs(
+          persistentAttempt,
+          this.persistentRetryDelaysMs
+        )
+        const message = error instanceof Error ? error.message : String(error)
+        await handlers.onStatus?.(
+          `Provider request failed: ${message} Retrying in ${Math.ceil(delayMs / 1000)}s. Press Ctrl+C to cancel.`
+        )
+        await sleepWithAbortAsync(delayMs, handlers.signal)
+        persistentAttempt += 1
+        isPersistentRetry = true
+      }
+    }
+  }
+
+  private isPersistentSubmitError(error: unknown): boolean {
+    return (
+      error instanceof ProviderResponseTimeoutError ||
+      (isProviderAdapterError(error) && error.kind === 'rate_limit')
+    )
   }
 
   private async executePreparedTool(

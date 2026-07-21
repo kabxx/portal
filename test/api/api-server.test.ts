@@ -699,6 +699,18 @@ test('PortalApiServer broadcasts one thread event to multiple SSE clients', asyn
     }
 
     server.eventHub.publish('t-1', {
+      type: 'assistant.reset',
+      data: {},
+    })
+
+    for (const reader of readers) {
+      const event = await reader.read()
+      const text = new TextDecoder().decode(event.value)
+      assert.match(text, /event: assistant\.reset/)
+      assert.match(text, /"threadId":"t-1"/)
+    }
+
+    server.eventHub.publish('t-1', {
       type: 'thread.action',
       data: {
         operationId: 'op-reload-1',

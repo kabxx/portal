@@ -915,6 +915,33 @@ export class KimiAdapter extends ProviderAdapter {
     this.pendingTextVal += text
   }
 
+  protected override async prepareRetrySubmit(
+    text: string,
+    options: AbortOptions
+  ): Promise<() => Promise<void>> {
+    const composer = () => this.page.locator(KIMI_INPUT_SELECTOR)
+    return await this.prepareRetrySubmitText(text, options, {
+      provider: 'Kimi',
+      isComposerReady: async () => await this.isRetryComposerReady(composer()),
+      readComposerText: async () =>
+        await this.readRetryComposerText(composer()),
+      writeText: async () => {
+        this.pendingTextVal = ''
+        await this.attachText(text)
+      },
+      clearComposer: async () => {
+        await this.clearRetryComposerElements(composer())
+        this.pendingTextVal = ''
+      },
+      isStopActive: async () =>
+        await this.isRetryControlActive(this.page.locator(KIMI_STOP_SELECTOR)),
+      isSendReady: async () =>
+        await this.isRetryControlReady(
+          this.page.locator(`${KIMI_SEND_SELECTOR}:not(.disabled):not(.stop)`)
+        ),
+    })
+  }
+
   public async attachFile(path: string | readonly string[]): Promise<void> {
     const paths = normalizeToPathArray(path)
     const trigger = await this.getUniqueVisibleLocator(
@@ -1188,6 +1215,7 @@ export class KimiAdapter extends ProviderAdapter {
       this.page.on('request', onRequest)
       this.page.on('response', onResponse)
       dispatchStarted = true
+      this.emitSubmitDispatching(signal)
       await send.click()
       dispatched = true
       this.pendingTextVal = ''

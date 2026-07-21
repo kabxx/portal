@@ -10,6 +10,7 @@ import {
   ProviderAdapter,
   ProviderAdapterError,
   ProviderResponseTimeoutError,
+  type AbortOptions,
   type ProviderCdpSession,
   type ProviderPage,
   type ProviderTimingOptions,
@@ -366,6 +367,91 @@ class ResponseTimingAdapter extends ProviderAdapter {
   }
 }
 
+class RetryTransactionAdapter extends ProviderAdapter {
+  public composerText = ''
+  public composerReady = true
+  public stopActive = false
+  public sendReady = true
+  public clearCalls = 0
+  public writeCalls = 0
+  public dispatchBeforeSubmitError = false
+  public submitError: Error | null = null
+  public clearError: Error | null = null
+  public abortAfterWrite: AbortController | null = null
+  public abortDuringPreflight: AbortController | null = null
+  public abortBeforeDispatch: AbortController | null = null
+
+  public constructor() {
+    super(createBrowserContextStub())
+  }
+
+  protected override async prepareRetrySubmit(
+    text: string,
+    options: AbortOptions
+  ): Promise<() => Promise<void>> {
+    return await this.prepareRetrySubmitText(text, options, {
+      provider: 'Test',
+      isComposerReady: async () => {
+        this.abortDuringPreflight?.abort(
+          new PortalAbortError('abort during preflight')
+        )
+        return this.composerReady
+      },
+      readComposerText: async () => this.composerText,
+      writeText: async () => {
+        this.writeCalls += 1
+        this.composerText = text
+        this.abortAfterWrite?.abort(new PortalAbortError('abort after write'))
+      },
+      clearComposer: async () => {
+        this.clearCalls += 1
+        if (this.clearError !== null) {
+          throw this.clearError
+        }
+        this.composerText = ''
+      },
+      isStopActive: async () => this.stopActive,
+      isSendReady: async () => this.sendReady,
+    })
+  }
+
+  public async restore(): Promise<void> {}
+
+  public async isLoggedIn(): Promise<boolean> {
+    return true
+  }
+
+  public get conversationId(): string | null {
+    return null
+  }
+
+  public get conversationUrl(): string {
+    return 'https://example.com/thread'
+  }
+
+  public async changeModel(_model: string): Promise<void> {}
+
+  public async attachText(_text: string): Promise<void> {}
+
+  public async attachFile(_path: string | readonly string[]): Promise<void> {}
+
+  public async attachImage(_path: string | readonly string[]): Promise<void> {}
+
+  public async submit(options: AbortOptions = {}): Promise<string> {
+    this.abortBeforeDispatch?.abort(
+      new PortalAbortError('abort before dispatch')
+    )
+    if (this.dispatchBeforeSubmitError) {
+      this.emitSubmitDispatching(options.signal)
+    }
+    if (this.submitError !== null) {
+      throw this.submitError
+    }
+    this.emitSubmitDispatching(options.signal)
+    return 'done'
+  }
+}
+
 function responseTimings(
   responseStartTimeoutMs: number,
   responseStallTimeoutMs: number
@@ -476,6 +562,121 @@ test('ProviderAdapter does not count an unchanged captured response snapshot twi
 
   assert.equal(await adapter.submitWithResponseTimeout(), 'done')
   assert.equal(adapter.activityCalls, 1)
+})
+
+test('ProviderAdapter retry transaction rejects a nonempty Composer before writing', async () => {
+  const adapter = new RetryTransactionAdapter()
+  adapter.composerText = 'user draft'
+
+  await assert.rejects(
+    adapter.retrySubmitTextWithResponseTimeout('portal payload'),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'test_retry_composer_not_empty'
+  )
+  assert.equal(adapter.writeCalls, 0)
+  assert.equal(adapter.clearCalls, 0)
+  assert.equal(adapter.composerText, 'user draft')
+})
+
+test('ProviderAdapter retry transaction clears text when post-write send preflight fails', async () => {
+  const adapter = new RetryTransactionAdapter()
+  adapter.sendReady = false
+
+  await assert.rejects(
+    adapter.retrySubmitTextWithResponseTimeout('portal payload'),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'test_retry_send_unavailable'
+  )
+  assert.equal(adapter.writeCalls, 1)
+  assert.equal(adapter.clearCalls, 1)
+  assert.equal(adapter.composerText, '')
+})
+
+test('ProviderAdapter retry transaction clears text when cancellation arrives after writing', async () => {
+  const adapter = new RetryTransactionAdapter()
+  const controller = new AbortController()
+  adapter.abortAfterWrite = controller
+
+  await assert.rejects(
+    adapter.retrySubmitTextWithResponseTimeout('portal payload', {
+      signal: controller.signal,
+    }),
+    PortalAbortError
+  )
+  assert.equal(adapter.clearCalls, 1)
+  assert.equal(adapter.composerText, '')
+})
+
+test('ProviderAdapter retry transaction never writes after cancellation during preflight', async () => {
+  const adapter = new RetryTransactionAdapter()
+  const controller = new AbortController()
+  adapter.abortDuringPreflight = controller
+
+  await assert.rejects(
+    adapter.retrySubmitTextWithResponseTimeout('portal payload', {
+      signal: controller.signal,
+    }),
+    PortalAbortError
+  )
+  assert.equal(adapter.writeCalls, 0)
+  assert.equal(adapter.clearCalls, 0)
+})
+
+test('ProviderAdapter retry transaction clears text when cancelled at dispatch', async () => {
+  const adapter = new RetryTransactionAdapter()
+  const controller = new AbortController()
+  adapter.abortBeforeDispatch = controller
+
+  await assert.rejects(
+    adapter.retrySubmitTextWithResponseTimeout('portal payload', {
+      signal: controller.signal,
+    }),
+    PortalAbortError
+  )
+  assert.equal(adapter.clearCalls, 1)
+  assert.equal(adapter.composerText, '')
+})
+
+test('ProviderAdapter retry transaction clears text when submit fails before dispatch', async () => {
+  const adapter = new RetryTransactionAdapter()
+  adapter.submitError = new Error('pre-dispatch failure')
+
+  await assert.rejects(
+    adapter.retrySubmitTextWithResponseTimeout('portal payload'),
+    /pre-dispatch failure/
+  )
+  assert.equal(adapter.clearCalls, 1)
+  assert.equal(adapter.composerText, '')
+})
+
+test('ProviderAdapter retry transaction never clears after dispatch starts', async () => {
+  const adapter = new RetryTransactionAdapter()
+  adapter.dispatchBeforeSubmitError = true
+  adapter.submitError = new Error('click failed')
+
+  await assert.rejects(
+    adapter.retrySubmitTextWithResponseTimeout('portal payload'),
+    /click failed/
+  )
+  assert.equal(adapter.clearCalls, 0)
+  assert.equal(adapter.composerText, 'portal payload')
+})
+
+test('ProviderAdapter retry transaction surfaces cleanup failure and stops', async () => {
+  const adapter = new RetryTransactionAdapter()
+  adapter.sendReady = false
+  adapter.clearError = new Error('clear failed')
+
+  await assert.rejects(
+    adapter.retrySubmitTextWithResponseTimeout('portal payload'),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'test_retry_clear_failed'
+  )
+  assert.equal(adapter.clearCalls, 1)
+  assert.equal(adapter.composerText, 'portal payload')
 })
 
 test('ProviderAdapter bounds history capture waits with the configured page timeout', async () => {

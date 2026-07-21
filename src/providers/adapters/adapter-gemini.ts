@@ -398,6 +398,44 @@ export class GeminiAdapter extends ProviderAdapter {
     })
   }
 
+  protected override async prepareRetrySubmit(
+    text: string,
+    options: AbortOptions
+  ): Promise<() => Promise<void>> {
+    const composer = () =>
+      this.page.locator(
+        [
+          `[data-test-id="${GEMINI_TEXTAREA_WRAPPER_TEST_ID}"] rich-textarea [contenteditable="true"]`,
+          `[data-test-id="${GEMINI_TEXTAREA_INNER_TEST_ID}"][contenteditable="true"]`,
+          `[data-test-id="${GEMINI_TEXTAREA_INNER_TEST_ID}"] [contenteditable="true"]`,
+          'rich-textarea [contenteditable="true"]',
+        ].join(', ')
+      )
+    const stopButton = () =>
+      this.page
+        .locator(`[data-test-id="${GEMINI_SEND_BUTTON_CONTAINER_TEST_ID}"]`)
+        .locator(
+          'xpath=./gem-icon-button[contains(concat(" ", normalize-space(@class), " "), " send-button ") and contains(concat(" ", normalize-space(@class), " "), " stop ")]'
+        )
+        .locator('xpath=./button')
+    return await this.prepareRetrySubmitText(text, options, {
+      provider: 'Gemini',
+      isComposerReady: async () => await this.isRetryComposerReady(composer()),
+      readComposerText: async () =>
+        await this.readRetryComposerText(composer()),
+      writeText: async () => await this.attachText(text),
+      clearComposer: async () =>
+        await this.clearRetryComposerElements(composer()),
+      isStopActive: async () => await this.isRetryControlActive(stopButton()),
+      isSendReady: async () =>
+        await this.isRetryControlReady(
+          this.page.locator(
+            `[data-test-id="${GEMINI_SEND_BUTTON_CONTAINER_TEST_ID}"] button`
+          )
+        ),
+    })
+  }
+
   private getUploadTrigger(): Locator {
     return this.page.locator(GEMINI_UPLOAD_TRIGGER_SELECTOR).first()
   }
@@ -936,6 +974,7 @@ export class GeminiAdapter extends ProviderAdapter {
             async () =>
               await this.readCurrentStreamedResponseText(fetchCaptureStartIndex)
           )
+          this.emitSubmitDispatching(signal)
           await sendButton.click()
           this.emitSubmitSent()
           throwIfAborted(signal)

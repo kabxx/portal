@@ -322,6 +322,30 @@ export class ChatGPTAdapter extends ProviderAdapter {
     })
   }
 
+  protected override async prepareRetrySubmit(
+    text: string,
+    options: AbortOptions
+  ): Promise<() => Promise<void>> {
+    const composer = () => this.page.locator('#prompt-textarea')
+    return await this.prepareRetrySubmitText(text, options, {
+      provider: 'ChatGPT',
+      isComposerReady: async () => await this.isRetryComposerReady(composer()),
+      readComposerText: async () =>
+        await this.readRetryComposerText(composer()),
+      writeText: async () => await this.attachText(text),
+      clearComposer: async () =>
+        await this.clearRetryComposerElements(composer()),
+      isStopActive: async () =>
+        await this.isRetryControlActive(
+          this.page.locator('button[data-testid="stop-button"]')
+        ),
+      isSendReady: async () =>
+        await this.isRetryControlReady(
+          this.page.locator('#composer-submit-button')
+        ),
+    })
+  }
+
   public async attachFile(path: string | readonly string[]) {
     await this.wrapAdapterActionErrorAsync('attachFile', async () => {
       await this.page.getByTestId('composer-plus-btn').click()
@@ -761,6 +785,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
             clearInterval(submitTextPollTimer)
           }
           void pollSubmitText().catch(() => {})
+          this.emitSubmitDispatching(signal)
           await sendButton.click()
           this.emitSubmitSent()
           throwIfAborted(signal)
