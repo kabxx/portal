@@ -1822,20 +1822,51 @@ const MARKDOWN_RENDER_OPTIONS = {
   wrap: true,
 }
 
-const ANSI_SGR_RE = /\x1b\[[0-9;]*m/g
+const ANSI_CSI_RE = /(\x1b\[[0-?]*[ -/]*[@-~])/g
+const ANSI_CSI_TOKEN_RE = /^\x1b\[[0-?]*[ -/]*[@-~]$/
+
+function expandBubbleTabs(value: string): string {
+  const normalized = value.replace(/\r\n?/g, '\n')
+  let column = 0
+
+  return normalized
+    .split(ANSI_CSI_RE)
+    .map((part) => {
+      if (ANSI_CSI_TOKEN_RE.test(part)) {
+        return part
+      }
+
+      let expanded = ''
+      for (const grapheme of splitGraphemes(part)) {
+        if (grapheme === '\n') {
+          expanded += grapheme
+          column = 0
+        } else if (grapheme === '\t') {
+          const spaces = INPUT_TAB_WIDTH - (column % INPUT_TAB_WIDTH)
+          expanded += ' '.repeat(spaces)
+          column += spaces
+        } else {
+          expanded += grapheme
+          column += estimateGraphemeWidth(grapheme)
+        }
+      }
+      return expanded
+    })
+    .join('')
+}
 
 function collectLeadingAnsi(value: string): string {
   let leading = ''
   let match: RegExpExecArray | null
-  ANSI_SGR_RE.lastIndex = 0
-  while ((match = ANSI_SGR_RE.exec(value)) !== null) {
+  ANSI_CSI_RE.lastIndex = 0
+  while ((match = ANSI_CSI_RE.exec(value)) !== null) {
     if (match.index === leading.length) {
       leading += match[0]
     } else {
       break
     }
   }
-  ANSI_SGR_RE.lastIndex = 0
+  ANSI_CSI_RE.lastIndex = 0
   return leading
 }
 
@@ -1843,7 +1874,7 @@ function wrapAnsiLine(value: string, maxWidth: number): string[] {
   const safeWidth = Math.max(1, maxWidth)
   if (!value) return ['']
 
-  const plain = value.replace(ANSI_SGR_RE, '')
+  const plain = value.replace(ANSI_CSI_RE, '')
   if (estimateDisplayWidth(plain) <= safeWidth) {
     return [value]
   }
@@ -1873,7 +1904,7 @@ function wrapAnsiLine(value: string, maxWidth: number): string[] {
 }
 
 function stripAnsi(value: string): string {
-  return value.replace(ANSI_SGR_RE, '')
+  return value.replace(ANSI_CSI_RE, '')
 }
 
 function padToWidthAnsi(value: string, width: number): string {
@@ -1888,17 +1919,18 @@ export function renderBubbleBody(
   format: BubbleFormat,
   width: number
 ): string {
+  const normalizedBody = expandBubbleTabs(body)
   if (format === 'v4a') {
-    return renderV4aBody(body)
+    return renderV4aBody(normalizedBody)
   }
   if (format === 'markdown') {
-    return renderMarkdown(body || ' ', {
+    return renderMarkdown(normalizedBody || ' ', {
       ...MARKDOWN_RENDER_OPTIONS,
       width,
     }).replace(/\n+$/, '')
   }
 
-  return body
+  return normalizedBody
 }
 
 function renderV4aBody(body: string): string {
@@ -2023,7 +2055,7 @@ export function truncateAnsiLine(value: string, width: number): string {
 export function estimateDisplayWidth(value: string): number {
   let width = 0
 
-  for (const grapheme of splitGraphemes(value)) {
+  for (const grapheme of splitGraphemes(stripAnsi(value))) {
     width += estimateGraphemeWidth(grapheme)
   }
 
