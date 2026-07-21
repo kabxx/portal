@@ -718,7 +718,10 @@ test('RuntimeCore retries a provider response timeout through the retry transact
   assert.equal(adapter.submitSignals.length, 2)
   assert.equal(adapter.stopCalls, 1)
   assert.deepEqual(adapter.retryPreparedTexts, ['Wait for recovery.'])
-  assert.match(statuses[0] ?? '', /Retrying in 0s.*Ctrl\+C/)
+  assert.equal(
+    statuses[0],
+    'Provider did not send response activity within 10ms after submit. Retrying in 0s.'
+  )
 })
 
 test('RuntimeCore sends rate limits directly to persistent retry without an immediate bounded retry', async () => {
