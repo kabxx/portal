@@ -567,6 +567,33 @@ test('renderBubbleBody colors V4A snapshot lines without changing their text', (
   assert.match(rendered, /\u001B\[32m\+new\u001B\[39m/)
 })
 
+test('renderBubbleBody expands tabs at display-column stops for plain output', () => {
+  const rendered = renderBubbleBody('a\tb\r\n\tc\rd', 'plain', 40)
+
+  assert.equal(rendered, 'a   b\n    c\nd')
+  assert.equal(rendered.includes('\t'), false)
+})
+
+test('renderBubbleBody ignores ANSI CSI sequences when expanding and measuring tabs', () => {
+  const rendered = renderBubbleBody('a\u001B[2K\tb', 'plain', 40)
+
+  assert.equal(rendered, 'a\u001B[2K   b')
+  assert.equal(estimateDisplayWidth(rendered), 5)
+})
+
+test('renderBubbleBody expands tabs before markdown and V4A formatting', () => {
+  const markdown = renderBubbleBody(
+    '```\n\tconst value = 1\n```',
+    'markdown',
+    40
+  )
+  const v4a = renderBubbleBody('1 file\r\n*** Begin Patch\r\n\t+new', 'v4a', 40)
+
+  assert.equal(markdown.includes('\t'), false)
+  assert.equal(v4a.includes('\t'), false)
+  assert.match(v4a, / {4}\+new/)
+})
+
 test('renderBubbleBody wraps long CJK markdown table cells through markdansi', () => {
   const longText =
     '这是一段没有空格的超长中文单元格内容用来验证表格边框不会被撑破并且内容不会丢失'
