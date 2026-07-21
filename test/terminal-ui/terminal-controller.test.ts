@@ -630,7 +630,7 @@ test('TerminalController renders tool call and tool result with different tones'
   assert.equal(state.timeline[1]?.body.includes('cwd:'), false)
 })
 
-test('TerminalController keeps a two-line live run_command tail and reuses its id', () => {
+test('TerminalController keeps a dynamic ten-line live run_command tail and reuses its id', () => {
   const manager = new ThreadManager()
   const thread = manager.addThread({
     id: manager.createThreadId(),
@@ -685,7 +685,23 @@ test('TerminalController keeps a two-line live run_command tail and reuses its i
     text: 'tail',
   })
 
-  assert.equal(ui.getState().liveCommand?.body, 'replacement\nstderr: tail')
+  assert.equal(
+    ui.getState().liveCommand?.body,
+    'error\nfirst line\nreplacement\ntail'
+  )
+  assert.equal(ui.getState().liveCommand?.fixedLineCount, 4)
+
+  ui.renderToolProgress(thread, 'run_command', {
+    type: 'output',
+    stream: 'stdout',
+    text: `\n${Array.from({ length: 11 }, (_, index) => `line-${index}`).join('\n')}\n`,
+  })
+
+  assert.equal(
+    ui.getState().liveCommand?.body,
+    Array.from({ length: 10 }, (_, index) => `line-${index + 1}`).join('\n')
+  )
+  assert.equal(ui.getState().liveCommand?.fixedLineCount, 10)
 
   ui.renderToolResult(
     thread,

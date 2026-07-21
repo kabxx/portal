@@ -99,6 +99,24 @@ test('RunCommandJobManager applies a configured output buffer limit', async () =
   assert.equal(result.truncated, true)
 })
 
+test('RunCommandJobManager resolves the environment for every new job', async () => {
+  let invocationCount = 0
+  const manager = new RunCommandJobManager({}, () => ({
+    ...process.env,
+    PORTAL_RUN_COMMAND_ENV_TEST: `value-${++invocationCount}`,
+  }))
+  const command = nodeCommand(
+    'process.stdout.write(process.env.PORTAL_RUN_COMMAND_ENV_TEST ?? "missing")'
+  )
+
+  const first = await manager.start(command).wait()
+  const second = await manager.start(command).wait()
+
+  assert.equal(first.stdout, 'value-1')
+  assert.equal(second.stdout, 'value-2')
+  assert.equal(invocationCount, 2)
+})
+
 test('RunCommandJobManager drains bounded output after a waiter detaches', async () => {
   const manager = new RunCommandJobManager()
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'portal-job-output-'))

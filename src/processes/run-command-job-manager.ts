@@ -16,6 +16,7 @@ import {
   getShellCommand,
   type RunCommandShell,
 } from '../platform/platform-defaults.ts'
+import { getRunCommandEnvironment } from '../platform/win32-environment.ts'
 
 export type { RunCommandShell } from '../platform/platform-defaults.ts'
 export type RunCommandOutputStream = 'stdout' | 'stderr'
@@ -98,6 +99,8 @@ interface ResolvedRunCommandJobManagerOptions {
   terminationSettleTimeoutMs: number
 }
 
+type RunCommandEnvironmentProvider = () => NodeJS.ProcessEnv
+
 export class RunCommandEncodingError extends Error {
   public constructor(shell: RunCommandShell, stream: RunCommandOutputStream) {
     super(
@@ -113,7 +116,10 @@ export class RunCommandJobManager implements RunCommandJobService {
   private accepting = true
   private readonly options: ResolvedRunCommandJobManagerOptions
 
-  public constructor(options: RunCommandJobManagerOptions = {}) {
+  public constructor(
+    options: RunCommandJobManagerOptions = {},
+    private readonly environmentProvider: RunCommandEnvironmentProvider = getRunCommandEnvironment
+  ) {
     this.options = {
       maxOutputBufferBytes:
         options.maxOutputBufferBytes ?? MAX_OUTPUT_BUFFER_BYTES,
@@ -133,9 +139,16 @@ export class RunCommandJobManager implements RunCommandJobService {
       )
     }
 
+    const environment = this.environmentProvider()
     const id = `j-${this.nextId}`
     this.nextId += 1
-    const job = new ManagedRunCommandJob(id, input, this.options, onProgress)
+    const job = new ManagedRunCommandJob(
+      id,
+      input,
+      this.options,
+      environment,
+      onProgress
+    )
     this.jobs.set(id, job)
     void job.completion
       .catch(() => {})
@@ -219,11 +232,13 @@ class ManagedRunCommandJob {
     private readonly id: string,
     input: RunCommandInput,
     private readonly options: ResolvedRunCommandJobManagerOptions,
+    environment: NodeJS.ProcessEnv,
     onProgress?: (event: RunCommandProgressEvent) => void
   ) {
+    const platform = getPortalPlatform()
     this.command = input.command
     this.cwd = input.cwd ?? process.cwd()
-    this.shell = input.shell ?? getDefaultShell()
+    this.shell = input.shell ?? getDefaultShell(platform, environment)
     if (onProgress !== undefined) {
       this.progressReporters.add(onProgress)
     }
@@ -236,10 +251,12 @@ class ManagedRunCommandJob {
     const shellCommand = getShellCommand(
       this.shell,
       input.command,
-      getPortalPlatform()
+      platform,
+      environment
     )
     this.child = spawn(shellCommand.file, shellCommand.args, {
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+      env: environment,
       windowsHide: true,
       detached: this.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
