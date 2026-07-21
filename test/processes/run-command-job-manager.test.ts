@@ -65,6 +65,15 @@ async function waitForFile(filePath: string, timeoutMs = 3000): Promise<void> {
   }
 }
 
+function assertTimingMetadata(result: {
+  durationMs: number
+  finishedAt: string
+}): void {
+  assert.equal(Number.isInteger(result.durationMs), true)
+  assert.ok(result.durationMs >= 0)
+  assert.equal(new Date(result.finishedAt).toISOString(), result.finishedAt)
+}
+
 test('RunCommandJobManager lists active jobs and removes completed jobs', async () => {
   const manager = new RunCommandJobManager()
   const input =
@@ -85,8 +94,25 @@ test('RunCommandJobManager lists active jobs and removes completed jobs', async 
 
   const result = await job.wait()
   assert.equal(result.exitCode, 0)
+  assertTimingMetadata(result)
   await new Promise<void>((resolve) => setImmediate(resolve))
   assert.deepEqual(manager.list(), [])
+})
+
+test('RunCommandJobManager returns timing metadata for asynchronous spawn errors', async () => {
+  const manager = new RunCommandJobManager()
+  const missingCwd = path.join(
+    os.tmpdir(),
+    `portal-run-command-missing-${process.pid}-${Date.now()}`
+  )
+
+  assert.equal(existsSync(missingCwd), false)
+  const result = await manager
+    .start({ ...nodeCommand(''), cwd: missingCwd })
+    .wait()
+
+  assert.equal(result.exitCode, null)
+  assertTimingMetadata(result)
 })
 
 test('RunCommandJobManager applies a configured output buffer limit', async () => {
@@ -166,6 +192,7 @@ test('RunCommandJobManager timeout terminates a running job', async () => {
 
     assert.equal(result.timedOut, true)
     assert.equal(result.terminationReason, 'timeout')
+    assertTimingMetadata(result)
   } finally {
     await manager.stopAll()
     rmSync(tempDir, { recursive: true, force: true })
@@ -200,6 +227,7 @@ test(
       assert.equal(await manager.stop(job.id), 'stopped')
       const result = await completion
       assert.equal(result.terminationReason, 'user')
+      assertTimingMetadata(result)
       await new Promise((resolve) => setTimeout(resolve, 700))
       assert.equal(existsSync(marker), false)
     } finally {
@@ -229,6 +257,7 @@ test(
       assert.equal(await manager.stop(job.id), 'stopped')
       const result = await completion
       assert.equal(result.terminationReason, 'user')
+      assertTimingMetadata(result)
       await new Promise((resolve) => setTimeout(resolve, 700))
       assert.equal(existsSync(marker), false)
     } finally {
@@ -245,10 +274,13 @@ test('RunCommandJobManager shutdown stops jobs and rejects new starts', async ()
   const input = markerCommand(ready)
 
   try {
-    manager.start(input)
+    const job = manager.start(input)
     await waitForFile(ready)
     await manager.stopAll()
+    const result = await job.wait()
 
+    assert.equal(result.terminationReason, 'shutdown')
+    assertTimingMetadata(result)
     assert.deepEqual(manager.list(), [])
     assert.throws(() => manager.start(nodeCommand('')), /shutting down/)
   } finally {

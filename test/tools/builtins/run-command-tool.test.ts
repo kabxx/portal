@@ -106,6 +106,14 @@ function requireString(value: unknown, label: string): string {
   return value
 }
 
+function assertTimingMetadata(result: Record<string, unknown>): void {
+  assert.equal(typeof result.durationMs, 'number')
+  assert.equal(Number.isInteger(result.durationMs), true)
+  assert.ok(Number(result.durationMs) >= 0)
+  const finishedAt = requireString(result.finishedAt, 'finishedAt')
+  assert.equal(new Date(finishedAt).toISOString(), finishedAt)
+}
+
 test('RunCommandTool does not advertise a default timeout', () => {
   const tool = createRunCommandTool()
   const schema = requireRecord(tool.metadata.inputSchema, 'input schema')
@@ -116,8 +124,16 @@ test('RunCommandTool does not advertise a default timeout', () => {
   assert.match(tool.prompt, /valid UTF-8 text/i)
   if (getDefaultShell() === 'powershell') {
     assert.match(tool.prompt, /-Encoding UTF8/)
+    assert.match(tool.prompt, /Get-Command rg -ErrorAction SilentlyContinue/)
+    assert.match(tool.prompt, /ripgrep when available/)
+    assert.match(tool.prompt, /without ripgrep: Get-ChildItem.*Select-String/)
+    assert.match(tool.prompt, /Select-Object -First 200/)
   } else {
     assert.doesNotMatch(tool.prompt, /Get-Content|C:\\/)
+    assert.match(tool.prompt, /command -v rg >\/dev\/null 2>&1/)
+    assert.match(tool.prompt, /ripgrep when available/)
+    assert.match(tool.prompt, /without ripgrep: grep -R/)
+    assert.match(tool.prompt, /head -n 200/)
   }
 })
 
@@ -201,8 +217,10 @@ test('RunCommandTool does not register a timeout when timeoutMs is omitted', asy
 
     assert.equal(requireString(result.stdout, 'stdout').trim(), 'ok')
     assert.equal(result.timedOut, false)
+    assertTimingMetadata(result)
     assert.equal(output.outcome, 'success')
     assert.match(output.displayText, /exitCode: 0/)
+    assert.doesNotMatch(output.displayText, /durationMs|finishedAt/)
     assert.equal(setTimeoutMock.mock.callCount(), 0)
   } finally {
     setTimeoutMock.mock.restore()
@@ -218,6 +236,7 @@ test('RunCommandTool marks nonzero command exits as errors', async () => {
 
   assert.equal(output.outcome, 'error')
   assert.equal(output.result.exitCode, 2)
+  assertTimingMetadata(output.result)
 })
 
 test('RunCommandTool registers a timeout when timeoutMs is provided', async (t) => {
@@ -342,6 +361,7 @@ test('RunCommandTool returns an error result when its job is stopped', async () 
     const output = await running
     assert.equal(output.outcome, 'error')
     assert.equal(output.result.terminationReason, 'user')
+    assertTimingMetadata(output.result)
   } finally {
     await manager.stopAll()
     rmSync(tempDir, { recursive: true, force: true })
