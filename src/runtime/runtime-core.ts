@@ -523,7 +523,7 @@ export class RuntimeCore {
         )
         const message = error instanceof Error ? error.message : String(error)
         await handlers.onStatus?.(
-          `Provider request failed: ${message} Retrying in ${Math.ceil(delayMs / 1000)}s. Press Ctrl+C to cancel.`
+          `${message} Retrying in ${Math.ceil(delayMs / 1000)}s.`
         )
         await sleepWithAbortAsync(delayMs, handlers.signal)
         persistentAttempt += 1
