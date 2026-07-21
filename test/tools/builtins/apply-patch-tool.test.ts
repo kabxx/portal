@@ -8,6 +8,10 @@ import {
   ApplyPatchTool,
   parsePatch,
 } from '../../../src/tools/builtins/apply-patch-tool.ts'
+import {
+  formatToolResultMessage,
+  ToolRegistry,
+} from '../../../src/tools/core/tool-registry.ts'
 import type { ToolOutput } from '../../../src/tools/core/tool-definition.ts'
 import { createProviderAdapterStub } from '../../helpers/fakes.ts'
 
@@ -59,6 +63,7 @@ test('ApplyPatchTool returns a structured error for empty input', async () => {
   const output = await new ApplyPatchTool(createProviderAdapterStub()).call('')
 
   assert.match(expectError(output), /input must be non-empty/)
+  assert.deepEqual(output.result.resolvedPaths, [])
   assert.equal(output.displayText, output.result.message)
 })
 
@@ -89,6 +94,8 @@ test('ApplyPatchTool applies Add and Update files as one planned patch', async (
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-apply-patch-'))
   const createdPath = path.join(root, 'nested', 'created.txt')
   const updatedPath = path.join(root, 'updated.txt')
+  const createdInputPath = path.relative(process.cwd(), createdPath)
+  const updatedInputPath = path.relative(process.cwd(), updatedPath)
   const tool = new ApplyPatchTool(createProviderAdapterStub())
   await writeFile(updatedPath, 'old\n', 'utf8')
 
@@ -97,11 +104,11 @@ test('ApplyPatchTool applies Add and Update files as one planned patch', async (
       await tool.call(
         [
           '*** Begin Patch',
-          `*** Add File: ${createdPath}`,
+          `*** Add File: ${createdInputPath}`,
           '+first',
           '+',
           '+second',
-          `*** Update File: ${updatedPath}`,
+          `*** Update File: ${updatedInputPath}`,
           '@@',
           '-old',
           '+new',
@@ -113,6 +120,7 @@ test('ApplyPatchTool applies Add and Update files as one planned patch', async (
     assert.equal(await readFile(createdPath, 'utf8'), 'first\n\nsecond')
     assert.equal(await readFile(updatedPath, 'utf8'), 'new\n')
     assert.equal(output.result.operations, 2)
+    assert.deepEqual(output.result.resolvedPaths, [createdPath, updatedPath])
     assert.match(output.displayText, /^2 files · \+3 -1\n\*\*\* Begin Patch/)
     assert.ok(
       output.displayText.indexOf('-old') < output.displayText.indexOf('+new')
@@ -122,6 +130,124 @@ test('ApplyPatchTool applies Add and Update files as one planned patch', async (
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test('ApplyPatchTool reports the actual resolved path when cwd assumptions are wrong', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-apply-patch-'))
+  const intendedPath = path.join(root, 'FEATURE_PLAN.md')
+  const inputPath = path.join(path.basename(root), 'FEATURE_PLAN.md')
+  const resolvedPath = path.resolve(inputPath)
+  const tool = new ApplyPatchTool(createProviderAdapterStub())
+  await writeFile(intendedPath, 'old', 'utf8')
+
+  try {
+    const output = await tool.call(
+      [
+        '*** Begin Patch',
+        `*** Update File: ${inputPath}`,
+        '@@',
+        '-old',
+        '+new',
+        '*** End Patch',
+      ].join('\n')
+    )
+
+    assert.match(expectError(output), /missing file/i)
+    assert.deepEqual(output.result.resolvedPaths, [resolvedPath])
+    assert.equal(await readFile(intendedPath, 'utf8'), 'old')
+    assert.equal(await exists(resolvedPath), false)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('ApplyPatchTool reports recognized paths when later patch parsing fails', async () => {
+  const firstPath = path.join('relative', 'first.txt')
+  const secondPath = path.join('relative', 'second.txt')
+  const firstPathAlias = path.join('relative', 'nested', '..', 'first.txt')
+  const output = await new ApplyPatchTool(createProviderAdapterStub()).call(
+    [
+      '*** Begin Patch',
+      `*** Update File: ${firstPath}`,
+      '@@',
+      '-old',
+      '+new',
+      `*** Update File: ${secondPath}`,
+      '@@',
+      '-old',
+      '+new',
+      `*** Update File: ${firstPathAlias}`,
+      '@@',
+      '-old',
+      '+new',
+    ].join('\n')
+  )
+
+  assert.match(expectError(output), /must end with/i)
+  assert.deepEqual(output.result.resolvedPaths, [
+    path.resolve(firstPath),
+    path.resolve(secondPath),
+  ])
+})
+
+test('ApplyPatchTool preserves resolved paths in the Tool Result JSON', async () => {
+  const inputPath = path.join(
+    `portal-missing-${process.pid}-${Date.now()}`,
+    'target.txt'
+  )
+  const registry = new ToolRegistry(createProviderAdapterStub(), [
+    ApplyPatchTool,
+  ])
+  const result = await registry.executeToolCall(
+    [
+      '*** Begin Patch',
+      `*** Update File: ${inputPath}`,
+      '@@',
+      '-old',
+      '+new',
+      '*** End Patch',
+    ].join('\n'),
+    {},
+    'apply_patch'
+  )
+  const message = formatToolResultMessage('apply_patch', result)
+  const payload: unknown = JSON.parse(message.slice(message.indexOf('\n') + 1))
+
+  assert.ok(typeof payload === 'object' && payload !== null)
+  assert.ok('result' in payload)
+  const resultPayload = payload.result
+  assert.ok(typeof resultPayload === 'object' && resultPayload !== null)
+  assert.ok('resolvedPaths' in resultPayload)
+  assert.deepEqual(resultPayload.resolvedPaths, [path.resolve(inputPath)])
+})
+
+test('ApplyPatchTool does not resolve empty or NUL paths to cwd', async () => {
+  const tool = new ApplyPatchTool(createProviderAdapterStub())
+  const emptyPath = await tool.call(
+    [
+      '*** Begin Patch',
+      '*** Update File: ',
+      '@@',
+      '-old',
+      '+new',
+      '*** End Patch',
+    ].join('\n')
+  )
+  const nulPath = await tool.call(
+    [
+      '*** Begin Patch',
+      '*** Update File: bad\0path',
+      '@@',
+      '-old',
+      '+new',
+      '*** End Patch',
+    ].join('\n')
+  )
+
+  expectError(emptyPath)
+  expectError(nulPath)
+  assert.deepEqual(emptyPath.result.resolvedPaths, [])
+  assert.deepEqual(nulPath.result.resolvedPaths, [])
 })
 
 test('ApplyPatchTool explains malformed Add File lines to the model', async () => {

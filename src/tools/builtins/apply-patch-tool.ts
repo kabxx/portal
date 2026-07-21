@@ -1,10 +1,6 @@
 import { lstat, mkdir, readFile, unlink, writeFile } from 'fs/promises'
 import path from 'path'
-import {
-  createToolError,
-  Tool,
-  defineToolMetadata,
-} from '../core/tool-definition.ts'
+import { Tool, defineToolMetadata } from '../core/tool-definition.ts'
 import type { ToolOutput } from '../core/tool-definition.ts'
 import { applyDiff } from '../patch/openai-apply-diff.ts'
 import { buildV4aPreview } from '../patch/v4a-preview.ts'
@@ -92,6 +88,34 @@ function marker(
     }
   }
   return null
+}
+
+function resolvePatchPaths(input: string): string[] {
+  const resolvedPaths = new Set<string>()
+  for (const line of input.replace(/\r\n?/g, '\n').split('\n')) {
+    const header = marker(line)
+    if (
+      header === null ||
+      !('path' in header) ||
+      !header.path ||
+      header.path.includes('\0')
+    ) {
+      continue
+    }
+    resolvedPaths.add(path.resolve(header.path))
+  }
+  return [...resolvedPaths]
+}
+
+function createApplyPatchError(
+  message: string,
+  resolvedPaths: readonly string[]
+): ToolOutput & { outcome: 'error' } {
+  return {
+    outcome: 'error',
+    result: { message, resolvedPaths },
+    displayText: message,
+  }
 }
 
 function parsePatch(input: string): PatchOperation[] {
@@ -340,12 +364,15 @@ async function commitPatch(files: PlannedFile[]): Promise<void> {
 class ApplyPatchTool extends Tool<string, ToolOutput> {
   public async call(input: string): Promise<ToolOutput> {
     if (typeof input !== 'string' || !input.trim()) {
-      return createToolError(
-        'apply_patch input must be non-empty freeform Patch text'
+      return createApplyPatchError(
+        'apply_patch input must be non-empty freeform Patch text',
+        []
       )
     }
 
+    let resolvedPaths: string[] = []
     try {
+      resolvedPaths = resolvePatchPaths(input)
       const operations = parsePatch(input)
       const files = await planPatch(operations)
       await commitPatch(files)
@@ -353,11 +380,12 @@ class ApplyPatchTool extends Tool<string, ToolOutput> {
         result: {
           operations: operations.length,
           files: files.map((file) => file.displayPath),
+          resolvedPaths,
         },
         displayText: buildV4aPreview(files),
       }
     } catch (error) {
-      return createToolError(errorMessage(error))
+      return createApplyPatchError(errorMessage(error), resolvedPaths)
     }
   }
 }
