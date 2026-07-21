@@ -1442,13 +1442,12 @@ function formatPreviewValue(value: unknown): string {
 const LIVE_ASSISTANT_EMIT_INTERVAL_MS = 120
 const LIVE_COMMAND_EMIT_INTERVAL_MS = 120
 const LIVE_TOOL_HEARTBEAT_INTERVAL_MS = 1000
-const LIVE_COMMAND_TAIL_LINE_COUNT = 2
+const LIVE_COMMAND_TAIL_LINE_COUNT = 10
 const MAX_COMMAND_TAIL_LINE_LENGTH = 4096
 
 type CommandOutputStream = 'stdout' | 'stderr'
 
 interface CommandTailRecord {
-  stream: CommandOutputStream
   text: string
 }
 
@@ -1483,27 +1482,21 @@ class CommandOutputTail {
       } else if (token === '\n' || token === '\r\n') {
         this.finish(state)
       } else if (token) {
-        this.appendText(stream, state, token)
+        this.appendText(state, token)
       }
     }
   }
 
   public toLines(): string[] {
-    return this.records.map((record) =>
-      record.stream === 'stderr' ? `stderr: ${record.text}` : record.text
-    )
+    return this.records.map((record) => record.text)
   }
 
   public toBody(): string {
     return this.toLines().join('\n')
   }
 
-  private appendText(
-    stream: CommandOutputStream,
-    state: CommandStreamState,
-    text: string
-  ): void {
-    const record = state.current ?? { stream, text: '' }
+  private appendText(state: CommandStreamState, text: string): void {
+    const record = state.current ?? { text: '' }
     if (state.current === null) {
       state.current = record
     }
@@ -1538,7 +1531,7 @@ class CommandOutputTail {
   private touch(record: CommandTailRecord): void {
     this.remove(record)
     this.records.push(record)
-    while (this.records.length > 2) {
+    while (this.records.length > LIVE_COMMAND_TAIL_LINE_COUNT) {
       this.records.shift()
     }
   }
