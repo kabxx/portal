@@ -198,7 +198,7 @@ low-frequency tuning knobs and are applied when portal starts.
 | Field                             | Default | Meaning                                  |
 | --------------------------------- | ------: | ---------------------------------------- |
 | `initializationAttemptLimit`      |       3 | Runtime initialization attempts          |
-| `requestAttemptLimit`             |       3 | Retryable request attempts               |
+| `requestAttemptLimit`             |       3 | Ordinary bounded retry attempts          |
 | `cancelWaitTimeoutSeconds`        |       3 | Wait for cancelled thread work to settle |
 | `shutdownCloseTimeoutSeconds`     |       3 | Wait for each resource during shutdown   |
 | `childRuntimeCloseTimeoutSeconds` |       2 | Wait for a Hook child runtime to close   |

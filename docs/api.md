@@ -127,7 +127,7 @@ as `/thread capability`. Unsupported states and unavailable controls return
 Each event includes an SSE sequence id and JSON data containing `threadId`.
 The event names are:
 
-`message.started`, `assistant.delta`, `assistant.message`, `status`,
+`message.started`, `assistant.delta`, `assistant.reset`, `assistant.message`, `status`,
 `tool.started`, `tool.output`, `tool.completed`, `message.completed`,
 `message.failed`, `message.cancelled`, `thread.closed`, `thread.action`, and
 `hook.execution`.
@@ -153,7 +153,10 @@ Its data contains `hookRunId`, `phase`, `event`, `handler`, `handlerType`,
 `assistant.delta` contains text appended since the previous stream callback.
 The provider adapters internally report full snapshots, so a client should
 append `text` from this event and treat `assistant.message` as the completed
-assistant message for that model response.
+assistant message for that model response. `assistant.reset` has no additional
+fields and means a failed Provider attempt emitted partial text before portal
+started a retry. Clients must discard the accumulated deltas for that attempt;
+the terminal UI leaves the old partial response visible during the retry delay.
 
 `tool.started`, `tool.output`, and `tool.completed` include `toolCallId` so a
 client can correlate progress and completion for one invocation. `tool.output`

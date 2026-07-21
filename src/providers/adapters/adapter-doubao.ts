@@ -862,6 +862,31 @@ export class DoubaoAdapter extends ProviderAdapter {
     })
   }
 
+  protected override async prepareRetrySubmit(
+    text: string,
+    options: AbortOptions
+  ): Promise<() => Promise<void>> {
+    const composer = () =>
+      this.page.locator('textarea.semi-input-textarea, div[role="textbox"]')
+    return await this.prepareRetrySubmitText(text, options, {
+      provider: 'Doubao',
+      isComposerReady: async () => await this.isRetryComposerReady(composer()),
+      readComposerText: async () =>
+        await this.readRetryComposerText(composer()),
+      writeText: async () => await this.attachText(text),
+      clearComposer: async () =>
+        await this.clearRetryComposerElements(composer()),
+      isStopActive: async () =>
+        await this.isRetryControlActive(
+          this.page.locator(DOUBAO_STOP_BUTTON_SELECTORS.join(', '))
+        ),
+      isSendReady: async () =>
+        await this.isRetryControlReady(
+          this.page.locator('button[class*="bg-g-send-msg-btn-bg"]')
+        ),
+    })
+  }
+
   public async attachFile(path: string | readonly string[]) {
     await this.wrapAdapterActionErrorAsync('attachFile', async () => {
       const paths = normalizeToPathArray(path)
@@ -1191,6 +1216,7 @@ export class DoubaoAdapter extends ProviderAdapter {
             async () =>
               await this.readCurrentStreamedResponseText(fetchCaptureStartIndex)
           )
+          this.emitSubmitDispatching(signal)
           await sendButton.click()
           this.emitSubmitSent()
           throwIfAborted(signal)
