@@ -45,6 +45,8 @@ export interface RunCommandResult {
   timedOut: boolean
   truncated: boolean
   terminationReason: RunCommandTerminationReason
+  durationMs: number
+  finishedAt: string
 }
 
 export type RunCommandProgressEvent =
@@ -197,6 +199,7 @@ class ManagedRunCommandJob {
 
   private readonly child: ChildProcess
   private readonly startedAt = Date.now()
+  private readonly startedAtMonotonic = process.hrtime.bigint()
   private readonly cwd: string
   private readonly shell: RunCommandShell
   private readonly command: string
@@ -428,6 +431,10 @@ class ManagedRunCommandJob {
       return
     }
     this.settled = true
+    const finishedAt = new Date().toISOString()
+    const durationMs = Number(
+      (process.hrtime.bigint() - this.startedAtMonotonic) / 1_000_000n
+    )
     if (this.timeout !== null) {
       clearTimeout(this.timeout)
       this.timeout = null
@@ -463,6 +470,8 @@ class ManagedRunCommandJob {
         timedOut: this.terminationReason === 'timeout',
         truncated: this.outputState.truncated,
         terminationReason: this.terminationReason,
+        durationMs,
+        finishedAt,
       })
     } catch (error) {
       this.rejectCompletion(error)

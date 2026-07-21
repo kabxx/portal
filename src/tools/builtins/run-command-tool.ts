@@ -61,18 +61,22 @@ const runCommandDescription = [
         '- List a directory: Get-ChildItem -LiteralPath "C:\\path" | Select-Object Mode,Length,LastWriteTime,Name',
         '- List recursively: Get-ChildItem -LiteralPath "C:\\path" -Recurse -Depth 2 | Select-Object FullName',
         '- Find files: Get-ChildItem -LiteralPath "C:\\path" -Recurse -Filter "*.ts" | Select-Object -ExpandProperty FullName',
-        '- Search text with ripgrep: rg -n --hidden --glob "!node_modules" "pattern" "C:\\path"',
+        '- Check for ripgrep: Get-Command rg -ErrorAction SilentlyContinue',
+        '- Search text with ripgrep when available: rg -n --hidden --glob "!node_modules" "pattern" "C:\\path" | Select-Object -First 200',
+        '- Search text without ripgrep: Get-ChildItem -LiteralPath "C:\\path" -Recurse -File | Select-String -Pattern "pattern" | Select-Object -First 200',
         '',
-        'Keep command output bounded. Use Select-Object -First, -TotalCount, rg -m, or targeted paths when possible.',
+        'Keep command output bounded. Use Select-Object -First, -TotalCount, or targeted paths when possible.',
       ]
     : [
         'Common POSIX shell templates:',
         '- Show the current directory: pwd',
         '- List a directory: ls -la',
         '- Find files: find . -maxdepth 2 -type f',
-        '- Search text with ripgrep: rg -n --hidden --glob "!node_modules" "pattern" .',
+        '- Check for ripgrep: command -v rg >/dev/null 2>&1',
+        '- Search text with ripgrep when available: rg -n --hidden --glob "!node_modules" "pattern" . | head -n 200',
+        '- Search text without ripgrep: grep -R -n --exclude-dir=node_modules --exclude-dir=.git -- "pattern" . | head -n 200',
         '',
-        'Keep command output bounded. Use head, rg -m, or targeted paths when possible.',
+        'Keep command output bounded. Use head or targeted paths when possible.',
       ]),
 ].join('\n')
 
