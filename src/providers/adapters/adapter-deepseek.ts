@@ -424,6 +424,31 @@ export class DeepSeekAdapter extends ProviderAdapter {
     })
   }
 
+  protected override async prepareRetrySubmit(
+    text: string,
+    options: AbortOptions
+  ): Promise<() => Promise<void>> {
+    const composer = () => this.page.locator('textarea')
+    const stopButton = () =>
+      this.page.locator(
+        `div[role="button"]:has(svg[viewBox^="0 0 16"] path[d^="${DEEPSEEK_STOP_ICON_PATH_PREFIX}"])`
+      )
+    return await this.prepareRetrySubmitText(text, options, {
+      provider: 'DeepSeek',
+      isComposerReady: async () => await this.isRetryComposerReady(composer()),
+      readComposerText: async () =>
+        await this.readRetryComposerText(composer()),
+      writeText: async () => await this.attachText(text),
+      clearComposer: async () =>
+        await this.clearRetryComposerElements(composer()),
+      isStopActive: async () => await this.isRetryControlActive(stopButton()),
+      isSendReady: async () =>
+        await this.isRetryControlReady(
+          this.page.locator(DEEPSEEK_SEND_BUTTON_SELECTOR)
+        ),
+    })
+  }
+
   public async attachFile(path: string | readonly string[]) {
     await this.wrapAdapterActionErrorAsync('attachFile', async () => {
       const uploadButtons = this.page.locator(DEEPSEEK_UPLOAD_BUTTON_SELECTOR)
@@ -670,6 +695,7 @@ export class DeepSeekAdapter extends ProviderAdapter {
             async () =>
               await this.readCurrentStreamedResponseText(fetchCaptureStartIndex)
           )
+          this.emitSubmitDispatching(signal)
           await sendButton.click()
           this.emitSubmitSent()
           throwIfAborted(signal)

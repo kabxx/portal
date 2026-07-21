@@ -1,8 +1,9 @@
-import type { CDPSession, Page, Response } from 'playwright'
+import type { CDPSession, Locator, Page, Response } from 'playwright'
 import {
   abortable,
   type AbortOptions,
   isAbortError,
+  throwIfAborted,
   toError,
 } from '../../runtime/runtime-cancellation.ts'
 import { abortableSleep } from '../../shared/sleep.ts'
@@ -96,6 +97,16 @@ export interface ProviderAdapterErrorOptions {
   maxAttempts?: number
   detailCode?: string | null
   cause?: unknown
+}
+
+interface ProviderRetryInputControls {
+  provider: string
+  isComposerReady(): Promise<boolean>
+  readComposerText(): Promise<string>
+  writeText(): Promise<void>
+  clearComposer(): Promise<void>
+  isStopActive(): Promise<boolean>
+  isSendReady(): Promise<boolean>
 }
 
 export class ProviderAdapterError extends Error {
@@ -585,6 +596,7 @@ export abstract class ProviderAdapter<
     | null = null
   private submitSentReporter: (() => void) | null = null
   private submitActivityReporter: (() => void) | null = null
+  private submitDispatchReporter: (() => void) | null = null
   private readonly submitFetchActivitySnapshots = new Map<number, string>()
   private fetchCaptureInitialized = false
   private readonly capturedPageResponses: Response[] = []
@@ -756,6 +768,112 @@ export abstract class ProviderAdapter<
       .catch(() => false)
   }
 
+  protected async getUniqueVisibleRetryLocator(
+    locator: Locator
+  ): Promise<Locator | null> {
+    const count = await locator.count().catch(() => 0)
+    let visible: Locator | null = null
+    for (let index = 0; index < count; index += 1) {
+      const candidate = locator.nth(index)
+      if (!(await candidate.isVisible().catch(() => false))) {
+        continue
+      }
+      if (visible !== null) {
+        return null
+      }
+      visible = candidate
+    }
+    return visible
+  }
+
+  protected async isRetryComposerReady(locator: Locator): Promise<boolean> {
+    const composer = await this.getUniqueVisibleRetryLocator(locator)
+    return (
+      composer !== null &&
+      (await composer.isEditable().catch(() => false)) &&
+      (await composer.isEnabled().catch(() => false))
+    )
+  }
+
+  protected async readRetryComposerText(locator: Locator): Promise<string> {
+    const composer = await this.getUniqueVisibleRetryLocator(locator)
+    if (composer === null) {
+      throw new Error('Retry Composer is missing or ambiguous.')
+    }
+    return await composer.evaluate((element) => {
+      if (
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement
+      ) {
+        return element.value
+      }
+      return element.textContent ?? ''
+    })
+  }
+
+  protected async clearRetryComposerElements(locator: Locator): Promise<void> {
+    const count = await locator.count()
+    if (count === 0) {
+      throw new Error('Retry Composer no longer exists.')
+    }
+    for (let index = 0; index < count; index += 1) {
+      await locator.nth(index).evaluate((element) => {
+        if (
+          element instanceof HTMLInputElement ||
+          element instanceof HTMLTextAreaElement
+        ) {
+          element.value = ''
+        } else {
+          element.textContent = ''
+        }
+        element.dispatchEvent(
+          new InputEvent('input', {
+            bubbles: true,
+            inputType: 'deleteContentBackward',
+          })
+        )
+        element.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+    }
+    const remainingCount = await locator.count()
+    if (remainingCount === 0) {
+      throw new Error('Retry Composer no longer exists after clearing.')
+    }
+    for (let index = 0; index < remainingCount; index += 1) {
+      const remaining = await locator.nth(index).evaluate((element) => {
+        if (
+          element instanceof HTMLInputElement ||
+          element instanceof HTMLTextAreaElement
+        ) {
+          return element.value
+        }
+        return element.textContent ?? ''
+      })
+      if (remaining !== '') {
+        throw new Error('Retry Composer remained nonempty after clearing.')
+      }
+    }
+  }
+
+  protected async isRetryControlReady(locator: Locator): Promise<boolean> {
+    const control = await this.getUniqueVisibleRetryLocator(locator)
+    return control !== null && (await control.isEnabled().catch(() => false))
+  }
+
+  protected async isRetryControlActive(locator: Locator): Promise<boolean> {
+    const count = await locator.count().catch(() => 0)
+    for (let index = 0; index < count; index += 1) {
+      const control = locator.nth(index)
+      if (
+        (await control.isVisible().catch(() => false)) &&
+        (await control.isEnabled().catch(() => false))
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+
   public setSubmitStatusReporter(
     reporter: ((message: string) => void | Promise<void>) | null
   ) {
@@ -774,8 +892,125 @@ export abstract class ProviderAdapter<
   public abstract attachImage(path: string | readonly string[]): Promise<void>
   public abstract submit(options?: AbortOptions): Promise<string>
 
+  protected async prepareRetrySubmitText(
+    text: string,
+    options: AbortOptions,
+    controls: ProviderRetryInputControls
+  ): Promise<() => Promise<void>> {
+    let writeStarted = false
+
+    try {
+      throwIfAborted(options.signal)
+      const composerReady = await controls.isComposerReady()
+      throwIfAborted(options.signal)
+      if (!composerReady) {
+        throw this.createRetryInputError(
+          controls.provider,
+          'Composer is unavailable before retry.',
+          'composer_unavailable'
+        )
+      }
+      const composerText = await controls.readComposerText()
+      throwIfAborted(options.signal)
+      if (composerText !== '') {
+        throw this.createRetryInputError(
+          controls.provider,
+          'Composer is not empty before retry.',
+          'composer_not_empty'
+        )
+      }
+      const stopActiveBeforeWrite = await controls.isStopActive()
+      throwIfAborted(options.signal)
+      if (stopActiveBeforeWrite) {
+        throw this.createRetryInputError(
+          controls.provider,
+          'Provider is still generating before retry.',
+          'generation_active'
+        )
+      }
+
+      throwIfAborted(options.signal)
+      writeStarted = true
+      await controls.writeText()
+      throwIfAborted(options.signal)
+      const writtenText = await controls.readComposerText()
+      throwIfAborted(options.signal)
+      if (writtenText !== text) {
+        throw this.createRetryInputError(
+          controls.provider,
+          'Composer content does not match the retry payload.',
+          'composer_text_mismatch'
+        )
+      }
+      const stopActiveAfterWrite = await controls.isStopActive()
+      throwIfAborted(options.signal)
+      if (stopActiveAfterWrite) {
+        throw this.createRetryInputError(
+          controls.provider,
+          'Provider started generating before retry dispatch.',
+          'generation_started'
+        )
+      }
+      const sendReady = await controls.isSendReady()
+      throwIfAborted(options.signal)
+      if (!sendReady) {
+        throw this.createRetryInputError(
+          controls.provider,
+          'Send control is unavailable after writing the retry payload.',
+          'send_unavailable'
+        )
+      }
+      throwIfAborted(options.signal)
+      return async () => await controls.clearComposer()
+    } catch (error) {
+      if (writeStarted) {
+        await this.clearRetryComposer(controls)
+      }
+      throw error
+    }
+  }
+
+  protected async prepareRetrySubmit(
+    _text: string,
+    _options: AbortOptions
+  ): Promise<() => Promise<void>> {
+    throw new ProviderAdapterUnsupportedError(
+      'retrySubmit',
+      'This provider does not support automatic retry submission.'
+    )
+  }
+
+  public async retrySubmitTextWithResponseTimeout(
+    text: string,
+    options: AbortOptions = {}
+  ): Promise<string> {
+    const clearComposer = await this.prepareRetrySubmit(text, options)
+    let dispatchStarted = false
+
+    try {
+      return await this.runSubmitWithResponseTimeout(options, () => {
+        dispatchStarted = true
+      })
+    } catch (error) {
+      if (!dispatchStarted) {
+        await this.clearRetryComposer({
+          provider: this.constructor.name.replace(/Adapter$/, ''),
+          clearComposer,
+        })
+      }
+      throw error
+    }
+  }
+
   public async submitWithResponseTimeout(
     options: AbortOptions = {}
+  ): Promise<string> {
+    return await this.runSubmitWithResponseTimeout(options)
+  }
+
+  private async runSubmitWithResponseTimeout(
+    options: AbortOptions,
+    onDispatch?: () => void
   ): Promise<string> {
     const timeoutController = new AbortController()
     const signal =
@@ -807,6 +1042,7 @@ export abstract class ProviderAdapter<
     }
 
     this.submitFetchActivitySnapshots.clear()
+    this.submitDispatchReporter = onDispatch ?? null
     this.submitSentReporter = () => {
       if (settled || timeoutError !== null || responseStarted) return
       phase = 'start'
@@ -831,7 +1067,43 @@ export abstract class ProviderAdapter<
       clearTimer()
       this.submitSentReporter = null
       this.submitActivityReporter = null
+      this.submitDispatchReporter = null
       this.submitFetchActivitySnapshots.clear()
+    }
+  }
+
+  private createRetryInputError(
+    provider: string,
+    message: string,
+    suffix: string
+  ): ProviderAdapterError {
+    return new ProviderAdapterError('retrySubmit', `${provider}: ${message}`, {
+      kind: 'ui',
+      recovery: 'none',
+      retryable: false,
+      maxAttempts: 1,
+      detailCode: `${provider.toLowerCase()}_retry_${suffix}`,
+    })
+  }
+
+  private async clearRetryComposer(
+    controls: Pick<ProviderRetryInputControls, 'provider' | 'clearComposer'>
+  ): Promise<void> {
+    try {
+      await controls.clearComposer()
+    } catch (clearError) {
+      throw new ProviderAdapterError(
+        'retrySubmit',
+        `${controls.provider}: retry input could not be cleared.`,
+        {
+          kind: 'ui',
+          recovery: 'none',
+          retryable: false,
+          maxAttempts: 1,
+          detailCode: `${controls.provider.toLowerCase()}_retry_clear_failed`,
+          cause: clearError,
+        }
+      )
     }
   }
 
@@ -850,6 +1122,11 @@ export abstract class ProviderAdapter<
 
   protected emitSubmitSent(): void {
     this.submitSentReporter?.()
+  }
+
+  protected emitSubmitDispatching(signal?: AbortSignal): void {
+    throwIfAborted(signal)
+    this.submitDispatchReporter?.()
   }
 
   protected emitSubmitActivity(): void {

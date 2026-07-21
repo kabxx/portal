@@ -685,6 +685,30 @@ export class GlmAdapter extends ProviderAdapter {
     })
   }
 
+  protected override async prepareRetrySubmit(
+    text: string,
+    options: AbortOptions
+  ): Promise<() => Promise<void>> {
+    const composer = () => this.page.locator(GLM_COMPOSER_SELECTOR)
+    return await this.prepareRetrySubmitText(text, options, {
+      provider: 'GLM',
+      isComposerReady: async () => await this.isRetryComposerReady(composer()),
+      readComposerText: async () =>
+        await this.readRetryComposerText(composer()),
+      writeText: async () => await this.attachText(text),
+      clearComposer: async () =>
+        await this.clearRetryComposerElements(composer()),
+      isStopActive: async () =>
+        await this.isRetryControlActive(
+          this.page.locator(GLM_STOP_BUTTON_SELECTOR)
+        ),
+      isSendReady: async () =>
+        await this.isRetryControlReady(
+          this.page.locator(GLM_READY_BUTTON_SELECTOR)
+        ),
+    })
+  }
+
   public async attachFile(path: string | readonly string[]): Promise<void> {
     await this.wrapAdapterActionErrorAsync('attachFile', async () => {
       await this.dismissBlockingDialog('attachFile')
@@ -859,6 +883,7 @@ export class GlmAdapter extends ProviderAdapter {
             async () =>
               await this.readCurrentStreamedResponseText(fetchCaptureStartIndex)
           )
+          this.emitSubmitDispatching(signal)
           await sendButton.click()
           this.emitSubmitSent()
           throwIfAborted(signal)

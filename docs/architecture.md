@@ -213,7 +213,7 @@ Long-running app operations receive an `AbortSignal`.
 - Idle `Ctrl+D` with empty input requests shutdown.
 - `/exit` requests the same shutdown path.
 
-Provider failures are classified by kind, retryability, and recovery action. Authentication errors retain the adapter page and enter a login-wait loop. Retryable network/page failures use bounded retries and adapter restore. Non-retryable UI or protocol errors remain visible in the current timeline.
+Provider failures are classified by kind, retryability, and recovery action. Authentication errors retain the adapter page and enter a login-wait loop. Ordinary retryable network/page failures use bounded retries and adapter restore. Explicit rate-limit errors and provider response activity timeouts instead keep the current payload and retry with 5, 10, 20, then capped 30 second delays until success, a retry preflight failure, or cancellation. This persistent path never restores the page: before each replay the adapter requires one empty editable Composer, no active stop control, an exact write/readback match, and one ready send control. A failure after writing but before dispatch clears every matching Composer; once dispatch starts, input is no longer rolled back. Other UI or protocol errors remain visible in the current timeline.
 
 Cancellation is propagated through provider submit, runtime retries, tools, Skill installation, MCP requests, and app operations, except for the detached waiter behavior of `run_command` described above. Shutdown closes job admission and stops all active command jobs before closing providers. It uses bounded close waits so a hanging provider page or transport cannot block process exit indefinitely.
 

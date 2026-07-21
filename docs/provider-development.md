@@ -227,6 +227,10 @@ The submit path must keep three states separate: the UI action succeeded, the ad
 
 If it is uncertain whether a submit reached the Provider, report an unknown outcome and do not mark it automatically retryable. Runtime retry performs another attach-and-submit cycle and can create a duplicate user message.
 
+Runtime has one deliberate replay exception for explicit `rate_limit` errors and `ProviderResponseTimeoutError`. It retries the current user or completed Tool-result payload with 5/10/20/30-second capped backoff until success, preflight failure, or cancellation. This can leave a duplicate remote message after a response timeout. Do not broaden the exception to unknown submit outcomes.
+
+Every adapter participates through the retry-submit transaction. Before writing, require exactly one visible, editable, empty Composer and no active stop control. After writing, read back the exact payload, check the stop control again, and require one visible enabled send control. Call `emitSubmitDispatching()` immediately before invoking the click or key action. Any failure or cancellation from the start of writing until that marker must clear all current matching Composer nodes; a cleanup failure is terminal. Never clear after the marker because dispatch may have reached the Provider.
+
 `stopGeneration()` should target one scoped, visible stop control. Cancellation means portal stopped waiting and attempted Provider-side stop; it cannot prove that the remote request had no side effects.
 
 ### History source and completeness
@@ -276,7 +280,7 @@ Rules:
 - Convert raw Playwright/DOM errors into a clean user-facing message; retain the original error only as `cause`.
 - Do not surface locator call logs, private URLs, request headers, or response bodies in terminal errors.
 - Keep auth errors attached to the adapter. Keep non-login-recoverable access states out of login wait.
-- Treat protocol ambiguity, rate limits, and unknown submit outcomes as non-retryable unless the Provider proves otherwise.
+- Treat protocol ambiguity and unknown submit outcomes as non-retryable unless the Provider proves otherwise. Explicit rate limits and the base response timeout use the narrowly scoped runtime replay transaction described above.
 - Propagate `AbortSignal` and preserve `isAbortError` rather than wrapping cancellation as a Provider failure.
 
 ## 8. Validation

@@ -469,6 +469,35 @@ export class QwenAdapter extends ProviderAdapter {
     })
   }
 
+  protected override async prepareRetrySubmit(
+    text: string,
+    options: AbortOptions
+  ): Promise<() => Promise<void>> {
+    const composer = () => this.page.locator(QWEN_COMPOSER_SELECTOR)
+    return await this.prepareRetrySubmitText(text, options, {
+      provider: 'Qwen',
+      isComposerReady: async () => await this.isRetryComposerReady(composer()),
+      readComposerText: async () =>
+        await this.readRetryComposerText(composer()),
+      writeText: async () => {
+        this.pendingText = ''
+        await this.attachText(text)
+      },
+      clearComposer: async () => {
+        await this.clearRetryComposerElements(composer())
+        this.pendingText = ''
+      },
+      isStopActive: async () =>
+        await this.isRetryControlActive(
+          this.page.locator(QWEN_STOP_BUTTON_SELECTOR)
+        ),
+      isSendReady: async () =>
+        await this.isRetryControlReady(
+          this.page.locator(QWEN_SEND_BUTTON_SELECTOR)
+        ),
+    })
+  }
+
   public async attachFile(
     path: string | readonly string[],
     waitForTextParsing = true
@@ -1145,6 +1174,7 @@ export class QwenAdapter extends ProviderAdapter {
         this.page.on('close', onClose)
 
         try {
+          this.emitSubmitDispatching(signal)
           await sendButton.click()
           this.emitSubmitSent()
           throwIfAborted(signal)
