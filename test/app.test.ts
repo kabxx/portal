@@ -15,6 +15,7 @@ import {
   parseApiThreadCreationMode,
   runtimeSetupModeForThreadCreation,
   handleUnexpectedThreadPageClose,
+  inheritSpawnModelSelection,
   loadResumedThreadHistory,
   setApiProviderCapability,
   showPendingThreadTimeline,
@@ -34,6 +35,18 @@ import {
   createFakeRuntime,
   createProviderAdapterStub,
 } from './helpers/fakes.ts'
+
+test('spawn model selection inherits only within the same provider', () => {
+  const model = {
+    key: '3.1-pro',
+    option: 'extended',
+    adapterValue: '3+extended',
+  }
+
+  assert.equal(inheritSpawnModelSelection('gemini', 'gemini', model), model)
+  assert.equal(inheritSpawnModelSelection('gemini', 'deepseek', model), null)
+  assert.equal(inheritSpawnModelSelection('gemini', 'gemini', null), null)
+})
 
 test('application provider registry includes every supported provider', () => {
   assert.deepEqual(PROVIDERS, [

@@ -15,7 +15,6 @@ import {
 } from '../../src/terminal-ui/input-hints.ts'
 import {
   InputHintPanel as CommandHintPanel,
-  completeThreadProvider,
   estimateDisplayWidth,
   formatInputHintLines as formatCommandHintLines,
 } from '../../src/terminal-ui/terminal-screen.tsx'
@@ -138,31 +137,61 @@ test('thread open hints filter providers then advance to the optional model', ()
   )
   assert.equal(
     providerHints[0]?.usage,
-    '/thread open <provider> [model-number]'
+    '/thread open <provider> [model-key] [option-key]'
   )
-  assert.equal(providerHints[1]?.usage, 'provider: gemini')
+  assert.equal(providerHints[1]?.usage, 'gemini')
   assert.equal(
-    providerHints.every(({ completion }) => completion === undefined),
-    true
-  )
-  assert.equal(
-    completeThreadProvider('/thread open gem', PROVIDERS),
+    resolveCommandHintSelection(providerHints, '/thread open gem', null),
     '/thread open gemini '
   )
-
   const modelHints = resolveCommandHints(
     '/thread open gemini ',
     DEFAULT_COMMANDS,
     PROVIDERS
   )
-  assert.equal(modelHints[1]?.usage, 'model-number: optional')
+  assert.deepEqual(
+    modelHints.slice(1).map(({ usage }) => usage),
+    ['3.5-flash-lite', '3.6-flash', '3.1-pro']
+  )
+  assert.equal(
+    resolveCommandHintSelection(modelHints, '/thread open gemini ', null),
+    '/thread open gemini 3.5-flash-lite '
+  )
 
   const completedHints = resolveCommandHints(
-    '/thread open gemini 2',
+    '/thread open gemini 3.1',
     DEFAULT_COMMANDS,
     PROVIDERS
   )
-  assert.equal(completedHints.length, 1)
+  assert.equal(completedHints.at(-1)?.usage, '3.1-pro')
+  assert.equal(
+    completedHints.at(-1)?.completion,
+    '/thread open gemini 3.1-pro '
+  )
+
+  const optionHints = resolveCommandHints(
+    '/thread open gemini 3.1-pro e',
+    DEFAULT_COMMANDS,
+    PROVIDERS
+  )
+  assert.equal(optionHints.at(-1)?.usage, 'extended')
+  assert.equal(
+    resolveCommandHintSelection(
+      optionHints,
+      '/thread open gemini 3.1-pro e',
+      null
+    ),
+    '/thread open gemini 3.1-pro extended'
+  )
+
+  assert.equal(
+    resolveCommandHints(
+      '/thread open gemini 3.1-pro extended extra',
+      DEFAULT_COMMANDS,
+      PROVIDERS
+    ).some(({ usage }) => usage === 'extended'),
+    false
+  )
 })
 
 test('thread chat hints and completion mirror thread open', () => {
@@ -173,11 +202,11 @@ test('thread chat hints and completion mirror thread open', () => {
   )
   assert.equal(
     providerHints[0]?.usage,
-    '/thread chat <provider> [model-number]'
+    '/thread chat <provider> [model-key] [option-key]'
   )
-  assert.equal(providerHints[1]?.usage, 'provider: gemini')
+  assert.equal(providerHints[1]?.usage, 'gemini')
   assert.equal(
-    completeThreadProvider('/thread chat gem', PROVIDERS),
+    resolveCommandHintSelection(providerHints, '/thread chat gem', null),
     '/thread chat gemini '
   )
   const modelHints = resolveCommandHints(
@@ -185,7 +214,28 @@ test('thread chat hints and completion mirror thread open', () => {
     DEFAULT_COMMANDS,
     PROVIDERS
   )
-  assert.equal(modelHints[1]?.usage, 'model-number: optional')
+  assert.deepEqual(
+    modelHints.slice(1).map(({ usage }) => usage),
+    ['3.5-flash-lite', '3.6-flash', '3.1-pro']
+  )
+  assert.equal(
+    resolveCommandHintSelection(modelHints, '/thread chat gemini ', null),
+    '/thread chat gemini 3.5-flash-lite '
+  )
+
+  const optionHints = resolveCommandHints(
+    '/thread chat gemini 3.6-flash e',
+    DEFAULT_COMMANDS,
+    PROVIDERS
+  )
+  assert.equal(
+    resolveCommandHintSelection(
+      optionHints,
+      '/thread chat gemini 3.6-flash e',
+      null
+    ),
+    '/thread chat gemini 3.6-flash extended'
+  )
 })
 
 test('unknown warnings wait until the invalid token is completed', () => {
@@ -299,11 +349,11 @@ test('selection moves through selectable rows and wraps at both ends', () => {
   )
   assert.equal(
     resolveCommandHintSelection(providerHints, providerInput, null),
-    null
+    '/thread open gemini '
   )
   assert.equal(
     moveCommandHintSelection(providerHints, providerInput, null, 'down'),
-    null
+    '/thread open gemini '
   )
 
   const mixedHints = [

@@ -35,6 +35,7 @@ export interface PortalMcpHandlers {
     input: {
       provider: string
       model: string | null
+      option: string | null
       mode: ThreadCreationMode
     },
     signal: AbortSignal

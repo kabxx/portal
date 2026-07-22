@@ -79,7 +79,16 @@ export function createPortalMcpProtocolServer(
         'Open and initialize a new browser-backed Portal thread. This may wait for browser login.',
       inputSchema: z.object({
         provider: z.string().min(1),
-        model: z.string().nullable().optional(),
+        model: z
+          .string()
+          .nullable()
+          .optional()
+          .describe('Named model key; omit to keep the provider default.'),
+        option: z
+          .string()
+          .nullable()
+          .optional()
+          .describe('Named option key for the selected model.'),
         mode: z.enum(THREAD_CREATION_MODES).optional(),
       }),
       outputSchema: threadSchema,
@@ -90,11 +99,16 @@ export function createPortalMcpProtocolServer(
         openWorldHint: true,
       },
     },
-    async ({ provider, model, mode }, extra) =>
+    async ({ provider, model, option, mode }, extra) =>
       await runTool(
         async () =>
           await handlers.openThread(
-            { provider, model: model ?? null, mode: mode ?? 'agent' },
+            {
+              provider,
+              model: model ?? null,
+              option: option ?? null,
+              mode: mode ?? 'agent',
+            },
             AbortSignal.any([requestSignal, extra.signal])
           )
       )

@@ -121,17 +121,20 @@ function normalizeToPathArray(path: string | readonly string[]): string[] {
 
 function parseGeminiModel(
   model: string
-): { index: number; extended: boolean } | null {
+): { index: number; extended: boolean | null } | null {
   const normalized = model.trim().toLowerCase()
-  const extended = normalized.endsWith(GEMINI_MODEL_EXTENSION_SUFFIX)
-  const modelName = extended
+  const hasExtendedSuffix = normalized.endsWith(GEMINI_MODEL_EXTENSION_SUFFIX)
+  const modelName = hasExtendedSuffix
     ? normalized.slice(0, -GEMINI_MODEL_EXTENSION_SUFFIX.length)
     : normalized
   const modelNumber = Number(modelName)
   if (!Number.isSafeInteger(modelNumber) || modelNumber < 1) {
     return null
   }
-  return { index: modelNumber - 1, extended }
+  return {
+    index: modelNumber - 1,
+    extended: hasExtendedSuffix ? true : null,
+  }
 }
 
 export class GeminiAdapter extends ProviderAdapter {
@@ -358,6 +361,10 @@ export class GeminiAdapter extends ProviderAdapter {
     }
     await menuItems.nth(parsed.index).click()
     await this.waitForModelMenuClosed()
+
+    if (parsed.extended === null) {
+      return
+    }
 
     const extensionMenu = await this.openModelMenu()
     const extensionItem = await this.getModelExtensionItem(

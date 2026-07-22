@@ -4,6 +4,7 @@ import type {
 } from '../../threads/thread-manager.ts'
 import type { ThreadStore } from '../../threads/thread-store.ts'
 import type { ProviderId } from '../../providers/provider-id.ts'
+import type { ResolvedProviderModel } from '../../providers/provider-model-catalog.ts'
 import type { TerminalController } from '../../terminal-ui/terminal-controller.ts'
 import type {
   SkillAddResult,
@@ -49,7 +50,7 @@ export interface CliCommandContext {
   resolveProvider(value: string): ProviderId | null
   createThread(
     provider: ProviderId,
-    model: string | null,
+    model: ResolvedProviderModel | null,
     mode?: ThreadCreationMode
   ): Promise<void>
   resumeThread(conversationUrl: string): Promise<void>

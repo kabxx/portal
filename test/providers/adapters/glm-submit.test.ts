@@ -295,6 +295,16 @@ test('GlmAdapter changes model through data-value menu items', async () => {
   await assert.rejects(adapter.changeModel('4'), /GLM does not have model 4\./)
 })
 
+test('GlmAdapter rejects unscoped model options from multiple groups', async () => {
+  const adapter = createTestGlmAdapter()
+  adapter.page = createGlmPage({
+    visibleModelMenuCount: 1,
+    globalModelParentCount: 2,
+  })
+
+  await assert.rejects(adapter.changeModel('1'), /options were ambiguous/)
+})
+
 test('GlmAdapter reads and sets thinking/search toggle states', async () => {
   const adapter = createTestGlmAdapter()
   const thinkingButton = createToggleButton('data-autothink', 'false')
@@ -406,6 +416,8 @@ function createGlmPage({
   searchButton,
   advancedSearchSwitch,
   modelItems = [createButton(), createButton(), createButton()],
+  visibleModelMenuCount = 0,
+  globalModelParentCount = 1,
 }: {
   sendButton?: ReturnType<typeof createButton>
   uploadButton?: ReturnType<typeof createButton>
@@ -414,6 +426,8 @@ function createGlmPage({
   searchButton?: ReturnType<typeof createToggleButton>
   advancedSearchSwitch?: ReturnType<typeof createAdvancedSearchSwitch>
   modelItems?: ReturnType<typeof createButton>[]
+  visibleModelMenuCount?: number
+  globalModelParentCount?: number
 } = {}) {
   const emitter = new EventEmitter()
   const modelTrigger = createButton()
@@ -458,6 +472,19 @@ function createGlmPage({
       }
       if (selector === 'button[id^="model-selector-"]') {
         return createSingleLocator(modelTrigger)
+      }
+      if (selector === '[data-dropdown-menu-content]:visible') {
+        return {
+          count: async () => visibleModelMenuCount,
+          locator: () => ({ count: async () => 0 }),
+        }
+      }
+      if (selector === 'button[data-value]:visible') {
+        return {
+          count: async () => modelItems.length,
+          nth: (index: number) => modelItems[index] ?? missingButton,
+          evaluateAll: async () => globalModelParentCount === 1,
+        }
       }
       if (selector === '[data-dropdown-menu-content]') {
         return {

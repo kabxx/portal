@@ -26,9 +26,9 @@ Open and manage conversations in the current portal process:
 
 ```text
 /thread open gemini
-/thread open chatgpt 1
+/thread open chatgpt chatgpt
 /thread chat chatgpt
-/thread chat gemini 2
+/thread chat gemini 3.6-flash extended
 /thread list
 /thread switch t-1
 /thread status
@@ -60,21 +60,21 @@ On a successful open, chat, or resume, the new thread timeline starts with `Thre
 
 ### Thread commands
 
-| Command                                       | Behavior                                                   |
-| --------------------------------------------- | ---------------------------------------------------------- |
-| `/thread open <provider> [model]`             | Open a provider conversation and run the setup handshake   |
-| `/thread chat <provider> [model]`             | Open with only the minimal setup handshake                 |
-| `/thread list`                                | List open local threads and local turn counts              |
-| `/thread history [limit]`                     | List recent conversation URL records from SQLite           |
-| `/thread resume <url\|#history-id>`           | Reopen a provider conversation and display remote history  |
-| `/thread switch <thread-id>`                  | Restore another open thread's in-memory timeline           |
-| `/thread status`                              | Show the active thread                                     |
-| `/thread reload`                              | Reload the active provider page without creating a turn    |
-| `/thread close [thread-id]`                   | Close the selected thread, or the active thread by default |
-| `/thread detach`                              | Return to the home timeline without closing the thread     |
-| `/thread capability [name] [on\|off\|status]` | Inspect or change provider-specific web controls           |
+| Command                                            | Behavior                                                   |
+| -------------------------------------------------- | ---------------------------------------------------------- |
+| `/thread open <provider> [model-key] [option-key]` | Open a provider conversation and run the setup handshake   |
+| `/thread chat <provider> [model-key] [option-key]` | Open with only the minimal setup handshake                 |
+| `/thread list`                                     | List open local threads and local turn counts              |
+| `/thread history [limit]`                          | List recent conversation URL records from SQLite           |
+| `/thread resume <url\|#history-id>`                | Reopen a provider conversation and display remote history  |
+| `/thread switch <thread-id>`                       | Restore another open thread's in-memory timeline           |
+| `/thread status`                                   | Show the active thread                                     |
+| `/thread reload`                                   | Reload the active provider page without creating a turn    |
+| `/thread close [thread-id]`                        | Close the selected thread, or the active thread by default |
+| `/thread detach`                                   | Return to the home timeline without closing the thread     |
+| `/thread capability [name] [on\|off\|status]`      | Inspect or change provider-specific web controls           |
 
-Remote messages loaded by resume are display-only and do not increase the local turn count shown by `/thread list`. Accepted URLs, model syntax, and capability behavior are documented in [Providers](providers.md).
+Remote messages loaded by resume are display-only and do not increase the local turn count shown by `/thread list`. Accepted URLs, named model keys, and capability behavior are documented in [Providers](providers.md).
 
 ## Command index
 

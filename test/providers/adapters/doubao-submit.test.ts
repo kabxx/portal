@@ -693,6 +693,32 @@ test('DoubaoAdapter changes model through the dropdown menu content', async () =
   )
 })
 
+test('DoubaoAdapter changes model through role menu items', async () => {
+  const adapter = createTestDoubaoAdapter()
+  const modelMenu = createModelMenu(4, true)
+  adapter.page = createDoubaoPage(createSendButton(), undefined, undefined, {
+    modelMenu,
+  })
+
+  await adapter.changeModel('3')
+
+  assert.equal(modelMenu.triggerClicks, 1)
+  assert.deepEqual(
+    modelMenu.items.map((item) => item.selfClicks),
+    [0, 0, 1, 0]
+  )
+})
+
+test('DoubaoAdapter rejects ambiguous visible model selectors', async () => {
+  const adapter = createTestDoubaoAdapter()
+  adapter.page = createDoubaoPage(createSendButton(), undefined, undefined, {
+    modelMenu: createModelMenu(),
+    modelTriggerCount: 2,
+  })
+
+  await assert.rejects(adapter.changeModel('1'), /missing or ambiguous/)
+})
+
 test('DoubaoAdapter rejects unsupported model names', async () => {
   const adapter = createTestDoubaoAdapter()
   adapter.page = createDoubaoPage(createSendButton())
@@ -761,6 +787,8 @@ function createDoubaoPage(
   stopButton?: ReturnType<typeof createStopButton>,
   stopOptions: {
     modelMenu?: ReturnType<typeof createModelMenu>
+    modelTriggerCount?: number
+    modelMenuCount?: number
     desktopPromotion?: ReturnType<typeof createDesktopPromotion>
   } = {}
 ) {
@@ -796,19 +824,29 @@ function createDoubaoPage(
         return readyContainerLocator
       }
       if (
-        selector === 'button[data-dbx-name="button"]:has(img[src*="mode_"])'
+        selector ===
+        'button[data-dbx-name="button"]:has(img[src*="mode_"]):visible, button[data-dbx-name="button"][aria-haspopup="menu"]:visible'
       ) {
+        const trigger = {
+          click: async () => {
+            stopOptions.modelMenu?.open()
+          },
+        }
         return {
-          first: () => ({
-            click: async () => {
-              stopOptions.modelMenu?.open()
-            },
-          }),
+          count: async () => stopOptions.modelTriggerCount ?? 1,
+          first: () => trigger,
         }
       }
-      if (selector === 'div[data-slot="dropdown-menu-content"]') {
+      if (
+        selector ===
+        'div[data-slot="dropdown-menu-content"]:visible, [role="menu"]:visible'
+      ) {
         return {
-          last: () => stopOptions.modelMenu ?? missingModelMenu,
+          count: async () =>
+            stopOptions.modelMenu === undefined
+              ? 0
+              : (stopOptions.modelMenuCount ?? 1),
+          first: () => stopOptions.modelMenu ?? missingModelMenu,
         }
       }
       if (
@@ -881,7 +919,7 @@ const missingModelMenu = {
   },
 }
 
-function createModelMenu(itemCount = 4) {
+function createModelMenu(itemCount = 4, usesRoleItems = false) {
   const items = Array.from({ length: itemCount }, () => {
     const item = {
       selfClicks: 0,
@@ -910,6 +948,14 @@ function createModelMenu(itemCount = 4) {
     },
     isVisible: async () => menu.triggerClicks > 0,
     locator: (selector: string) => {
+      if (selector === '[role="menuitem"]') {
+        return usesRoleItems
+          ? {
+              count: async () => items.length,
+              nth: (index: number) => items[index] ?? missingModelItem,
+            }
+          : { count: async () => 0 }
+      }
       if (selector !== 'xpath=./div') {
         throw new Error(`Unexpected model menu selector: ${selector}`)
       }
