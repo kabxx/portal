@@ -22,7 +22,7 @@ Provider-specific website behavior stays behind adapters. The runtime understand
 | Provider adapters | `src/providers/adapters/`               | Navigate pages, detect login/readiness, submit, stream, upload, select models, and stop output      |
 | History parsing   | `src/providers/conversation-history.ts` | Convert eight provider history formats into visible user/assistant messages                         |
 | Runtime           | `src/runtime/`                          | Build setup prompts, initialize runtimes, execute tool loops, retry, recover, and cancel            |
-| Threads           | `src/threads/`                          | Track open threads and local turns in memory; persist URL history metadata in SQLite                |
+| Threads           | `src/threads/`                          | Track active threads and local turns in memory; persist URL history metadata in SQLite              |
 | Commands          | `src/cli-commands/`                     | Tokenize and dispatch slash commands                                                                |
 | Tools             | `src/tools/`                            | Define schemas, render the tool protocol, validate calls, execute tools, and report progress        |
 | Command processes | `src/processes/`                        | Track command jobs, bound output, and terminate process trees                                       |
@@ -231,11 +231,11 @@ The base adapter installs fetch/XHR capture before navigation for submit flows. 
 
 Three stores serve different purposes:
 
-| Store                        | Lifetime        | Contents                                                                 |
-| ---------------------------- | --------------- | ------------------------------------------------------------------------ |
-| `ThreadRegistry`             | Current process | Open runtimes, active id, local turns, assistant/tool/status/error items |
-| `TerminalController` cache   | Current process | One home timeline plus one rendered timeline per open thread             |
-| `ThreadStore` / `threads.db` | Persistent      | Provider, normalized conversation URL, title, created/last-used times    |
+| Store                        | Lifetime        | Contents                                                                   |
+| ---------------------------- | --------------- | -------------------------------------------------------------------------- |
+| `ThreadRegistry`             | Current process | Active runtimes, active id, local turns, assistant/tool/status/error items |
+| `TerminalController` cache   | Current process | One home timeline plus one rendered timeline per active thread             |
+| `ThreadStore` / `threads.db` | Persistent      | Provider, normalized conversation URL, title, created/last-used times      |
 
 Switching a thread first saves the visible timeline under the previous key and restores the target array. It does not navigate or request remote history again. `detach` clears active selection and returns to the home timeline. Closing the active thread removes its cache and also returns home; closing a background thread keeps the current timeline visible. The same behavior applies when the user closes a provider tab directly. Any active operation is cancelled first, concurrent close requests share one close task, and portal makes two bounded settlement waits before force-closing the logical thread if the operation remains stuck. Page close events caused by portal shutdown are ignored by this thread-level path.
 
@@ -266,7 +266,7 @@ Spawned conversations are not added to the normal thread list or SQLite history.
 
 The `skills` section of `data/config.yaml` is read for every Skill command and runtime creation. A valid enabled snapshot defines which names `load_skill` can resolve. Agent threads and spawned runtimes also include the name/description catalog in their full setup prompts; chat threads retain the snapshot locally without advertising it.
 
-Catalog membership is immutable for an open runtime. The actual `SKILL.md` and resource list are read and validated on demand, so edits are visible to later loads while deleted or invalid files return errors. See [Skills](skills.md).
+Catalog membership is immutable for an active runtime. The actual `SKILL.md` and resource list are read and validated on demand, so edits are visible to later loads while deleted or invalid files return errors. See [Skills](skills.md).
 
 ## Project instructions
 

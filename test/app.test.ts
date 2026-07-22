@@ -336,7 +336,7 @@ test('busy threads allow navigation and queries but reject runtime mutations', (
     '/help',
     '/thread switch t-2',
     '/thread close t-1',
-    '/thread open gemini',
+    '/thread agent gemini',
     '/thread chat gemini',
     '/thread status',
     '/mcp list',

@@ -51,7 +51,7 @@ export function createPortalMcpProtocolServer(
     'portal_list_threads',
     {
       title: 'List Portal Threads',
-      description: 'List threads open in the running Portal process.',
+      description: 'List active threads in the running Portal process.',
       outputSchema: z.object({ threads: z.array(threadSchema) }),
       annotations: readOnlyAnnotations,
     },
@@ -62,7 +62,7 @@ export function createPortalMcpProtocolServer(
     'portal_get_thread',
     {
       title: 'Get Portal Thread',
-      description: 'Get one open Portal thread by id.',
+      description: 'Get one active Portal thread by id.',
       inputSchema: z.object({ threadId: z.string().min(1) }),
       outputSchema: threadSchema,
       annotations: readOnlyAnnotations,
@@ -72,11 +72,11 @@ export function createPortalMcpProtocolServer(
   )
 
   server.registerTool(
-    'portal_open_thread',
+    'portal_create_thread',
     {
-      title: 'Open Portal Thread',
+      title: 'Create Portal Thread',
       description:
-        'Open and initialize a new browser-backed Portal thread. This may wait for browser login.',
+        'Create and initialize a new browser-backed Portal thread. This may wait for browser login.',
       inputSchema: z.object({
         provider: z.string().min(1),
         model: z
@@ -102,7 +102,7 @@ export function createPortalMcpProtocolServer(
     async ({ provider, model, option, mode }, extra) =>
       await runTool(
         async () =>
-          await handlers.openThread(
+          await handlers.createThread(
             {
               provider,
               model: model ?? null,
@@ -119,7 +119,7 @@ export function createPortalMcpProtocolServer(
     {
       title: 'Resume Portal Thread',
       description:
-        'Open an existing provider conversation in a browser-backed Portal thread.',
+        'Resume an existing provider conversation in a browser-backed Portal thread.',
       inputSchema: z.object({ conversationUrl: z.string().min(1) }),
       outputSchema: threadSchema,
       annotations: {
@@ -144,7 +144,7 @@ export function createPortalMcpProtocolServer(
     {
       title: 'Close Portal Thread',
       description:
-        'Cancel any active operation and close an open Portal thread.',
+        'Cancel any active operation and close an active Portal thread.',
       inputSchema: z.object({ threadId: z.string().min(1) }),
       outputSchema: z.object({ closed: z.literal(true), threadId: z.string() }),
       annotations: {
@@ -163,7 +163,7 @@ export function createPortalMcpProtocolServer(
     {
       title: 'Send Portal Message',
       description:
-        'Start one message in an open Portal thread and return an operation id immediately.',
+        'Start one message in an active Portal thread and return an operation id immediately.',
       inputSchema: z.object({
         threadId: z.string().min(1),
         input: z.string().min(1),

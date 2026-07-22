@@ -6,7 +6,7 @@ Portal can expose selected thread operations as a native Streamable HTTP MCP
 Server. This service is independent from the [HTTP API](api.md): it has its own
 listener, configuration, authentication, protocol, and lifecycle, and it never
 calls the API. Both services share the same in-process browser, runtimes, and
-open threads.
+active threads.
 
 The [`mcpServers` configuration](mcp.md) has the opposite direction: it makes
 Portal an MCP client. The `listeners.mcp` section documented here configures
@@ -62,22 +62,22 @@ The first version targets non-browser MCP clients. Requests containing any
 | Tool                    | Purpose                                                |
 | ----------------------- | ------------------------------------------------------ |
 | `portal_list_providers` | List supported provider ids                            |
-| `portal_open_thread`    | Open an agent or chat provider conversation            |
+| `portal_create_thread`  | Create an agent or chat provider conversation          |
 | `portal_resume_thread`  | Resume a provider conversation URL                     |
-| `portal_list_threads`   | List threads open in the current Portal process        |
-| `portal_get_thread`     | Read one open thread                                   |
+| `portal_list_threads`   | List active threads in the current Portal process      |
+| `portal_get_thread`     | Read one active thread                                 |
 | `portal_close_thread`   | Cancel active work and close one thread                |
 | `portal_send_message`   | Start a message and return an operation id immediately |
 | `portal_wait_message`   | Long-poll a message operation for up to 30 seconds     |
 | `portal_cancel_message` | Cancel the exact MCP-owned message operation           |
 
-`portal_open_thread` accepts an optional `mode` of `"agent"` or `"chat"` and
+`portal_create_thread` accepts an optional `mode` of `"agent"` or `"chat"` and
 defaults to `"agent"`. Chat creation sends only the shared `READY` handshake,
 using a case-insensitive whole-word match, instead of the full portal setup
 prompt. It still creates a normal local runtime with configured tools, Skills,
 MCP connections, and Hooks, so chat mode is not a sandbox.
 
-`portal_open_thread` accepts `provider` plus optional named `model` and
+`portal_create_thread` accepts `provider` plus optional named `model` and
 model-specific `option` keys from [Providers](providers.md). Numeric menu
 positions and the previous combined numeric forms are rejected.
 

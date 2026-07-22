@@ -259,7 +259,7 @@ function appendProviderHint(
   const subcommand = pathInput[0]
   if (
     command.name !== '/thread' ||
-    (subcommand !== 'open' && subcommand !== 'chat')
+    (subcommand !== 'agent' && subcommand !== 'chat')
   ) {
     return hints
   }
@@ -327,7 +327,7 @@ function appendProviderHint(
 }
 
 function providerHints(
-  subcommand: 'open' | 'chat',
+  subcommand: 'agent' | 'chat',
   providers: readonly ProviderId[]
 ): readonly InputHint[] {
   return providers.map((provider) => ({
@@ -339,7 +339,7 @@ function providerHints(
 }
 
 function modelHints(
-  subcommand: 'open' | 'chat',
+  subcommand: 'agent' | 'chat',
   provider: ProviderId,
   models: readonly string[]
 ): readonly InputHint[] {
@@ -352,7 +352,7 @@ function modelHints(
 }
 
 function optionHints(
-  subcommand: 'open' | 'chat',
+  subcommand: 'agent' | 'chat',
   provider: ProviderId,
   model: string,
   options: readonly string[]

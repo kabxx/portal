@@ -10,8 +10,8 @@ portal automates the normal web product in a real Chromium page. A Provider inte
 
 A first-class Provider is complete only when all applicable paths below work:
 
-- `/providers`, `/thread open`, `/thread chat`, Spawn, HTTP API, and Portal MCP Server expose the Provider;
-- a signed-in page can open a new agent or chat conversation and complete its setup `READY` handshake;
+- `/providers`, `/thread agent`, `/thread chat`, Spawn, HTTP API, and Portal MCP Server expose the Provider;
+- a signed-in page can create a new agent or chat conversation and complete its setup `READY` handshake;
 - signed-out, restricted, and unexpected page states are classified without leaking raw browser errors;
 - normal turns stream, terminate, cancel, and leave the page reusable;
 - model selection, file/image upload, and capabilities either work or return an explicit unsupported result;
@@ -325,8 +325,8 @@ Coverage is a diagnostic baseline, not proof that the live Provider website stil
 
 CI does not log in to Provider websites. Use a dedicated profile and record only pass/fail facts, never private content.
 
-1. Open a new signed-in agent thread and complete the full setup `READY` handshake.
-2. Open a chat thread and verify that it sends only the minimal handshake and accepts a case-insensitive whole-word `READY` response.
+1. Create a new signed-in agent thread and complete the full setup `READY` handshake.
+2. Create a chat thread and verify that it sends only the minimal handshake and accepts a case-insensitive whole-word `READY` response.
 3. Verify signed-out/login redirect behavior without sending setup early.
 4. Submit a normal turn; verify request start, monotonic streaming, completion, and a second usable turn.
 5. Exercise a real Tool call and any Provider continuation stream.

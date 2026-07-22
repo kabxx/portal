@@ -129,23 +129,23 @@ test('completed paths show all usage forms and ignore free-form arguments', () =
   assert.equal(attachHints[0]?.usage, '/mcp resource attach <server> <uri>')
 })
 
-test('thread open hints filter providers then advance to the optional model', () => {
+test('thread agent hints filter providers then advance to the optional model', () => {
   const providerHints = resolveCommandHints(
-    '/thread open gem',
+    '/thread agent gem',
     DEFAULT_COMMANDS,
     PROVIDERS
   )
   assert.equal(
     providerHints[0]?.usage,
-    '/thread open <provider> [model-key] [option-key]'
+    '/thread agent <provider> [model-key] [option-key]'
   )
   assert.equal(providerHints[1]?.usage, 'gemini')
   assert.equal(
-    resolveCommandHintSelection(providerHints, '/thread open gem', null),
-    '/thread open gemini '
+    resolveCommandHintSelection(providerHints, '/thread agent gem', null),
+    '/thread agent gemini '
   )
   const modelHints = resolveCommandHints(
-    '/thread open gemini ',
+    '/thread agent gemini ',
     DEFAULT_COMMANDS,
     PROVIDERS
   )
@@ -154,23 +154,23 @@ test('thread open hints filter providers then advance to the optional model', ()
     ['3.5-flash-lite', '3.6-flash', '3.1-pro']
   )
   assert.equal(
-    resolveCommandHintSelection(modelHints, '/thread open gemini ', null),
-    '/thread open gemini 3.5-flash-lite '
+    resolveCommandHintSelection(modelHints, '/thread agent gemini ', null),
+    '/thread agent gemini 3.5-flash-lite '
   )
 
   const completedHints = resolveCommandHints(
-    '/thread open gemini 3.1',
+    '/thread agent gemini 3.1',
     DEFAULT_COMMANDS,
     PROVIDERS
   )
   assert.equal(completedHints.at(-1)?.usage, '3.1-pro')
   assert.equal(
     completedHints.at(-1)?.completion,
-    '/thread open gemini 3.1-pro '
+    '/thread agent gemini 3.1-pro '
   )
 
   const optionHints = resolveCommandHints(
-    '/thread open gemini 3.1-pro e',
+    '/thread agent gemini 3.1-pro e',
     DEFAULT_COMMANDS,
     PROVIDERS
   )
@@ -178,15 +178,15 @@ test('thread open hints filter providers then advance to the optional model', ()
   assert.equal(
     resolveCommandHintSelection(
       optionHints,
-      '/thread open gemini 3.1-pro e',
+      '/thread agent gemini 3.1-pro e',
       null
     ),
-    '/thread open gemini 3.1-pro extended'
+    '/thread agent gemini 3.1-pro extended'
   )
 
   assert.equal(
     resolveCommandHints(
-      '/thread open gemini 3.1-pro extended extra',
+      '/thread agent gemini 3.1-pro extended extra',
       DEFAULT_COMMANDS,
       PROVIDERS
     ).some(({ usage }) => usage === 'extended'),
@@ -194,7 +194,7 @@ test('thread open hints filter providers then advance to the optional model', ()
   )
 })
 
-test('thread chat hints and completion mirror thread open', () => {
+test('thread chat hints and completion mirror thread agent', () => {
   const providerHints = resolveCommandHints(
     '/thread chat gem',
     DEFAULT_COMMANDS,
@@ -287,7 +287,7 @@ test('unknown warnings wait until the invalid token is completed', () => {
 
 test('multiline input never opens command hints', () => {
   assert.deepEqual(
-    resolveCommandHints('/thread\nopen', DEFAULT_COMMANDS, PROVIDERS),
+    resolveCommandHints('/thread\nagent', DEFAULT_COMMANDS, PROVIDERS),
     []
   )
 })
@@ -296,7 +296,7 @@ test('selection defaults to the first current prefix match without stale state',
   const cases = [
     ['/', '/help '],
     ['/thr', '/thread '],
-    ['/thread ', '/thread open '],
+    ['/thread ', '/thread agent '],
   ] as const
 
   for (const [input, expected] of cases) {
@@ -315,7 +315,7 @@ test('selection defaults to the first current prefix match without stale state',
   )
   assert.equal(
     resolveCommandHintSelection(threadHints, '/thread ', '/thread missing '),
-    '/thread open '
+    '/thread agent '
   )
 
   const completedHelp = resolveCommandHints(
@@ -341,7 +341,7 @@ test('selection moves through selectable rows and wraps at both ends', () => {
     '/thread '
   )
 
-  const providerInput = '/thread open gem'
+  const providerInput = '/thread agent gem'
   const providerHints = resolveCommandHints(
     providerInput,
     DEFAULT_COMMANDS,
@@ -349,11 +349,11 @@ test('selection moves through selectable rows and wraps at both ends', () => {
   )
   assert.equal(
     resolveCommandHintSelection(providerHints, providerInput, null),
-    '/thread open gemini '
+    '/thread agent gemini '
   )
   assert.equal(
     moveCommandHintSelection(providerHints, providerInput, null, 'down'),
-    '/thread open gemini '
+    '/thread agent gemini '
   )
 
   const mixedHints = [
@@ -484,7 +484,7 @@ test('command hint bubble renders one aligned frame with five command rows', () 
 test('guide-derived subcommands preserve existing completion order', () => {
   const expected: Readonly<Record<string, readonly string[]>> = {
     '/thread': [
-      'open',
+      'agent',
       'chat',
       'list',
       'history',

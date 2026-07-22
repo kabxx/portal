@@ -82,7 +82,7 @@ test('ThreadCommand shows subcommand help when no subcommand is provided', async
   const entry = getLatestTimelineEntry(ui)
   assert.equal(entry.label, '/thread')
   assert.equal(entry.tone, 'info')
-  assert.match(entry.body, /open <provider> \[model-key\] \[option-key\]/)
+  assert.match(entry.body, /agent <provider> \[model-key\] \[option-key\]/)
   assert.match(entry.body, /chat <provider> \[model-key\] \[option-key\]/)
   assert.match(entry.body, /resume <conversation-url\|#history-id>/)
   assert.match(entry.body, /reload/)
@@ -171,31 +171,31 @@ test('ThreadCommand rejects unknown subcommands', async () => {
   })
 })
 
-test('ThreadCommand open validates provider and model', async () => {
+test('ThreadCommand agent validates provider and model', async () => {
   const { context, createdThreads, ui } = await createCommandContext()
 
-  await ThreadCommand.execute(context, ['open'])
+  await ThreadCommand.execute(context, ['agent'])
   assert.deepEqual(getLatestTimelineEntry(ui), {
     tone: 'warning',
-    label: '/thread open',
-    body: 'Missing provider. Usage: /thread open <provider> [model-key] [option-key]',
+    label: '/thread agent',
+    body: 'Missing provider. Usage: /thread agent <provider> [model-key] [option-key]',
     format: 'plain',
   })
 
-  await ThreadCommand.execute(context, ['open', 'unknown'])
+  await ThreadCommand.execute(context, ['agent', 'unknown'])
   assert.equal(getLatestTimelineEntry(ui).body, 'Unknown provider: unknown')
 
-  await ThreadCommand.execute(context, ['open', 'chatgpt', 'pro'])
+  await ThreadCommand.execute(context, ['agent', 'chatgpt', 'pro'])
   assert.equal(
     getLatestTimelineEntry(ui).body,
     'chatgpt does not support model "pro". Available models: chatgpt.'
   )
 
-  await ThreadCommand.execute(context, ['open', 'deepseek', '2'])
+  await ThreadCommand.execute(context, ['agent', 'deepseek', '2'])
   assert.match(getLatestTimelineEntry(ui).body, /does not support model "2"/)
 
   await ThreadCommand.execute(context, [
-    'open',
+    'agent',
     'deepseek',
     'expert',
     'thinking',
@@ -206,7 +206,7 @@ test('ThreadCommand open validates provider and model', async () => {
   )
 
   await ThreadCommand.execute(context, [
-    'open',
+    'agent',
     'deepseek',
     'expert',
     'thinking',
@@ -216,22 +216,22 @@ test('ThreadCommand open validates provider and model', async () => {
   assert.deepEqual(createdThreads, [])
 })
 
-test('ThreadCommand open forwards supported provider models', async () => {
+test('ThreadCommand agent forwards supported provider models', async () => {
   const { context, createdThreads } = await createCommandContext()
 
   await ThreadCommand.execute(context, [
-    'open',
+    'agent',
     'gemini',
     '3.1-pro',
     'extended',
   ])
-  await ThreadCommand.execute(context, ['open', 'chatgpt', 'chatgpt'])
-  await ThreadCommand.execute(context, ['open', 'deepseek', 'expert'])
-  await ThreadCommand.execute(context, ['open', 'doubao', 'office-turbo'])
-  await ThreadCommand.execute(context, ['open', 'grok'])
-  await ThreadCommand.execute(context, ['open', 'glm', 'glm-5.1'])
-  await ThreadCommand.execute(context, ['open', 'qwen', 'qwen3.8-max-preview'])
-  await ThreadCommand.execute(context, ['open', 'kimi', 'k2.6'])
+  await ThreadCommand.execute(context, ['agent', 'chatgpt', 'chatgpt'])
+  await ThreadCommand.execute(context, ['agent', 'deepseek', 'expert'])
+  await ThreadCommand.execute(context, ['agent', 'doubao', 'office-turbo'])
+  await ThreadCommand.execute(context, ['agent', 'grok'])
+  await ThreadCommand.execute(context, ['agent', 'glm', 'glm-5.1'])
+  await ThreadCommand.execute(context, ['agent', 'qwen', 'qwen3.8-max-preview'])
+  await ThreadCommand.execute(context, ['agent', 'kimi', 'k2.6'])
 
   assert.deepEqual(createdThreads, [
     {
@@ -391,7 +391,7 @@ test('ThreadCommand resume requires hash-prefixed history ids', async () => {
   )
 })
 
-test('ThreadCommand resume accepts URLs and rejects duplicate open threads', async () => {
+test('ThreadCommand resume accepts URLs and rejects duplicate active threads', async () => {
   const { context, resumedUrls, threadManager, ui } =
     await createCommandContext()
 

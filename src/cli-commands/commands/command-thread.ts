@@ -21,20 +21,20 @@ import type { ThreadCreationMode } from '../../threads/thread-creation-mode.ts'
 
 const THREAD_GUIDES = [
   {
-    path: ['open'],
-    usage: 'open <provider> [model-key] [option-key]',
-    description: 'Open an agent thread.',
+    path: ['agent'],
+    usage: 'agent <provider> [model-key] [option-key]',
+    description: 'Create an agent thread.',
   },
   {
     path: ['chat'],
     usage: 'chat <provider> [model-key] [option-key]',
-    description: 'Open a chat thread with only the setup handshake.',
+    description: 'Create a chat thread with only the setup handshake.',
   },
   { path: ['list'], usage: 'list', description: 'List local threads.' },
   {
     path: ['history'],
     usage: 'history [limit]',
-    description: 'Show opened thread history.',
+    description: 'Show thread history.',
   },
   {
     path: ['resume'],
@@ -87,7 +87,7 @@ export const ThreadCommand: CliCommand = {
     }
 
     switch (subcommand) {
-      case 'open':
+      case 'agent':
         return await createThread(context, subcommandArgs, 'agent')
       case 'chat':
         return await createThread(context, subcommandArgs, 'chat')
@@ -138,7 +138,7 @@ async function createThread(
   args: readonly string[],
   mode: ThreadCreationMode
 ): Promise<CommandResult> {
-  const label = mode === 'chat' ? '/thread chat' : '/thread open'
+  const label = mode === 'chat' ? '/thread chat' : '/thread agent'
   const usage = `${label} <provider> [model-key] [option-key]`
   const rawProvider = args[0] ?? ''
   if (!rawProvider) {

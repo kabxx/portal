@@ -329,7 +329,7 @@ export function canRunCommandWhileThreadBusy(input: string): boolean {
     return (
       subcommand === undefined ||
       [
-        'open',
+        'agent',
         'chat',
         'list',
         'history',
@@ -921,7 +921,7 @@ export async function handleUnexpectedThreadPageClose({
   return removed
 }
 
-async function openThread(
+async function createThread(
   ui: TerminalController,
   threadManager: ThreadManager,
   skillLibrary: SkillLibrary,
@@ -939,7 +939,7 @@ async function openThread(
   onStopTarget?: (target: StopTarget | null) => void,
   source: import('./hooks/hook-types.ts').HookExecutionScope['source'] = 'system'
 ): Promise<PendingThreadHistoryEntry | null> {
-  const commandLabel = mode === 'chat' ? '/thread chat' : '/thread open'
+  const commandLabel = mode === 'chat' ? '/thread chat' : '/thread agent'
   const threadId = threadManager.createThreadId()
   const pendingTimeline = showPendingThreadTimeline(ui, threadManager, threadId)
   let waitingForLogin = false
@@ -1023,7 +1023,7 @@ async function openThread(
     if (runtime === null) {
       pendingTimeline.discard()
       ui.renderWarning('thread', [
-        `Could not open ${provider}.`,
+        `Could not create a ${provider} thread.`,
         `No thread was created. Check the browser page, then run ${commandLabel} again.`,
       ])
       return null
@@ -1052,7 +1052,7 @@ async function openThread(
   } catch (error) {
     if (isAbortError(error)) {
       pendingTimeline.discard()
-      ui.renderWarning(commandLabel, `Cancelled opening ${provider}.`)
+      ui.renderWarning(commandLabel, `Cancelled creating a ${provider} thread.`)
       if (source === 'mcp') {
         throw error
       }
@@ -1490,7 +1490,7 @@ export async function run(argv = process.argv): Promise<void> {
     if (activeThread === null) {
       ui.renderWarning(
         'portal',
-        'No active thread. Use /thread open to create one, or /help to see commands.'
+        'No active thread. Use /thread agent to create one, or /help to see commands.'
       )
       return
     }
@@ -2288,7 +2288,7 @@ export async function run(argv = process.argv): Promise<void> {
         const historyEntry = await withCancellableOperation(
           null,
           async (signal, setStopTarget) => {
-            const historyEntry = await openThread(
+            const historyEntry = await createThread(
               ui,
               threadManager,
               skillLibrary,
@@ -2308,8 +2308,8 @@ export async function run(argv = process.argv): Promise<void> {
             if (historyEntry === null) {
               throw new ApiHttpError(
                 502,
-                'THREAD_OPEN_FAILED',
-                'Could not open the provider thread.'
+                'THREAD_CREATE_FAILED',
+                'Could not create the provider thread.'
               )
             }
             await threadStore.touch({
@@ -2594,7 +2594,7 @@ export async function run(argv = process.argv): Promise<void> {
         threads: threadManager.listThreads().map(({ id }) => toMcpThread(id)),
       }),
       getThread: async (threadId) => toMcpThread(threadId),
-      openThread: async (
+      createThread: async (
         { provider: providerValue, model, option, mode },
         signal
       ) => {
@@ -2606,7 +2606,7 @@ export async function run(argv = process.argv): Promise<void> {
         const historyEntry = await withMcpForegroundOperation(
           signal,
           async (operationSignal, setStopTarget) => {
-            const opened = await openThread(
+            const created = await createThread(
               ui,
               threadManager,
               skillLibrary,
@@ -2624,16 +2624,16 @@ export async function run(argv = process.argv): Promise<void> {
               setStopTarget,
               'mcp'
             )
-            if (opened === null) {
-              throw new Error('Could not open the provider thread.')
+            if (created === null) {
+              throw new Error('Could not create the provider thread.')
             }
             await threadStore.touch({
-              provider: opened.provider,
-              conversationUrl: opened.conversationUrl,
+              provider: created.provider,
+              conversationUrl: created.conversationUrl,
               title: null,
-              createdAt: opened.createdAt,
+              createdAt: created.createdAt,
             })
-            return opened
+            return created
           }
         )
         return toMcpThread(historyEntry.threadId)
@@ -2909,7 +2909,7 @@ export async function run(argv = process.argv): Promise<void> {
         mode: ThreadCreationMode = 'agent'
       ) =>
         await withCancellableOperation(null, async (signal, setStopTarget) => {
-          const historyEntry = await openThread(
+          const historyEntry = await createThread(
             ui,
             threadManager,
             skillLibrary,
@@ -3028,7 +3028,7 @@ export async function run(argv = process.argv): Promise<void> {
       if (!input) {
         ui.renderWarning(
           'portal',
-          'No active thread. Use /thread open to create one, or /help to see commands.'
+          'No active thread. Use /thread agent to create one, or /help to see commands.'
         )
         continue
       }

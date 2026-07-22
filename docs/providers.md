@@ -23,28 +23,28 @@ Model keys are maintained in the static catalog for the current Portal Profile. 
 
 `gpt` is accepted as a command alias for `chatgpt`; the other provider ids are used as shown.
 
-## Opening a conversation
+## Creating a conversation
 
 ```text
-/thread open <provider> [model-key] [option-key]
+/thread agent <provider> [model-key] [option-key]
 /thread chat <provider> [model-key] [option-key]
 ```
 
 Examples:
 
 ```text
-/thread open glm
-/thread open deepseek expert
-/thread open qwen qwen3.7-plus
-/thread open gemini 3.1-pro extended
-/thread open kimi k2.6
+/thread agent glm
+/thread agent deepseek expert
+/thread agent qwen qwen3.7-plus
+/thread agent gemini 3.1-pro extended
+/thread agent kimi k2.6
 /thread chat chatgpt
 /thread chat gemini 3.6-flash extended
 ```
 
 When the model argument is omitted, portal leaves the provider's current/default selection unchanged. Both creation commands create a page, verify login and composer readiness, connect the current MCP configuration, snapshot enabled Skills, and require a case-insensitive whole-word `READY` token in the handshake response.
 
-`/thread open` sends the full portal agent setup prompt. `/thread chat` sends
+`/thread agent` sends the full portal agent setup prompt. `/thread chat` sends
 only the shared setup handshake, without the tool protocol, Skill or MCP
 catalog, working directory, project instructions, or provider-specific prompt.
 The local chat runtime still owns those configured integrations and can execute

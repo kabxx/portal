@@ -46,7 +46,7 @@ npm run dev
 首次运行时，portal 会创建带注释的 `data/config.yaml` 和专用浏览器 profile。创建 thread，在需要时通过浏览器完成登录，然后直接输入普通任务：
 
 ```text
-/thread open chatgpt
+/thread agent chatgpt
 总结当前仓库，并找出风险最高的模块。
 ```
 
@@ -79,7 +79,7 @@ flowchart LR
 
 ```text
 /providers
-/thread open gemini
+/thread agent gemini
 /thread list
 /thread switch t-1
 /thread history

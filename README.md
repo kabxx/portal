@@ -13,7 +13,7 @@ portal does **not** call provider model APIs or bypass provider accounts, subscr
 
 ## Core capabilities
 
-- **One terminal workflow for eight web providers.** Open, switch, and resume provider conversations through a shared thread model.
+- **One terminal workflow for eight web providers.** Create, switch, and resume provider conversations through a shared thread model.
 - **Persistent browser sessions.** A dedicated browser profile keeps login state and account-specific web features.
 - **Local tool use.** Models can inspect a workspace, run commands, edit files, attach images, and delegate focused tasks.
 - **Workspace context and extensions.** Project instructions, Skills, MCP servers, and lifecycle Hooks can shape each runtime.
@@ -43,14 +43,14 @@ npm install
 npm run dev
 ```
 
-On first run, portal creates a commented `data/config.yaml` and a dedicated browser profile. Open a thread, complete login in the browser when needed, and enter a normal task:
+On first run, portal creates a commented `data/config.yaml` and a dedicated browser profile. Create a thread, complete login in the browser when needed, and enter a normal task:
 
 ```text
-/thread open chatgpt
+/thread agent chatgpt
 Summarize this repository and identify its highest-risk module.
 ```
 
-Use `/thread chat <provider> [model-key] [option-key]` to open a minimally initialized provider
+Use `/thread chat <provider> [model-key] [option-key]` to create a minimally initialized provider
 conversation. Chat creation sends only the shared `READY` handshake instead of
 portal's full agent setup prompt. Local tools, Skills, MCP connections, and
 Hooks remain active, so chat creation is not a sandbox or an execution boundary.
@@ -82,7 +82,7 @@ Common thread operations:
 
 ```text
 /providers
-/thread open gemini
+/thread agent gemini
 /thread list
 /thread switch t-1
 /thread history
@@ -90,7 +90,7 @@ Common thread operations:
 /thread close
 ```
 
-Conversation URLs and metadata are stored in `data/threads.db`; transcripts are not. Open-thread terminal timelines are lost when portal exits. `/thread resume` reloads only the provider's current visible user/assistant history.
+Conversation URLs and metadata are stored in `data/threads.db`; transcripts are not. Active-thread terminal timelines are lost when portal exits. `/thread resume` reloads only the provider's current visible user/assistant history.
 
 Use `Ctrl+J` for a reliable multiline input and `Ctrl+C` to cancel the current operation. Input submission remains unavailable while portal is busy. Typing `/` or an active-thread `$` prefix opens a five-row contextual hint bubble; `Up` / `Down` browse it, `Tab` completes the selected item, and `Enter` keeps normal submission. The command index and input controls are documented in the [CLI guide](docs/cli.md).
 
