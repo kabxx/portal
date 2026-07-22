@@ -2,7 +2,7 @@ import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
 import { abortableSleep } from './sleep.ts'
 
 type WaitOptions = {
-  timeoutMs?: number
+  timeoutMs?: number | null
   continueIf?: (startedAt: number, currentAt: number) => Promise<boolean>
   onPending?: (startedAt: number, currentAt: number) => Promise<void>
   onError?: (error: unknown) => Promise<void>
@@ -15,7 +15,8 @@ export async function waitAsync(
   {
     timeoutMs = 60000,
     signal,
-    continueIf = async (s: number, c: number) => s + timeoutMs > c,
+    continueIf = async (s: number, c: number) =>
+      timeoutMs === null || s + timeoutMs > c,
     onPending = async (_s: number, _c: number) => {
       await abortableSleep(100, signal)
     },

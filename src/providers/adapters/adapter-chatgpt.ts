@@ -537,7 +537,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
 
   private async waitForComposerReady(
     action: 'restore' | 'submit',
-    timeoutMs: number,
+    timeoutMs: number | null,
     signal?: AbortSignal
   ): Promise<void> {
     const speechButton = this.getComposerSpeechButton()
@@ -824,9 +824,11 @@ export class ChatGPTAdapter extends ProviderAdapter {
           let parsedResponse = pickCurrentResponse()
           await emitCurrentStreamText(parsedResponse)
           if (parsedResponse === null && terminalError === null) {
+            const submitTimeoutMs = this.getSubmitResponseTimeoutMs()
             const responseDeadlineAt =
-              (requestStartedAt ?? Date.now()) +
-              this.getSubmitResponseTimeoutMs()
+              submitTimeoutMs === null
+                ? null
+                : (requestStartedAt ?? Date.now()) + submitTimeoutMs
             await waitAsync(
               async () => {
                 await updateCapturedHttpResponse()
@@ -835,9 +837,12 @@ export class ChatGPTAdapter extends ProviderAdapter {
                 return parsedResponse !== null || terminalError !== null
               },
               {
-                timeoutMs: Math.max(1, responseDeadlineAt - Date.now()),
+                timeoutMs:
+                  responseDeadlineAt === null
+                    ? null
+                    : Math.max(1, responseDeadlineAt - Date.now()),
                 continueIf: async (startedAt, currentAt) =>
-                  currentAt < responseDeadlineAt,
+                  responseDeadlineAt === null || currentAt < responseDeadlineAt,
                 onPending: async () => {
                   await delayAsync(10, signal)
                 },
@@ -850,9 +855,11 @@ export class ChatGPTAdapter extends ProviderAdapter {
             let lastResponseKey = `${parsedResponse.isFinished}:${parsedResponse.text}`
             let stablePolls = 0
             let lastProgressAt = Date.now()
+            const submitTimeoutMs = this.getSubmitResponseTimeoutMs()
             const responseDeadlineAt =
-              (requestStartedAt ?? Date.now()) +
-              this.getSubmitResponseTimeoutMs()
+              submitTimeoutMs === null
+                ? null
+                : (requestStartedAt ?? Date.now()) + submitTimeoutMs
             await waitAsync(
               async () => {
                 await updateCapturedHttpResponse()
@@ -884,9 +891,13 @@ export class ChatGPTAdapter extends ProviderAdapter {
                 return false
               },
               {
-                timeoutMs: Math.max(1, responseDeadlineAt - Date.now()),
+                timeoutMs:
+                  responseDeadlineAt === null
+                    ? null
+                    : Math.max(1, responseDeadlineAt - Date.now()),
                 continueIf: async (startedAt, currentAt) =>
-                  currentAt < responseDeadlineAt &&
+                  (responseDeadlineAt === null ||
+                    currentAt < responseDeadlineAt) &&
                   currentAt - lastProgressAt <
                     this.getSubmitResponseIdleTimeoutMs(),
                 onPending: async () => {

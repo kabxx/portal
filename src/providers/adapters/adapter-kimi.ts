@@ -1039,8 +1039,10 @@ export class KimiAdapter extends ProviderAdapter {
     | { kind: 'page'; response: KimiPageResponseResult }
   > {
     let nextWarningAt = Date.now() + this.getSubmitRequestStartGraceMs()
-    const deadline = Date.now() + this.getSubmitResponseTimeoutMs()
-    while (Date.now() < deadline) {
+    const submitTimeoutMs = this.getSubmitResponseTimeoutMs()
+    const deadline =
+      submitTimeoutMs === null ? null : Date.now() + submitTimeoutMs
+    while (deadline === null || Date.now() < deadline) {
       throwIfAborted(signal)
       const entries = await this.getCapturedFetchEntries(captureStartIndex)
       this.reportCapturedSubmitActivity(entries)

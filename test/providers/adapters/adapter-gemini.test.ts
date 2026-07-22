@@ -13,7 +13,7 @@ type GeminiAdapterHarness = Pick<GeminiAdapter, keyof GeminiAdapter> & {
   readCurrentStreamedResponseText: unknown
   getSubmitRequestStartGraceMs(): number
   getSubmitBlockedWarningIntervalMs(): number
-  getSubmitResponseTimeoutMs(): number
+  getSubmitResponseTimeoutMs(): number | null
 }
 
 function createTestGeminiAdapter(): GeminiAdapterHarness {

@@ -312,7 +312,7 @@ export class GlmAdapter extends ProviderAdapter {
 
   private async waitForReadyButton(
     action: 'restore' | 'submit',
-    timeoutMs: number,
+    timeoutMs: number | null,
     signal?: AbortSignal
   ): Promise<void> {
     await waitAsync(async () => await this.isReadyButtonVisible(), {

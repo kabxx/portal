@@ -77,7 +77,7 @@ export class GrokAdapter extends ProviderAdapter {
 
   private async waitForVoiceModeReady(
     action: 'restore' | 'submit',
-    timeoutMs: number,
+    timeoutMs: number | null,
     signal?: AbortSignal
   ): Promise<void> {
     const voiceModeButton = this.page.locator(GROK_VOICE_MODE_READY_SELECTOR)

@@ -23,7 +23,7 @@ type QwenAdapterHarness = Pick<QwenAdapter, keyof QwenAdapter> & {
     startIndex?: number
   ) => Promise<CapturedFetchEntry[]>
   getSubmitRequestStartGraceMs: () => number
-  getSubmitResponseTimeoutMs: () => number
+  getSubmitResponseTimeoutMs: () => number | null
   getSubmitResponseStartTimeoutMs: () => number
   getSubmitResponseStallTimeoutMs: () => number
   getHistoryLoadTimeoutMs: () => number
@@ -88,7 +88,7 @@ test('QwenAdapter rejects an incomplete owned response and removes listeners', a
 
 test('QwenAdapter aborts a pending response and removes all listeners', async () => {
   const adapter = createTestQwenAdapter()
-  adapter.getSubmitResponseTimeoutMs = () => 2_147_483_647
+  adapter.getSubmitResponseTimeoutMs = () => null
   const page = createSubmitPage({ omitResponse: true })
   adapter.page = page
   await adapter.attachText('Portal request')

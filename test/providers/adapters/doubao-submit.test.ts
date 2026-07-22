@@ -15,7 +15,7 @@ type DoubaoAdapterHarness = Pick<DoubaoAdapter, keyof DoubaoAdapter> & {
   getActionCapabilityState(capability: string): Promise<string>
   getSubmitRequestStartGraceMs(): number
   getSubmitBlockedWarningIntervalMs(): number
-  getSubmitResponseTimeoutMs(): number
+  getSubmitResponseTimeoutMs(): number | null
   readCurrentStreamedResponseText: unknown
 }
 
