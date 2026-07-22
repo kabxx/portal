@@ -539,16 +539,17 @@ export function completeThreadProvider(
   value: string,
   providers: readonly ProviderId[]
 ): string {
-  const match = value.match(/^\/thread +open +(\S*)$/)
+  const match = value.match(/^\/thread +(open|chat) +(\S*)$/)
   if (match === null) {
     return value
   }
 
-  const providerPrefix = match[1] ?? ''
+  const subcommand = match[1]!
+  const providerPrefix = match[2] ?? ''
   const matches = providers.filter((provider) =>
     provider.startsWith(providerPrefix)
   )
-  return matches.length === 1 ? `/thread open ${matches[0]} ` : value
+  return matches.length === 1 ? `/thread ${subcommand} ${matches[0]} ` : value
 }
 
 export function completeManualSkill(

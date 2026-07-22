@@ -225,7 +225,6 @@ export function isProviderAdapterError(
 
 export interface ProviderAdapterOptions {
   model: string | null
-  skipSetup?: boolean
   signal?: AbortSignal | undefined
 }
 

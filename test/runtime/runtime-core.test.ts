@@ -41,6 +41,7 @@ import {
 import { HookDispatcher } from '../../src/hooks/hook-dispatcher.ts'
 import type { HookExecutionScope } from '../../src/hooks/hook-types.ts'
 import { createBrowserContextStub } from '../helpers/fakes.ts'
+import { SETUP_HANDSHAKE_PROMPT } from '../../src/runtime/setup-handshake.ts'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -1074,6 +1075,15 @@ test('RuntimeCore accepts a case-insensitive READY token with extra text', async
   const runtime = new RuntimeCore(adapter, new ToolRegistry(adapter, []))
 
   await runtime.init()
+})
+
+test('RuntimeCore handshake mode sends only the shared handshake prompt', async () => {
+  const adapter = new FakeAdapter(['Ready, initialized.'])
+  const runtime = new RuntimeCore(adapter, new ToolRegistry(adapter, []))
+
+  await runtime.init({ setupMode: 'handshake' })
+
+  assert.equal(adapter.attachedTexts[0], SETUP_HANDSHAKE_PROMPT)
 })
 
 test('RuntimeCore rejects a setup handshake without a READY token', async () => {

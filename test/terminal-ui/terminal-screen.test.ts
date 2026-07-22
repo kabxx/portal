@@ -267,6 +267,10 @@ test('completeThreadProvider completes only unique provider prefixes', () => {
     '/thread open gemini '
   )
   assert.equal(
+    completeThreadProvider('/thread chat gem', providers),
+    '/thread chat gemini '
+  )
+  assert.equal(
     completeThreadProvider('/thread open gemini', providers),
     '/thread open gemini '
   )

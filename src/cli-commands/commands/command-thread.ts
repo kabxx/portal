@@ -13,12 +13,18 @@ import {
   commandGuideSubcommands,
   getActiveThread,
 } from '../core/command-types.ts'
+import type { ThreadCreationMode } from '../../threads/thread-creation-mode.ts'
 
 const THREAD_GUIDES = [
   {
     path: ['open'],
     usage: 'open <provider> [model-number]',
-    description: 'Open a new thread.',
+    description: 'Open an agent thread.',
+  },
+  {
+    path: ['chat'],
+    usage: 'chat <provider> [model-number]',
+    description: 'Open a chat thread with only the setup handshake.',
   },
   { path: ['list'], usage: 'list', description: 'List local threads.' },
   {
@@ -78,7 +84,9 @@ export const ThreadCommand: CliCommand = {
 
     switch (subcommand) {
       case 'open':
-        return await openThread(context, subcommandArgs)
+        return await createThread(context, subcommandArgs, 'agent')
+      case 'chat':
+        return await createThread(context, subcommandArgs, 'chat')
       case 'list':
         return await listThreads(context)
       case 'history':
@@ -143,35 +151,35 @@ function isSupportedProviderModel(
   ).test(normalized)
 }
 
-async function openThread(
+async function createThread(
   context: CliCommandContext,
-  args: readonly string[]
+  args: readonly string[],
+  mode: ThreadCreationMode
 ): Promise<CommandResult> {
+  const label = mode === 'chat' ? '/thread chat' : '/thread open'
+  const usage = `${label} <provider> [model-number]`
   const rawProvider = args[0] ?? ''
   if (!rawProvider) {
-    context.ui.renderWarning(
-      '/thread open',
-      'Missing provider. Usage: /thread open <provider> [model-number]'
-    )
+    context.ui.renderWarning(label, `Missing provider. Usage: ${usage}`)
     return { continue: true }
   }
 
   const provider = context.resolveProvider(rawProvider)
   if (provider === null) {
-    context.ui.renderWarning('/thread open', `Unknown provider: ${rawProvider}`)
+    context.ui.renderWarning(label, `Unknown provider: ${rawProvider}`)
     return { continue: true }
   }
 
   const model = args[1] ?? null
   if (model !== null && !isSupportedProviderModel(provider, model)) {
     context.ui.renderWarning(
-      '/thread open',
+      label,
       `${provider} does not support model "${model}".`
     )
     return { continue: true }
   }
 
-  await context.createThread(provider, model)
+  await context.createThread(provider, model, mode)
   return { continue: true }
 }
 

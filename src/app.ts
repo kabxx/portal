@@ -44,6 +44,10 @@ import {
 import { sleepWithAbortAsync } from './shared/sleep.ts'
 import { ThreadManager } from './threads/thread-manager.ts'
 import {
+  isThreadCreationMode,
+  type ThreadCreationMode,
+} from './threads/thread-creation-mode.ts'
+import {
   ThreadCloseTimeoutError,
   ThreadOperationCoordinator,
   type ThreadOperationHandle,
@@ -103,6 +107,7 @@ import type {
   PortalMcpHandlers,
   PortalMcpThreadSummary,
 } from './mcp-server/mcp-server-types.ts'
+import type { RuntimeSetupMode } from './runtime/setup-handshake.ts'
 
 const LOGIN_CHECK_INTERVAL_MS = 1000
 const CLEAR_TERMINAL_ESCAPE = '\u001B[2J\u001B[3J\u001B[H'
@@ -263,6 +268,26 @@ export function createPortalRuntimeSettings(
   }
 }
 
+export function runtimeSetupModeForThreadCreation(
+  mode: ThreadCreationMode
+): Exclude<RuntimeSetupMode, 'skip'> {
+  return mode === 'chat' ? 'handshake' : 'full'
+}
+
+export function parseApiThreadCreationMode(value: unknown): ThreadCreationMode {
+  if (value === undefined) {
+    return 'agent'
+  }
+  if (isThreadCreationMode(value)) {
+    return value
+  }
+  throw new ApiHttpError(
+    400,
+    'INVALID_REQUEST',
+    'mode must be "agent" or "chat".'
+  )
+}
+
 export function clearTerminalBeforeRender(output: {
   isTTY?: boolean
   write: (data: string) => unknown
@@ -300,6 +325,7 @@ export function canRunCommandWhileThreadBusy(input: string): boolean {
       subcommand === undefined ||
       [
         'open',
+        'chat',
         'list',
         'history',
         'resume',
@@ -678,6 +704,7 @@ async function runSpawnTask({
     )
     runtime = await createRuntimeFromAdapter(adapter, {
       model,
+      setupMode: 'full',
       providerPrompt: getProviderPrompt(provider),
       skillLibrary,
       mcpLibrary,
@@ -893,11 +920,13 @@ async function openThread(
   context: import('playwright').BrowserContext,
   provider: ProviderId,
   model: string | null,
+  mode: ThreadCreationMode,
   browserProfileDir: string,
   signal?: AbortSignal,
   onStopTarget?: (target: StopTarget | null) => void,
   source: import('./hooks/hook-types.ts').HookExecutionScope['source'] = 'system'
 ): Promise<PendingThreadHistoryEntry | null> {
+  const commandLabel = mode === 'chat' ? '/thread chat' : '/thread open'
   const threadId = threadManager.createThreadId()
   const pendingTimeline = showPendingThreadTimeline(ui, threadManager, threadId)
   let waitingForLogin = false
@@ -931,6 +960,7 @@ async function openThread(
       createRuntime: async (adapter) =>
         await createRuntimeFromAdapter(adapter, {
           model,
+          setupMode: runtimeSetupModeForThreadCreation(mode),
           providerPrompt: getProviderPrompt(provider),
           skillLibrary,
           mcpLibrary,
@@ -981,7 +1011,7 @@ async function openThread(
       pendingTimeline.discard()
       ui.renderWarning('thread', [
         `Could not open ${provider}.`,
-        'No thread was created. Check the browser page, then run /thread open again.',
+        `No thread was created. Check the browser page, then run ${commandLabel} again.`,
       ])
       return null
     }
@@ -996,7 +1026,7 @@ async function openThread(
     pendingTimeline.keep()
     waitingForLogin = false
     ui.showThreadTimeline(thread.id)
-    ui.renderInfo('/thread open', [
+    ui.renderInfo(commandLabel, [
       `Thread ${threadId} is ready.`,
       `Conversation URL: ${runtime.conversationUrl}`,
     ])
@@ -1009,7 +1039,7 @@ async function openThread(
   } catch (error) {
     if (isAbortError(error)) {
       pendingTimeline.discard()
-      ui.renderWarning('/thread open', `Cancelled opening ${provider}.`)
+      ui.renderWarning(commandLabel, `Cancelled opening ${provider}.`)
       if (source === 'mcp') {
         throw error
       }
@@ -1152,7 +1182,7 @@ async function resumeThread(
             hookDispatcher,
             settings,
           }),
-          skipSetup: true,
+          setupMode: 'skip',
           signal,
         }),
       onWarning: async (plan) => {
@@ -1861,6 +1891,7 @@ export async function run(argv = process.argv): Promise<void> {
             )
             runtime = await createRuntimeFromAdapter(adapter, {
               model: null,
+              setupMode: 'full',
               providerPrompt: getProviderPrompt(request.provider),
               ...(allowsSkills ? { skillLibrary } : {}),
               ...(allowsMcp ? { mcpLibrary } : {}),
@@ -2217,6 +2248,7 @@ export async function run(argv = process.argv): Promise<void> {
             'model must be a string or null.'
           )
         }
+        const mode = parseApiThreadCreationMode(input.mode)
         const historyEntry = await withCancellableOperation(
           null,
           async (signal, setStopTarget) => {
@@ -2232,6 +2264,7 @@ export async function run(argv = process.argv): Promise<void> {
               context,
               provider,
               model === undefined ? null : model,
+              mode,
               browserProfileDir,
               signal,
               setStopTarget
@@ -2525,7 +2558,7 @@ export async function run(argv = process.argv): Promise<void> {
         threads: threadManager.listThreads().map(({ id }) => toMcpThread(id)),
       }),
       getThread: async (threadId) => toMcpThread(threadId),
-      openThread: async ({ provider: providerValue, model }, signal) => {
+      openThread: async ({ provider: providerValue, model, mode }, signal) => {
         const provider = normalizeProviderId(providerValue)
         if (provider === null) {
           throw new Error(`Unsupported provider: ${providerValue}`)
@@ -2545,6 +2578,7 @@ export async function run(argv = process.argv): Promise<void> {
               context,
               provider,
               model,
+              mode,
               browserProfileDir,
               operationSignal,
               setStopTarget,
@@ -2829,7 +2863,11 @@ export async function run(argv = process.argv): Promise<void> {
       browserProfileDir,
       providers: PROVIDERS,
       resolveProvider: normalizeProviderId,
-      createThread: async (provider: ProviderId, model: string | null) =>
+      createThread: async (
+        provider: ProviderId,
+        model: string | null,
+        mode: ThreadCreationMode = 'agent'
+      ) =>
         await withCancellableOperation(null, async (signal, setStopTarget) => {
           const historyEntry = await openThread(
             ui,
@@ -2843,6 +2881,7 @@ export async function run(argv = process.argv): Promise<void> {
             context,
             provider,
             model,
+            mode,
             browserProfileDir,
             signal,
             setStopTarget

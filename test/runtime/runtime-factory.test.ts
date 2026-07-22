@@ -20,6 +20,7 @@ import {
 } from '../../src/mcp/mcp-connection.ts'
 import { loadProjectInstructions } from '../../src/instructions/project-instructions.ts'
 import { createBrowserContextStub } from '../helpers/fakes.ts'
+import { SETUP_HANDSHAKE_PROMPT } from '../../src/runtime/setup-handshake.ts'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -153,10 +154,25 @@ test('createRuntimeFromAdapter keeps the adapter open for auth runtime init fail
 test('createRuntimeFromAdapter can skip the setup handshake for resumed conversations', async () => {
   const adapter = new FakeAdapter()
 
-  await createRuntimeFromAdapter(adapter, { model: null, skipSetup: true })
+  await createRuntimeFromAdapter(adapter, {
+    model: null,
+    setupMode: 'skip',
+  })
 
   assert.equal(adapter.attachedTexts.length, 0)
   assert.equal(adapter.closeCalls, 0)
+})
+
+test('createRuntimeFromAdapter can send only the setup handshake for chat threads', async () => {
+  const adapter = new FakeAdapter({ responses: ['ready - complete'] })
+
+  await createRuntimeFromAdapter(adapter, {
+    model: null,
+    setupMode: 'handshake',
+    providerPrompt: '# Provider Boundary',
+  })
+
+  assert.deepEqual(adapter.attachedTexts, [SETUP_HANDSHAKE_PROMPT])
 })
 
 test('createRuntimeFromAdapter includes provider prompt in setup', async () => {
@@ -554,7 +570,7 @@ test('resumed runtimes reconnect current MCP config without sending setup', asyn
   try {
     const runtime = await createRuntimeFromAdapter(adapter, {
       model: null,
-      skipSetup: true,
+      setupMode: 'skip',
       mcpLibrary,
       mcpConnector: async () => {
         connectorCalls += 1

@@ -14,6 +14,7 @@ import {
 } from '../../helpers/cli-command-context.ts'
 import { createFakeRuntime } from '../../helpers/fakes.ts'
 import { latestTimelineEntry } from '../../helpers/ui.ts'
+import type { ThreadCreationMode } from '../../../src/threads/thread-creation-mode.ts'
 
 const fixtureCleanups = new Set<() => void>()
 
@@ -31,8 +32,11 @@ function getLatestTimelineEntry(ui: TerminalController) {
 async function createCommandContext() {
   const ui = new TerminalController()
   const threadManager = new ThreadManager()
-  const createdThreads: Array<{ provider: ProviderId; model: string | null }> =
-    []
+  const createdThreads: Array<{
+    provider: ProviderId
+    model: string | null
+    mode: ThreadCreationMode
+  }> = []
   const resumedUrls: string[] = []
   const reloadedThreadIds: string[] = []
   const { context, cleanup } = createCliCommandContext({
@@ -40,8 +44,8 @@ async function createCommandContext() {
     ui,
     browserProfileDir: 'C:\\profiles\\chrome',
     providers: TEST_PROVIDER_IDS,
-    createThread: async (provider, model) => {
-      createdThreads.push({ provider, model })
+    createThread: async (provider, model, mode = 'agent') => {
+      createdThreads.push({ provider, model, mode })
     },
     resumeThread: async (conversationUrl) => {
       resumedUrls.push(conversationUrl)
@@ -78,6 +82,7 @@ test('ThreadCommand shows subcommand help when no subcommand is provided', async
   assert.equal(entry.label, '/thread')
   assert.equal(entry.tone, 'info')
   assert.match(entry.body, /open <provider> \[model-number\]/)
+  assert.match(entry.body, /chat <provider> \[model-number\]/)
   assert.match(entry.body, /resume <conversation-url\|#history-id>/)
   assert.match(entry.body, /reload/)
   assert.match(entry.body, /close \[thread-id\]/)
@@ -200,14 +205,38 @@ test('ThreadCommand open forwards supported provider models', async () => {
   await ThreadCommand.execute(context, ['open', 'kimi', '1'])
 
   assert.deepEqual(createdThreads, [
-    { provider: 'gemini', model: '3+extended' },
-    { provider: 'chatgpt', model: '2+1' },
-    { provider: 'deepseek', model: '2' },
-    { provider: 'doubao', model: '3' },
-    { provider: 'grok', model: null },
-    { provider: 'glm', model: '2' },
-    { provider: 'qwen', model: '2' },
-    { provider: 'kimi', model: '1' },
+    { provider: 'gemini', model: '3+extended', mode: 'agent' },
+    { provider: 'chatgpt', model: '2+1', mode: 'agent' },
+    { provider: 'deepseek', model: '2', mode: 'agent' },
+    { provider: 'doubao', model: '3', mode: 'agent' },
+    { provider: 'grok', model: null, mode: 'agent' },
+    { provider: 'glm', model: '2', mode: 'agent' },
+    { provider: 'qwen', model: '2', mode: 'agent' },
+    { provider: 'kimi', model: '1', mode: 'agent' },
+  ])
+})
+
+test('ThreadCommand chat shares validation and forwards chat mode', async () => {
+  const { context, createdThreads } = await createCommandContext()
+
+  await ThreadCommand.execute(context, ['chat', 'chatgpt'])
+  await ThreadCommand.execute(context, ['chat', 'gemini', '2+extended'])
+
+  assert.deepEqual(createdThreads, [
+    { provider: 'chatgpt', model: null, mode: 'chat' },
+    { provider: 'gemini', model: '2+extended', mode: 'chat' },
+  ])
+})
+
+test('ThreadCommand creation preserves permissive trailing arguments', async () => {
+  const { context, createdThreads } = await createCommandContext()
+
+  await ThreadCommand.execute(context, ['open', 'chatgpt', '2', 'ignored'])
+  await ThreadCommand.execute(context, ['chat', 'gemini', '2', 'ignored'])
+
+  assert.deepEqual(createdThreads, [
+    { provider: 'chatgpt', model: '2', mode: 'agent' },
+    { provider: 'gemini', model: '2', mode: 'chat' },
   ])
 })
 

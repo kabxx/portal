@@ -6,7 +6,7 @@ portal intentionally connects an untrusted web model to powerful operations on t
 
 ## Security model
 
-The web model receives a textual catalog of available tools. When its response contains a valid tool request, portal executes that request and sends the result back to the same web conversation. Setup prompts, enabled project instructions, ordinary user input, MCP attachments, loaded Skill instructions, tool results, and selected local images all cross the provider boundary.
+Agent threads and spawned runtimes send the web model a textual catalog of available tools. Chat threads send only a minimal `READY` handshake, but their local runtime still registers tools, Skills, MCP connections, and Hooks. In every mode, when a model response contains a valid tool request, portal executes that request and sends the result back to the same web conversation. Chat mode is therefore not a sandbox or a permission boundary. Setup prompts, enabled project instructions, ordinary user input, MCP attachments, loaded Skill instructions, tool results, and selected local images can all cross the provider boundary.
 
 There is currently no human approval gate between a valid model-generated request and local execution. The effective permissions are the permissions of the user account running portal.
 
@@ -112,6 +112,9 @@ configuration operations. Portal MCP Server access can send instructions to a
 logged-in provider conversation, whose model can invoke local Portal tools.
 Either listener therefore exposes high-privilege local and browser-account
 capabilities.
+
+Selecting `mode: "chat"` when opening a thread does not reduce those listener
+permissions or disable model-generated tool execution.
 
 Bearer authentication does not encrypt HTTP traffic. On an untrusted network,
 an observer may capture Tokens, prompts, assistant output, and conversation

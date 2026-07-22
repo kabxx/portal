@@ -50,6 +50,8 @@ npm run dev
 总结当前仓库，并找出风险最高的模块。
 ```
 
+使用 `/thread chat <provider> [model]` 可以创建最小初始化的 Provider 会话。Chat 创建只发送共享的 `READY` handshake，不发送 portal 完整的 Agent setup prompt。本地工具、Skills、MCP 连接和 Hooks 仍然处于活动状态，因此 Chat 创建不是沙箱，也不是执行权限边界。
+
 使用 `/help` 查看命令索引。Thread、Resume、输入控制、后台 job 和启动参数详见 [CLI 指南](cli.md)。
 
 > [!WARNING]
@@ -113,6 +115,7 @@ flowchart LR
 - Resume 只展示 Provider 当前可见的 user/assistant 分支，不支持的内容和其它分支会被过滤。
 - Home 和 thread 时间线只保存在内存中。
 - Resume 假定原会话已经包含 portal 工具协议；它会跳过 setup handshake，也不会重新发送当前项目指令。
+- Chat 创建仍会发送最小 `READY` handshake；虽然不会向模型介绍 portal 工具，但合法的模型工具调用仍可能被执行。
 - portal 还没有稳定的全局 CLI 安装包，也没有自动化的真实浏览器 CI。
 
 ## 许可证

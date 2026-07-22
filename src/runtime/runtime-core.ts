@@ -37,6 +37,11 @@ import {
   type ComposerTextOrigin,
 } from '../providers/composer-limit.ts'
 import type { ManualSkillSummary } from '../skills/manual-skill-summary.ts'
+import {
+  hasReadyHandshakeToken,
+  SETUP_HANDSHAKE_PROMPT,
+  type RuntimeSetupMode,
+} from './setup-handshake.ts'
 
 export interface ManualSkill {
   name: string
@@ -129,11 +134,17 @@ export class RuntimeCore {
     return this.manualSkills.map(({ name }) => name)
   }
 
-  public async init(options: AbortOptions = {}) {
+  public async init(
+    options: AbortOptions & {
+      setupMode?: Exclude<RuntimeSetupMode, 'skip'>
+    } = {}
+  ) {
     await this.retryAsync(async () => {
       throwIfAborted(options.signal)
       const setupPrompt = await this.prepareOutboundText(
-        this.prompt,
+        options.setupMode === 'handshake'
+          ? SETUP_HANDSHAKE_PROMPT
+          : this.prompt,
         'internal',
         null,
         options.signal
@@ -143,7 +154,7 @@ export class RuntimeCore {
       const response =
         await this.agentAdapter.submitWithResponseTimeout(options)
       throwIfAborted(options.signal)
-      if (!/\bREADY\b/i.test(response)) {
+      if (!hasReadyHandshakeToken(response)) {
         throw new Error(
           'Setup handshake failed: response did not contain READY.'
         )
@@ -177,11 +188,7 @@ export class RuntimeCore {
         ].join('\n'),
         this.projectInstructions?.prompt,
         this.providerPrompt,
-        [
-          `# Setup Handshake`,
-          `- This message initializes the runtime only.`,
-          `- Reply with READY when initialization is complete.`,
-        ].join('\n'),
+        SETUP_HANDSHAKE_PROMPT,
       ],
       '\n\n\n'
     )

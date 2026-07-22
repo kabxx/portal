@@ -52,7 +52,7 @@ On Windows, the launched browser is assigned to a Job Object. Closing the Job Ob
 
 The browser and portal share one lifecycle. Playwright's browser-level `disconnected` event covers browser process exit, crash, and CDP loss. An unexpected disconnect requests the same controlled shutdown used by `/exit`; portal-initiated browser closure is marked internally and does not trigger a second shutdown. Closing an individual provider page does not end the portal process. Instead, the base adapter reports an unexpected page close to the owning thread, which uses the normal coordinated close path.
 
-## New runtime creation
+## Thread creation modes
 
 A new thread uses this sequence:
 
@@ -72,14 +72,19 @@ sequenceDiagram
     Factory->>MCP: connect enabled servers in parallel
     Factory->>Skills: snapshot enabled Skill metadata
     Factory->>Web: optional model selection
-    Factory->>Web: submit setup prompt
-    Web-->>Factory: READY
+    alt agent mode
+        Factory->>Web: submit full setup prompt
+    else chat mode
+        Factory->>Web: submit minimal setup handshake
+    end
+    Web-->>Factory: response containing READY
     App->>Threads: register active thread
     App->>UI: switch to empty thread timeline
     App->>UI: render Thread t-N is ready
 ```
 
-The setup prompt is composed from:
+Both modes require the response to contain `READY` as a case-insensitive whole
+word. Agent creation sends a full setup prompt composed from:
 
 - the shared tool invocation protocol and built-in tool definitions;
 - enabled Skill names and descriptions, when the catalog is non-empty;
@@ -88,6 +93,12 @@ The setup prompt is composed from:
 - enabled always-on project instructions;
 - optional provider rules, currently used for Grok;
 - a setup handshake instruction to reply with `READY`.
+
+Chat creation sends only the shared setup handshake. It still constructs the
+same local runtime, connects MCP servers, snapshots Skills, registers tools and
+Hooks, and retains project-instruction state. Those capabilities are not
+advertised to the model, but a valid model-generated tool call can still be
+executed, so chat mode is not a sandbox.
 
 `load_skill` is registered only when the new runtime has at least one enabled valid Skill. MCP host tools are backed by the runtime's `ThreadMcpSession`.
 
@@ -98,7 +109,7 @@ Resume accepts a normalized provider URL or a `#history-id` resolved through `Th
 1. Reject unsupported URLs and duplicate open conversations.
 2. Create an adapter directly on the existing provider URL and wait for login/readiness.
 3. Read the current Skills, MCP, and project-instruction configuration.
-4. Build the runtime with `skipSetup: true`; no new setup/catalog turn is sent.
+4. Build the runtime with `setupMode: 'skip'`; no new setup/catalog turn is sent.
 5. Register the thread and switch to its empty timeline.
 6. Render the existing ready status bubble.
 7. Load the provider's visible remote history and append user/assistant messages.
@@ -253,7 +264,7 @@ Spawned conversations are not added to the normal thread list or SQLite history.
 
 ## Skills
 
-The `skills` section of `data/config.yaml` is read for every Skill command and runtime creation. A valid enabled snapshot contributes a name/description catalog to new setup prompts and defines which names `load_skill` can resolve.
+The `skills` section of `data/config.yaml` is read for every Skill command and runtime creation. A valid enabled snapshot defines which names `load_skill` can resolve. Agent threads and spawned runtimes also include the name/description catalog in their full setup prompts; chat threads retain the snapshot locally without advertising it.
 
 Catalog membership is immutable for an open runtime. The actual `SKILL.md` and resource list are read and validated on demand, so edits are visible to later loads while deleted or invalid files return errors. See [Skills](skills.md).
 
@@ -261,10 +272,11 @@ Catalog membership is immutable for an open runtime. The actual `SKILL.md` and r
 
 The `agentInstructions` section is disabled by default. When enabled, new
 runtimes load reviewed Codex and Claude Code files from configured global roots
-and the current workspace. Always-on text joins the setup prompt; supported
-file-targeting tool calls can activate nested instructions and path rules before
-execution. Loader membership is snapshotted per runtime, while a child `spawn`
-forks the parent's active state. See [Project Instructions](instructions.md).
+and the current workspace. Always-on text joins full agent and spawned setup
+prompts; chat creation does not send it. Supported file-targeting tool calls can
+still activate nested instructions and path rules before execution. Loader
+membership is snapshotted per runtime, while a child `spawn` forks the parent's
+active state. See [Project Instructions](instructions.md).
 
 ## MCP
 
@@ -273,7 +285,7 @@ Every new, resumed, or spawned runtime creates a `ThreadMcpSession` and
 independent client transports for enabled valid servers. Failed servers are
 omitted and rendered as Markdown warnings; successful servers continue normally.
 
-Only connected Server and Tool names appear in the setup prompt. `mcp_search_tool` reads one exact cached definition, while `mcp_call_tool` dispatches one exact request. Tool list-change notifications refresh the current cache but do not rewrite the setup snapshot. Resource and Prompt commands operate through the active thread session and submit each attachment as its own user turn. See [MCP](mcp.md).
+Only connected Server and Tool names appear in full agent and spawned setup prompts. Chat and resumed runtimes keep their current connections locally without sending a catalog turn. `mcp_search_tool` reads one exact cached definition, while `mcp_call_tool` dispatches one exact request. Tool list-change notifications refresh the current cache but do not rewrite the setup snapshot. Resource and Prompt commands operate through the active thread session and submit each attachment as its own user turn. See [MCP](mcp.md).
 
 Closing a runtime closes its MCP clients and stdio child processes.
 

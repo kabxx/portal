@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import * as z from 'zod'
 import type { PortalMcpHandlers } from './mcp-server-types.ts'
+import { THREAD_CREATION_MODES } from '../threads/thread-creation-mode.ts'
 
 const threadSchema = z.object({
   id: z.string(),
@@ -79,6 +80,7 @@ export function createPortalMcpProtocolServer(
       inputSchema: z.object({
         provider: z.string().min(1),
         model: z.string().nullable().optional(),
+        mode: z.enum(THREAD_CREATION_MODES).optional(),
       }),
       outputSchema: threadSchema,
       annotations: {
@@ -88,11 +90,11 @@ export function createPortalMcpProtocolServer(
         openWorldHint: true,
       },
     },
-    async ({ provider, model }, extra) =>
+    async ({ provider, model, mode }, extra) =>
       await runTool(
         async () =>
           await handlers.openThread(
-            { provider, model: model ?? null },
+            { provider, model: model ?? null, mode: mode ?? 'agent' },
             AbortSignal.any([requestSignal, extra.signal])
           )
       )

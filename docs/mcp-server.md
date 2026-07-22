@@ -62,7 +62,7 @@ The first version targets non-browser MCP clients. Requests containing any
 | Tool                    | Purpose                                                |
 | ----------------------- | ------------------------------------------------------ |
 | `portal_list_providers` | List supported provider ids                            |
-| `portal_open_thread`    | Open and initialize a provider conversation            |
+| `portal_open_thread`    | Open an agent or chat provider conversation            |
 | `portal_resume_thread`  | Resume a provider conversation URL                     |
 | `portal_list_threads`   | List threads open in the current Portal process        |
 | `portal_get_thread`     | Read one open thread                                   |
@@ -70,6 +70,12 @@ The first version targets non-browser MCP clients. Requests containing any
 | `portal_send_message`   | Start a message and return an operation id immediately |
 | `portal_wait_message`   | Long-poll a message operation for up to 30 seconds     |
 | `portal_cancel_message` | Cancel the exact MCP-owned message operation           |
+
+`portal_open_thread` accepts an optional `mode` of `"agent"` or `"chat"` and
+defaults to `"agent"`. Chat creation sends only the shared `READY` handshake,
+using a case-insensitive whole-word match, instead of the full portal setup
+prompt. It still creates a normal local runtime with configured tools, Skills,
+MCP connections, and Hooks, so chat mode is not a sandbox.
 
 `portal_send_message` returns a process-local `operationId` with `running`
 status. Call `portal_wait_message` until it returns `completed`, `failed`, or

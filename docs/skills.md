@@ -153,18 +153,18 @@ These checks reduce accidental damage; they do not prove that a skill is safe.
 
 ## Runtime lifecycle
 
-When a newly opened thread or spawned runtime is created:
+When a new agent thread, chat thread, or spawned runtime is created:
 
 1. portal reads registered skills and their enabled state from `config.yaml`.
 2. It creates an immutable catalog snapshot containing enabled skill names, descriptions, and directories.
-3. The setup prompt advertises each skill's name and description.
+3. Agent threads and spawned runtimes advertise each skill's name and description in the full setup prompt; chat threads retain the snapshot locally without advertising it.
 4. If the browser model decides that a skill matches the task, it invokes `load_skill`.
 5. portal rereads and validates the current `SKILL.md`, rescans its resources, and returns name, directory, resources, and instructions in the standard JSON Tool Result envelope.
 6. The model continues using only the tools already available to the runtime.
 
 An open runtime keeps its catalog membership: newly added or enabled skills require a new runtime, and disabling a skill does not remove it from an existing catalog. Skill files are loaded from disk on demand, so modifying them changes later `load_skill` results, while deleting or corrupting them returns an error even in an existing runtime.
 
-A resumed conversation also creates a fresh snapshot from the current registry and registers `load_skill` when that snapshot is non-empty. Resume uses `skipSetup: true`, however, so portal does not submit a new `# Skills` catalog or Tool definition turn. The provider conversation keeps the catalog it previously saw; newly enabled names are therefore reliably advertised only by opening a new thread or creating a spawned runtime.
+A resumed conversation also creates a fresh snapshot from the current registry and registers `load_skill` when that snapshot is non-empty. Resume uses `setupMode: 'skip'`, however, so portal does not submit a new `# Skills` catalog or Tool definition turn. A chat thread likewise registers `load_skill` but sends only the minimal handshake. The provider conversation keeps whichever catalog it previously saw; newly enabled names are therefore reliably advertised only by opening a new agent thread or creating a spawned runtime.
 
 ## Resources
 
