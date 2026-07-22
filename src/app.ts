@@ -49,6 +49,7 @@ import {
   type ThreadOperationHandle,
 } from './threads/thread-operation-coordinator.ts'
 import type { ProviderId } from './providers/provider-id.ts'
+import { ComposerLimitExceededError } from './providers/composer-limit.ts'
 import {
   buildThreadHistoryTitle,
   createThreadStore,
@@ -2925,7 +2926,20 @@ export async function run(argv = process.argv): Promise<void> {
       const input = (
         await ui.requestInput(
           ui.promptLabel(threadManager),
-          'Type a task or enter a slash command.'
+          'Type a task or enter a slash command.',
+          async (candidate) => {
+            const normalizedCandidate = candidate.trim()
+            if (normalizedCandidate.startsWith('/')) return
+            const activeThread = threadManager.getActiveThread()
+            if (activeThread === null) return
+            const check =
+              await activeThread.runtime.preflightInitialInput(
+                normalizedCandidate
+              )
+            if (check.status === 'over_limit') {
+              throw new ComposerLimitExceededError(check, 'user')
+            }
+          }
         )
       ).trim()
       if (exitRequested) {

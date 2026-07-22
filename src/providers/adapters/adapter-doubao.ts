@@ -158,6 +158,10 @@ function normalizeToPathArray(path: string | readonly string[]): string[] {
 }
 
 export class DoubaoAdapter extends ProviderAdapter {
+  protected override get composerLimitProvider() {
+    return 'doubao' as const
+  }
+
   private lastParsedResponse!: DoubaoParsedResponse | null
 
   private getSendButton() {

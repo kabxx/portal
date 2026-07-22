@@ -813,11 +813,16 @@ export function TerminalScreen({
   const [spinnerFrameIndex, setSpinnerFrameIndex] = useState(0)
   const historyRef = useRef(new InputHistory())
   const inputStateRef = useRef(inputState)
+  const inputRevisionRef = useRef(0)
+  const inputSubmissionRef = useRef(0)
   const updateInputState = (
     update: InputEditorState | ((current: InputEditorState) => InputEditorState)
   ) => {
     const next =
       typeof update === 'function' ? update(inputStateRef.current) : update
+    if (next.value !== inputStateRef.current.value) {
+      inputRevisionRef.current += 1
+    }
     inputStateRef.current = next
     setInputState(next)
   }
@@ -1013,20 +1018,44 @@ export function TerminalScreen({
 
     if (action === 'input.submit') {
       const currentState = ui.getState()
+      const submittedValue = inputStateRef.current.value
+      const submittedRevision = inputRevisionRef.current
       if (
         !currentState.prompt.active ||
-        !canSubmitInput(inputValue, currentState.busy)
+        !canSubmitInput(submittedValue, currentState.busy)
       ) {
         return
       }
-      if (!ui.submitInput(inputValue)) return
-      historyRef.current.push(inputValue)
-      updateInputState({
-        value: '',
-        cursor: 0,
-        preferredColumn: null,
-        selectedHintCompletion: null,
-      })
+      const submittedAttempt = ++inputSubmissionRef.current
+      void ui
+        .preflightInput(submittedValue)
+        .then((accepted) => {
+          if (
+            !accepted ||
+            inputSubmissionRef.current !== submittedAttempt ||
+            inputRevisionRef.current !== submittedRevision
+          ) {
+            return
+          }
+          if (!ui.submitInput(submittedValue)) return
+          historyRef.current.push(submittedValue)
+          updateInputState({
+            value: '',
+            cursor: 0,
+            preferredColumn: null,
+            selectedHintCompletion: null,
+          })
+        })
+        .catch((error: unknown) => {
+          if (
+            inputSubmissionRef.current !== submittedAttempt ||
+            inputRevisionRef.current !== submittedRevision ||
+            !ui.getState().prompt.active
+          ) {
+            return
+          }
+          ui.renderError('runtime', String(error))
+        })
       return
     }
 

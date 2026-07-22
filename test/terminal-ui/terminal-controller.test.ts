@@ -1519,6 +1519,38 @@ test('TerminalController requestInput and submitInput resolve through prompt sta
   assert.equal(ui.getState().prompt.active, false)
 })
 
+test('TerminalController preflights changed input independently', async () => {
+  const ui = new TerminalController()
+  const checks: Array<{
+    value: string
+    release: () => void
+  }> = []
+  const pendingAnswer = ui.requestInput(
+    'portal > ',
+    'Type a task or enter a slash command.',
+    async (value) => {
+      const deferred = Promise.withResolvers<void>()
+      checks.push({ value, release: deferred.resolve })
+      await deferred.promise
+    }
+  )
+
+  const first = ui.preflightInput('first input')
+  const second = ui.preflightInput('second input')
+
+  assert.deepEqual(
+    checks.map(({ value }) => value),
+    ['first input', 'second input']
+  )
+  checks[1]!.release()
+  assert.equal(await second, true)
+  checks[0]!.release()
+  assert.equal(await first, true)
+
+  assert.equal(ui.submitInput('second input'), true)
+  assert.equal(await pendingAnswer, 'second input')
+})
+
 test('TerminalController cancelPendingInput rejects the prompt and resets prompt state', async () => {
   const ui = new TerminalController()
 

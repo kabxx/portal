@@ -12,9 +12,11 @@ import {
 } from '../../../src/tools/core/tool-definition.ts'
 import {
   extractToolCall,
+  formatToolResultMessage,
   parseToolCallPayload,
   projectStreamingAssistantText,
   ToolRegistry,
+  type ToolResult,
 } from '../../../src/tools/core/tool-registry.ts'
 import { createProviderAdapterStub } from '../../helpers/fakes.ts'
 
@@ -103,6 +105,58 @@ test('streaming assistant projection defers to complete tool extraction', () => 
     projectStreamingAssistantText('`unfinished code\n<tool>payload</tool>'),
     '`unfinished code'
   )
+})
+
+test('tool result messages add delivery only when the original result is omitted', () => {
+  const normalResult: ToolResult = {
+    outcome: 'success',
+    result: { content: 'complete result' },
+  }
+  assert.deepEqual(
+    JSON.parse(
+      formatToolResultMessage('future_tool', normalResult).slice(
+        '### Tool Result ###\n'.length
+      )
+    ),
+    {
+      tool: 'future_tool',
+      outcome: 'success',
+      result: { content: 'complete result' },
+    }
+  )
+
+  for (const outcome of ['success', 'error', 'unknown'] as const) {
+    const toolResult: ToolResult = {
+      outcome,
+      result: { content: `private ${outcome} result` },
+    }
+    assert.deepEqual(
+      JSON.parse(
+        formatToolResultMessage('future_tool', toolResult, {
+          status: 'not_delivered',
+          code: 'COMPOSER_LIMIT_EXCEEDED',
+          message: 'The original result was not delivered.',
+          measured: 200_000,
+          limit: 100_000,
+        }).slice('### Tool Result ###\n'.length)
+      ),
+      {
+        tool: 'future_tool',
+        outcome,
+        result: null,
+        delivery: {
+          status: 'not_delivered',
+          code: 'COMPOSER_LIMIT_EXCEEDED',
+          message: 'The original result was not delivered.',
+          measured: 200_000,
+          limit: 100_000,
+        },
+      }
+    )
+    assert.deepEqual(toolResult.result, {
+      content: `private ${outcome} result`,
+    })
+  }
 })
 
 test('ToolRegistry keeps JSON tools and executes named freeform tools', async () => {
