@@ -257,19 +257,71 @@ export class ChatGPTAdapter extends ProviderAdapter {
     const modeNumber = match[2] === undefined ? null : Number(match[2])
     const modelIndex = modelNumber - 1
     const modeIndex = modeNumber === null ? null : modeNumber - 1
+    const directMenus = this.page.locator('[role="menu"]:visible')
 
     const openPicker = async () => {
-      await this.page.locator('button.__composer-pill').click()
-      const picker = this.page
-        .locator(CHATGPT_INTELLIGENCE_PICKER_SELECTOR)
-        .last()
-      await waitAsync(async () => await picker.isVisible().catch(() => false), {
-        timeoutMs: 5000,
-      })
-      return picker
+      const triggers = this.page.locator(
+        'button.__composer-pill:visible, button[aria-label="模型选择器"]:visible'
+      )
+      if ((await triggers.count()) !== 1) {
+        throw new ProviderAdapterError(
+          'changeModel',
+          'ChatGPT model selector was missing or ambiguous.',
+          {
+            kind: 'ui',
+            recovery: 'none',
+            retryable: false,
+            maxAttempts: 1,
+            detailCode: 'chatgpt_model_trigger_invalid',
+          }
+        )
+      }
+      await triggers.first().click()
+      const picker = this.page.locator(
+        `${CHATGPT_INTELLIGENCE_PICKER_SELECTOR}:visible`
+      )
+      await waitAsync(
+        async () =>
+          (await picker.count().catch(() => 0)) > 0 ||
+          (await directMenus.count().catch(() => 0)) > 0,
+        { timeoutMs: 5000 }
+      )
+      if ((await picker.count()) > 1 || (await directMenus.count()) > 1) {
+        throw new ProviderAdapterError(
+          'changeModel',
+          'ChatGPT model menu was ambiguous.',
+          {
+            kind: 'ui',
+            recovery: 'none',
+            retryable: false,
+            maxAttempts: 1,
+            detailCode: 'chatgpt_model_menu_ambiguous',
+          }
+        )
+      }
+      return picker.first()
     }
 
     let picker = await openPicker()
+    if (!(await picker.isVisible().catch(() => false))) {
+      if (modeIndex !== null) {
+        throw new ProviderAdapterUnsupportedError(
+          'changeModel',
+          'ChatGPT model modes are unavailable.'
+        )
+      }
+      const directModelItems = directMenus
+        .first()
+        .locator('[role="menuitemradio"]')
+      if ((await directModelItems.count()) <= modelIndex) {
+        throw new ProviderAdapterUnsupportedError(
+          'changeModel',
+          `ChatGPT does not have model ${modelNumber}.`
+        )
+      }
+      await directModelItems.nth(modelIndex).click()
+      return
+    }
 
     if (modeIndex !== null) {
       const modeItems = picker.locator(

@@ -1,5 +1,9 @@
 import { resolveConversationUrl } from '../../providers/provider-conversation-url.ts'
 import {
+  ProviderModelSelectionError,
+  resolveProviderModel,
+} from '../../providers/provider-model-catalog.ts'
+import {
   parseThreadHistoryId,
   parseThreadHistoryLimit,
 } from '../../threads/thread-store.ts'
@@ -18,12 +22,12 @@ import type { ThreadCreationMode } from '../../threads/thread-creation-mode.ts'
 const THREAD_GUIDES = [
   {
     path: ['open'],
-    usage: 'open <provider> [model-number]',
+    usage: 'open <provider> [model-key] [option-key]',
     description: 'Open an agent thread.',
   },
   {
     path: ['chat'],
-    usage: 'chat <provider> [model-number]',
+    usage: 'chat <provider> [model-key] [option-key]',
     description: 'Open a chat thread with only the setup handshake.',
   },
   { path: ['list'], usage: 'list', description: 'List local threads.' },
@@ -129,35 +133,13 @@ function renderThreadHelp(context: CliCommandContext): void {
   )
 }
 
-function isSupportedProviderModel(
-  provider:
-    | 'chatgpt'
-    | 'deepseek'
-    | 'doubao'
-    | 'gemini'
-    | 'grok'
-    | 'glm'
-    | 'qwen'
-    | 'kimi',
-  model: string
-): boolean {
-  const normalized = model.trim().toLowerCase()
-  return (
-    provider === 'gemini'
-      ? /^([1-9]\d*)(\+extended)?$/
-      : provider === 'chatgpt'
-        ? /^([1-9]\d*)(\+[1-9]\d*)?$/
-        : /^([1-9]\d*)$/
-  ).test(normalized)
-}
-
 async function createThread(
   context: CliCommandContext,
   args: readonly string[],
   mode: ThreadCreationMode
 ): Promise<CommandResult> {
   const label = mode === 'chat' ? '/thread chat' : '/thread open'
-  const usage = `${label} <provider> [model-number]`
+  const usage = `${label} <provider> [model-key] [option-key]`
   const rawProvider = args[0] ?? ''
   if (!rawProvider) {
     context.ui.renderWarning(label, `Missing provider. Usage: ${usage}`)
@@ -170,12 +152,17 @@ async function createThread(
     return { continue: true }
   }
 
-  const model = args[1] ?? null
-  if (model !== null && !isSupportedProviderModel(provider, model)) {
-    context.ui.renderWarning(
-      label,
-      `${provider} does not support model "${model}".`
-    )
+  if (args.length > 3) {
+    context.ui.renderWarning(label, `Too many arguments. Usage: ${usage}`)
+    return { continue: true }
+  }
+
+  let model: ReturnType<typeof resolveProviderModel>
+  try {
+    model = resolveProviderModel(provider, args[1] ?? null, args[2] ?? null)
+  } catch (error) {
+    if (!(error instanceof ProviderModelSelectionError)) throw error
+    context.ui.renderWarning(label, error.message)
     return { continue: true }
   }
 

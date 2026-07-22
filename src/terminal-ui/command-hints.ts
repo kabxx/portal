@@ -3,6 +3,10 @@ import type {
   CliCommandGuide,
 } from '../cli-commands/core/command-types.ts'
 import type { ProviderId } from '../providers/provider-id.ts'
+import {
+  listProviderModelOptions,
+  listProviderModels,
+} from '../providers/provider-model-catalog.ts'
 import type { InputHint } from './input-hints.ts'
 
 export function resolveCommandHints(
@@ -252,48 +256,111 @@ function appendProviderHint(
   trailingWhitespace: boolean,
   providers: readonly ProviderId[]
 ): readonly InputHint[] {
+  const subcommand = pathInput[0]
   if (
     command.name !== '/thread' ||
-    (pathInput[0] !== 'open' && pathInput[0] !== 'chat')
+    (subcommand !== 'open' && subcommand !== 'chat')
   ) {
     return hints
   }
 
   const providerInput = pathInput[1]
   if (providerInput === undefined) {
-    return [...hints, providerHint(providers)]
+    return [...hints, ...providerHints(subcommand, providers)]
   }
 
   const providerMatches = providers.filter((provider) =>
     provider.startsWith(providerInput)
   )
+  const provider = providers.find((candidate) => candidate === providerInput)
   if (!trailingWhitespace && pathInput.length === 2) {
     return providerMatches.length > 0
-      ? [...hints, providerHint(providerMatches)]
+      ? [...hints, ...providerHints(subcommand, providerMatches)]
       : hints
   }
 
-  if (
-    pathInput.length === 2 &&
-    trailingWhitespace &&
-    providers.some((provider) => provider === providerInput)
-  ) {
-    return [
-      ...hints,
-      {
-        usage: 'model-number: optional',
-        description: '',
-        kind: 'detail',
-      },
-    ]
+  if (pathInput.length === 2 && trailingWhitespace && provider !== undefined) {
+    const models = listProviderModels(provider)
+    return [...hints, ...modelHints(subcommand, provider, models)]
+  }
+
+  if (pathInput.length >= 3 && provider !== undefined) {
+    const modelInput = pathInput[2] ?? ''
+    const modelMatches = listProviderModels(provider).filter((model) =>
+      model.startsWith(modelInput.toLowerCase())
+    )
+    if (!trailingWhitespace && pathInput.length === 3) {
+      return [...hints, ...modelHints(subcommand, provider, modelMatches)]
+    }
+    if (pathInput.length === 3 && trailingWhitespace) {
+      const model = listProviderModels(provider).find(
+        (candidate) => candidate === modelInput.toLowerCase()
+      )
+      if (model === undefined) return hints
+      const options = listProviderModelOptions(provider, model)
+      return options.length === 0
+        ? [
+            ...hints,
+            {
+              usage: 'option-key: none',
+              description: '',
+              kind: 'detail',
+            },
+          ]
+        : [...hints, ...optionHints(subcommand, provider, model, options)]
+    }
+    if (pathInput.length === 4) {
+      const optionInput = pathInput[3] ?? ''
+      const model = listProviderModels(provider).find(
+        (candidate) => candidate === modelInput.toLowerCase()
+      )
+      if (model === undefined) return hints
+      const options = listProviderModelOptions(provider, model).filter(
+        (option) => option.startsWith(optionInput.toLowerCase())
+      )
+      return options.length > 0
+        ? [...hints, ...optionHints(subcommand, provider, model, options)]
+        : hints
+    }
   }
   return hints
 }
 
-function providerHint(providers: readonly ProviderId[]): InputHint {
-  return {
-    usage: `provider: ${providers.join(' | ')}`,
+function providerHints(
+  subcommand: 'open' | 'chat',
+  providers: readonly ProviderId[]
+): readonly InputHint[] {
+  return providers.map((provider) => ({
+    usage: provider,
     description: '',
-    kind: 'detail',
-  }
+    kind: 'detail' as const,
+    completion: `/thread ${subcommand} ${provider} `,
+  }))
+}
+
+function modelHints(
+  subcommand: 'open' | 'chat',
+  provider: ProviderId,
+  models: readonly string[]
+): readonly InputHint[] {
+  return models.map((model) => ({
+    usage: model,
+    description: '',
+    kind: 'detail' as const,
+    completion: `/thread ${subcommand} ${provider} ${model} `,
+  }))
+}
+
+function optionHints(
+  subcommand: 'open' | 'chat',
+  provider: ProviderId,
+  model: string,
+  options: readonly string[]
+): readonly InputHint[] {
+  return options.map((option) => ({
+    usage: option,
+    description: '',
+    kind: 'detail' as const,
+    completion: `/thread ${subcommand} ${provider} ${model} ${option}`,
+  }))
 }

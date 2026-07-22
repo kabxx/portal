@@ -127,7 +127,7 @@ Adding the adapter file is only one part of registration. Search for exhaustive 
 | Resume URL         | Add strict HTTPS host/path recognition and canonicalization in `src/providers/provider-conversation-url.ts`, with positive, alias, malformed-encoding, wrong-host, and wrong-path tests.  |
 | Hooks              | Add the id to Provider normalization in `src/hooks/hook-config.ts` and update Hook tests.                                                                                                 |
 | Spawn              | Update the Provider list in the `spawn` description and input-schema enum in `src/tools/builtins/spawn-tool.ts`; update `test/tools/builtins/spawn-tool.test.ts`.                         |
-| Model argument     | Add the Provider grammar to `isSupportedProviderModel` in `src/cli-commands/commands/command-thread.ts` and cover accepted/rejected forms in its tests.                                   |
+| Model argument     | Add the Provider's named models and per-model options to `src/providers/provider-model-catalog.ts`; cover every mapping plus accepted/rejected forms in catalog and command tests.        |
 | Capabilities       | If applicable, update `src/cli-commands/commands/command-thread-capability.ts`: capability records, display-name records, toggle/action Provider type guards, dispatch unions, and tests. |
 | User documentation | Update the brief lists in `README.md` and `docs/README.zh-CN.md`, plus the detailed matrix/counts in [Providers](providers.md); other docs only when needed.                              |
 | Integration tests  | Update Provider lists, command completion, API/MCP listing, and any exhaustive records surfaced by TypeScript or repository search.                                                       |

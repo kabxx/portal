@@ -442,17 +442,52 @@ export class QwenAdapter extends ProviderAdapter {
     }
     await trigger.first().click()
 
-    const listboxes = this.page.locator(QWEN_MODEL_LISTBOX_SELECTOR)
+    const visibleListboxes = this.page.locator(
+      `${QWEN_MODEL_LISTBOX_SELECTOR}:visible`
+    )
+    const scopedOptions = visibleListboxes.locator(QWEN_MODEL_OPTION_SELECTOR)
+    const globalOptions = this.page.locator(
+      `${QWEN_MODEL_OPTION_SELECTOR}:visible`
+    )
     await waitAsync(
       async () =>
-        (await listboxes.count().catch(() => 0)) === 1 &&
-        (await listboxes
-          .first()
-          .isVisible()
-          .catch(() => false)),
+        (await scopedOptions.count().catch(() => 0)) > 0 ||
+        (await globalOptions.count().catch(() => 0)) > 0,
       { timeoutMs: 5000 }
     )
-    const options = listboxes.first().locator(QWEN_MODEL_OPTION_SELECTOR)
+    if ((await visibleListboxes.count()) > 1) {
+      throw new ProviderAdapterError(
+        'changeModel',
+        'Qwen model menu was ambiguous.',
+        {
+          kind: 'ui',
+          recovery: 'none',
+          retryable: false,
+          maxAttempts: 1,
+          detailCode: 'qwen_model_menu_ambiguous',
+        }
+      )
+    }
+    const usesScopedOptions = (await scopedOptions.count()) > 0
+    const options = usesScopedOptions ? scopedOptions : globalOptions
+    if (
+      !usesScopedOptions &&
+      !(await options.evaluateAll(
+        (items) => new Set(items.map((item) => item.parentElement)).size === 1
+      ))
+    ) {
+      throw new ProviderAdapterError(
+        'changeModel',
+        'Qwen model options were ambiguous.',
+        {
+          kind: 'ui',
+          recovery: 'none',
+          retryable: false,
+          maxAttempts: 1,
+          detailCode: 'qwen_model_options_ambiguous',
+        }
+      )
+    }
     const modelIndex = modelNumber - 1
     if ((await options.count()) <= modelIndex) {
       await this.page.keyboard.press('Escape').catch(() => {})
