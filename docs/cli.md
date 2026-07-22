@@ -27,6 +27,8 @@ Open and manage conversations in the current portal process:
 ```text
 /thread open gemini
 /thread open chatgpt 1
+/thread chat chatgpt
+/thread chat gemini 2
 /thread list
 /thread switch t-1
 /thread status
@@ -44,7 +46,15 @@ Resume from a provider URL or local history id:
 /thread resume https://chatgpt.com/c/...
 ```
 
-On a successful open or resume, the new thread timeline starts with `Thread t-N is ready.` Resume then appends the visible user/assistant history from the provider's current conversation branch. Tool nodes, hidden setup messages, reasoning, and unsupported attachment content are not rendered as ordinary history messages.
+`/thread open` sends the full portal agent setup prompt. `/thread chat` sends only
+the shared setup handshake and accepts a response containing `READY` as a
+case-insensitive whole word. Both commands still construct the local runtime,
+connect configured MCP servers, snapshot Skills, register tools and Hooks, and
+persist the provider conversation. Chat mode does not advertise those local
+capabilities to the model, but a valid model-generated tool call can still be
+executed; it is not a sandbox.
+
+On a successful open, chat, or resume, the new thread timeline starts with `Thread t-N is ready.` Resume then appends the visible user/assistant history from the provider's current conversation branch. Tool nodes, hidden setup messages, reasoning, and unsupported attachment content are not rendered as ordinary history messages.
 
 `data/threads.db` stores provider metadata, conversation URLs, titles, and timestamps, not transcripts. Remote history and terminal timelines remain in memory. After portal restarts, use `/thread resume` to load the provider conversation again. Switching among already open threads restores their cached timelines without another provider request.
 
@@ -53,6 +63,7 @@ On a successful open or resume, the new thread timeline starts with `Thread t-N 
 | Command                                       | Behavior                                                   |
 | --------------------------------------------- | ---------------------------------------------------------- |
 | `/thread open <provider> [model]`             | Open a provider conversation and run the setup handshake   |
+| `/thread chat <provider> [model]`             | Open with only the minimal setup handshake                 |
 | `/thread list`                                | List open local threads and local turn counts              |
 | `/thread history [limit]`                     | List recent conversation URL records from SQLite           |
 | `/thread resume <url\|#history-id>`           | Reopen a provider conversation and display remote history  |

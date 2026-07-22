@@ -10,8 +10,8 @@ portal automates the normal web product in a real Chromium page. A Provider inte
 
 A first-class Provider is complete only when all applicable paths below work:
 
-- `/providers`, `/thread open`, Spawn, HTTP API, and Portal MCP Server expose the Provider;
-- a signed-in page can open a new conversation and complete the setup `READY` handshake;
+- `/providers`, `/thread open`, `/thread chat`, Spawn, HTTP API, and Portal MCP Server expose the Provider;
+- a signed-in page can open a new agent or chat conversation and complete its setup `READY` handshake;
 - signed-out, restricted, and unexpected page states are classified without leaking raw browser errors;
 - normal turns stream, terminate, cancel, and leave the page reusable;
 - model selection, file/image upload, and capabilities either work or return an explicit unsupported result;
@@ -46,13 +46,17 @@ sequenceDiagram
     end
     App->>Runtime: createRuntimeFromAdapter()
     Runtime->>Adapter: changeModel() when requested
-    Runtime->>Adapter: attachText(setup prompt)
+    alt agent mode
+        Runtime->>Adapter: attachText(full setup prompt)
+    else chat mode
+        Runtime->>Adapter: attachText(minimal setup handshake)
+    end
     Runtime->>Adapter: submitWithResponseTimeout()
     Adapter-->>Runtime: streamed response ending in READY
     Runtime-->>App: initialized runtime
 ```
 
-`READY` is a Runtime handshake, not a DOM readiness signal. The adapter must prove that the page is ready before the Runtime writes the setup prompt.
+`READY` is a Runtime handshake, not a DOM readiness signal. The response must contain `READY` as a case-insensitive whole word. The adapter must prove that the page is ready before the Runtime writes either setup prompt.
 
 ### Resumed conversation
 
@@ -69,7 +73,7 @@ sequenceDiagram
     Adapter->>Adapter: super.init()
     Adapter->>Page: install response/CDP history capture
     Adapter->>Page: restore conversation URL
-    App->>Runtime: createRuntimeFromAdapter(skipSetup=true)
+    App->>Runtime: createRuntimeFromAdapter(setupMode=skip)
     Runtime-->>App: runtime ready without a new setup message
     App->>Runtime: loadHistory()
     Runtime->>Adapter: loadHistory()
@@ -321,17 +325,18 @@ Coverage is a diagnostic baseline, not proof that the live Provider website stil
 
 CI does not log in to Provider websites. Use a dedicated profile and record only pass/fail facts, never private content.
 
-1. Open a new signed-in thread and complete the setup `READY` handshake.
-2. Verify signed-out/login redirect behavior without sending setup early.
-3. Submit a normal turn; verify request start, monotonic streaming, completion, and a second usable turn.
-4. Exercise a real Tool call and any Provider continuation stream.
-5. Select a model and verify the selected state when the Provider supports it.
-6. Upload file/image content and verify page acknowledgement where safely observable.
-7. List, select/toggle, clear, and re-list capabilities when applicable.
-8. Cancel a live response and verify the page remains usable.
-9. Resume a short and long history; verify current branch, ordering, filtered controls, and incomplete warnings.
-10. Check restricted, rate-limit, or account-tier behavior only when that state already exists and can be tested safely.
-11. Close/detach the thread and exit; verify listeners, pages, browser ownership, and child processes clean up.
+1. Open a new signed-in agent thread and complete the full setup `READY` handshake.
+2. Open a chat thread and verify that it sends only the minimal handshake and accepts a case-insensitive whole-word `READY` response.
+3. Verify signed-out/login redirect behavior without sending setup early.
+4. Submit a normal turn; verify request start, monotonic streaming, completion, and a second usable turn.
+5. Exercise a real Tool call and any Provider continuation stream.
+6. Select a model and verify the selected state when the Provider supports it.
+7. Upload file/image content and verify page acknowledgement where safely observable.
+8. List, select/toggle, clear, and re-list capabilities when applicable.
+9. Cancel a live response and verify the page remains usable.
+10. Resume a short and long history; verify current branch, ordering, filtered controls, and incomplete warnings.
+11. Check restricted, rate-limit, or account-tier behavior only when that state already exists and can be tested safely.
+12. Close/detach the thread and exit; verify listeners, pages, browser ownership, and child processes clean up.
 
 State any unrun smoke path explicitly in the final report. Unit tests cannot substitute for an upstream DOM/protocol check.
 

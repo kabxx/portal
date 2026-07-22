@@ -165,6 +165,29 @@ test('thread open hints filter providers then advance to the optional model', ()
   assert.equal(completedHints.length, 1)
 })
 
+test('thread chat hints and completion mirror thread open', () => {
+  const providerHints = resolveCommandHints(
+    '/thread chat gem',
+    DEFAULT_COMMANDS,
+    PROVIDERS
+  )
+  assert.equal(
+    providerHints[0]?.usage,
+    '/thread chat <provider> [model-number]'
+  )
+  assert.equal(providerHints[1]?.usage, 'provider: gemini')
+  assert.equal(
+    completeThreadProvider('/thread chat gem', PROVIDERS),
+    '/thread chat gemini '
+  )
+  const modelHints = resolveCommandHints(
+    '/thread chat gemini ',
+    DEFAULT_COMMANDS,
+    PROVIDERS
+  )
+  assert.equal(modelHints[1]?.usage, 'model-number: optional')
+})
+
 test('unknown warnings wait until the invalid token is completed', () => {
   assert.deepEqual(
     resolveCommandHints('/unknown', DEFAULT_COMMANDS, PROVIDERS),
@@ -412,6 +435,7 @@ test('guide-derived subcommands preserve existing completion order', () => {
   const expected: Readonly<Record<string, readonly string[]>> = {
     '/thread': [
       'open',
+      'chat',
       'list',
       'history',
       'resume',

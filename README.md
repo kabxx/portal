@@ -50,6 +50,11 @@ On first run, portal creates a commented `data/config.yaml` and a dedicated brow
 Summarize this repository and identify its highest-risk module.
 ```
 
+Use `/thread chat <provider> [model]` to open a minimally initialized provider
+conversation. Chat creation sends only the shared `READY` handshake instead of
+portal's full agent setup prompt. Local tools, Skills, MCP connections, and
+Hooks remain active, so chat creation is not a sandbox or an execution boundary.
+
 Use `/help` for the command index. See the [CLI guide](docs/cli.md) for threads, resume, input controls, background jobs, and startup options.
 
 > [!WARNING]
@@ -113,6 +118,7 @@ Each mechanism has different trust and lifecycle boundaries. Follow the detailed
 - Resume displays the provider's current visible user/assistant branch; unsupported content and alternate branches are filtered.
 - Home and thread timelines are in memory only.
 - Resume assumes that the existing conversation already contains portal's tool protocol; it skips the setup handshake and does not resend current project instructions.
+- Chat creation still sends a minimal `READY` handshake and can execute a valid model-generated tool call even though it does not advertise portal's tools.
 - portal is not packaged as a stable global CLI, and automated real-browser CI is not yet available.
 
 ## License

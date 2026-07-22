@@ -36,9 +36,9 @@ function createHandlers(calls: string[] = []): PortalMcpHandlers {
       calls.push(`get:${threadId}`)
       return thread
     },
-    openThread: async ({ provider }, signal) => {
+    openThread: async ({ provider, mode }, signal) => {
       assert.equal(signal.aborted, false)
-      calls.push(`open:${provider}`)
+      calls.push(`open:${provider}:${mode}`)
       return thread
     },
     resumeThread: async (conversationUrl) => {
@@ -101,6 +101,15 @@ test('PortalMcpServer initializes, lists, and calls its fixed tools', async () =
       { type: 'text', text: '{"providers":["chatgpt","gemini"]}' },
     ])
 
+    await client.callTool({
+      name: 'portal_open_thread',
+      arguments: { provider: 'chatgpt' },
+    })
+    await client.callTool({
+      name: 'portal_open_thread',
+      arguments: { provider: 'chatgpt', mode: 'chat' },
+    })
+
     const sent = await client.callTool({
       name: 'portal_send_message',
       arguments: { threadId: 't-1', input: 'hello' },
@@ -120,7 +129,12 @@ test('PortalMcpServer initializes, lists, and calls its fixed tools', async () =
       status: 'completed',
       assistant: 'answer',
     })
-    assert.deepEqual(calls, ['send:t-1:hello', 'wait:op-1:2000'])
+    assert.deepEqual(calls, [
+      'open:chatgpt:agent',
+      'open:chatgpt:chat',
+      'send:t-1:hello',
+      'wait:op-1:2000',
+    ])
   } finally {
     await client.close()
     await server.stop()

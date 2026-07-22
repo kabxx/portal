@@ -45,20 +45,20 @@ The API addresses a thread directly. It does not introduce a separate
 `session`, `run`, or `turn` resource, and it does not expose MCP attachment
 operations.
 
-| Method   | Path                             | Purpose                                               |
-| -------- | -------------------------------- | ----------------------------------------------------- |
-| `GET`    | `/health`                        | Liveness check                                        |
-| `GET`    | `/v1/status`                     | Portal and API status                                 |
-| `GET`    | `/v1/providers`                  | Supported provider ids                                |
-| `GET`    | `/v1/threads`                    | List open threads                                     |
-| `POST`   | `/v1/threads`                    | Open a thread; body: `provider`, optional `model`     |
-| `POST`   | `/v1/threads/resume`             | Resume; body: `conversationUrl`                       |
-| `GET`    | `/v1/threads/:threadId`          | Get thread metadata                                   |
-| `DELETE` | `/v1/threads/:threadId`          | Close a thread                                        |
-| `POST`   | `/v1/threads/:threadId/messages` | Submit `{ "input": "..." }`; returns `202`            |
-| `POST`   | `/v1/threads/:threadId/cancel`   | Cancel the current thread operation; idempotent       |
-| `POST`   | `/v1/threads/:threadId/reload`   | Reload the provider page; returns `202`               |
-| `GET`    | `/v1/threads/:threadId/events`   | Subscribe to SSE events; multiple clients are allowed |
+| Method   | Path                             | Purpose                                                      |
+| -------- | -------------------------------- | ------------------------------------------------------------ |
+| `GET`    | `/health`                        | Liveness check                                               |
+| `GET`    | `/v1/status`                     | Portal and API status                                        |
+| `GET`    | `/v1/providers`                  | Supported provider ids                                       |
+| `GET`    | `/v1/threads`                    | List open threads                                            |
+| `POST`   | `/v1/threads`                    | Open a thread; body: `provider`, optional `model` and `mode` |
+| `POST`   | `/v1/threads/resume`             | Resume; body: `conversationUrl`                              |
+| `GET`    | `/v1/threads/:threadId`          | Get thread metadata                                          |
+| `DELETE` | `/v1/threads/:threadId`          | Close a thread                                               |
+| `POST`   | `/v1/threads/:threadId/messages` | Submit `{ "input": "..." }`; returns `202`                   |
+| `POST`   | `/v1/threads/:threadId/cancel`   | Cancel the current thread operation; idempotent              |
+| `POST`   | `/v1/threads/:threadId/reload`   | Reload the provider page; returns `202`                      |
+| `GET`    | `/v1/threads/:threadId/events`   | Subscribe to SSE events; multiple clients are allowed        |
 
 Only one operation may run on a given thread at a time. A conflicting message
 or reload returns `409 THREAD_BUSY`; it is not queued. Different threads can
@@ -66,6 +66,13 @@ run through the existing thread coordinator. Reload restores the current
 provider page without creating a turn or changing the local title/history.
 Subscribe to the SSE endpoint before sending the reload request when the
 `thread.action` `started` event must not be missed.
+
+`POST /v1/threads` accepts an optional `mode` of `"agent"` or `"chat"` and
+defaults to `"agent"`. Agent creation sends the full portal setup prompt. Chat
+creation sends only the shared `READY` handshake; the response must contain
+`READY` as a case-insensitive whole word. Chat runtimes still connect configured
+MCP servers, snapshot Skills, register tools and Hooks, and may execute a valid
+model-generated tool call. The mode is not a sandbox or permission boundary.
 
 Closing a thread can return `409 THREAD_CLOSE_TIMEOUT` when its active operation
 does not settle in time. If the logical thread was removed but one or more

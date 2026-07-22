@@ -14,6 +14,10 @@ import {
   projectStreamingAssistantText,
 } from '../tools/core/tool-registry.ts'
 import { getDefaultShell } from '../platform/platform-defaults.ts'
+import {
+  hasReadyHandshakeToken,
+  SETUP_HANDSHAKE_PROMPT,
+} from '../runtime/setup-handshake.ts'
 
 export type UiTone =
   | 'info'
@@ -695,12 +699,21 @@ export class TerminalController {
     const firstMessage = messages[0]
     if (isInitialSetupMessage(firstMessage)) {
       hiddenIndexes.add(0)
+      const nextUserIndex = messages.findIndex(
+        (message, index) => index > 0 && message.role === 'user'
+      )
       const firstAssistantIndex = messages.findIndex(
-        (message, index) => index > 0 && message.role === 'assistant'
+        (message, index) =>
+          index > 0 &&
+          (nextUserIndex === -1 || index < nextUserIndex) &&
+          message.role === 'assistant'
       )
       const firstAssistant =
         firstAssistantIndex === -1 ? null : messages[firstAssistantIndex]
-      if (firstAssistant?.text.trim() === 'READY') {
+      if (
+        firstAssistant != null &&
+        hasReadyHandshakeToken(firstAssistant.text)
+      ) {
         hiddenIndexes.add(firstAssistantIndex)
       }
     }
@@ -1392,7 +1405,9 @@ function isInitialSetupMessage(
   message: ConversationHistoryMessage | undefined
 ): boolean {
   return (
-    message?.role === 'user' && message.text.trimStart().startsWith('# System')
+    message?.role === 'user' &&
+    (message.text.trimStart().startsWith('# System') ||
+      message.text.trim() === SETUP_HANDSHAKE_PROMPT)
   )
 }
 

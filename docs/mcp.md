@@ -101,6 +101,11 @@ When a new, resumed, or spawned runtime is created:
 
 Resume does not restore an old transport or HTTP `MCP-Session-Id`. It reconnects the currently enabled configuration with fresh clients. A resumed conversation skips the setup handshake, so the model may still have an older MCP catalog in its provider-side context; current connections are available to host tools, but portal does not send a catalog update turn.
 
+A chat thread also creates normal MCP connections and exposes the host tools to
+the local runtime, but its minimal setup handshake does not advertise the MCP
+catalog. A valid model-generated MCP tool call can still be executed; chat mode
+is not a security boundary.
+
 Tool `list_changed` notifications refresh the current connection cache. They do not rewrite the original setup snapshot or add a discovery turn. A server/tool name added after runtime creation is therefore reliably advertised only to a new runtime.
 
 ## Tool discovery and calls
@@ -110,7 +115,7 @@ Every runtime exposes two MCP host tools. When no Server is available, they retu
 - `mcp_search_tool({ server, tool })` loads one exact cached Tool definition, including description, input schema, and optional output schema. It never calls the server Tool.
 - `mcp_call_tool({ server, tool, arguments })` calls one exact cached Tool using schema-conforming arguments.
 
-The setup prompt contains only successful Server and Tool names under `# MCP Servers`. It does not inject descriptions, schemas, server instructions, Resources, or Prompts. The model should search an unfamiliar Tool before calling it.
+Full agent and spawned setup prompts contain only successful Server and Tool names under `# MCP Servers`. They do not inject descriptions, schemas, server instructions, Resources, or Prompts. The model should search an unfamiliar Tool before calling it. Chat and resumed runtimes send no MCP catalog turn.
 
 ## Resources and Prompts
 

@@ -27,8 +27,10 @@ import { RuntimeCore } from './runtime-core.ts'
 import { throwIfAborted } from './runtime-cancellation.ts'
 import type { ProjectInstructions } from '../instructions/project-instructions.ts'
 import type { HookDispatcher } from '../hooks/hook-dispatcher.ts'
+import type { RuntimeSetupMode } from './setup-handshake.ts'
 
 export interface RuntimeFactoryOptions extends ProviderAdapterOptions {
+  setupMode?: RuntimeSetupMode
   providerPrompt?: string | null
   toolServices?: ToolServices
   skillLibrary?: SkillLibrary
@@ -166,8 +168,9 @@ export async function createRuntimeFromAdapter(
       await adapter.changeModel(options.model)
     }
     throwIfAborted(signal)
-    if (options.skipSetup !== true) {
-      await runtime.init({ signal })
+    const setupMode = options.setupMode ?? 'full'
+    if (setupMode !== 'skip') {
+      await runtime.init({ signal, setupMode })
     }
     throwIfAborted(signal)
     return runtime

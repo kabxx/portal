@@ -27,6 +27,7 @@ portal supports eight web AI products through provider-specific adapters. Every 
 
 ```text
 /thread open <provider> [model]
+/thread chat <provider> [model]
 ```
 
 Examples:
@@ -38,9 +39,16 @@ Examples:
 /thread open chatgpt 1+2
 /thread open gemini 1+extended
 /thread open kimi 1
+/thread chat chatgpt
 ```
 
-When the model argument is omitted, portal leaves the provider's current/default selection unchanged. Opening a new thread creates a page, verifies login and composer readiness, connects the current MCP configuration, snapshots enabled Skills, sends the portal setup prompt, and requires a case-insensitive whole-word `READY` token in the response.
+When the model argument is omitted, portal leaves the provider's current/default selection unchanged. Both creation commands create a page, verify login and composer readiness, connect the current MCP configuration, snapshot enabled Skills, and require a case-insensitive whole-word `READY` token in the handshake response.
+
+`/thread open` sends the full portal agent setup prompt. `/thread chat` sends
+only the shared setup handshake, without the tool protocol, Skill or MCP
+catalog, working directory, project instructions, or provider-specific prompt.
+The local chat runtime still owns those configured integrations and can execute
+a valid model-generated tool call, so this mode is not a sandbox.
 
 If login is required, portal keeps the same adapter page open and waits for the user to complete authentication in the browser.
 
@@ -154,7 +162,7 @@ These history endpoints are private web implementation details, not public APIs.
 
 ## Provider-specific setup
 
-Most providers use the shared setup prompt. Grok receives an additional strict tool-boundary prompt because its native product features and local-tool behavior require stronger separation. That provider rule remains active after the `READY` handshake.
+Agent-mode threads and spawned runtimes use the shared full setup prompt. Grok receives an additional strict tool-boundary prompt because its native product features and local-tool behavior require stronger separation. That provider rule remains active after the `READY` handshake. Chat creation sends only the shared handshake and does not include provider-specific setup text.
 
 ## Maintenance notes
 

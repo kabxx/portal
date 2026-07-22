@@ -14,6 +14,7 @@ import type { McpLibrary } from '../../mcp/mcp-library.ts'
 import type { HookCatalog } from '../../hooks/hook-catalog.ts'
 import type { KeybindingCatalog } from '../../keybindings/keybinding-catalog.ts'
 import type { RunCommandJobService } from '../../processes/run-command-job-manager.ts'
+import type { ThreadCreationMode } from '../../threads/thread-creation-mode.ts'
 
 export interface ListenerCommandController {
   start(): Promise<void>
@@ -46,7 +47,11 @@ export interface CliCommandContext {
   browserProfileDir: string
   providers: readonly ProviderId[]
   resolveProvider(value: string): ProviderId | null
-  createThread(provider: ProviderId, model: string | null): Promise<void>
+  createThread(
+    provider: ProviderId,
+    model: string | null,
+    mode?: ThreadCreationMode
+  ): Promise<void>
   resumeThread(conversationUrl: string): Promise<void>
   reloadThread?: (threadId: string) => Promise<void>
   closeThread(threadId: string): Promise<boolean>

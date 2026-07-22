@@ -60,12 +60,13 @@ activate directory-specific rules.
 
 ## Runtime lifecycle
 
-| Runtime                 | Instruction behavior                                                                                                                        |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| New thread              | Loads the configured snapshot and includes always-on instructions in the setup prompt                                                       |
-| Spawned runtime         | Forks the parent snapshot and runs its own setup handshake                                                                                  |
-| Hook prompt/agent child | Loads the configured sources for the isolated child runtime                                                                                 |
-| Resumed thread          | Reads a fresh snapshot, but `skipSetup: true` means it does not resend the initial instruction prompt to the existing provider conversation |
+| Runtime                 | Instruction behavior                                                                                                                          |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent thread            | Loads the configured snapshot and includes always-on instructions in the full setup prompt                                                    |
+| Chat thread             | Loads the snapshot locally but sends only the shared handshake; a later target-aware tool call can still activate matching instructions       |
+| Spawned runtime         | Forks the parent snapshot and runs its own full setup handshake                                                                               |
+| Hook prompt/agent child | Loads the configured sources for the isolated child runtime                                                                                   |
+| Resumed thread          | Reads a fresh snapshot, but `setupMode: 'skip'` means it does not resend the initial instruction prompt to the existing provider conversation |
 
 The resumed thread currently does not attach that snapshot to its
 `RuntimeCore`; it therefore does not perform target-aware instruction activation

@@ -13,6 +13,7 @@ import {
 import { ThreadManager } from '../../src/threads/thread-manager.ts'
 import { DEFAULT_COMMANDS } from '../../src/cli-commands/command-set.ts'
 import { createFakeRuntime } from '../helpers/fakes.ts'
+import { SETUP_HANDSHAKE_PROMPT } from '../../src/runtime/setup-handshake.ts'
 
 test('TerminalController renders providers as a plain list', () => {
   const ui = new TerminalController()
@@ -586,6 +587,95 @@ test('TerminalController keeps READY when no setup prompt is present', () => {
     [
       { tone: 'user', body: 'Say READY.' },
       { tone: 'assistant', body: 'READY' },
+    ]
+  )
+})
+
+test('TerminalController hides the chat handshake and accepted READY response', () => {
+  const manager = new ThreadManager()
+  const thread = manager.addThread({
+    id: manager.createThreadId(),
+    provider: 'chatgpt',
+    runtime: createFakeRuntime(),
+    createdAt: 1,
+  })
+  const ui = new TerminalController()
+
+  ui.renderConversationHistory(thread, [
+    {
+      id: 'setup',
+      parentId: null,
+      role: 'user',
+      text: SETUP_HANDSHAKE_PROMPT,
+      format: 'plain',
+      createdAt: 1,
+    },
+    {
+      id: 'ready',
+      parentId: 'setup',
+      role: 'assistant',
+      text: 'ready - complete',
+      format: 'markdown',
+      createdAt: 2,
+    },
+    {
+      id: 'question',
+      parentId: 'ready',
+      role: 'user',
+      text: 'Hello.',
+      format: 'plain',
+      createdAt: 3,
+    },
+  ])
+
+  assert.deepEqual(
+    ui.getState().timeline.map(({ tone, body }) => ({ tone, body })),
+    [{ tone: 'user', body: 'Hello.' }]
+  )
+})
+
+test('TerminalController keeps a later READY response when the handshake reply is missing', () => {
+  const manager = new ThreadManager()
+  const thread = manager.addThread({
+    id: manager.createThreadId(),
+    provider: 'chatgpt',
+    runtime: createFakeRuntime(),
+    createdAt: 1,
+  })
+  const ui = new TerminalController()
+
+  ui.renderConversationHistory(thread, [
+    {
+      id: 'setup',
+      parentId: null,
+      role: 'user',
+      text: SETUP_HANDSHAKE_PROMPT,
+      format: 'plain',
+      createdAt: 1,
+    },
+    {
+      id: 'question',
+      parentId: 'setup',
+      role: 'user',
+      text: 'Can you help?',
+      format: 'plain',
+      createdAt: 2,
+    },
+    {
+      id: 'answer',
+      parentId: 'question',
+      role: 'assistant',
+      text: 'I am ready to help.',
+      format: 'markdown',
+      createdAt: 3,
+    },
+  ])
+
+  assert.deepEqual(
+    ui.getState().timeline.map(({ tone, body }) => ({ tone, body })),
+    [
+      { tone: 'user', body: 'Can you help?' },
+      { tone: 'assistant', body: 'I am ready to help.' },
     ]
   )
 })

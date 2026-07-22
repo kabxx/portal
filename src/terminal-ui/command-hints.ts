@@ -252,7 +252,10 @@ function appendProviderHint(
   trailingWhitespace: boolean,
   providers: readonly ProviderId[]
 ): readonly InputHint[] {
-  if (command.name !== '/thread' || pathInput[0] !== 'open') {
+  if (
+    command.name !== '/thread' ||
+    (pathInput[0] !== 'open' && pathInput[0] !== 'chat')
+  ) {
     return hints
   }
 

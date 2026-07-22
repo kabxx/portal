@@ -12,6 +12,8 @@ import {
   closeWithTimeout,
   createIdempotentAsyncTask,
   createPortalRuntimeSettings,
+  parseApiThreadCreationMode,
+  runtimeSetupModeForThreadCreation,
   handleUnexpectedThreadPageClose,
   loadResumedThreadHistory,
   setApiProviderCapability,
@@ -44,6 +46,15 @@ test('application provider registry includes every supported provider', () => {
     'qwen',
     'kimi',
   ])
+})
+
+test('thread creation modes map to setup modes and API defaults safely', () => {
+  assert.equal(runtimeSetupModeForThreadCreation('agent'), 'full')
+  assert.equal(runtimeSetupModeForThreadCreation('chat'), 'handshake')
+  assert.equal(parseApiThreadCreationMode(undefined), 'agent')
+  assert.equal(parseApiThreadCreationMode('chat'), 'chat')
+  assert.throws(() => parseApiThreadCreationMode(null), /mode must be/)
+  assert.throws(() => parseApiThreadCreationMode('clean'), /mode must be/)
 })
 
 test('transitionLoginWaitWarning renders only when entering login wait', () => {
@@ -313,6 +324,7 @@ test('busy threads allow navigation and queries but reject runtime mutations', (
     '/thread switch t-2',
     '/thread close t-1',
     '/thread open gemini',
+    '/thread chat gemini',
     '/thread status',
     '/mcp list',
     '/mcp resource list',

@@ -1,3 +1,5 @@
+import type { ThreadCreationMode } from '../threads/thread-creation-mode.ts'
+
 export type PortalMcpThreadSummary = {
   id: string
   provider: string
@@ -30,7 +32,11 @@ export interface PortalMcpHandlers {
     | { threads: PortalMcpThreadSummary[] }
   getThread(threadId: string): Promise<PortalMcpThreadSummary>
   openThread(
-    input: { provider: string; model: string | null },
+    input: {
+      provider: string
+      model: string | null
+      mode: ThreadCreationMode
+    },
     signal: AbortSignal
   ): Promise<PortalMcpThreadSummary>
   resumeThread(
