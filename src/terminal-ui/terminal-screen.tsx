@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { Box, Static, Text, useInput, usePaste, useWindowSize } from 'ink'
+import {
+  Box,
+  sanitizeTerminalText,
+  Static,
+  stripAnsiSequences,
+  Text,
+  tokenizeAnsi,
+  useInput,
+  usePaste,
+  useWindowSize,
+} from 'ink'
 import type { CliCommand } from '../cli-commands/core/command-types.ts'
 import type { KeybindingCatalog } from '../keybindings/keybinding-catalog.ts'
 import type { ProviderId } from '../providers/provider-id.ts'
@@ -1825,78 +1835,96 @@ const MARKDOWN_RENDER_OPTIONS = {
   wrap: true,
 }
 
-const ANSI_CSI_RE = /(\x1b\[[0-?]*[ -/]*[@-~])/g
-const ANSI_CSI_TOKEN_RE = /^\x1b\[[0-?]*[ -/]*[@-~]$/
-
-function expandBubbleTabs(value: string): string {
-  const normalized = value.replace(/\r\n?/g, '\n')
-  let column = 0
-
-  return normalized
-    .split(ANSI_CSI_RE)
-    .map((part) => {
-      if (ANSI_CSI_TOKEN_RE.test(part)) {
-        return part
-      }
-
-      let expanded = ''
-      for (const grapheme of splitGraphemes(part)) {
-        if (grapheme === '\n') {
-          expanded += grapheme
-          column = 0
-        } else if (grapheme === '\t') {
-          const spaces = INPUT_TAB_WIDTH - (column % INPUT_TAB_WIDTH)
-          expanded += ' '.repeat(spaces)
-          column += spaces
-        } else {
-          expanded += grapheme
-          column += estimateGraphemeWidth(grapheme)
-        }
-      }
-      return expanded
-    })
-    .join('')
-}
-
 function collectLeadingAnsi(value: string): string {
   let leading = ''
-  let match: RegExpExecArray | null
-  ANSI_CSI_RE.lastIndex = 0
-  while ((match = ANSI_CSI_RE.exec(value)) !== null) {
-    if (match.index === leading.length) {
-      leading += match[0]
+  for (const token of tokenizeAnsi(value)) {
+    if (token.type === 'csi') {
+      leading += token.value
     } else {
       break
     }
   }
-  ANSI_CSI_RE.lastIndex = 0
   return leading
 }
 
-function wrapAnsiLine(value: string, maxWidth: number): string[] {
+const OSC8_CLOSE = '\u001B]8;;\u001B\\'
+
+function getOsc8Uri(value: string): string | undefined {
+  const payloadStart = value.startsWith('\u001B]')
+    ? 2
+    : value.startsWith('\u009D')
+      ? 1
+      : -1
+  if (payloadStart < 0) return undefined
+
+  const payloadEnd = value.endsWith('\u001B\\')
+    ? value.length - 2
+    : value.endsWith('\u0007') || value.endsWith('\u009C')
+      ? value.length - 1
+      : -1
+  if (payloadEnd < 0) return undefined
+
+  const payload = value.slice(payloadStart, payloadEnd)
+  if (!payload.startsWith('8;')) return undefined
+
+  const uriSeparator = payload.indexOf(';', 2)
+  return uriSeparator < 0 ? undefined : payload.slice(uriSeparator + 1)
+}
+
+export function wrapAnsiLine(value: string, maxWidth: number): string[] {
   const safeWidth = Math.max(1, maxWidth)
   if (!value) return ['']
 
-  const plain = value.replace(ANSI_CSI_RE, '')
+  const plain = stripAnsiSequences(value)
   if (estimateDisplayWidth(plain) <= safeWidth) {
     return [value]
   }
 
   const leadingAnsi = collectLeadingAnsi(value)
   const segments: string[] = []
-  let current = leadingAnsi
+  let current = ''
   let currentWidth = 0
+  let activeHyperlink: string | undefined
 
-  for (const grapheme of splitGraphemes(plain)) {
-    const charWidth = estimateDisplayWidth(grapheme)
-    if (currentWidth > 0 && currentWidth + charWidth > safeWidth) {
-      segments.push(current)
-      current = leadingAnsi + grapheme
-      currentWidth = charWidth
-    } else {
-      current += grapheme
-      currentWidth += charWidth
+  const pushWrappedLine = () => {
+    if (activeHyperlink !== undefined) {
+      current += OSC8_CLOSE
     }
+    segments.push(current)
+    current = leadingAnsi + (activeHyperlink ?? '')
+    currentWidth = 0
+  }
+
+  for (const token of tokenizeAnsi(value)) {
+    if (token.type === 'text') {
+      for (const grapheme of splitGraphemes(token.value)) {
+        const charWidth = estimateDisplayWidth(grapheme)
+        if (currentWidth > 0 && currentWidth + charWidth > safeWidth) {
+          pushWrappedLine()
+        }
+
+        current += grapheme
+        currentWidth += charWidth
+      }
+      continue
+    }
+
+    if (token.type === 'osc') {
+      const uri = getOsc8Uri(token.value)
+      current += token.value
+      if (uri !== undefined) {
+        activeHyperlink = uri.length > 0 ? token.value : undefined
+      }
+      continue
+    }
+
+    if (token.type === 'csi') {
+      current += token.value
+    }
+  }
+
+  if (activeHyperlink !== undefined) {
+    current += OSC8_CLOSE
   }
 
   if (current || segments.length === 0) {
@@ -1907,7 +1935,7 @@ function wrapAnsiLine(value: string, maxWidth: number): string[] {
 }
 
 function stripAnsi(value: string): string {
-  return value.replace(ANSI_CSI_RE, '')
+  return stripAnsiSequences(value)
 }
 
 function padToWidthAnsi(value: string, width: number): string {
@@ -1922,7 +1950,7 @@ export function renderBubbleBody(
   format: BubbleFormat,
   width: number
 ): string {
-  const normalizedBody = expandBubbleTabs(body)
+  const normalizedBody = sanitizeTerminalText(body)
   if (format === 'v4a') {
     return renderV4aBody(normalizedBody)
   }
@@ -1995,8 +2023,9 @@ const GRAPHEME_SEGMENTER =
     : null
 
 const COMBINING_MARK_REGEX = /\p{Mark}/u
+const DEFAULT_IGNORABLE_CODE_POINT_REGEX = /\p{Default_Ignorable_Code_Point}/u
 const EMOJI_GRAPHEME_REGEX =
-  /(?:\p{Extended_Pictographic}|\u200d|\ufe0f|\u20e3)/u
+  /(?:\p{Extended_Pictographic}|\p{Emoji_Presentation}|\u20e3)/u
 
 export function wrapSingleLine(value: string, width: number): string[] {
   const safeWidth = Math.max(1, width)
@@ -2078,12 +2107,17 @@ function estimateGraphemeWidth(grapheme: string): number {
     return 0
   }
 
+  const characters = Array.from(grapheme)
+  if (characters.every(isZeroWidthCharacter)) {
+    return 0
+  }
+
   if (EMOJI_GRAPHEME_REGEX.test(grapheme)) {
     return 2
   }
 
   let width = 0
-  for (const char of Array.from(grapheme)) {
+  for (const char of characters) {
     if (isZeroWidthCharacter(char)) {
       continue
     }
@@ -2094,11 +2128,8 @@ function estimateGraphemeWidth(grapheme: string): number {
 }
 
 function isZeroWidthCharacter(char: string): boolean {
-  const codePoint = char.codePointAt(0) ?? 0
   return (
-    codePoint === 0x200d ||
-    codePoint === 0xfe0e ||
-    codePoint === 0xfe0f ||
+    DEFAULT_IGNORABLE_CODE_POINT_REGEX.test(char) ||
     COMBINING_MARK_REGEX.test(char)
   )
 }
