@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { Box, Static, Text, useInput, usePaste, useWindowSize } from 'ink'
+import {
+  Box,
+  sanitizeTerminalText,
+  Static,
+  stripAnsiSequences,
+  Text,
+  useInput,
+  usePaste,
+  useWindowSize,
+} from 'ink'
 import type { CliCommand } from '../cli-commands/core/command-types.ts'
 import type { KeybindingCatalog } from '../keybindings/keybinding-catalog.ts'
 import type { ProviderId } from '../providers/provider-id.ts'
@@ -1826,37 +1835,6 @@ const MARKDOWN_RENDER_OPTIONS = {
 }
 
 const ANSI_CSI_RE = /(\x1b\[[0-?]*[ -/]*[@-~])/g
-const ANSI_CSI_TOKEN_RE = /^\x1b\[[0-?]*[ -/]*[@-~]$/
-
-function expandBubbleTabs(value: string): string {
-  const normalized = value.replace(/\r\n?/g, '\n')
-  let column = 0
-
-  return normalized
-    .split(ANSI_CSI_RE)
-    .map((part) => {
-      if (ANSI_CSI_TOKEN_RE.test(part)) {
-        return part
-      }
-
-      let expanded = ''
-      for (const grapheme of splitGraphemes(part)) {
-        if (grapheme === '\n') {
-          expanded += grapheme
-          column = 0
-        } else if (grapheme === '\t') {
-          const spaces = INPUT_TAB_WIDTH - (column % INPUT_TAB_WIDTH)
-          expanded += ' '.repeat(spaces)
-          column += spaces
-        } else {
-          expanded += grapheme
-          column += estimateGraphemeWidth(grapheme)
-        }
-      }
-      return expanded
-    })
-    .join('')
-}
 
 function collectLeadingAnsi(value: string): string {
   let leading = ''
@@ -1907,7 +1885,7 @@ function wrapAnsiLine(value: string, maxWidth: number): string[] {
 }
 
 function stripAnsi(value: string): string {
-  return value.replace(ANSI_CSI_RE, '')
+  return stripAnsiSequences(value)
 }
 
 function padToWidthAnsi(value: string, width: number): string {
@@ -1922,7 +1900,7 @@ export function renderBubbleBody(
   format: BubbleFormat,
   width: number
 ): string {
-  const normalizedBody = expandBubbleTabs(body)
+  const normalizedBody = sanitizeTerminalText(body)
   if (format === 'v4a') {
     return renderV4aBody(normalizedBody)
   }
@@ -1995,8 +1973,9 @@ const GRAPHEME_SEGMENTER =
     : null
 
 const COMBINING_MARK_REGEX = /\p{Mark}/u
+const DEFAULT_IGNORABLE_CODE_POINT_REGEX = /\p{Default_Ignorable_Code_Point}/u
 const EMOJI_GRAPHEME_REGEX =
-  /(?:\p{Extended_Pictographic}|\u200d|\ufe0f|\u20e3)/u
+  /(?:\p{Extended_Pictographic}|\p{Emoji_Presentation}|\u20e3)/u
 
 export function wrapSingleLine(value: string, width: number): string[] {
   const safeWidth = Math.max(1, width)
@@ -2078,12 +2057,17 @@ function estimateGraphemeWidth(grapheme: string): number {
     return 0
   }
 
+  const characters = Array.from(grapheme)
+  if (characters.every(isZeroWidthCharacter)) {
+    return 0
+  }
+
   if (EMOJI_GRAPHEME_REGEX.test(grapheme)) {
     return 2
   }
 
   let width = 0
-  for (const char of Array.from(grapheme)) {
+  for (const char of characters) {
     if (isZeroWidthCharacter(char)) {
       continue
     }
@@ -2094,11 +2078,8 @@ function estimateGraphemeWidth(grapheme: string): number {
 }
 
 function isZeroWidthCharacter(char: string): boolean {
-  const codePoint = char.codePointAt(0) ?? 0
   return (
-    codePoint === 0x200d ||
-    codePoint === 0xfe0e ||
-    codePoint === 0xfe0f ||
+    DEFAULT_IGNORABLE_CODE_POINT_REGEX.test(char) ||
     COMBINING_MARK_REGEX.test(char)
   )
 }
