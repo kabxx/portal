@@ -1756,7 +1756,7 @@ export class QwenAdapter extends ProviderAdapter {
 
   private async waitForComposer(
     action: 'restore' | 'submit',
-    timeoutMs: number,
+    timeoutMs: number | null,
     signal?: AbortSignal
   ): Promise<void> {
     await waitAsync(

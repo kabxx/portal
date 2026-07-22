@@ -525,7 +525,7 @@ export class DoubaoAdapter extends ProviderAdapter {
 
   private async waitForReadyContainer(
     action: 'restore' | 'submit',
-    timeoutMs: number,
+    timeoutMs: number | null,
     signal?: AbortSignal
   ): Promise<void> {
     await waitAsync(

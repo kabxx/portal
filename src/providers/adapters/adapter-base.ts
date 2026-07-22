@@ -44,7 +44,6 @@ export const DEFAULT_SUBMIT_REQUEST_START_GRACE_MS = 30000
 export const DEFAULT_SUBMIT_BLOCKED_WARNING_INTERVAL_MS = 30000
 export const DEFAULT_RESPONSE_START_TIMEOUT_MS = 30000
 export const DEFAULT_RESPONSE_STALL_TIMEOUT_MS = 30000
-const MAX_INTERNAL_SUBMIT_WAIT_MS = 2_147_483_647
 const HISTORY_CAPTURE_POLL_MS = 100
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -263,16 +262,18 @@ export function delayAsync(
 
 export function awaitWithTimeout<T>(
   promise: Promise<T>,
-  timeoutMs: number,
+  timeoutMs: number | null,
   onTimeout: () => Error,
   options: AbortOptions = {}
 ): Promise<T> {
   let timer: NodeJS.Timeout | null = null
   const timedPromise = new Promise<T>((resolve, reject) => {
-    timer = setTimeout(() => {
-      timer = null
-      reject(onTimeout())
-    }, timeoutMs)
+    if (timeoutMs !== null) {
+      timer = setTimeout(() => {
+        timer = null
+        reject(onTimeout())
+      }, timeoutMs)
+    }
 
     void promise.then(
       (value) => {
@@ -1169,12 +1170,12 @@ export abstract class ProviderAdapter<
     )
   }
 
-  protected getSubmitResponseTimeoutMs(): number {
-    return MAX_INTERNAL_SUBMIT_WAIT_MS
+  protected getSubmitResponseTimeoutMs(): number | null {
+    return null
   }
 
   protected getRestoreTimeoutMs(): number {
-    return this.options?.timings?.restoreTimeoutMs ?? 60_000
+    return this.options?.timings?.restoreTimeoutMs ?? 180_000
   }
 
   protected getHistoryLoadTimeoutMs(): number {

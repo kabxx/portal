@@ -14,7 +14,7 @@ type DeepSeekAdapterHarness = Pick<DeepSeekAdapter, keyof DeepSeekAdapter> & {
   getLatestCapturedFetchBody(): Promise<string | null>
   getSubmitRequestStartGraceMs(): number
   getSubmitBlockedWarningIntervalMs(): number
-  getSubmitResponseTimeoutMs(): number
+  getSubmitResponseTimeoutMs(): number | null
   readCurrentStreamedResponseText: unknown
 }
 

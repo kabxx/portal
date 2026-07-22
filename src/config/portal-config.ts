@@ -283,7 +283,7 @@ export function createDefaultAdvancedConfig(): PortalAdvancedConfig {
       blockedWarningEverySeconds: 30,
       responseStartTimeoutSeconds: 30,
       responseStallTimeoutSeconds: 30,
-      restoreTimeoutSeconds: 60,
+      restoreTimeoutSeconds: 180,
       historyLoadTimeoutSeconds: 60,
       historyPageTimeoutSeconds: 10,
     },

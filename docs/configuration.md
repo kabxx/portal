@@ -189,7 +189,7 @@ low-frequency tuning knobs and are applied when portal starts.
 | `blockedWarningEverySeconds`      |      30 | Interval between blocked-request warnings                     |
 | `responseStartTimeoutSeconds`     |      30 | Time allowed for first response activity                      |
 | `responseStallTimeoutSeconds`     |      30 | Time allowed between response activities                      |
-| `restoreTimeoutSeconds`           |      60 | Provider page restore timeout                                 |
+| `restoreTimeoutSeconds`           |     180 | Provider page restore timeout                                 |
 | `historyLoadTimeoutSeconds`       |      60 | Total resume-history timeout                                  |
 | `historyPageTimeoutSeconds`       |      10 | Timeout for one history page                                  |
 

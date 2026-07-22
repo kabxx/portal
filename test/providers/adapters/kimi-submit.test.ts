@@ -18,7 +18,7 @@ type KimiAdapterHarness = Pick<KimiAdapter, keyof KimiAdapter> & {
   getCapturedFetchEntryCount(): Promise<number>
   getCapturedFetchEntries(startIndex?: number): Promise<unknown[]>
   reportCapturedSubmitActivity(entries: readonly unknown[]): void
-  getSubmitResponseTimeoutMs(): number
+  getSubmitResponseTimeoutMs(): number | null
 }
 
 function createTestKimiAdapter(): KimiAdapterHarness {
@@ -331,7 +331,7 @@ function createKimiCapturedSubmitPage() {
       stopVisible = false
       adapter.pendingTextVal = text
     },
-    setResponseTimeout(timeoutMs: number) {
+    setResponseTimeout(timeoutMs: number | null) {
       adapter.getSubmitResponseTimeoutMs = () => timeoutMs
     },
     get sendClicks() {
@@ -778,7 +778,7 @@ test('KimiAdapter rejects errors and unverified clean-EOF responses', async () =
       error.detailCode === 'kimi_response_text_missing'
   )
 
-  controls.setResponseTimeout(1000)
+  controls.setResponseTimeout(null)
   controls.setTurn('owned aborted prompt', incompleteRaw, {
     done: false,
     keepStop: true,

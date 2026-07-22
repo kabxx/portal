@@ -80,6 +80,8 @@ test('ensurePortalConfig creates one YAML file with concrete defaults', async ()
     assert.deepEqual(defaults.mcpServers, {})
     assert.deepEqual(defaults.skills, {})
     assert.deepEqual(defaults.advanced, createDefaultAdvancedConfig())
+    assert.equal(defaults.advanced.provider.restoreTimeoutSeconds, 180)
+    assert.equal(document.advanced.provider.restoreTimeoutSeconds, 180)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

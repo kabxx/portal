@@ -5,6 +5,7 @@ import { createContext, runInContext } from 'node:vm'
 import type { Response } from 'playwright'
 
 import {
+  awaitWithTimeout,
   type CapturedFetchEntry,
   createDeferred,
   ProviderAdapter,
@@ -35,6 +36,59 @@ test('createDeferred preserves an early rejection for a later consumer', async (
   await new Promise<void>((resolve) => setImmediate(resolve))
 
   await assert.rejects(deferred.promise, /early deferred failure/)
+})
+
+test('awaitWithTimeout without a deadline resolves and normalizes rejection errors', async () => {
+  assert.equal(
+    await awaitWithTimeout(Promise.resolve('done'), null, () => {
+      throw new Error('timeout callback should not run')
+    }),
+    'done'
+  )
+
+  const nonErrorRejection = new Promise<never>((_resolve, reject) => {
+    // Intentionally exercise the helper's normalization of non-Error rejections.
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+    reject(null)
+  })
+  await assert.rejects(
+    awaitWithTimeout(nonErrorRejection, null, () => {
+      throw new Error('timeout callback should not run')
+    }),
+    /Provider operation failed\./
+  )
+})
+
+test('awaitWithTimeout without a deadline remains abortable', async () => {
+  const controller = new AbortController()
+  let timeoutCalls = 0
+  const pending = awaitWithTimeout(
+    new Promise<never>(() => {}),
+    null,
+    () => {
+      timeoutCalls += 1
+      return new Error('unexpected timeout')
+    },
+    { signal: controller.signal }
+  )
+
+  controller.abort(new PortalAbortError('cancel pending operation'))
+
+  await assert.rejects(pending, /cancel pending operation/)
+  assert.equal(timeoutCalls, 0)
+})
+
+test('awaitWithTimeout keeps finite timeout behavior', async () => {
+  let timeoutCalls = 0
+
+  await assert.rejects(
+    awaitWithTimeout(new Promise<never>(() => {}), 5, () => {
+      timeoutCalls += 1
+      return new Error('finite timeout')
+    }),
+    /finite timeout/
+  )
+  assert.equal(timeoutCalls, 1)
 })
 
 class ThrowingInitAdapter extends ProviderAdapter<
@@ -135,6 +189,10 @@ class ThrowingAuthInitAdapter extends ProviderAdapter<
 }
 
 class PollingAdapter extends ProviderAdapter<ProviderPage, ProviderCdpSession> {
+  public readSubmitResponseTimeoutMs(): number | null {
+    return this.getSubmitResponseTimeoutMs()
+  }
+
   public readTimingOptions() {
     return {
       requestStartWarningAfterMs: this.getSubmitRequestStartGraceMs(),
@@ -482,6 +540,16 @@ test('ProviderAdapter uses configured provider timing options', () => {
   })
 
   assert.deepEqual(adapter.readTimingOptions(), timings)
+})
+
+test('ProviderAdapter uses no submit deadline and the expected restore defaults', () => {
+  const adapter = new PollingAdapter(createProviderContextStub({}))
+  const timings = adapter.readTimingOptions()
+
+  assert.equal(adapter.readSubmitResponseTimeoutMs(), null)
+  assert.equal(timings.restoreTimeoutMs, 180_000)
+  assert.equal(timings.historyLoadTimeoutMs, 60_000)
+  assert.equal(timings.historyPageTimeoutMs, 10_000)
 })
 
 test('ProviderAdapter fails and stops generation when initial response activity times out', async () => {
