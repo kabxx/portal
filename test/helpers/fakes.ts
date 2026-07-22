@@ -26,6 +26,7 @@ export interface FakeRuntimeOptions {
   manualSkills?: readonly ManualSkillSummary[]
   onUnexpectedPageClose?: (listener: () => void) => () => void
   loadHistory?: RuntimeCore['loadHistory']
+  preflightInitialInput?: RuntimeCore['preflightInitialInput']
 }
 
 export function createPrototypeObject(prototype: object): unknown {
@@ -184,6 +185,15 @@ class FakeRuntime extends RuntimeCore {
   }
 
   public override async init(): Promise<void> {}
+
+  public override async preflightInitialInput(
+    input: string,
+    signal?: AbortSignal
+  ): ReturnType<RuntimeCore['preflightInitialInput']> {
+    return this.fakeOptions.preflightInitialInput === undefined
+      ? await super.preflightInitialInput(input, signal)
+      : await this.fakeOptions.preflightInitialInput(input, signal)
+  }
 
   public override async submitUserInput(
     input: string,

@@ -144,6 +144,11 @@ export class TerminalController {
   private pendingPrompt: {
     resolve: (value: string) => void
     reject: (error: Error) => void
+    preflight: ((value: string) => Promise<void>) | null
+    preflightRequest: {
+      value: string
+      promise: Promise<boolean>
+    } | null
   } | null = null
 
   public bindThreadManager(threadManager: ThreadManager) {
@@ -307,7 +312,11 @@ export class TerminalController {
     this.emitView(view)
   }
 
-  public async requestInput(label: string, hint: string): Promise<string> {
+  public async requestInput(
+    label: string,
+    hint: string,
+    preflight: ((value: string) => Promise<void>) | null = null
+  ): Promise<string> {
     if (this.pendingPrompt !== null) {
       throw new Error('Prompt already active')
     }
@@ -321,8 +330,39 @@ export class TerminalController {
     this.emit()
 
     return await new Promise<string>((resolve, reject) => {
-      this.pendingPrompt = { resolve, reject }
+      this.pendingPrompt = {
+        resolve,
+        reject,
+        preflight,
+        preflightRequest: null,
+      }
     })
+  }
+
+  public async preflightInput(value: string): Promise<boolean> {
+    const pendingPrompt = this.pendingPrompt
+    if (pendingPrompt === null) {
+      return false
+    }
+    if (pendingPrompt.preflight === null) {
+      return true
+    }
+    if (pendingPrompt.preflightRequest?.value === value) {
+      return await pendingPrompt.preflightRequest.promise
+    }
+    const promise = pendingPrompt.preflight(value).then(() => true)
+    const request = { value, promise }
+    pendingPrompt.preflightRequest = request
+    try {
+      return await promise
+    } finally {
+      if (
+        this.pendingPrompt === pendingPrompt &&
+        pendingPrompt.preflightRequest === request
+      ) {
+        pendingPrompt.preflightRequest = null
+      }
+    }
   }
 
   public submitInput(value: string): boolean {
