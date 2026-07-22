@@ -164,12 +164,19 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
     const created = await fetch(`${address}/v1/threads`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ provider: 'deepseek', mode: 'chat' }),
+      body: JSON.stringify({
+        provider: 'gemini',
+        model: '3.1-pro',
+        option: 'extended',
+        mode: 'chat',
+      }),
     })
     assert.equal(created.status, 201)
     assert.deepEqual(await created.json(), {
       id: 't-1',
-      provider: 'deepseek',
+      provider: 'gemini',
+      model: '3.1-pro',
+      option: 'extended',
       mode: 'chat',
     })
     const message = await fetch(`${address}/v1/threads/t-1/messages`, {

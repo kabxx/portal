@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import { ThreadCommand } from '../../../src/cli-commands/commands/command-thread.ts'
 import type { ProviderId } from '../../../src/providers/provider-id.ts'
+import type { ResolvedProviderModel } from '../../../src/providers/provider-model-catalog.ts'
 import {
   ThreadCloseCleanupError,
   ThreadManager,
@@ -34,7 +35,7 @@ async function createCommandContext() {
   const threadManager = new ThreadManager()
   const createdThreads: Array<{
     provider: ProviderId
-    model: string | null
+    model: ResolvedProviderModel | null
     mode: ThreadCreationMode
   }> = []
   const resumedUrls: string[] = []
@@ -81,8 +82,8 @@ test('ThreadCommand shows subcommand help when no subcommand is provided', async
   const entry = getLatestTimelineEntry(ui)
   assert.equal(entry.label, '/thread')
   assert.equal(entry.tone, 'info')
-  assert.match(entry.body, /open <provider> \[model-number\]/)
-  assert.match(entry.body, /chat <provider> \[model-number\]/)
+  assert.match(entry.body, /open <provider> \[model-key\] \[option-key\]/)
+  assert.match(entry.body, /chat <provider> \[model-key\] \[option-key\]/)
   assert.match(entry.body, /resume <conversation-url\|#history-id>/)
   assert.match(entry.body, /reload/)
   assert.match(entry.body, /close \[thread-id\]/)
@@ -177,7 +178,7 @@ test('ThreadCommand open validates provider and model', async () => {
   assert.deepEqual(getLatestTimelineEntry(ui), {
     tone: 'warning',
     label: '/thread open',
-    body: 'Missing provider. Usage: /thread open <provider> [model-number]',
+    body: 'Missing provider. Usage: /thread open <provider> [model-key] [option-key]',
     format: 'plain',
   })
 
@@ -187,57 +188,132 @@ test('ThreadCommand open validates provider and model', async () => {
   await ThreadCommand.execute(context, ['open', 'chatgpt', 'pro'])
   assert.equal(
     getLatestTimelineEntry(ui).body,
-    'chatgpt does not support model "pro".'
+    'chatgpt does not support model "pro". Available models: chatgpt.'
   )
+
+  await ThreadCommand.execute(context, ['open', 'deepseek', '2'])
+  assert.match(getLatestTimelineEntry(ui).body, /does not support model "2"/)
+
+  await ThreadCommand.execute(context, [
+    'open',
+    'deepseek',
+    'expert',
+    'thinking',
+  ])
+  assert.match(
+    getLatestTimelineEntry(ui).body,
+    /does not support model options/
+  )
+
+  await ThreadCommand.execute(context, [
+    'open',
+    'deepseek',
+    'expert',
+    'thinking',
+    'extra',
+  ])
+  assert.match(getLatestTimelineEntry(ui).body, /Too many arguments/)
   assert.deepEqual(createdThreads, [])
 })
 
 test('ThreadCommand open forwards supported provider models', async () => {
   const { context, createdThreads } = await createCommandContext()
 
-  await ThreadCommand.execute(context, ['open', 'gemini', '3+extended'])
-  await ThreadCommand.execute(context, ['open', 'chatgpt', '2+1'])
-  await ThreadCommand.execute(context, ['open', 'deepseek', '2'])
-  await ThreadCommand.execute(context, ['open', 'doubao', '3'])
+  await ThreadCommand.execute(context, [
+    'open',
+    'gemini',
+    '3.1-pro',
+    'extended',
+  ])
+  await ThreadCommand.execute(context, ['open', 'chatgpt', 'chatgpt'])
+  await ThreadCommand.execute(context, ['open', 'deepseek', 'expert'])
+  await ThreadCommand.execute(context, ['open', 'doubao', 'office-turbo'])
   await ThreadCommand.execute(context, ['open', 'grok'])
-  await ThreadCommand.execute(context, ['open', 'glm', '2'])
-  await ThreadCommand.execute(context, ['open', 'qwen', '2'])
-  await ThreadCommand.execute(context, ['open', 'kimi', '1'])
+  await ThreadCommand.execute(context, ['open', 'glm', 'glm-5.1'])
+  await ThreadCommand.execute(context, ['open', 'qwen', 'qwen3.8-max-preview'])
+  await ThreadCommand.execute(context, ['open', 'kimi', 'k2.6'])
 
   assert.deepEqual(createdThreads, [
-    { provider: 'gemini', model: '3+extended', mode: 'agent' },
-    { provider: 'chatgpt', model: '2+1', mode: 'agent' },
-    { provider: 'deepseek', model: '2', mode: 'agent' },
-    { provider: 'doubao', model: '3', mode: 'agent' },
+    {
+      provider: 'gemini',
+      model: {
+        key: '3.1-pro',
+        option: 'extended',
+        adapterValue: '3+extended',
+      },
+      mode: 'agent',
+    },
+    {
+      provider: 'chatgpt',
+      model: { key: 'chatgpt', option: null, adapterValue: '1' },
+      mode: 'agent',
+    },
+    {
+      provider: 'deepseek',
+      model: { key: 'expert', option: null, adapterValue: '2' },
+      mode: 'agent',
+    },
+    {
+      provider: 'doubao',
+      model: { key: 'office-turbo', option: null, adapterValue: '3' },
+      mode: 'agent',
+    },
     { provider: 'grok', model: null, mode: 'agent' },
-    { provider: 'glm', model: '2', mode: 'agent' },
-    { provider: 'qwen', model: '2', mode: 'agent' },
-    { provider: 'kimi', model: '1', mode: 'agent' },
+    {
+      provider: 'glm',
+      model: { key: 'glm-5.1', option: null, adapterValue: '2' },
+      mode: 'agent',
+    },
+    {
+      provider: 'qwen',
+      model: {
+        key: 'qwen3.8-max-preview',
+        option: null,
+        adapterValue: '2',
+      },
+      mode: 'agent',
+    },
+    {
+      provider: 'kimi',
+      model: { key: 'k2.6', option: null, adapterValue: '1' },
+      mode: 'agent',
+    },
   ])
 })
 
-test('ThreadCommand chat shares validation and forwards chat mode', async () => {
-  const { context, createdThreads } = await createCommandContext()
+test('ThreadCommand chat shares named model validation and forwards chat mode', async () => {
+  const { context, createdThreads, ui } = await createCommandContext()
 
   await ThreadCommand.execute(context, ['chat', 'chatgpt'])
-  await ThreadCommand.execute(context, ['chat', 'gemini', '2+extended'])
+  await ThreadCommand.execute(context, [
+    'chat',
+    'gemini',
+    '3.6-flash',
+    'extended',
+  ])
 
   assert.deepEqual(createdThreads, [
     { provider: 'chatgpt', model: null, mode: 'chat' },
-    { provider: 'gemini', model: '2+extended', mode: 'chat' },
+    {
+      provider: 'gemini',
+      model: {
+        key: '3.6-flash',
+        option: 'extended',
+        adapterValue: '2+extended',
+      },
+      mode: 'chat',
+    },
   ])
-})
 
-test('ThreadCommand creation preserves permissive trailing arguments', async () => {
-  const { context, createdThreads } = await createCommandContext()
-
-  await ThreadCommand.execute(context, ['open', 'chatgpt', '2', 'ignored'])
-  await ThreadCommand.execute(context, ['chat', 'gemini', '2', 'ignored'])
-
-  assert.deepEqual(createdThreads, [
-    { provider: 'chatgpt', model: '2', mode: 'agent' },
-    { provider: 'gemini', model: '2', mode: 'chat' },
+  await ThreadCommand.execute(context, [
+    'chat',
+    'gemini',
+    '3.6-flash',
+    'extended',
+    'extra',
   ])
+  assert.equal(getLatestTimelineEntry(ui).label, '/thread chat')
+  assert.match(getLatestTimelineEntry(ui).body, /Too many arguments/)
 })
 
 test('ThreadCommand history lists recent entries and validates limits', async () => {

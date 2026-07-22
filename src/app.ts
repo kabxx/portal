@@ -53,6 +53,11 @@ import {
   type ThreadOperationHandle,
 } from './threads/thread-operation-coordinator.ts'
 import type { ProviderId } from './providers/provider-id.ts'
+import {
+  ProviderModelSelectionError,
+  resolveProviderModel,
+  type ResolvedProviderModel,
+} from './providers/provider-model-catalog.ts'
 import { ComposerLimitExceededError } from './providers/composer-limit.ts'
 import {
   buildThreadHistoryTitle,
@@ -578,6 +583,14 @@ function formatInstructionWarning(
   ]
 }
 
+export function inheritSpawnModelSelection(
+  parentProvider: ProviderId,
+  spawnProvider: ProviderId,
+  model: ResolvedProviderModel | null
+): ResolvedProviderModel | null {
+  return spawnProvider === parentProvider ? model : null
+}
+
 function createToolServices({
   context,
   provider,
@@ -591,7 +604,7 @@ function createToolServices({
 }: {
   context: import('playwright').BrowserContext
   provider: ProviderId
-  model: string | null
+  model: ResolvedProviderModel | null
   skillLibrary: SkillLibrary
   mcpLibrary: McpLibrary
   projectInstructions: ProjectInstructions
@@ -618,7 +631,7 @@ function createToolServices({
       const spawnOptions = {
         context,
         provider: spawnProvider,
-        model: spawnProvider === provider ? model : null,
+        model: inheritSpawnModelSelection(provider, spawnProvider, model),
         prompt,
         skillLibrary,
         mcpLibrary,
@@ -667,7 +680,7 @@ async function runSpawnTask({
 }: {
   context: import('playwright').BrowserContext
   provider: ProviderId
-  model: string | null
+  model: ResolvedProviderModel | null
   prompt: string
   skillLibrary: SkillLibrary
   mcpLibrary: McpLibrary
@@ -703,7 +716,7 @@ async function runSpawnTask({
       settings.providerTimings
     )
     runtime = await createRuntimeFromAdapter(adapter, {
-      model,
+      model: model?.adapterValue ?? null,
       setupMode: 'full',
       providerPrompt: getProviderPrompt(provider),
       skillLibrary,
@@ -919,7 +932,7 @@ async function openThread(
   instructionConfig: PortalAgentInstructionsConfig,
   context: import('playwright').BrowserContext,
   provider: ProviderId,
-  model: string | null,
+  model: ResolvedProviderModel | null,
   mode: ThreadCreationMode,
   browserProfileDir: string,
   signal?: AbortSignal,
@@ -959,7 +972,7 @@ async function openThread(
       },
       createRuntime: async (adapter) =>
         await createRuntimeFromAdapter(adapter, {
-          model,
+          model: model?.adapterValue ?? null,
           setupMode: runtimeSetupModeForThreadCreation(mode),
           providerPrompt: getProviderPrompt(provider),
           skillLibrary,
@@ -2248,6 +2261,29 @@ export async function run(argv = process.argv): Promise<void> {
             'model must be a string or null.'
           )
         }
+        const option = input.option
+        if (
+          option !== undefined &&
+          option !== null &&
+          typeof option !== 'string'
+        ) {
+          throw new ApiHttpError(
+            400,
+            'INVALID_REQUEST',
+            'option must be a string or null.'
+          )
+        }
+        let resolvedModel: ResolvedProviderModel | null
+        try {
+          resolvedModel = resolveProviderModel(
+            provider,
+            model === undefined ? null : model,
+            option === undefined ? null : option
+          )
+        } catch (error) {
+          if (!(error instanceof ProviderModelSelectionError)) throw error
+          throw new ApiHttpError(400, 'INVALID_REQUEST', error.message)
+        }
         const mode = parseApiThreadCreationMode(input.mode)
         const historyEntry = await withCancellableOperation(
           null,
@@ -2263,7 +2299,7 @@ export async function run(argv = process.argv): Promise<void> {
               portalConfig.agentInstructions,
               context,
               provider,
-              model === undefined ? null : model,
+              resolvedModel,
               mode,
               browserProfileDir,
               signal,
@@ -2558,11 +2594,15 @@ export async function run(argv = process.argv): Promise<void> {
         threads: threadManager.listThreads().map(({ id }) => toMcpThread(id)),
       }),
       getThread: async (threadId) => toMcpThread(threadId),
-      openThread: async ({ provider: providerValue, model, mode }, signal) => {
+      openThread: async (
+        { provider: providerValue, model, option, mode },
+        signal
+      ) => {
         const provider = normalizeProviderId(providerValue)
         if (provider === null) {
           throw new Error(`Unsupported provider: ${providerValue}`)
         }
+        const resolvedModel = resolveProviderModel(provider, model, option)
         const historyEntry = await withMcpForegroundOperation(
           signal,
           async (operationSignal, setStopTarget) => {
@@ -2577,7 +2617,7 @@ export async function run(argv = process.argv): Promise<void> {
               portalConfig.agentInstructions,
               context,
               provider,
-              model,
+              resolvedModel,
               mode,
               browserProfileDir,
               operationSignal,
@@ -2865,7 +2905,7 @@ export async function run(argv = process.argv): Promise<void> {
       resolveProvider: normalizeProviderId,
       createThread: async (
         provider: ProviderId,
-        model: string | null,
+        model: ResolvedProviderModel | null,
         mode: ThreadCreationMode = 'agent'
       ) =>
         await withCancellableOperation(null, async (signal, setStopTarget) => {

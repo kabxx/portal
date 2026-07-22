@@ -45,25 +45,28 @@ The API addresses a thread directly. It does not introduce a separate
 `session`, `run`, or `turn` resource, and it does not expose MCP attachment
 operations.
 
-| Method   | Path                             | Purpose                                                      |
-| -------- | -------------------------------- | ------------------------------------------------------------ |
-| `GET`    | `/health`                        | Liveness check                                               |
-| `GET`    | `/v1/status`                     | Portal and API status                                        |
-| `GET`    | `/v1/providers`                  | Supported provider ids                                       |
-| `GET`    | `/v1/threads`                    | List open threads                                            |
-| `POST`   | `/v1/threads`                    | Open a thread; body: `provider`, optional `model` and `mode` |
-| `POST`   | `/v1/threads/resume`             | Resume; body: `conversationUrl`                              |
-| `GET`    | `/v1/threads/:threadId`          | Get thread metadata                                          |
-| `DELETE` | `/v1/threads/:threadId`          | Close a thread                                               |
-| `POST`   | `/v1/threads/:threadId/messages` | Submit `{ "input": "..." }`; returns `202`                   |
-| `POST`   | `/v1/threads/:threadId/cancel`   | Cancel the current thread operation; idempotent              |
-| `POST`   | `/v1/threads/:threadId/reload`   | Reload the provider page; returns `202`                      |
-| `GET`    | `/v1/threads/:threadId/events`   | Subscribe to SSE events; multiple clients are allowed        |
+| Method   | Path                             | Purpose                                                                 |
+| -------- | -------------------------------- | ----------------------------------------------------------------------- |
+| `GET`    | `/health`                        | Liveness check                                                          |
+| `GET`    | `/v1/status`                     | Portal and API status                                                   |
+| `GET`    | `/v1/providers`                  | Supported provider ids                                                  |
+| `GET`    | `/v1/threads`                    | List open threads                                                       |
+| `POST`   | `/v1/threads`                    | Open a thread; body: `provider`, optional `model`, `option`, and `mode` |
+| `POST`   | `/v1/threads/resume`             | Resume; body: `conversationUrl`                                         |
+| `GET`    | `/v1/threads/:threadId`          | Get thread metadata                                                     |
+| `DELETE` | `/v1/threads/:threadId`          | Close a thread                                                          |
+| `POST`   | `/v1/threads/:threadId/messages` | Submit `{ "input": "..." }`; returns `202`                              |
+| `POST`   | `/v1/threads/:threadId/cancel`   | Cancel the current thread operation; idempotent                         |
+| `POST`   | `/v1/threads/:threadId/reload`   | Reload the provider page; returns `202`                                 |
+| `GET`    | `/v1/threads/:threadId/events`   | Subscribe to SSE events; multiple clients are allowed                   |
 
 Only one operation may run on a given thread at a time. A conflicting message
 or reload returns `409 THREAD_BUSY`; it is not queued. Different threads can
 run through the existing thread coordinator. Reload restores the current
 provider page without creating a turn or changing the local title/history.
+The optional `model` and `option` fields use the named keys documented in
+[Providers](providers.md); numeric menu positions are rejected.
+
 Subscribe to the SSE endpoint before sending the reload request when the
 `thread.action` `started` event must not be missed.
 

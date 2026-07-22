@@ -824,6 +824,23 @@ test('ChatGPTAdapter changes model without changing mode', async () => {
   ])
 })
 
+test('ChatGPTAdapter changes model through the direct radio menu', async () => {
+  const adapter = createTestChatGPTAdapter()
+  const page = createChatGPTDirectModelPage()
+  adapter.page = page
+
+  await adapter.changeModel('2')
+
+  assert.deepEqual(page.events, ['click:trigger', 'click:model:1'])
+})
+
+test('ChatGPTAdapter rejects ambiguous visible model selectors', async () => {
+  const adapter = createTestChatGPTAdapter()
+  adapter.page = createChatGPTDirectModelPage({ triggerCount: 2 })
+
+  await assert.rejects(adapter.changeModel('1'), /missing or ambiguous/)
+})
+
 test('ChatGPTAdapter rejects unsupported model and mode numbers', async () => {
   const adapter = createTestChatGPTAdapter()
   adapter.page = createChatGPTModelPage({ modelCount: 2, modeCount: 1 })
@@ -1008,7 +1025,8 @@ function createChatGPTModelPage({
     },
   }))
   const picker = {
-    last: () => picker,
+    count: async () => (pickerOpen ? 1 : 0),
+    first: () => picker,
     isVisible: async () => pickerOpen,
     locator: (selector: string) => {
       if (selector === 'div[role="group"] div[role="menuitemradio"]') {
@@ -1041,21 +1059,99 @@ function createChatGPTModelPage({
   return {
     events,
     locator: (selector: string) => {
-      if (selector === 'button.__composer-pill') {
-        return {
+      if (selector === '[role="menu"]:visible') {
+        return { count: async () => 0, first: () => picker }
+      }
+      if (
+        selector ===
+        'button.__composer-pill:visible, button[aria-label="模型选择器"]:visible'
+      ) {
+        const trigger = {
+          count: async () => 1,
+          first: () => trigger,
           click: async () => {
             events.push('click:pill')
             pickerOpen = true
           },
         }
+        return trigger
       }
       if (
-        selector === 'div[data-testid="composer-intelligence-picker-content"]'
+        selector ===
+        'div[data-testid="composer-intelligence-picker-content"]:visible'
       ) {
         return picker
       }
       if (selector === '[id="chatgpt-model-menu"] div[role="menuitemradio"]') {
         return modelMenu
+      }
+      throw new Error(`Unexpected selector: ${selector}`)
+    },
+  }
+}
+
+function createChatGPTDirectModelPage({
+  modelCount = 2,
+  triggerCount = 1,
+  menuCount = 1,
+}: {
+  modelCount?: number
+  triggerCount?: number
+  menuCount?: number
+} = {}) {
+  const events: string[] = []
+  let menuOpen = false
+  const modelItems = Array.from({ length: modelCount }, (_, index) => ({
+    click: async () => {
+      events.push(`click:model:${index}`)
+    },
+  }))
+  const directModelItems = {
+    count: async () => (menuOpen ? modelItems.length : 0),
+    nth: (index: number) => modelItems[index],
+  }
+  const picker = {
+    isVisible: async () => false,
+  }
+  const pickerCollection = {
+    count: async () => 0,
+    first: () => picker,
+  }
+  const menu = {
+    locator: (selector: string) => {
+      assert.equal(selector, '[role="menuitemradio"]')
+      return directModelItems
+    },
+  }
+  const directMenus = {
+    count: async () => (menuOpen ? menuCount : 0),
+    first: () => menu,
+  }
+  const trigger = {
+    click: async () => {
+      events.push('click:trigger')
+      menuOpen = true
+    },
+  }
+
+  return {
+    events,
+    locator: (selector: string) => {
+      if (selector === '[role="menu"]:visible') return directMenus
+      if (
+        selector ===
+        'button.__composer-pill:visible, button[aria-label="模型选择器"]:visible'
+      ) {
+        return {
+          count: async () => triggerCount,
+          first: () => trigger,
+        }
+      }
+      if (
+        selector ===
+        'div[data-testid="composer-intelligence-picker-content"]:visible'
+      ) {
+        return pickerCollection
       }
       throw new Error(`Unexpected selector: ${selector}`)
     },

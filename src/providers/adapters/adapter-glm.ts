@@ -664,13 +664,65 @@ export class GlmAdapter extends ProviderAdapter {
     const modelIndex = modelNumber - 1
 
     await this.dismissBlockingDialog('changeModel')
-    await this.page.locator(GLM_MODEL_TRIGGER_SELECTOR).first().click()
-    const modelMenu = this.page.locator(GLM_MODEL_MENU_SELECTOR).last()
+    const triggers = this.page.locator(GLM_MODEL_TRIGGER_SELECTOR)
+    if ((await triggers.count()) !== 1) {
+      throw new ProviderAdapterError(
+        'changeModel',
+        'GLM model selector was missing or ambiguous.',
+        {
+          kind: 'ui',
+          recovery: 'none',
+          retryable: false,
+          maxAttempts: 1,
+          detailCode: 'glm_model_trigger_invalid',
+        }
+      )
+    }
+    await triggers.first().click()
+    const visibleMenus = this.page.locator(`${GLM_MODEL_MENU_SELECTOR}:visible`)
+    const scopedModelItems = visibleMenus.locator(GLM_MODEL_ITEM_SELECTOR)
+    const globalModelItems = this.page.locator(
+      `${GLM_MODEL_ITEM_SELECTOR}:visible`
+    )
     await waitAsync(
-      async () => await modelMenu.isVisible().catch(() => false),
+      async () =>
+        (await scopedModelItems.count().catch(() => 0)) > 0 ||
+        (await globalModelItems.count().catch(() => 0)) > 0,
       { timeoutMs: 5000 }
     )
-    const modelItems = modelMenu.locator(GLM_MODEL_ITEM_SELECTOR)
+    if ((await visibleMenus.count()) > 1) {
+      throw new ProviderAdapterError(
+        'changeModel',
+        'GLM model menu was ambiguous.',
+        {
+          kind: 'ui',
+          recovery: 'none',
+          retryable: false,
+          maxAttempts: 1,
+          detailCode: 'glm_model_menu_ambiguous',
+        }
+      )
+    }
+    const usesScopedItems = (await scopedModelItems.count()) > 0
+    const modelItems = usesScopedItems ? scopedModelItems : globalModelItems
+    if (
+      !usesScopedItems &&
+      !(await modelItems.evaluateAll(
+        (items) => new Set(items.map((item) => item.parentElement)).size === 1
+      ))
+    ) {
+      throw new ProviderAdapterError(
+        'changeModel',
+        'GLM model options were ambiguous.',
+        {
+          kind: 'ui',
+          recovery: 'none',
+          retryable: false,
+          maxAttempts: 1,
+          detailCode: 'glm_model_options_ambiguous',
+        }
+      )
+    }
     if ((await modelItems.count()) <= modelIndex) {
       await this.page.keyboard.press('Escape').catch(() => {})
       throw new ProviderAdapterUnsupportedError(

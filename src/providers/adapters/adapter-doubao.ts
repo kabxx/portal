@@ -31,8 +31,9 @@ const DOUBAO_UPLOAD_TRIGGER_SELECTOR = [
 const DOUBAO_FILE_INPUT_SELECTOR = 'input[type="file"]'
 const DOUBAO_READY_CONTAINER_SELECTOR = 'div[class*="container-YCWnMI"]'
 const DOUBAO_MODEL_TRIGGER_SELECTOR =
-  'button[data-dbx-name="button"]:has(img[src*="mode_"])'
-const DOUBAO_MODEL_MENU_SELECTOR = 'div[data-slot="dropdown-menu-content"]'
+  'button[data-dbx-name="button"]:has(img[src*="mode_"]):visible, button[data-dbx-name="button"][aria-haspopup="menu"]:visible'
+const DOUBAO_MODEL_MENU_SELECTOR =
+  'div[data-slot="dropdown-menu-content"]:visible, [role="menu"]:visible'
 const DOUBAO_TOOLBAR_SELECTOR =
   '[style*="--chat-input-tool-button-overflow-list-gap"]'
 const DOUBAO_SELECTED_SKILL_SELECTOR =
@@ -834,23 +835,57 @@ export class DoubaoAdapter extends ProviderAdapter {
       )
     }
     const index = modelNumber - 1
-    await this.page.locator(DOUBAO_MODEL_TRIGGER_SELECTOR).first().click()
+    const triggers = this.page.locator(DOUBAO_MODEL_TRIGGER_SELECTOR)
+    if ((await triggers.count()) !== 1) {
+      throw new ProviderAdapterError(
+        'changeModel',
+        'Doubao model selector was missing or ambiguous.',
+        {
+          kind: 'ui',
+          recovery: 'none',
+          retryable: false,
+          maxAttempts: 1,
+          detailCode: 'doubao_model_trigger_invalid',
+        }
+      )
+    }
+    await triggers.first().click()
 
-    const modelMenu = this.page.locator(DOUBAO_MODEL_MENU_SELECTOR).last()
-    await waitAsync(
-      async () => await modelMenu.isVisible().catch(() => false),
-      {
-        timeoutMs: 5000,
-      }
-    )
-    const modelItems = modelMenu.locator('xpath=./div')
+    const modelMenus = this.page.locator(DOUBAO_MODEL_MENU_SELECTOR)
+    await waitAsync(async () => (await modelMenus.count().catch(() => 0)) > 0, {
+      timeoutMs: 5000,
+    })
+    if ((await modelMenus.count()) !== 1) {
+      throw new ProviderAdapterError(
+        'changeModel',
+        'Doubao model menu was ambiguous.',
+        {
+          kind: 'ui',
+          recovery: 'none',
+          retryable: false,
+          maxAttempts: 1,
+          detailCode: 'doubao_model_menu_ambiguous',
+        }
+      )
+    }
+    const modelMenu = modelMenus.first()
+    const roleItems = modelMenu.locator('[role="menuitem"]')
+    const modelItems =
+      (await roleItems.count()) > 0
+        ? roleItems
+        : modelMenu.locator('xpath=./div')
     if ((await modelItems.count()) <= index) {
       throw new ProviderAdapterUnsupportedError(
         'changeModel',
         `Doubao does not have model ${modelNumber}.`
       )
     }
-    await modelItems.nth(index).locator('xpath=./div').click()
+    const target = modelItems.nth(index)
+    if ((await roleItems.count()) > 0) {
+      await target.click()
+    } else {
+      await target.locator('xpath=./div').click()
+    }
   }
 
   public async attachText(text: string) {

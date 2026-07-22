@@ -50,7 +50,7 @@ npm run dev
 总结当前仓库，并找出风险最高的模块。
 ```
 
-使用 `/thread chat <provider> [model]` 可以创建最小初始化的 Provider 会话。Chat 创建只发送共享的 `READY` handshake，不发送 portal 完整的 Agent setup prompt。本地工具、Skills、MCP 连接和 Hooks 仍然处于活动状态，因此 Chat 创建不是沙箱，也不是执行权限边界。
+使用 `/thread chat <provider> [model-key] [option-key]` 可以创建最小初始化的 Provider 会话。Chat 创建只发送共享的 `READY` handshake，不发送 portal 完整的 Agent setup prompt。本地工具、Skills、MCP 连接和 Hooks 仍然处于活动状态，因此 Chat 创建不是沙箱，也不是执行权限边界。
 
 使用 `/help` 查看命令索引。Thread、Resume、输入控制、后台 job 和启动参数详见 [CLI 指南](cli.md)。
 

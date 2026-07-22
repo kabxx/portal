@@ -8,38 +8,38 @@ portal supports eight web AI products through provider-specific adapters. Every 
 
 ## Support matrix
 
-| Provider id | Website             | Resume history | Upload | Model syntax        | Capabilities                              |
-| ----------- | ------------------- | -------------- | ------ | ------------------- | ----------------------------------------- |
-| `chatgpt`   | `chatgpt.com`       | Yes            | Yes    | `N` or `N+M`        | Page actions when the action group exists |
-| `gemini`    | `gemini.google.com` | Yes            | Yes    | `N` or `N+extended` | Dynamic page actions                      |
-| `deepseek`  | `chat.deepseek.com` | Yes            | Yes    | `N`                 | `thinking`, `search`                      |
-| `doubao`    | `www.doubao.com`    | Yes            | Yes    | `N`                 | Dynamic page actions                      |
-| `grok`      | `grok.com`          | Yes            | Yes    | `N`                 | None exposed by `/thread capability`      |
-| `glm`       | `chat.z.ai`         | Yes            | Yes    | `N`                 | `thinking`, `search`, `advanced_search`   |
-| `qwen`      | `chat.qwen.ai`      | Yes            | Yes    | `N`                 | Dynamic page actions                      |
-| `kimi`      | `www.kimi.com`      | Yes            | Yes    | `N`                 | `search`                                  |
+| Provider id | Website             | Resume history | Upload | Model syntax                                                   | Capabilities                              |
+| ----------- | ------------------- | -------------- | ------ | -------------------------------------------------------------- | ----------------------------------------- |
+| `chatgpt`   | `chatgpt.com`       | Yes            | Yes    | `chatgpt`                                                      | Page actions when the action group exists |
+| `gemini`    | `gemini.google.com` | Yes            | Yes    | `3.5-flash-lite`, `3.6-flash`, `3.1-pro` + optional `extended` | Dynamic page actions                      |
+| `deepseek`  | `chat.deepseek.com` | Yes            | Yes    | `quick`, `expert`, `vision`                                    | `thinking`, `search`                      |
+| `doubao`    | `www.doubao.com`    | Yes            | Yes    | `quick`, `expert`, `office-turbo`, `office-pro`                | Dynamic page actions                      |
+| `grok`      | `grok.com`          | Yes            | Yes    | `fast`, `auto`, `expert`, `heavy`                              | None exposed by `/thread capability`      |
+| `glm`       | `chat.z.ai`         | Yes            | Yes    | `glm-5.2`, `glm-5.1`, `glm-5-turbo`, `glm-5v-turbo`, `glm-4.7` | `thinking`, `search`, `advanced_search`   |
+| `qwen`      | `chat.qwen.ai`      | Yes            | Yes    | `qwen3.7-plus`, `qwen3.8-max-preview`, `qwen3.7-max`           | Dynamic page actions                      |
+| `kimi`      | `www.kimi.com`      | Yes            | Yes    | `k2.6`, `k3`, `k3-cluster`                                     | `search`                                  |
 
-`N` and `M` are one-based positions in the menus visible to the current account. They are not stable model identifiers. Provider experiments, subscription state, and regional differences can change both menu order and capability availability.
+Model keys are maintained in the static catalog for the current Portal Profile. The catalog maps each key to the one-based menu position used by its adapter; provider menu changes may therefore select a different model until the catalog is updated. Numeric menu positions are internal and are not accepted by the CLI, API, or MCP server.
 
 `gpt` is accepted as a command alias for `chatgpt`; the other provider ids are used as shown.
 
 ## Opening a conversation
 
 ```text
-/thread open <provider> [model]
-/thread chat <provider> [model]
+/thread open <provider> [model-key] [option-key]
+/thread chat <provider> [model-key] [option-key]
 ```
 
 Examples:
 
 ```text
 /thread open glm
-/thread open deepseek 2
-/thread open qwen 1
-/thread open chatgpt 1+2
-/thread open gemini 1+extended
-/thread open kimi 1
+/thread open deepseek expert
+/thread open qwen qwen3.7-plus
+/thread open gemini 3.1-pro extended
+/thread open kimi k2.6
 /thread chat chatgpt
+/thread chat gemini 3.6-flash extended
 ```
 
 When the model argument is omitted, portal leaves the provider's current/default selection unchanged. Both creation commands create a page, verify login and composer readiness, connect the current MCP configuration, snapshot enabled Skills, and require a case-insensitive whole-word `READY` token in the handshake response.
