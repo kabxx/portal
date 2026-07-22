@@ -50,7 +50,7 @@ On first run, portal creates a commented `data/config.yaml` and a dedicated brow
 Summarize this repository and identify its highest-risk module.
 ```
 
-Use `/thread chat <provider> [model]` to open a minimally initialized provider
+Use `/thread chat <provider> [model-key] [option-key]` to open a minimally initialized provider
 conversation. Chat creation sends only the shared `READY` handshake instead of
 portal's full agent setup prompt. Local tools, Skills, MCP connections, and
 Hooks remain active, so chat creation is not a sandbox or an execution boundary.

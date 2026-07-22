@@ -636,6 +636,27 @@ test('QwenAdapter changes models by one-based option index', async () => {
   )
 })
 
+test('QwenAdapter changes models through visible options without a listbox', async () => {
+  const adapter = createTestQwenAdapter()
+  const selected: number[] = []
+  adapter.page = createControlPage({ selected, globalModelOptions: true })
+
+  await adapter.changeModel('2')
+
+  assert.deepEqual(selected, [1])
+})
+
+test('QwenAdapter rejects unscoped model options from multiple groups', async () => {
+  const adapter = createTestQwenAdapter()
+  adapter.page = createControlPage({
+    globalModelOptions: true,
+    visibleListboxCount: 1,
+    globalModelParentCount: 2,
+  })
+
+  await assert.rejects(adapter.changeModel('1'), /options were ambiguous/)
+})
+
 test('QwenAdapter uploads through the unique file input and stops generation', async () => {
   const adapter = createTestQwenAdapter()
   const uploaded: Array<string | readonly string[]> = []
@@ -1091,10 +1112,16 @@ function createControlPage({
   selected = [],
   uploaded = [],
   onStop = () => {},
+  globalModelOptions = false,
+  visibleListboxCount,
+  globalModelParentCount = 1,
 }: {
   selected?: number[]
   uploaded?: Array<string | readonly string[]>
   onStop?: () => void
+  globalModelOptions?: boolean
+  visibleListboxCount?: number
+  globalModelParentCount?: number
 }) {
   const emitter = new EventEmitter()
   let listboxVisible = false
@@ -1102,6 +1129,7 @@ function createControlPage({
   let uploadCount = 0
   const options = {
     count: async () => 2,
+    evaluateAll: async () => globalModelParentCount === 1,
     nth: (index: number) => ({
       click: async () => {
         selected.push(index)
@@ -1109,10 +1137,10 @@ function createControlPage({
     }),
   }
   const listbox = {
-    count: async () => 1,
+    count: async () => visibleListboxCount ?? (globalModelOptions ? 0 : 1),
     first: () => listbox,
     isVisible: async () => listboxVisible,
-    locator: () => options,
+    locator: () => (globalModelOptions ? { count: async () => 0 } : options),
   }
   const trigger = {
     count: async () => 1,
@@ -1149,6 +1177,8 @@ function createControlPage({
     locator: (selector: string) => {
       if (selector.includes('qwen-chat-header-left')) return trigger
       if (selector === '[role="listbox"]') return listbox
+      if (selector === '[role="listbox"]:visible') return listbox
+      if (selector === '[role="option"]:visible') return options
       if (selector.includes('mode-select-open')) return uploadTrigger
       if (selector.includes('data-menu-id')) return uploadItem
       if (selector.includes('file-card-list')) return fileCards

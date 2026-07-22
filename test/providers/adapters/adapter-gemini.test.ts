@@ -344,12 +344,7 @@ test('GeminiAdapter changes model through the mode menu', async () => {
 
   await adapter.changeModel('3')
 
-  assert.deepEqual(page.events, [
-    'click:model-trigger',
-    'click:model-item:2',
-    'click:model-trigger',
-    'click:model-trigger',
-  ])
+  assert.deepEqual(page.events, ['click:model-trigger', 'click:model-item:2'])
 })
 
 test('GeminiAdapter enables model extension only when requested', async () => {
@@ -384,20 +379,15 @@ test('GeminiAdapter keeps selected model extension when requested', async () => 
   assert.equal(page.isExtended(), true)
 })
 
-test('GeminiAdapter disables model extension when it is not requested', async () => {
+test('GeminiAdapter leaves model extension unchanged when it is not requested', async () => {
   const adapter = createTestGeminiAdapter()
   const page = createGeminiModelPage({ extended: true })
   adapter.page = page
 
   await adapter.changeModel('1')
 
-  assert.deepEqual(page.events, [
-    'click:model-trigger',
-    'click:model-item:0',
-    'click:model-trigger',
-    'click:model-item:4',
-  ])
-  assert.equal(page.isExtended(), false)
+  assert.deepEqual(page.events, ['click:model-trigger', 'click:model-item:0'])
+  assert.equal(page.isExtended(), true)
 })
 
 test('GeminiAdapter rejects unsupported model names', async () => {

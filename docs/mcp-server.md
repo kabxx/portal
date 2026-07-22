@@ -77,6 +77,10 @@ using a case-insensitive whole-word match, instead of the full portal setup
 prompt. It still creates a normal local runtime with configured tools, Skills,
 MCP connections, and Hooks, so chat mode is not a sandbox.
 
+`portal_open_thread` accepts `provider` plus optional named `model` and
+model-specific `option` keys from [Providers](providers.md). Numeric menu
+positions and the previous combined numeric forms are rejected.
+
 `portal_send_message` returns a process-local `operationId` with `running`
 status. Call `portal_wait_message` until it returns `completed`, `failed`, or
 `cancelled`. Terminal operations expire after a bounded retention period and
