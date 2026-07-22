@@ -351,6 +351,10 @@ export function parseKimiConnectResponse(raw: string): KimiParsedResponse {
 }
 
 export class KimiAdapter extends ProviderAdapter {
+  protected override get composerLimitProvider() {
+    return 'kimi' as const
+  }
+
   private conversationIdVal!: string | null
   private pendingTextVal = ''
 

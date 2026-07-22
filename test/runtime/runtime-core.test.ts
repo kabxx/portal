@@ -22,8 +22,13 @@ import {
 } from '../../src/tools/core/tool-definition.ts'
 import type {
   ToolExecutionOptions,
+  ToolOutcome,
   ToolOutput,
 } from '../../src/tools/core/tool-definition.ts'
+import {
+  ComposerLimitExceededError,
+  type ComposerLimit,
+} from '../../src/providers/composer-limit.ts'
 import {
   abortable,
   PortalAbortError,
@@ -112,6 +117,65 @@ class FakeAdapter extends ProviderAdapter {
       throw new Error('No fake adapter response queued.')
     }
     return response
+  }
+}
+
+class LimitedFakeAdapter extends FakeAdapter {
+  public constructor(
+    responses: string[],
+    private readonly composerLimit: Extract<ComposerLimit, { kind: 'known' }>
+  ) {
+    super(responses)
+  }
+
+  public override async getComposerLimit(): Promise<ComposerLimit> {
+    return this.composerLimit
+  }
+}
+
+class RetryToolResultAdapter extends LimitedFakeAdapter {
+  public restoreCalls = 0
+  private submitCalls = 0
+
+  public override async submit(options?: AbortOptions): Promise<string> {
+    this.submitCalls += 1
+    if (this.submitCalls === 2) {
+      this.submitSignals.push(options?.signal)
+      throw new ProviderAdapterError(
+        'submit',
+        'temporary tool result failure',
+        {
+          kind: 'transient',
+          recovery: 'restore',
+          retryable: true,
+          maxAttempts: 2,
+        }
+      )
+    }
+    return await super.submit(options)
+  }
+
+  public override async restore(): Promise<void> {
+    this.restoreCalls += 1
+  }
+}
+
+class PersistentRetryToolResultAdapter extends LimitedFakeAdapter {
+  private submitCalls = 0
+
+  public override async submit(options?: AbortOptions): Promise<string> {
+    this.submitCalls += 1
+    if (this.submitCalls === 2) {
+      this.submitSignals.push(options?.signal)
+      await this.emitSubmitText('partial tool result response')
+      throw new ProviderAdapterError('submit', 'rate limited', {
+        kind: 'rate_limit',
+        recovery: 'retry',
+        retryable: true,
+        maxAttempts: 2,
+      })
+    }
+    return await super.submit(options)
   }
 }
 
@@ -308,6 +372,23 @@ class StructuredTool extends Tool<
     return {
       result: { content: 'FULL MODEL CONTENT' },
       displayText: 'Short display content.',
+    }
+  }
+}
+
+let oversizedOutcomeToolCalls = 0
+
+@defineToolMetadata({
+  name: 'oversized_outcome_tool',
+  description: 'Returns a large result with a selected outcome.',
+})
+class OversizedOutcomeTool extends Tool<{ outcome: ToolOutcome }, ToolOutput> {
+  public async call(input: { outcome: ToolOutcome }): Promise<ToolOutput> {
+    oversizedOutcomeToolCalls += 1
+    return {
+      outcome: input.outcome,
+      result: { content: `${input.outcome}:${'x'.repeat(1_000)}` },
+      displayText: `large ${input.outcome} result`,
     }
   }
 }
@@ -1119,4 +1200,200 @@ test('RuntimeCore sends full structured tool content to the model and forwards d
       '}',
     ].join('\n')
   )
+})
+
+test('RuntimeCore preserves every original tool outcome when a large result is not delivered', async () => {
+  const limit = {
+    kind: 'known',
+    provider: 'deepseek',
+    limit: 600,
+    unit: 'utf16_code_units',
+    source: 'verified_fallback',
+    confidence: 'safe_cap',
+  } as const
+
+  for (const outcome of ['success', 'error', 'unknown'] as const) {
+    const adapter = new LimitedFakeAdapter(
+      [
+        `<tool>{"tool":"oversized_outcome_tool","params":{"outcome":"${outcome}"}}</tool>`,
+        'Handled the missing result.',
+      ],
+      limit
+    )
+    const runtime = new RuntimeCore(
+      adapter,
+      new ToolRegistry(adapter, [OversizedOutcomeTool])
+    )
+    const localResults: Array<Record<string, unknown>> = []
+
+    await runtime.submitUserInput('x', {
+      onToolResult: async (toolResult) => {
+        localResults.push(toolResult.result)
+      },
+    })
+
+    assert.deepEqual(localResults, [
+      { content: `${outcome}:${'x'.repeat(1_000)}` },
+    ])
+    const outbound: unknown = JSON.parse(
+      adapter.attachedTexts[1]!.slice('### Tool Result ###\n'.length)
+    )
+    assert.ok(isRecord(outbound))
+    assert.equal(outbound.tool, 'oversized_outcome_tool')
+    assert.equal(outbound.outcome, outcome)
+    assert.equal(outbound.result, null)
+    assert.ok(isRecord(outbound.delivery))
+    assert.equal(outbound.delivery.status, 'not_delivered')
+    assert.equal(outbound.delivery.code, 'COMPOSER_LIMIT_EXCEEDED')
+    assert.equal(outbound.delivery.limit, 600)
+    assert.equal(outbound.delivery.unit, 'utf16_code_units')
+    assert.equal(outbound.delivery.source, 'verified_fallback')
+    assert.equal(outbound.delivery.confidence, 'safe_cap')
+    assert.equal(typeof outbound.delivery.measured, 'number')
+    assert.ok(Number(outbound.delivery.measured) > limit.limit)
+    assert.doesNotMatch(
+      adapter.attachedTexts[1]!,
+      /success:x{10}|error:x{10}|unknown:x{10}/
+    )
+  }
+})
+
+test('RuntimeCore does not attach an over-limit delivery replacement', async () => {
+  const adapter = new LimitedFakeAdapter(
+    [
+      '<tool>{"tool":"oversized_outcome_tool","params":{"outcome":"success"}}</tool>',
+    ],
+    {
+      kind: 'known',
+      provider: 'deepseek',
+      limit: 100,
+      unit: 'utf16_code_units',
+      source: 'verified_fallback',
+      confidence: 'safe_cap',
+    }
+  )
+  const runtime = new RuntimeCore(
+    adapter,
+    new ToolRegistry(adapter, [OversizedOutcomeTool])
+  )
+
+  await assert.rejects(runtime.submitUserInput('x'), ComposerLimitExceededError)
+  assert.deepEqual(adapter.attachedTexts, ['x'])
+  assert.equal(adapter.submitSignals.length, 1)
+})
+
+test('RuntimeCore keeps an over-limit delivery stable across submit recovery without rerunning the tool', async () => {
+  const adapter = new RetryToolResultAdapter(
+    [
+      '<tool>{"tool":"oversized_outcome_tool","params":{"outcome":"unknown"}}</tool>',
+      'Handled after recovery.',
+    ],
+    {
+      kind: 'known',
+      provider: 'deepseek',
+      limit: 600,
+      unit: 'utf16_code_units',
+      source: 'verified_fallback',
+      confidence: 'safe_cap',
+    }
+  )
+  const runtime = new RuntimeCore(
+    adapter,
+    new ToolRegistry(adapter, [OversizedOutcomeTool])
+  )
+  oversizedOutcomeToolCalls = 0
+  let localResultCalls = 0
+
+  await runtime.submitUserInput('x', {
+    onToolResult: async () => {
+      localResultCalls += 1
+    },
+  })
+
+  assert.equal(oversizedOutcomeToolCalls, 1)
+  assert.equal(localResultCalls, 1)
+  assert.equal(adapter.restoreCalls, 1)
+  assert.equal(adapter.submitSignals.length, 3)
+  assert.equal(adapter.attachedTexts.length, 3)
+  assert.equal(adapter.attachedTexts[1], adapter.attachedTexts[2])
+  const replacement: unknown = JSON.parse(
+    adapter.attachedTexts[2]!.slice('### Tool Result ###\n'.length)
+  )
+  assert.ok(isRecord(replacement))
+  assert.equal(replacement.outcome, 'unknown')
+  assert.equal(replacement.result, null)
+  assert.ok(isRecord(replacement.delivery))
+  assert.equal(replacement.delivery.status, 'not_delivered')
+})
+
+test('RuntimeCore reuses one over-limit delivery across persistent retry without repeating local effects', async () => {
+  const adapter = new PersistentRetryToolResultAdapter(
+    [
+      '<tool>{"tool":"oversized_outcome_tool","params":{"outcome":"success"}}</tool>',
+      'Handled after persistent retry.',
+    ],
+    {
+      kind: 'known',
+      provider: 'deepseek',
+      limit: 600,
+      unit: 'utf16_code_units',
+      source: 'verified_fallback',
+      confidence: 'safe_cap',
+    }
+  )
+  const hookPayloads: Array<Record<string, unknown>> = []
+  const dispatcher = new HookDispatcher({
+    execute: async (_handler, event) => {
+      hookPayloads.push(event.payload)
+      return '{}'
+    },
+  })
+  const runtime = new RuntimeCore(
+    adapter,
+    new ToolRegistry(adapter, [OversizedOutcomeTool]),
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [],
+    dispatcher,
+    3,
+    [0]
+  )
+  const scope = createHookScope({
+    name: 'record-result',
+    type: 'prompt',
+    events: ['tool.after'],
+    prompt: 'Record the result.',
+  })
+  const localResults: Array<Record<string, unknown>> = []
+  let streamResets = 0
+  oversizedOutcomeToolCalls = 0
+
+  assert.equal(
+    await runtime.submitUserInput('x', {
+      executionScope: scope,
+      onToolResult: async (toolResult) => {
+        localResults.push(toolResult.result)
+      },
+      onAssistantStreamReset: async () => {
+        streamResets += 1
+      },
+    }),
+    'Handled after persistent retry.'
+  )
+
+  assert.equal(oversizedOutcomeToolCalls, 1)
+  assert.equal(localResults.length, 1)
+  assert.match(String(localResults[0]?.content), /^success:x{1000}$/)
+  assert.equal(hookPayloads.length, 1)
+  const hookResult = hookPayloads[0]?.result
+  assert.ok(isRecord(hookResult))
+  assert.match(String(hookResult.content), /^success:x{1000}$/)
+  assert.equal(streamResets, 1)
+  assert.equal(adapter.retryPreparedTexts.length, 1)
+  assert.equal(adapter.attachedTexts[1], adapter.attachedTexts[2])
+  assert.equal(adapter.retryPreparedTexts[0], adapter.attachedTexts[1])
 })

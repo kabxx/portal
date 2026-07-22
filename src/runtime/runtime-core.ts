@@ -29,6 +29,13 @@ import type {
 } from '../instructions/project-instructions.ts'
 import { HookDispatcher } from '../hooks/hook-dispatcher.ts'
 import type { HookExecutionScope } from '../hooks/hook-types.ts'
+import {
+  checkComposerLimit,
+  ComposerLimitExceededError,
+  createComposerLimitToolDelivery,
+  type ComposerLimitCheck,
+  type ComposerTextOrigin,
+} from '../providers/composer-limit.ts'
 import type { ManualSkillSummary } from '../skills/manual-skill-summary.ts'
 
 export interface ManualSkill {
@@ -86,6 +93,11 @@ export interface ToolCallMetadata {
   rewrittenBy: readonly string[]
 }
 
+interface OutboundToolResult {
+  toolName: string
+  toolResult: ToolResult
+}
+
 export class RuntimeCore {
   private readonly manualSkills: readonly ManualSkillSummary[]
 
@@ -120,7 +132,13 @@ export class RuntimeCore {
   public async init(options: AbortOptions = {}) {
     await this.retryAsync(async () => {
       throwIfAborted(options.signal)
-      await this.agentAdapter.attachText(this.prompt)
+      const setupPrompt = await this.prepareOutboundText(
+        this.prompt,
+        'internal',
+        null,
+        options.signal
+      )
+      await this.agentAdapter.attachText(setupPrompt)
       throwIfAborted(options.signal)
       const response =
         await this.agentAdapter.submitWithResponseTimeout(options)
@@ -185,6 +203,17 @@ export class RuntimeCore {
     return this.mcpSession
   }
 
+  public async preflightInitialInput(
+    input: string,
+    signal?: AbortSignal
+  ): Promise<ComposerLimitCheck> {
+    const manualSkill = await this.resolveManualSkill(input, signal)
+    const outboundText = manualSkill?.prompt ?? input
+    const limit = await this.agentAdapter.getComposerLimit({ signal })
+    throwIfAborted(signal)
+    return checkComposerLimit(outboundText, limit)
+  }
+
   public onUnexpectedPageClose(listener: () => void): () => void {
     return this.agentAdapter.onUnexpectedPageClose(listener)
   }
@@ -234,12 +263,20 @@ export class RuntimeCore {
       throwIfAborted(handlers.signal)
     }
     let user = manualSkill?.prompt ?? input
+    let outboundOrigin: ComposerTextOrigin = 'user'
+    let outboundToolResult: OutboundToolResult | null = null
     let assistant: string
     let toolCallCount = 0
 
     while (true) {
       throwIfAborted(handlers.signal)
-      assistant = await this.submitPayloadWithRetry(user, handlers)
+      const outboundText = await this.prepareOutboundText(
+        user,
+        outboundOrigin,
+        outboundToolResult,
+        handlers.signal
+      )
+      assistant = await this.submitPayloadWithRetry(outboundText, handlers)
 
       const extractedToolCall =
         await this.toolRegistry.extractToolCall(assistant)
@@ -266,6 +303,8 @@ export class RuntimeCore {
         }
         if (instructionActivation.prompt !== null) {
           user = instructionActivation.prompt
+          outboundOrigin = 'internal'
+          outboundToolResult = null
           continue
         }
       }
@@ -301,6 +340,11 @@ export class RuntimeCore {
           toolCall?.tool ?? 'unknown',
           prepared.result
         )
+        outboundOrigin = 'tool_result'
+        outboundToolResult = {
+          toolName: toolCall?.tool ?? 'unknown',
+          toolResult: prepared.result,
+        }
         continue
       }
       const executableToolCall = prepared.toolCall
@@ -457,6 +501,11 @@ export class RuntimeCore {
       }
       await handlers.onToolResult?.(toolResult, toolCall, metadata)
       user = formatToolResultMessage(toolCall?.tool ?? 'unknown', toolResult)
+      outboundOrigin = 'tool_result'
+      outboundToolResult = {
+        toolName: toolCall?.tool ?? 'unknown',
+        toolResult,
+      }
     }
   }
 
@@ -537,6 +586,36 @@ export class RuntimeCore {
       error instanceof ProviderResponseTimeoutError ||
       (isProviderAdapterError(error) && error.kind === 'rate_limit')
     )
+  }
+
+  private async prepareOutboundText(
+    text: string,
+    origin: ComposerTextOrigin,
+    outboundToolResult: OutboundToolResult | null,
+    signal?: AbortSignal
+  ): Promise<string> {
+    throwIfAborted(signal)
+    const check = checkComposerLimit(
+      text,
+      await this.agentAdapter.getComposerLimit({ signal })
+    )
+    throwIfAborted(signal)
+    if (check.status !== 'over_limit') {
+      return text
+    }
+    if (origin !== 'tool_result' || outboundToolResult === null) {
+      throw new ComposerLimitExceededError(check, origin)
+    }
+    const replacement = formatToolResultMessage(
+      outboundToolResult.toolName,
+      outboundToolResult.toolResult,
+      createComposerLimitToolDelivery(check)
+    )
+    const replacementCheck = checkComposerLimit(replacement, check.limit)
+    if (replacementCheck.status === 'over_limit') {
+      throw new ComposerLimitExceededError(replacementCheck, origin)
+    }
+    return replacement
   }
 
   private async executePreparedTool(

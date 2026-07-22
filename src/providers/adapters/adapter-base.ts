@@ -11,6 +11,11 @@ import {
   emptyHistoryResult,
   type ConversationHistoryResult,
 } from '../conversation-history.ts'
+import {
+  resolveProviderComposerLimit,
+  type ComposerLimit,
+} from '../composer-limit.ts'
+import type { ProviderId } from '../provider-id.ts'
 
 export type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
 
@@ -587,6 +592,10 @@ export abstract class ProviderAdapter<
   TPage extends ProviderPage = Page,
   TSession extends ProviderCdpSession = CDPSession,
 > {
+  protected get composerLimitProvider(): ProviderId | 'unknown' {
+    return 'unknown'
+  }
+
   protected context: ProviderBrowserContext<TPage, TSession>
   protected page!: TPage
   private submitStatusReporter:
@@ -747,6 +756,19 @@ export abstract class ProviderAdapter<
 
   public async stopGeneration(): Promise<void> {
     return undefined
+  }
+
+  public async getComposerLimit(
+    options: AbortOptions = {}
+  ): Promise<ComposerLimit> {
+    throwIfAborted(options.signal)
+    return this.composerLimitProvider === 'unknown'
+      ? { kind: 'unknown', provider: 'unknown', source: 'unknown' }
+      : await resolveProviderComposerLimit(
+          this.page,
+          this.composerLimitProvider,
+          options
+        )
   }
 
   protected async clickLocatorIfReady(locator: {

@@ -6,7 +6,10 @@ import {
   ThreadCloseCleanupError,
   ThreadManager,
 } from '../../src/threads/thread-manager.ts'
-import { PortalAbortError } from '../../src/runtime/runtime-cancellation.ts'
+import {
+  abortable,
+  PortalAbortError,
+} from '../../src/runtime/runtime-cancellation.ts'
 import {
   type TurnRecord,
   ThreadRegistry,
@@ -165,6 +168,34 @@ test('ThreadManager does not create a turn for an already cancelled input', asyn
   )
 
   assert.equal(submitted, false)
+  assert.equal(manager.getThread(thread.id)?.turnCount, 0)
+  assert.equal(manager.getThread(thread.id)?.title, null)
+  assert.equal(manager.isThreadRunning(thread.id), false)
+})
+
+test('ThreadManager aborts a stalled input preflight without creating a turn', async () => {
+  const manager = new ThreadManager()
+  const controller = new AbortController()
+  const entered = Promise.withResolvers<void>()
+  const thread = manager.addThread({
+    id: manager.createThreadId(),
+    provider: 'chatgpt',
+    runtime: createFakeRuntime({
+      preflightInitialInput: async (_input, signal) => {
+        entered.resolve()
+        return await abortable(new Promise(() => {}), signal)
+      },
+    }),
+    createdAt: 1,
+  })
+
+  const submission = manager.submitThreadInput(thread.id, 'Cancel preflight.', {
+    signal: controller.signal,
+  })
+  await entered.promise
+  controller.abort(new PortalAbortError('cancel stalled preflight'))
+
+  await assert.rejects(submission, PortalAbortError)
   assert.equal(manager.getThread(thread.id)?.turnCount, 0)
   assert.equal(manager.getThread(thread.id)?.title, null)
   assert.equal(manager.isThreadRunning(thread.id), false)

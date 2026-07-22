@@ -64,6 +64,10 @@ function readGrokConversationIdFromUrl(
 }
 
 export class GrokAdapter extends ProviderAdapter {
+  protected override get composerLimitProvider() {
+    return 'grok' as const
+  }
+
   private conversationIdVal!: string | null
   private websocketFrames: string[] = []
 
