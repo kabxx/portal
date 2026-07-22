@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createElement } from 'react'
+import { renderToString, stripAnsiSequences, Text } from 'ink'
 import type { CliCommand } from '../../src/cli-commands/core/command-types.ts'
 
 import {
@@ -25,6 +27,7 @@ import {
   moveCursorVertical,
   normalizePastedInput,
   renderBubbleBody,
+  wrapAnsiLine,
   resolveInputSyntaxHighlight,
   shouldClearInputForCtrlC,
   shouldInterruptForKey,
@@ -527,8 +530,40 @@ test('renderBubbleBody expands tabs at display-column stops for plain output', (
 test('renderBubbleBody ignores ANSI CSI sequences when expanding and measuring tabs', () => {
   const rendered = renderBubbleBody('a\u001B[2K\tb', 'plain', 40)
 
-  assert.equal(rendered, 'a\u001B[2K   b')
+  assert.equal(rendered, 'a   b')
   assert.equal(estimateDisplayWidth(rendered), 5)
+})
+
+test('renderBubbleBody normalizes Unicode line separators before tab expansion', () => {
+  const rendered = renderBubbleBody('a\u0085\tb\u2028\tc\u2029\td', 'plain', 40)
+
+  assert.equal(rendered, 'a\n    b\n    c\n    d')
+})
+
+test('renderBubbleBody canonicalizes C1 SGR before measuring tabs', () => {
+  const rendered = renderBubbleBody('\u009B31mred\u009B0m\tb', 'plain', 40)
+
+  assert.equal(rendered, '\u001B[31mred\u001B[0m b')
+  assert.equal(estimateDisplayWidth(rendered), 5)
+})
+
+test('wrapAnsiLine keeps long OSC 8 links atomic across wrapped lines', () => {
+  const uri = `https://example.com/${'secret'.repeat(30)}`
+  const visible = 'Z'.repeat(100)
+  const input = `\u001B]8;;${uri}\u0007${visible}\u001B]8;;\u0007`
+  const lines = wrapAnsiLine(input, 20)
+  const renderedLines = lines.map((line) =>
+    renderToString(createElement(Text, null, line))
+  )
+
+  assert.equal(
+    renderedLines.map((line) => stripAnsiSequences(line)).join(''),
+    visible
+  )
+  assert.equal(
+    renderedLines.some((line) => stripAnsiSequences(line).includes('secret')),
+    false
+  )
 })
 
 test('renderBubbleBody expands tabs before markdown and V4A formatting', () => {
@@ -542,6 +577,38 @@ test('renderBubbleBody expands tabs before markdown and V4A formatting', () => {
   assert.equal(markdown.includes('\t'), false)
   assert.equal(v4a.includes('\t'), false)
   assert.match(v4a, / {4}\+new/)
+})
+
+test('Ink renders bubble control characters without terminal side effects', () => {
+  const body = renderBubbleBody(
+    'VT: [\u000B] FF: [\u000C]\nNEL: [\u0085] LS: [\u2028] PS: [\u2029]',
+    'plain',
+    80
+  )
+  const output = renderToString(createElement(Text, null, body))
+
+  assert.equal(
+    /[\u0000-\u0009\u000B-\u001F\u007F-\u009F\u2028\u2029]/u.test(output),
+    false
+  )
+  assert.match(output, /VT: \[ \] FF: \[ \]/)
+})
+
+test('estimateDisplayWidth ignores default-ignorable formatting characters', () => {
+  for (const character of ['\u200B', '\u200C', '\u200D', '\u2060', '\uFEFF']) {
+    const codePoint = character.codePointAt(0)?.toString(16).toUpperCase()
+    assert.equal(estimateDisplayWidth(character), 0, `U+${codePoint}`)
+  }
+
+  assert.equal(estimateDisplayWidth('a\u200Bb\u200Cc'), 3)
+})
+
+test('estimateDisplayWidth preserves emoji clusters and Unicode space widths', () => {
+  assert.equal(estimateDisplayWidth('👩‍💻'), 2)
+  assert.equal(estimateDisplayWidth('🇨🇳'), 2)
+  assert.equal(estimateDisplayWidth('1️⃣'), 2)
+  assert.equal(estimateDisplayWidth('\u00A0\u2002\u2003\u2009'), 4)
+  assert.equal(estimateDisplayWidth('\u3000'), 2)
 })
 
 test('renderBubbleBody wraps long CJK markdown table cells through markdansi', () => {
