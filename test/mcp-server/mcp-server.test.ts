@@ -36,9 +36,9 @@ function createHandlers(calls: string[] = []): PortalMcpHandlers {
       calls.push(`get:${threadId}`)
       return thread
     },
-    openThread: async ({ provider, model, option, mode }, signal) => {
+    createThread: async ({ provider, model, option, mode }, signal) => {
       assert.equal(signal.aborted, false)
-      calls.push(`open:${provider}:${model ?? ''}:${option ?? ''}:${mode}`)
+      calls.push(`create:${provider}:${model ?? ''}:${option ?? ''}:${mode}`)
       return thread
     },
     resumeThread: async (conversationUrl) => {
@@ -82,7 +82,7 @@ test('PortalMcpServer initializes, lists, and calls its fixed tools', async () =
         'portal_list_providers',
         'portal_list_threads',
         'portal_get_thread',
-        'portal_open_thread',
+        'portal_create_thread',
         'portal_resume_thread',
         'portal_close_thread',
         'portal_send_message',
@@ -102,11 +102,11 @@ test('PortalMcpServer initializes, lists, and calls its fixed tools', async () =
     ])
 
     await client.callTool({
-      name: 'portal_open_thread',
+      name: 'portal_create_thread',
       arguments: { provider: 'chatgpt' },
     })
-    const opened = await client.callTool({
-      name: 'portal_open_thread',
+    const created = await client.callTool({
+      name: 'portal_create_thread',
       arguments: {
         provider: 'gemini',
         model: '3.1-pro',
@@ -114,7 +114,7 @@ test('PortalMcpServer initializes, lists, and calls its fixed tools', async () =
         mode: 'chat',
       },
     })
-    assert.deepEqual(opened.structuredContent, thread)
+    assert.deepEqual(created.structuredContent, thread)
 
     const sent = await client.callTool({
       name: 'portal_send_message',
@@ -136,8 +136,8 @@ test('PortalMcpServer initializes, lists, and calls its fixed tools', async () =
       assistant: 'answer',
     })
     assert.deepEqual(calls, [
-      'open:chatgpt:::agent',
-      'open:gemini:3.1-pro:extended:chat',
+      'create:chatgpt:::agent',
+      'create:gemini:3.1-pro:extended:chat',
       'send:t-1:hello',
       'wait:op-1:2000',
     ])
@@ -338,7 +338,7 @@ test('PortalMcpServer maps HTTP parsing and size errors at the protocol boundary
 test('PortalMcpServer bounds stop when a request handler ignores cancellation', async () => {
   const handlers = createHandlers()
   const requestEntered = deferred()
-  handlers.openThread = async () => {
+  handlers.createThread = async () => {
     requestEntered.resolve()
     return await new Promise(() => {})
   }
@@ -352,7 +352,7 @@ test('PortalMcpServer bounds stop when a request handler ignores cancellation', 
   await server.start()
   const client = await connectClient(server.address()!)
   const call = client.callTool({
-    name: 'portal_open_thread',
+    name: 'portal_create_thread',
     arguments: { provider: 'chatgpt' },
   })
 

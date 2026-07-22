@@ -31,7 +31,7 @@ export interface PortalMcpHandlers {
     | Promise<{ threads: PortalMcpThreadSummary[] }>
     | { threads: PortalMcpThreadSummary[] }
   getThread(threadId: string): Promise<PortalMcpThreadSummary>
-  openThread(
+  createThread(
     input: {
       provider: string
       model: string | null

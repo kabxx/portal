@@ -113,7 +113,7 @@ logged-in provider conversation, whose model can invoke local Portal tools.
 Either listener therefore exposes high-privilege local and browser-account
 capabilities.
 
-Selecting `mode: "chat"` when opening a thread does not reduce those listener
+Selecting `mode: "chat"` when creating a thread does not reduce those listener
 permissions or disable model-generated tool execution.
 
 Bearer authentication does not encrypt HTTP traffic. On an untrusted network,

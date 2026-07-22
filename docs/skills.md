@@ -162,9 +162,9 @@ When a new agent thread, chat thread, or spawned runtime is created:
 5. portal rereads and validates the current `SKILL.md`, rescans its resources, and returns name, directory, resources, and instructions in the standard JSON Tool Result envelope.
 6. The model continues using only the tools already available to the runtime.
 
-An open runtime keeps its catalog membership: newly added or enabled skills require a new runtime, and disabling a skill does not remove it from an existing catalog. Skill files are loaded from disk on demand, so modifying them changes later `load_skill` results, while deleting or corrupting them returns an error even in an existing runtime.
+An active runtime keeps its catalog membership: newly added or enabled skills require a new runtime, and disabling a skill does not remove it from an existing catalog. Skill files are loaded from disk on demand, so modifying them changes later `load_skill` results, while deleting or corrupting them returns an error even in an existing runtime.
 
-A resumed conversation also creates a fresh snapshot from the current registry and registers `load_skill` when that snapshot is non-empty. Resume uses `setupMode: 'skip'`, however, so portal does not submit a new `# Skills` catalog or Tool definition turn. A chat thread likewise registers `load_skill` but sends only the minimal handshake. The provider conversation keeps whichever catalog it previously saw; newly enabled names are therefore reliably advertised only by opening a new agent thread or creating a spawned runtime.
+A resumed conversation also creates a fresh snapshot from the current registry and registers `load_skill` when that snapshot is non-empty. Resume uses `setupMode: 'skip'`, however, so portal does not submit a new `# Skills` catalog or Tool definition turn. A chat thread likewise registers `load_skill` but sends only the minimal handshake. The provider conversation keeps whichever catalog it previously saw; newly enabled names are therefore reliably advertised only by creating a new agent thread or a spawned runtime.
 
 ## Resources
 

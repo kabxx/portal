@@ -261,7 +261,7 @@ test('TerminalController caches home and thread timelines independently', () => 
   ui.renderInfo('home', 'home entry')
   manager.switchThread(first.id)
   ui.showThreadTimeline(first.id)
-  ui.renderInfo('/thread open', 'Thread t-1 is ready')
+  ui.renderInfo('/thread agent', 'Thread t-1 is ready')
   manager.switchThread(second.id)
   ui.showThreadTimeline(second.id)
   ui.renderInfo('thread', 'second entry')

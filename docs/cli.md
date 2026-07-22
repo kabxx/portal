@@ -22,11 +22,11 @@ npm run dev -- --browser-engine chromium --browser-executable-path "<browser exe
 
 ## Thread workflow
 
-Open and manage conversations in the current portal process:
+Create and manage conversations in the current portal process:
 
 ```text
-/thread open gemini
-/thread open chatgpt chatgpt
+/thread agent gemini
+/thread agent chatgpt chatgpt
 /thread chat chatgpt
 /thread chat gemini 3.6-flash extended
 /thread list
@@ -46,7 +46,7 @@ Resume from a provider URL or local history id:
 /thread resume https://chatgpt.com/c/...
 ```
 
-`/thread open` sends the full portal agent setup prompt. `/thread chat` sends only
+`/thread agent` sends the full portal agent setup prompt. `/thread chat` sends only
 the shared setup handshake and accepts a response containing `READY` as a
 case-insensitive whole word. Both commands still construct the local runtime,
 connect configured MCP servers, snapshot Skills, register tools and Hooks, and
@@ -54,25 +54,25 @@ persist the provider conversation. Chat mode does not advertise those local
 capabilities to the model, but a valid model-generated tool call can still be
 executed; it is not a sandbox.
 
-On a successful open, chat, or resume, the new thread timeline starts with `Thread t-N is ready.` Resume then appends the visible user/assistant history from the provider's current conversation branch. Tool nodes, hidden setup messages, reasoning, and unsupported attachment content are not rendered as ordinary history messages.
+After `/thread agent`, `/thread chat`, or `/thread resume` succeeds, the new thread timeline starts with `Thread t-N is ready.` Resume then appends the visible user/assistant history from the provider's current conversation branch. Tool nodes, hidden setup messages, reasoning, and unsupported attachment content are not rendered as ordinary history messages.
 
-`data/threads.db` stores provider metadata, conversation URLs, titles, and timestamps, not transcripts. Remote history and terminal timelines remain in memory. After portal restarts, use `/thread resume` to load the provider conversation again. Switching among already open threads restores their cached timelines without another provider request.
+`data/threads.db` stores provider metadata, conversation URLs, titles, and timestamps, not transcripts. Remote history and terminal timelines remain in memory. After portal restarts, use `/thread resume` to load the provider conversation again. Switching among active threads restores their cached timelines without another provider request.
 
 ### Thread commands
 
-| Command                                            | Behavior                                                   |
-| -------------------------------------------------- | ---------------------------------------------------------- |
-| `/thread open <provider> [model-key] [option-key]` | Open a provider conversation and run the setup handshake   |
-| `/thread chat <provider> [model-key] [option-key]` | Open with only the minimal setup handshake                 |
-| `/thread list`                                     | List open local threads and local turn counts              |
-| `/thread history [limit]`                          | List recent conversation URL records from SQLite           |
-| `/thread resume <url\|#history-id>`                | Reopen a provider conversation and display remote history  |
-| `/thread switch <thread-id>`                       | Restore another open thread's in-memory timeline           |
-| `/thread status`                                   | Show the active thread                                     |
-| `/thread reload`                                   | Reload the active provider page without creating a turn    |
-| `/thread close [thread-id]`                        | Close the selected thread, or the active thread by default |
-| `/thread detach`                                   | Return to the home timeline without closing the thread     |
-| `/thread capability [name] [on\|off\|status]`      | Inspect or change provider-specific web controls           |
+| Command                                             | Behavior                                                   |
+| --------------------------------------------------- | ---------------------------------------------------------- |
+| `/thread agent <provider> [model-key] [option-key]` | Create a provider conversation with the full agent setup   |
+| `/thread chat <provider> [model-key] [option-key]`  | Create with only the minimal setup handshake               |
+| `/thread list`                                      | List active local threads and local turn counts            |
+| `/thread history [limit]`                           | List recent conversation URL records from SQLite           |
+| `/thread resume <url\|#history-id>`                 | Reopen a provider conversation and display remote history  |
+| `/thread switch <thread-id>`                        | Restore another active thread's in-memory timeline         |
+| `/thread status`                                    | Show the active thread                                     |
+| `/thread reload`                                    | Reload the active provider page without creating a turn    |
+| `/thread close [thread-id]`                         | Close the selected thread, or the active thread by default |
+| `/thread detach`                                    | Return to the home timeline without closing the thread     |
+| `/thread capability [name] [on\|off\|status]`       | Inspect or change provider-specific web controls           |
 
 Remote messages loaded by resume are display-only and do not increase the local turn count shown by `/thread list`. Accepted URLs, named model keys, and capability behavior are documented in [Providers](providers.md).
 
@@ -82,7 +82,7 @@ Remote messages loaded by resume are display-only and do not increase the local 
 | ------------------- | ---------------------------------------------------- |
 | `/help`             | Show top-level command help                          |
 | `/providers`        | List supported provider ids                          |
-| `/thread ...`       | Open, resume, switch, inspect, detach, and close     |
+| `/thread ...`       | Create, resume, switch, inspect, detach, and close   |
 | `/skill ...`        | Add, list, enable, disable, and remove Skills        |
 | `/mcp ...`          | Manage MCP servers and attach Resources or Prompts   |
 | `/serve api ...`    | Start and manage the local HTTP API                  |

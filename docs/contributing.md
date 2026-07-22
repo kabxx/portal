@@ -57,7 +57,7 @@ The CI jobs do not open a provider website. Run `npm run test:browser` first whe
 
 1. Run `npm run dev` with a dedicated browser profile.
 2. Confirm the browser connects, then run `/providers`.
-3. Run `/thread open <provider>` and submit a short prompt.
+3. Run `/thread agent <provider>` and submit a short prompt.
 4. When thread creation changed, run `/thread chat <provider>` and verify that only the minimal setup handshake precedes the first user message.
 5. Confirm the assistant response streams and the thread remains usable afterward.
 6. Run `/thread status`, then `/thread detach` (or `/thread close <thread-id>`) and `/exit`.

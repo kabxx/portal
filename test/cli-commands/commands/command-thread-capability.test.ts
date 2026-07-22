@@ -94,7 +94,7 @@ test('ThreadCommand capability warns when there is no active thread', async () =
   assert.deepEqual(latestTimelineEntry(ui), {
     tone: 'warning',
     label: '/thread capability',
-    body: 'No active thread. Use /thread open <provider> first.',
+    body: 'No active thread. Use /thread agent <provider> first.',
     format: 'plain',
   })
 })

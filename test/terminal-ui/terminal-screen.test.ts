@@ -214,7 +214,7 @@ test('completeSlashCommand completes unique command and subcommand prefixes', ()
       name: '/thread',
       description: 'thread',
       subcommands: [
-        'open',
+        'agent',
         'list',
         'history',
         'resume',
@@ -235,7 +235,7 @@ test('completeSlashCommand completes unique command and subcommand prefixes', ()
   ]
 
   assert.equal(completeSlashCommand('/th', commands), '/thread ')
-  assert.equal(completeSlashCommand('/thread op', commands), '/thread open ')
+  assert.equal(completeSlashCommand('/thread ag', commands), '/thread agent ')
   assert.equal(
     completeSlashCommand('/thread cap', commands),
     '/thread capability '
@@ -246,8 +246,8 @@ test('completeSlashCommand completes unique command and subcommand prefixes', ()
   assert.equal(completeSlashCommand('/serve api st', commands), '/serve api st')
   assert.equal(completeSlashCommand('/thread s', commands), '/thread s')
   assert.equal(
-    completeSlashCommand('/thread open gemini', commands),
-    '/thread open gemini'
+    completeSlashCommand('/thread agent gemini', commands),
+    '/thread agent gemini'
   )
   assert.equal(completeSlashCommand('/', commands), '/')
   assert.equal(completeSlashCommand('hello /op', commands), 'hello /op')
@@ -293,7 +293,7 @@ test('resolveInputSyntaxHighlight only marks recognized commands and skills', ()
     {
       name: '/thread',
       description: 'thread',
-      subcommands: ['open', 'reload'],
+      subcommands: ['agent', 'reload'],
       execute,
     },
   ]

@@ -102,7 +102,7 @@ export async function executeThreadCapability(
   if (activeThread === null) {
     context.ui.renderWarning(
       THREAD_CAPABILITY_LABEL,
-      'No active thread. Use /thread open <provider> first.'
+      'No active thread. Use /thread agent <provider> first.'
     )
     return { continue: true }
   }
