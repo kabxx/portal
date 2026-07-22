@@ -5,6 +5,7 @@ import {
   Static,
   stripAnsiSequences,
   Text,
+  tokenizeAnsi,
   useInput,
   usePaste,
   useWindowSize,
@@ -1834,47 +1835,96 @@ const MARKDOWN_RENDER_OPTIONS = {
   wrap: true,
 }
 
-const ANSI_CSI_RE = /(\x1b\[[0-?]*[ -/]*[@-~])/g
-
 function collectLeadingAnsi(value: string): string {
   let leading = ''
-  let match: RegExpExecArray | null
-  ANSI_CSI_RE.lastIndex = 0
-  while ((match = ANSI_CSI_RE.exec(value)) !== null) {
-    if (match.index === leading.length) {
-      leading += match[0]
+  for (const token of tokenizeAnsi(value)) {
+    if (token.type === 'csi') {
+      leading += token.value
     } else {
       break
     }
   }
-  ANSI_CSI_RE.lastIndex = 0
   return leading
 }
 
-function wrapAnsiLine(value: string, maxWidth: number): string[] {
+const OSC8_CLOSE = '\u001B]8;;\u001B\\'
+
+function getOsc8Uri(value: string): string | undefined {
+  const payloadStart = value.startsWith('\u001B]')
+    ? 2
+    : value.startsWith('\u009D')
+      ? 1
+      : -1
+  if (payloadStart < 0) return undefined
+
+  const payloadEnd = value.endsWith('\u001B\\')
+    ? value.length - 2
+    : value.endsWith('\u0007') || value.endsWith('\u009C')
+      ? value.length - 1
+      : -1
+  if (payloadEnd < 0) return undefined
+
+  const payload = value.slice(payloadStart, payloadEnd)
+  if (!payload.startsWith('8;')) return undefined
+
+  const uriSeparator = payload.indexOf(';', 2)
+  return uriSeparator < 0 ? undefined : payload.slice(uriSeparator + 1)
+}
+
+export function wrapAnsiLine(value: string, maxWidth: number): string[] {
   const safeWidth = Math.max(1, maxWidth)
   if (!value) return ['']
 
-  const plain = value.replace(ANSI_CSI_RE, '')
+  const plain = stripAnsiSequences(value)
   if (estimateDisplayWidth(plain) <= safeWidth) {
     return [value]
   }
 
   const leadingAnsi = collectLeadingAnsi(value)
   const segments: string[] = []
-  let current = leadingAnsi
+  let current = ''
   let currentWidth = 0
+  let activeHyperlink: string | undefined
 
-  for (const grapheme of splitGraphemes(plain)) {
-    const charWidth = estimateDisplayWidth(grapheme)
-    if (currentWidth > 0 && currentWidth + charWidth > safeWidth) {
-      segments.push(current)
-      current = leadingAnsi + grapheme
-      currentWidth = charWidth
-    } else {
-      current += grapheme
-      currentWidth += charWidth
+  const pushWrappedLine = () => {
+    if (activeHyperlink !== undefined) {
+      current += OSC8_CLOSE
     }
+    segments.push(current)
+    current = leadingAnsi + (activeHyperlink ?? '')
+    currentWidth = 0
+  }
+
+  for (const token of tokenizeAnsi(value)) {
+    if (token.type === 'text') {
+      for (const grapheme of splitGraphemes(token.value)) {
+        const charWidth = estimateDisplayWidth(grapheme)
+        if (currentWidth > 0 && currentWidth + charWidth > safeWidth) {
+          pushWrappedLine()
+        }
+
+        current += grapheme
+        currentWidth += charWidth
+      }
+      continue
+    }
+
+    if (token.type === 'osc') {
+      const uri = getOsc8Uri(token.value)
+      current += token.value
+      if (uri !== undefined) {
+        activeHyperlink = uri.length > 0 ? token.value : undefined
+      }
+      continue
+    }
+
+    if (token.type === 'csi') {
+      current += token.value
+    }
+  }
+
+  if (activeHyperlink !== undefined) {
+    current += OSC8_CLOSE
   }
 
   if (current || segments.length === 0) {

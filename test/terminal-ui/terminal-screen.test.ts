@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createElement } from 'react'
-import { renderToString, Text } from 'ink'
+import { renderToString, stripAnsiSequences, Text } from 'ink'
 import type { CliCommand } from '../../src/cli-commands/core/command-types.ts'
 
 import {
@@ -27,6 +27,7 @@ import {
   moveCursorVertical,
   normalizePastedInput,
   renderBubbleBody,
+  wrapAnsiLine,
   resolveInputSyntaxHighlight,
   shouldClearInputForCtrlC,
   shouldInterruptForKey,
@@ -544,6 +545,25 @@ test('renderBubbleBody canonicalizes C1 SGR before measuring tabs', () => {
 
   assert.equal(rendered, '\u001B[31mred\u001B[0m b')
   assert.equal(estimateDisplayWidth(rendered), 5)
+})
+
+test('wrapAnsiLine keeps long OSC 8 links atomic across wrapped lines', () => {
+  const uri = `https://example.com/${'secret'.repeat(30)}`
+  const visible = 'Z'.repeat(100)
+  const input = `\u001B]8;;${uri}\u0007${visible}\u001B]8;;\u0007`
+  const lines = wrapAnsiLine(input, 20)
+  const renderedLines = lines.map((line) =>
+    renderToString(createElement(Text, null, line))
+  )
+
+  assert.equal(
+    renderedLines.map((line) => stripAnsiSequences(line)).join(''),
+    visible
+  )
+  assert.equal(
+    renderedLines.some((line) => stripAnsiSequences(line).includes('secret')),
+    false
+  )
 })
 
 test('renderBubbleBody expands tabs before markdown and V4A formatting', () => {
