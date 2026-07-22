@@ -135,6 +135,10 @@ function parseGeminiModel(
 }
 
 export class GeminiAdapter extends ProviderAdapter {
+  protected override get composerLimitProvider() {
+    return 'gemini' as const
+  }
+
   private lastParsedResponse!: GeminiParsedResponse | null
 
   private isRetryableError(error: unknown): boolean {

@@ -97,6 +97,10 @@ function isGlmCompletionUrl(value: string): boolean {
 }
 
 export class GlmAdapter extends ProviderAdapter {
+  protected override get composerLimitProvider() {
+    return 'glm' as const
+  }
+
   private conversationIdVal!: string | null
 
   private getSendButton() {

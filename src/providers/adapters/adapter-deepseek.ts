@@ -71,6 +71,10 @@ function readDeepSeekConversationIdFromUrl(
 }
 
 export class DeepSeekAdapter extends ProviderAdapter {
+  protected override get composerLimitProvider() {
+    return 'deepseek' as const
+  }
+
   private conversationIdVal!: string | null
 
   private getReadyButton() {

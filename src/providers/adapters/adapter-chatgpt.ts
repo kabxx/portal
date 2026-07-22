@@ -80,6 +80,10 @@ function readChatGPTConversationIdFromUrl(
 }
 
 export class ChatGPTAdapter extends ProviderAdapter {
+  protected override get composerLimitProvider() {
+    return 'chatgpt' as const
+  }
+
   private lastParsedResponse!: ChatGPTParsedResponse | null
   private websocketFrames!: string[]
 

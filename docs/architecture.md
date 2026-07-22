@@ -163,6 +163,34 @@ The runtime sends every result with the same model-facing shape:
 }
 ```
 
+Before sending, the runtime measures the complete Tool Result envelope against
+the active provider's composer limit. If the original result is too large, the
+runtime preserves the tool's original `outcome`, keeps the full result in local
+records and hooks, and sends a bounded replacement instead:
+
+```text
+### Tool Result ###
+{
+  "tool": "tool_name",
+  "outcome": "success",
+  "result": null,
+  "delivery": {
+    "status": "not_delivered",
+    "code": "COMPOSER_LIMIT_EXCEEDED",
+    "message": "The original tool result was not delivered because it exceeds the provider composer limit.",
+    "measured": 200000,
+    "limit": 163840,
+    "unit": "utf16_code_units",
+    "source": "verified_fallback",
+    "confidence": "safe_cap"
+  }
+}
+```
+
+`outcome` describes tool execution. `delivery` appears only when the original
+`result` was not included in the model-facing message; it does not replace or
+modify the full local result.
+
 The runtime can perform multiple tool rounds before the local turn completes.
 
 ### Live command progress

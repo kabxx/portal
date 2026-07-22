@@ -184,6 +184,10 @@ function isQwenHistoryUrl(value: string, conversationId: string): boolean {
 }
 
 export class QwenAdapter extends ProviderAdapter {
+  protected override get composerLimitProvider() {
+    return 'qwen' as const
+  }
+
   private conversationIdVal!: string | null
   private pendingText = ''
 

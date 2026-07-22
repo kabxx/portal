@@ -16,6 +16,7 @@ import {
 import type { HookCatalog } from '../hooks/hook-catalog.ts'
 import type { HookDispatcher } from '../hooks/hook-dispatcher.ts'
 import type { HookExecutionScope } from '../hooks/hook-types.ts'
+import { ComposerLimitExceededError } from '../providers/composer-limit.ts'
 
 export interface ThreadHandle {
   id: string
@@ -308,6 +309,13 @@ export class ThreadManager {
   ): Promise<ThreadInputResult> {
     throwIfAborted(handlers.signal)
     await this.ready.get(thread.id)
+    const preflight = await thread.runtime.preflightInitialInput(
+      input,
+      handlers.signal
+    )
+    if (preflight.status === 'over_limit') {
+      throw new ComposerLimitExceededError(preflight, 'user')
+    }
     const turn = this.threads.beginTurn(thread.id, input)
     if (turn === null) {
       throw new Error(`Unknown thread: ${thread.id}`)
