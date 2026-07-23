@@ -497,6 +497,52 @@ test('renderBubbleBody keeps long markdown table cells instead of truncating', (
   assert.equal(rendered.includes('fifteen'), true)
 })
 
+test('renderBubbleBody keeps Markdown blocks compact without dropping code blank lines', () => {
+  const rendered = renderBubbleBody(
+    [
+      '# Heading',
+      '',
+      'Paragraph',
+      '',
+      '---',
+      '',
+      '```',
+      'alpha',
+      '',
+      'beta',
+      '```',
+      '',
+      '| H |',
+      '| --- |',
+      '| V |',
+      '',
+      '- first',
+      '',
+      '- second',
+    ].join('\n'),
+    'markdown',
+    40
+  )
+  const lines = rendered.split('\n')
+
+  assert.equal(lines[0], 'Heading')
+  assert.equal(
+    lines.some((line) => line.length === 0),
+    false
+  )
+
+  const alphaIndex = lines.findIndex((line) => line.includes('alpha'))
+  assert.notEqual(alphaIndex, -1)
+  assert.equal(lines[alphaIndex + 1]?.replace(/[│\s]/gu, ''), '')
+  assert.equal(lines[alphaIndex + 2]?.includes('beta'), true)
+
+  const codeBottomIndex = lines.findIndex((line) => line.startsWith('└'))
+  assert.equal(lines[codeBottomIndex + 1]?.startsWith('┌'), true)
+
+  const firstItemIndex = lines.findIndex((line) => line === '- first')
+  assert.equal(lines[firstItemIndex - 1]?.startsWith('└'), true)
+})
+
 test('renderBubbleBody colors V4A snapshot lines without changing their text', () => {
   const rendered = renderBubbleBody(
     [
