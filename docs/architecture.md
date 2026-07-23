@@ -8,7 +8,7 @@ portal coordinates three execution environments:
 2. a local TypeScript/Node.js runtime with filesystem, process, Skill, and MCP access;
 3. a real provider conversation in a Chromium browser.
 
-Provider-specific website behavior stays behind adapters. The runtime understands tools, threads, cancellation, recovery, and external integrations; adapters understand navigation, selectors, provider protocols, uploads, model menus, and conversation history.
+Provider-specific website behavior stays behind Provider UI components and adapters. The runtime understands tools, threads, cancellation, recovery, and external integrations. Provider UI components own DOM selectors and interactions; adapters expose semantic operations and coordinate navigation, provider protocols, network capture, and conversation history.
 
 ## Component map
 
@@ -19,8 +19,9 @@ Provider-specific website behavior stays behind adapters. The runtime understand
 | HTTP API          | `src/api/`                              | Serve authenticated routes, thread operations, and per-thread SSE event streams                                                                                       |
 | MCP Server        | `src/mcp-server/`                       | Expose selected thread operations through an independent Streamable HTTP MCP listener                                                                                 |
 | Browser platform  | `src/platform/`                         | Launch Chromium, connect over CDP, and manage platform-specific process lifetime                                                                                      |
-| Provider adapters | `src/providers/adapters/`               | Navigate pages, detect login/readiness, submit, stream, upload, select models, and stop output                                                                        |
-| Provider data     | `src/providers/definitions/`            | Typed immutable manifests for models, options, static capabilities, and semantic locator leaves                                                                       |
+| Provider adapters | `src/providers/adapters/`               | Implement the semantic Provider contract and coordinate navigation, protocol capture/parsing, history, and Provider UI components                                     |
+| Provider UI       | `src/providers/ui/`                     | Own Provider-local selector candidates, DOM scoping, uniqueness, readiness, interaction, upload, model, capability, and stop behavior                                 |
+| Provider data     | `src/providers/definitions/`            | Typed immutable domain definitions for model keys, model options, and static capability metadata; contains no DOM selectors or UI targets                             |
 | History parsing   | `src/providers/conversation-history.ts` | Convert eight provider history formats into visible user/assistant messages                                                                                           |
 | Runtime           | `src/runtime/`                          | Build setup prompts, initialize runtimes, execute tool loops, retry, recover, and cancel                                                                              |
 | Threads           | `src/threads/`                          | `ThreadLifecycleService` owns create/resume/send/close admission; registries track runtime identity, selection, and local turns; SQLite persists URL history metadata |
@@ -218,7 +219,7 @@ All adapters implement these core operations:
 
 - restore a new or existing provider page;
 - report login and conversation identity;
-- select a model by current menu position;
+- select a named domain model through the Provider-local UI mapping;
 - attach text, files, and images;
 - submit input and emit streamed/final text;
 - expose supported page capabilities;

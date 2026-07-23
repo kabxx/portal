@@ -76,7 +76,9 @@ class FakeAdapter extends ProviderAdapter {
     return 'https://example.com/thread'
   }
 
-  public async changeModel(_model: string) {
+  public async changeModel(
+    _model: Parameters<ProviderAdapter['changeModel']>[0]
+  ) {
     if (this.failChangeModel) {
       throw new Error('changeModel failed')
     }
@@ -116,7 +118,9 @@ test('createRuntimeFromAdapter closes the adapter when changeModel fails', async
   const adapter = new FakeAdapter({ failChangeModel: true })
 
   await assert.rejects(
-    createRuntimeFromAdapter(adapter, { model: 'gpt-test' }),
+    createRuntimeFromAdapter(adapter, {
+      model: { key: 'gpt-test', option: null },
+    }),
     /changeModel failed/
   )
 

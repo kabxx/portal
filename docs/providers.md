@@ -19,9 +19,9 @@ portal supports eight web AI products through provider-specific adapters. Every 
 | `qwen`      | `chat.qwen.ai`      | Yes            | Yes    | `qwen3.7-plus`, `qwen3.8-max-preview`, `qwen3.7-max`           | Dynamic page actions                      |
 | `kimi`      | `www.kimi.com`      | Yes            | Yes    | `k2.6`, `k3`, `k3-cluster`                                     | `search`                                  |
 
-Model keys and model-specific options are maintained in the typed Provider manifests under `src/providers/definitions/`. Each manifest maps a key to the one-based menu position used by its Adapter; Provider menu changes may therefore select a different model until the manifest is updated. Numeric menu positions are internal and are not accepted by the CLI, API, or MCP server.
+Model keys and model-specific options are maintained in the typed Provider definitions under `src/providers/definitions/`. Provider-local UI components translate those logical keys into current page interactions. Numeric menu positions and DOM details are internal and are not accepted by the CLI, API, or MCP server.
 
-Portal statically imports all eight manifests into one deeply frozen snapshot. TypeScript checks each Provider's exact fields, option/capability target kinds, and locator slot names; startup validation additionally checks uniqueness, ranges, target compatibility, and CSS candidate safety. Static capability mappings and maintained model/capability locator leaves live in the same manifests. Account- or experiment-dependent capabilities, page ownership, uniqueness rules, interaction state machines, and composer limits remain Adapter or runtime behavior.
+Portal statically imports all eight definitions into one deeply frozen domain snapshot. TypeScript and startup validation check each Provider's exact model, option, and capability metadata. Definitions contain no selector, menu position, or dispatch target. Provider-local UI components own selectors, page ownership, uniqueness, visibility, interaction state, and model/capability dispatch. Account- or experiment-dependent capabilities are still discovered from the live page.
 
 `gpt` is accepted as a command alias for `chatgpt`; the other provider ids are used as shown.
 

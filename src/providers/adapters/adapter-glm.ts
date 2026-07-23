@@ -15,49 +15,16 @@ import {
 } from '../../runtime/runtime-cancellation.ts'
 import { retryAsync } from '../../shared/retry.ts'
 import { waitAsync } from '../../shared/wait.ts'
-import type { Locator } from 'playwright'
 import { emptyHistoryResult, parseGlmHistory } from '../conversation-history.ts'
+import type { ResolvedProviderModel } from '../provider-model-catalog.ts'
 import {
-  getProviderDefinition,
-  joinCssLocatorCandidates,
-} from '../provider-definition-pack.ts'
+  GlmUi,
+  type GlmToggleCapability,
+  type GlmToggleState,
+} from '../ui/glm/glm-ui.ts'
 
 const GLM_CHAT_URL = 'https://chat.z.ai'
-const GLM_LOCATORS = getProviderDefinition('glm').locators
-const GLM_READY_BUTTON_SELECTOR = '#send-message-button'
-const GLM_COMPOSER_SELECTOR = '#chat-input'
-const GLM_UPLOAD_BUTTON_SELECTOR = '#upload-file-button'
-const GLM_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
-  GLM_LOCATORS.modelTrigger
-)
-const GLM_MODEL_ITEM_SELECTOR = joinCssLocatorCandidates(GLM_LOCATORS.modelItem)
-const GLM_VISIBLE_MODEL_MENU_SELECTOR = joinCssLocatorCandidates(
-  GLM_LOCATORS.modelMenu,
-  ':visible'
-)
-const GLM_VISIBLE_MODEL_ITEM_SELECTOR = joinCssLocatorCandidates(
-  GLM_LOCATORS.modelItem,
-  ':visible'
-)
-const GLM_STOP_BUTTON_SELECTOR =
-  '.messageInputContainer button.bg-black.rounded-full'
-const GLM_SIGNED_OUT_AVATAR_SELECTOR =
-  'div.pointer-events-auto.px-1\\.5.pb-3\\.5 > button > svg[viewBox^="0 0 20"] path[fill-rule="evenodd"][clip-rule="evenodd"]'
-const GLM_BLOCKING_DIALOG_SELECTOR = '[data-dialog-overlay][data-state="open"]'
-const GLM_ADVANCED_SEARCH_SWITCH_SELECTOR = joinCssLocatorCandidates(
-  GLM_LOCATORS.advancedSearchSwitch
-)
 const GLM_HISTORY_POLL_MS = 100
-
-export type GlmToggleCapability = 'thinking' | 'search' | 'advanced_search'
-export type GlmToggleState = 'on' | 'off'
-
-type GlmDirectToggleCapability = Exclude<GlmToggleCapability, 'advanced_search'>
-
-const GLM_TOGGLE_BUTTON_SELECTORS: Record<GlmDirectToggleCapability, string> = {
-  thinking: joinCssLocatorCandidates(GLM_LOCATORS.thinkingToggle),
-  search: joinCssLocatorCandidates(GLM_LOCATORS.searchToggle),
-}
 
 interface GlmStreamError {
   code: string
@@ -69,14 +36,6 @@ interface GlmParsedResponse {
   isFinished: boolean
   error: GlmStreamError | null
 }
-
-interface GlmAdvancedSearchSnapshot {
-  enabled: boolean
-  state: GlmToggleState
-}
-
-type GlmRestorePageState = 'pending' | 'signed_out' | 'ready'
-type GlmSignedOutIndicatorState = 'absent' | 'ambiguous' | 'visible'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -117,215 +76,35 @@ export class GlmAdapter extends ProviderAdapter {
   }
 
   private conversationIdVal!: string | null
-
-  private getSendButton() {
-    return this.page.locator(GLM_READY_BUTTON_SELECTOR).first()
-  }
-
-  private getUploadButton() {
-    return this.page.locator(GLM_UPLOAD_BUTTON_SELECTOR).first()
-  }
-
-  private getToggleButton(capability: GlmDirectToggleCapability) {
-    return this.page.locator(GLM_TOGGLE_BUTTON_SELECTORS[capability]).first()
-  }
-
-  private async findAdvancedSearchSwitch(): Promise<Locator | null> {
-    try {
-      await this.page.bringToFront()
-      await this.page.keyboard.press('Escape').catch(() => {})
-      await this.getToggleButton('search').locator('..').hover({
-        timeout: 5000,
-      })
-      const advancedSearchSwitch = this.page
-        .locator(GLM_ADVANCED_SEARCH_SWITCH_SELECTOR)
-        .first()
-      await advancedSearchSwitch.waitFor({ state: 'visible', timeout: 2000 })
-      return advancedSearchSwitch
-    } catch {
-      return null
-    }
-  }
-
-  private async getAdvancedSearchSnapshot(): Promise<GlmAdvancedSearchSnapshot | null> {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const button = await this.findAdvancedSearchSwitch()
-      if (button !== null) {
-        const snapshot = await button
-          .evaluate((element) => {
-            if (!(element instanceof HTMLButtonElement)) {
-              throw new TypeError('Expected an advanced search button.')
-            }
-            return {
-              enabled: !element.disabled,
-              checked: element.getAttribute('aria-checked') === 'true',
-            }
-          })
-          .catch(() => null)
-        if (snapshot !== null) {
-          return {
-            enabled: snapshot.enabled,
-            state: snapshot.checked ? 'on' : 'off',
-          }
-        }
-      }
-      await delayAsync(100)
-    }
-    return null
-  }
-
-  private async applyAdvancedSearchState(
-    targetState: GlmToggleState
-  ): Promise<boolean | null> {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const button = await this.findAdvancedSearchSwitch()
-      if (button !== null) {
-        const result = await button
-          .evaluate((element, target) => {
-            if (!(element instanceof HTMLButtonElement)) {
-              throw new TypeError('Expected an advanced search button.')
-            }
-            if (element.disabled) {
-              return { enabled: false }
-            }
-            const currentState =
-              element.getAttribute('aria-checked') === 'true' ? 'on' : 'off'
-            if (currentState !== target) {
-              element.click()
-            }
-            return { enabled: true }
-          }, targetState)
-          .catch(() => null)
-        if (result !== null) {
-          return result.enabled
-        }
-      }
-      await delayAsync(100)
-    }
-    return null
-  }
-
-  private async closeAdvancedSearchTooltip(): Promise<void> {
-    await this.page.keyboard.press('Escape').catch(() => {})
+  private get providerUi(): GlmUi {
+    return new GlmUi(this.page)
   }
 
   public async hasToggleCapability(
     capability: GlmToggleCapability
   ): Promise<boolean> {
-    if (capability === 'advanced_search') {
-      return await this.wrapAdapterActionErrorAsync(
-        `${capability}Available`,
-        async () => {
-          try {
-            const snapshot = await this.getAdvancedSearchSnapshot()
-            return snapshot !== null && snapshot.enabled
-          } finally {
-            await this.closeAdvancedSearchTooltip()
-          }
-        }
-      )
-    }
-
     return await this.wrapAdapterActionErrorAsync(
       `${capability}Available`,
-      async () => {
-        const buttons = this.page.locator(
-          GLM_TOGGLE_BUTTON_SELECTORS[capability]
-        )
-        return (
-          (await buttons.count()) > 0 &&
-          (await buttons
-            .first()
-            .isVisible()
-            .catch(() => false))
-        )
-      }
+      async () => await this.providerUi.hasToggleCapability(capability)
     )
   }
 
   public async getToggleState(
     capability: GlmToggleCapability
   ): Promise<GlmToggleState> {
-    if (capability === 'advanced_search') {
-      return await this.wrapAdapterActionErrorAsync(
-        `${capability}Status`,
-        async () => {
-          try {
-            const snapshot = await this.getAdvancedSearchSnapshot()
-            if (snapshot === null || !snapshot.enabled) {
-              throw new ProviderAdapterUnsupportedError(
-                `${capability}Status`,
-                'GLM advanced_search capability is not available on this page.'
-              )
-            }
-            return snapshot.state
-          } finally {
-            await this.closeAdvancedSearchTooltip()
-          }
-        }
-      )
-    }
-
-    if (!(await this.hasToggleCapability(capability))) {
-      throw new ProviderAdapterUnsupportedError(
-        `${capability}Status`,
-        `GLM ${capability} capability is not available on this page.`
-      )
-    }
-
-    const attribute =
-      capability === 'thinking' ? 'data-autothink' : 'data-active'
-    const value = await this.wrapAdapterActionErrorAsync(
+    return await this.wrapAdapterActionErrorAsync(
       `${capability}Status`,
-      async () => await this.getToggleButton(capability).getAttribute(attribute)
+      async () => await this.providerUi.getToggleState(capability)
     )
-    return value === 'true' ? 'on' : 'off'
   }
 
   public async setToggleState(
     capability: GlmToggleCapability,
     targetState: GlmToggleState
   ): Promise<GlmToggleState> {
-    if (capability === 'advanced_search') {
-      return await this.wrapAdapterActionErrorAsync(
-        `${capability}Set`,
-        async () => {
-          if (targetState === 'on') {
-            await this.setToggleState('thinking', 'on')
-            await this.setToggleState('search', 'on')
-          }
-
-          try {
-            const applied = await this.applyAdvancedSearchState(targetState)
-            if (applied !== true) {
-              throw new ProviderAdapterUnsupportedError(
-                `${capability}Set`,
-                'GLM advanced_search capability is not available on this page.'
-              )
-            }
-            await waitAsync(
-              async () =>
-                (await this.getAdvancedSearchSnapshot())?.state === targetState,
-              { timeoutMs: 5000 }
-            )
-            return targetState
-          } finally {
-            await this.closeAdvancedSearchTooltip()
-          }
-        }
-      )
-    }
-
     return await this.wrapAdapterActionErrorAsync(
       `${capability}Set`,
-      async () => {
-        const button = this.getToggleButton(capability)
-        const currentState = await this.getToggleState(capability)
-        if (currentState !== targetState) {
-          await button.click()
-        }
-        return await this.getToggleState(capability)
-      }
+      async () => await this.providerUi.setToggleState(capability, targetState)
     )
   }
 
@@ -334,138 +113,21 @@ export class GlmAdapter extends ProviderAdapter {
     timeoutMs: number | null,
     signal?: AbortSignal
   ): Promise<void> {
-    await waitAsync(async () => await this.isReadyButtonVisible(), {
-      timeoutMs,
-      signal,
-      onTimeout: async () => {
-        throw new ProviderAdapterError(
-          action,
-          action === 'restore'
-            ? 'GLM did not become ready after loading.'
-            : 'GLM finished responding, but the send button did not become visible again.',
-          {
-            kind: 'ui',
-            recovery: 'none',
-            retryable: false,
-            maxAttempts: 1,
-            detailCode: 'glm_ready_button_missing',
-          }
-        )
-      },
-    })
-  }
-
-  private async isReadyButtonVisible(): Promise<boolean> {
-    const readyButtons = this.page.locator(GLM_READY_BUTTON_SELECTOR)
-    if ((await readyButtons.count().catch(() => 0)) !== 1) return false
-    return await readyButtons
-      .first()
-      .isVisible()
-      .catch(() => false)
-  }
-
-  private async getSignedOutIndicatorState(): Promise<GlmSignedOutIndicatorState> {
-    const indicators = this.page.locator(GLM_SIGNED_OUT_AVATAR_SELECTOR)
-    const count = await indicators.count().catch(() => 0)
-    if (count === 0) return 'absent'
-    if (count !== 1) return 'ambiguous'
-    return (await indicators
-      .first()
-      .isVisible()
-      .catch(() => false))
-      ? 'visible'
-      : 'absent'
+    await this.providerUi.waitForReady(action, timeoutMs, signal)
   }
 
   private async waitForRestorePageState(
     timeoutMs: number,
     signal?: AbortSignal
-  ): Promise<Exclude<GlmRestorePageState, 'pending'>> {
-    let signedOut = false
-    await waitAsync(
-      async () => {
-        const signedOutIndicator = await this.getSignedOutIndicatorState()
-        if (signedOutIndicator === 'visible') {
-          signedOut = true
-          return true
-        }
-        if (signedOutIndicator === 'ambiguous') {
-          return false
-        }
-        if (await this.isReadyButtonVisible()) {
-          return true
-        }
-        return false
-      },
-      {
-        timeoutMs,
-        signal,
-        onTimeout: async () => {
-          throw new ProviderAdapterError(
-            'restore',
-            'GLM did not become ready after loading.',
-            {
-              kind: 'ui',
-              recovery: 'none',
-              retryable: false,
-              maxAttempts: 1,
-              detailCode: 'glm_ready_button_missing',
-            }
-          )
-        },
-      }
-    )
-    return signedOut ? 'signed_out' : 'ready'
-  }
-
-  private async isSendButtonReady(): Promise<boolean> {
-    const sendButton = this.getSendButton()
-    return (
-      (await sendButton.isVisible().catch(() => false)) &&
-      (await sendButton.isEnabled().catch(() => false))
-    )
+  ): Promise<'signed_out' | 'ready'> {
+    return await this.providerUi.waitForRestorePageState(timeoutMs, signal)
   }
 
   private async dismissBlockingDialog(
     action: string,
     signal?: AbortSignal
   ): Promise<void> {
-    const overlay = this.page.locator(GLM_BLOCKING_DIALOG_SELECTOR).first()
-    if (!(await overlay.isVisible().catch(() => false))) {
-      return
-    }
-    throwIfAborted(signal)
-    await this.page.keyboard.press('Escape')
-    await waitAsync(
-      async () => !(await overlay.isVisible().catch(() => false)),
-      {
-        timeoutMs: 5000,
-        signal,
-        onTimeout: async () => {
-          throw new ProviderAdapterError(
-            action,
-            'GLM has a blocking dialog that could not be dismissed.',
-            {
-              kind: 'ui',
-              recovery: 'none',
-              retryable: false,
-              maxAttempts: 1,
-              detailCode: 'glm_blocking_dialog',
-            }
-          )
-        },
-      }
-    )
-  }
-
-  private async clickComposerWithDialogRecovery(): Promise<void> {
-    const composer = this.page.locator(GLM_COMPOSER_SELECTOR).first()
-    try {
-      await composer.click({ timeout: 2000 })
-    } catch {
-      await this.dismissBlockingDialog('attachText')
-      await composer.click()
-    }
+    await this.providerUi.dismissBlockingDialog(action, signal)
   }
 
   private isRetryableError(error: unknown): boolean {
@@ -609,23 +271,7 @@ export class GlmAdapter extends ProviderAdapter {
     const deadline = Date.now() + this.getHistoryLoadTimeoutMs()
     while (!state.result.complete && Date.now() < deadline) {
       throwIfAborted(signal)
-      const scrolled = await this.page
-        .evaluate(() => {
-          const elements = [
-            document.scrollingElement,
-            ...document.querySelectorAll('*'),
-          ]
-          let foundScrollable = false
-          for (const element of elements) {
-            if (!(element instanceof HTMLElement)) continue
-            if (element.scrollHeight <= element.clientHeight + 40) continue
-            foundScrollable = true
-            element.scrollTo({ top: 0, behavior: 'auto' })
-            element.dispatchEvent(new Event('scroll', { bubbles: true }))
-          }
-          return foundScrollable
-        })
-        .catch(() => false)
+      const scrolled = await this.providerUi.scrollHistoryToTop()
       if (!scrolled) break
 
       const previousBodyCount = state.bodyCount
@@ -665,92 +311,16 @@ export class GlmAdapter extends ProviderAdapter {
       return false
     }
 
-    return (await this.getSignedOutIndicatorState()) === 'absent'
+    return await this.providerUi.isLoggedIn()
   }
 
-  public async changeModel(model: string): Promise<void> {
-    const modelNumber = Number(model.trim())
-    if (!Number.isSafeInteger(modelNumber) || modelNumber < 1) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `GLM does not support model "${model}".`
-      )
-    }
-    const modelIndex = modelNumber - 1
-
-    await this.dismissBlockingDialog('changeModel')
-    const triggers = this.page.locator(GLM_MODEL_TRIGGER_SELECTOR)
-    if ((await triggers.count()) !== 1) {
-      throw new ProviderAdapterError(
-        'changeModel',
-        'GLM model selector was missing or ambiguous.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'glm_model_trigger_invalid',
-        }
-      )
-    }
-    await triggers.first().click()
-    const visibleMenus = this.page.locator(GLM_VISIBLE_MODEL_MENU_SELECTOR)
-    const scopedModelItems = visibleMenus.locator(GLM_MODEL_ITEM_SELECTOR)
-    const globalModelItems = this.page.locator(GLM_VISIBLE_MODEL_ITEM_SELECTOR)
-    await waitAsync(
-      async () =>
-        (await scopedModelItems.count().catch(() => 0)) > 0 ||
-        (await globalModelItems.count().catch(() => 0)) > 0,
-      { timeoutMs: 5000 }
-    )
-    if ((await visibleMenus.count()) > 1) {
-      throw new ProviderAdapterError(
-        'changeModel',
-        'GLM model menu was ambiguous.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'glm_model_menu_ambiguous',
-        }
-      )
-    }
-    const usesScopedItems = (await scopedModelItems.count()) > 0
-    const modelItems = usesScopedItems ? scopedModelItems : globalModelItems
-    if (
-      !usesScopedItems &&
-      !(await modelItems.evaluateAll(
-        (items) => new Set(items.map((item) => item.parentElement)).size === 1
-      ))
-    ) {
-      throw new ProviderAdapterError(
-        'changeModel',
-        'GLM model options were ambiguous.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'glm_model_options_ambiguous',
-        }
-      )
-    }
-    if ((await modelItems.count()) <= modelIndex) {
-      await this.page.keyboard.press('Escape').catch(() => {})
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `GLM does not have model ${modelNumber}.`
-      )
-    }
-    await modelItems.nth(modelIndex).click()
+  public async changeModel(model: ResolvedProviderModel): Promise<void> {
+    await this.providerUi.selectModel(model)
   }
 
   public async attachText(text: string): Promise<void> {
     await this.wrapAdapterActionErrorAsync('attachText', async () => {
-      await this.dismissBlockingDialog('attachText')
-      await this.clickComposerWithDialogRecovery()
-      await this.page.keyboard.insertText(text)
+      await this.providerUi.attachText(text)
     })
   }
 
@@ -758,53 +328,26 @@ export class GlmAdapter extends ProviderAdapter {
     text: string,
     options: AbortOptions
   ): Promise<() => Promise<void>> {
-    const composer = () => this.page.locator(GLM_COMPOSER_SELECTOR)
+    const getLocators = () => this.providerUi.getRetryLocators()
     return await this.prepareRetrySubmitText(text, options, {
       provider: 'GLM',
-      isComposerReady: async () => await this.isRetryComposerReady(composer()),
+      isComposerReady: async () =>
+        await this.isRetryComposerReady(getLocators().composer),
       readComposerText: async () =>
-        await this.readRetryComposerText(composer()),
+        await this.readRetryComposerText(getLocators().composer),
       writeText: async () => await this.attachText(text),
       clearComposer: async () =>
-        await this.clearRetryComposerElements(composer()),
+        await this.clearRetryComposerElements(getLocators().composer),
       isStopActive: async () =>
-        await this.isRetryControlActive(
-          this.page.locator(GLM_STOP_BUTTON_SELECTOR)
-        ),
+        await this.isRetryControlActive(getLocators().stop),
       isSendReady: async () =>
-        await this.isRetryControlReady(
-          this.page.locator(GLM_READY_BUTTON_SELECTOR)
-        ),
+        await this.isRetryControlReady(getLocators().send),
     })
   }
 
   public async attachFile(path: string | readonly string[]): Promise<void> {
     await this.wrapAdapterActionErrorAsync('attachFile', async () => {
-      await this.dismissBlockingDialog('attachFile')
-      const uploadButtons = this.page.locator(GLM_UPLOAD_BUTTON_SELECTOR)
-      if ((await uploadButtons.count()) === 0) {
-        throw new ProviderAdapterUnsupportedError(
-          'attachFile',
-          'GLM file upload is not available in the current conversation.'
-        )
-      }
-
-      const uploadButton = this.getUploadButton()
-      const isAvailable =
-        (await uploadButton.isVisible().catch(() => false)) &&
-        (await uploadButton.isEnabled().catch(() => false))
-      if (!isAvailable) {
-        throw new ProviderAdapterUnsupportedError(
-          'attachFile',
-          'GLM file upload is not available in the current conversation.'
-        )
-      }
-
-      const [fileChooser] = await Promise.all([
-        this.page.waitForEvent('filechooser'),
-        uploadButton.click(),
-      ])
-      await fileChooser.setFiles(path)
+      await this.providerUi.attachFile(path)
     })
   }
 
@@ -813,7 +356,7 @@ export class GlmAdapter extends ProviderAdapter {
   }
 
   public override async stopGeneration(): Promise<void> {
-    await this.clickLocatorIfReady(this.page.locator(GLM_STOP_BUTTON_SELECTOR))
+    await this.providerUi.stopGeneration()
   }
 
   private isTargetCompletionRequest(
@@ -848,11 +391,10 @@ export class GlmAdapter extends ProviderAdapter {
         const { signal } = options
         throwIfAborted(signal)
         await this.dismissBlockingDialog('submit', signal)
-        const sendButton = this.getSendButton()
-        await waitAsync(async () => await this.isSendButtonReady(), {
-          timeoutMs: this.getSubmitResponseTimeoutMs(),
-          signal,
-        })
+        await this.providerUi.waitForSendReady(
+          this.getSubmitResponseTimeoutMs(),
+          signal
+        )
         throwIfAborted(signal)
 
         const fetchCaptureStartIndex = await this.getCapturedFetchEntryCount()
@@ -953,7 +495,7 @@ export class GlmAdapter extends ProviderAdapter {
               await this.readCurrentStreamedResponseText(fetchCaptureStartIndex)
           )
           this.emitSubmitDispatching(signal)
-          await sendButton.click()
+          await this.providerUi.clickSend()
           this.emitSubmitSent()
           throwIfAborted(signal)
 

@@ -27,7 +27,7 @@ type ToggleCapabilityDefinition = Extract<
   ProviderCapabilityDefinition,
   { kind: 'toggle' }
 >
-type ToggleCapability = ToggleCapabilityDefinition['target']['value']
+type ToggleCapability = ToggleCapabilityDefinition['key']
 type ToggleState = 'on' | 'off'
 
 interface ActionCapabilityInfo {
@@ -145,7 +145,7 @@ export async function listProviderCapabilityStates(
     const states: ProviderCapabilityState[] = []
     for (const capability of listProviderCapabilities(provider)) {
       if (capability.kind !== 'toggle') continue
-      const adapterCapability = capability.target.value
+      const adapterCapability = capability.key
       if (provider === 'kimi') {
         try {
           states.push({
@@ -243,7 +243,7 @@ export async function executeProviderCapability(
     }
   }
 
-  const capability = capabilityDefinition.target.value
+  const capability = capabilityDefinition.key
   if (provider !== 'kimi' && !(await adapter.hasToggleCapability(capability))) {
     return {
       status: 'unsupported_provider',

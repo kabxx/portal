@@ -33,7 +33,6 @@ test('spawn model selection inherits only within the same provider', () => {
   const model = {
     key: '3.1-pro',
     option: 'extended',
-    adapterValue: '3+extended',
   }
 
   assert.equal(inheritSpawnModelSelection('gemini', 'gemini', model), model)

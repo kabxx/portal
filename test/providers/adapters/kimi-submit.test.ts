@@ -6,15 +6,19 @@ import {
   KimiAdapter,
   parseKimiConnectResponse,
 } from '../../../src/providers/adapters/adapter-kimi.ts'
-import {
-  getProviderDefinition,
-  joinCssLocatorCandidates,
-} from '../../../src/providers/provider-definition-pack.ts'
+import { joinCssLocatorCandidates } from '../../../src/providers/ui/provider-ui.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 const KIMI_CHAT_URL =
   'https://www.kimi.com/apiv2/kimi.gateway.chat.v1.ChatService/Chat'
-const KIMI_LOCATORS = getProviderDefinition('kimi').locators
+const KIMI_LOCATORS = {
+  capabilityTrigger: ['.chat-editor .toolkit-trigger-btn'],
+  capabilityPopover: ['.toolkit-popover'],
+  searchItem: ['.toolkit-item:has(svg[name="InternetOn"])'],
+  searchPopover: ['.connect-popover'],
+  searchOption: ['.connect-item'],
+  selectedOptionIcon: ['svg[name="Check"]'],
+} as const
 
 type KimiAdapterHarness = Pick<KimiAdapter, keyof KimiAdapter> & {
   page: unknown
@@ -154,6 +158,9 @@ function createKimiCapabilityPage({
     first() {
       return this
     },
+    nth() {
+      return this
+    },
     isVisible: async () => toolkitOpen && searchVisible,
     isEnabled: async () => searchEnabled,
     click: async () => {
@@ -197,6 +204,9 @@ function createKimiCapabilityPage({
     first() {
       return this
     },
+    nth() {
+      return this
+    },
     isVisible: async () => true,
     click: async () => {
       composerClicks += 1
@@ -207,6 +217,9 @@ function createKimiCapabilityPage({
   const missing = {
     count: async () => 0,
     first() {
+      return this
+    },
+    nth() {
       return this
     },
     isVisible: async () => false,
@@ -306,9 +319,14 @@ function createKimiCapturedSubmitPage() {
     first() {
       return this
     },
+    nth() {
+      return this
+    },
     last() {
       return this
     },
+    isEnabled: async () => true,
+    getAttribute: async () => null,
     isVisible: async () => true,
     click: async () => {
       if (!selector.includes(':not(.disabled)')) return
@@ -863,6 +881,11 @@ test('KimiAdapter page fallback ignores a concurrent POST with different text', 
     last() {
       return this
     },
+    nth() {
+      return this
+    },
+    isEnabled: async () => true,
+    getAttribute: async () => null,
     isVisible: async () => true,
     click: async () => {
       if (!selector.includes(':not(.disabled)')) return
@@ -1024,6 +1047,9 @@ test('KimiAdapter stopGeneration clicks only one visible stop control', async ()
     first() {
       return this
     },
+    nth() {
+      return this
+    },
     isVisible: async () => true,
     click: async () => {
       clicks += 1
@@ -1051,6 +1077,9 @@ test('KimiAdapter waits for every selected file to finish uploading', async () =
           first() {
             return this
           },
+          nth() {
+            return this
+          },
           isVisible: async () => true,
           click: async () => {},
         }
@@ -1059,6 +1088,9 @@ test('KimiAdapter waits for every selected file to finish uploading', async () =
         return {
           count: async () => 1,
           first() {
+            return this
+          },
+          nth() {
             return this
           },
           setInputFiles: async (paths: string[]) => {
@@ -1098,6 +1130,9 @@ test('KimiAdapter fails immediately when an uploaded file enters an error state'
           first() {
             return this
           },
+          nth() {
+            return this
+          },
           isVisible: async () => true,
           click: async () => {},
         }
@@ -1106,6 +1141,9 @@ test('KimiAdapter fails immediately when an uploaded file enters an error state'
         return {
           count: async () => 1,
           first() {
+            return this
+          },
+          nth() {
             return this
           },
           setInputFiles: async () => {

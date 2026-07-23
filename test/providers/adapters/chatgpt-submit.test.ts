@@ -5,13 +5,24 @@ import assert from 'node:assert/strict'
 import { ChatGPTAdapter } from '../../../src/providers/adapters/adapter-chatgpt.ts'
 import { createDeferred } from '../../../src/providers/adapters/adapter-base.ts'
 import {
-  getProviderDefinition,
   joinCssLocatorCandidates,
   mapCssLocatorCandidates,
-} from '../../../src/providers/provider-definition-pack.ts'
+} from '../../../src/providers/ui/provider-ui.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
-const CHATGPT_LOCATORS = getProviderDefinition('chatgpt').locators
+const CHATGPT_LOCATORS = {
+  modelTrigger: [
+    'button[data-testid="model-switcher-dropdown-button"]',
+    'button.__composer-pill',
+  ],
+  modelDirectMenu: ['[role="menu"]'],
+  modelPicker: ['div[data-testid="composer-intelligence-picker-content"]'],
+  modelDirectItem: ['[role="menuitemradio"]'],
+  modelMenuItem: ['div[role="menuitem"]'],
+  modelItem: ['div[role="menuitemradio"]'],
+  capabilityTrigger: ['[data-testid="composer-plus-btn"]'],
+  capabilityGroup: ['div[role="group"][class*="empty:hidden"]'],
+} as const
 const CHATGPT_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
   CHATGPT_LOCATORS.modelTrigger,
   ':visible'
@@ -813,19 +824,17 @@ test('ChatGPTAdapter selects fixed action capabilities by index', async () => {
   ])
 })
 
-test('ChatGPTAdapter changes model and mode through the intelligence picker', async () => {
+test('ChatGPTAdapter changes the declared model through the intelligence picker', async () => {
   const adapter = createTestChatGPTAdapter()
   const page = createChatGPTModelPage()
   adapter.page = page
 
-  await adapter.changeModel('2+1')
+  await adapter.changeModel({ key: 'chatgpt', option: null })
 
   assert.deepEqual(page.events, [
     'click:pill',
-    'click:mode:0',
-    'click:pill',
     'click:model-menu',
-    'click:model:1',
+    'click:model:0',
   ])
 })
 
@@ -834,12 +843,12 @@ test('ChatGPTAdapter changes model without changing mode', async () => {
   const page = createChatGPTModelPage()
   adapter.page = page
 
-  await adapter.changeModel('3')
+  await adapter.changeModel({ key: 'chatgpt', option: null })
 
   assert.deepEqual(page.events, [
     'click:pill',
     'click:model-menu',
-    'click:model:2',
+    'click:model:0',
   ])
 })
 
@@ -848,33 +857,36 @@ test('ChatGPTAdapter changes model through the direct radio menu', async () => {
   const page = createChatGPTDirectModelPage()
   adapter.page = page
 
-  await adapter.changeModel('2')
+  await adapter.changeModel({ key: 'chatgpt', option: null })
 
-  assert.deepEqual(page.events, ['click:trigger', 'click:model:1'])
+  assert.deepEqual(page.events, ['click:trigger', 'click:model:0'])
 })
 
 test('ChatGPTAdapter rejects ambiguous visible model selectors', async () => {
   const adapter = createTestChatGPTAdapter()
   adapter.page = createChatGPTDirectModelPage({ triggerCount: 2 })
 
-  await assert.rejects(adapter.changeModel('1'), /missing or ambiguous/)
+  await assert.rejects(
+    adapter.changeModel({ key: 'chatgpt', option: null }),
+    /missing or ambiguous/
+  )
 })
 
-test('ChatGPTAdapter rejects unsupported model and mode numbers', async () => {
+test('ChatGPTAdapter rejects unsupported, unavailable, and optioned models', async () => {
   const adapter = createTestChatGPTAdapter()
-  adapter.page = createChatGPTModelPage({ modelCount: 2, modeCount: 1 })
+  adapter.page = createChatGPTModelPage({ modelCount: 0 })
 
   await assert.rejects(
-    adapter.changeModel('name'),
+    adapter.changeModel({ key: 'name', option: null }),
     /ChatGPT does not support model "name"\./
   )
   await assert.rejects(
-    adapter.changeModel('3'),
-    /ChatGPT does not have model 3\./
+    adapter.changeModel({ key: 'chatgpt', option: null }),
+    /ChatGPT does not have model 1\./
   )
   await assert.rejects(
-    adapter.changeModel('1+2'),
-    /ChatGPT does not have model mode 2\./
+    adapter.changeModel({ key: 'chatgpt', option: 'extended' }),
+    /ChatGPT does not support model "chatgpt" with option "extended"\./
   )
 })
 
@@ -1024,11 +1036,7 @@ function createStopButton() {
 
 function createChatGPTModelPage({
   modelCount = 3,
-  modeCount = 2,
-}: {
-  modelCount?: number
-  modeCount?: number
-} = {}) {
+}: { modelCount?: number } = {}) {
   const events: string[] = []
   let pickerOpen = false
   let modelMenuOpen = false
@@ -1037,25 +1045,11 @@ function createChatGPTModelPage({
       events.push(`click:model:${index}`)
     },
   }))
-  const modeItems = Array.from({ length: modeCount }, (_, index) => ({
-    click: async () => {
-      events.push(`click:mode:${index}`)
-      pickerOpen = false
-    },
-  }))
   const picker = {
     count: async () => (pickerOpen ? 1 : 0),
     first: () => picker,
     isVisible: async () => pickerOpen,
     locator: (selector: string) => {
-      if (
-        selector === joinCssLocatorCandidates(CHATGPT_LOCATORS.modelModeItem)
-      ) {
-        return {
-          count: async () => modeItems.length,
-          nth: (index: number) => modeItems[index],
-        }
-      }
       if (
         selector === joinCssLocatorCandidates(CHATGPT_LOCATORS.modelMenuItem)
       ) {

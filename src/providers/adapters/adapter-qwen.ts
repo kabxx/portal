@@ -1,4 +1,4 @@
-import type { Locator, Request, Response } from 'playwright'
+import type { Request, Response } from 'playwright'
 import { StringDecoder } from 'node:string_decoder'
 import {
   ProviderAdapter,
@@ -26,113 +26,18 @@ import {
   type QwenParsedResponse,
   type QwenStreamError,
 } from '../qwen-response-parser.ts'
+import type { ResolvedProviderModel } from '../provider-model-catalog.ts'
 import {
-  getProviderDefinition,
-  joinCssLocatorCandidates,
-  listProviderCapabilities,
-  mapCssLocatorCandidates,
-} from '../provider-definition-pack.ts'
+  QwenUi,
+  type QwenActionCapability,
+  type QwenActionCapabilityInfo,
+  type QwenActionCapabilityState,
+} from '../ui/qwen/qwen-ui.ts'
 
 const QWEN_CHAT_URL = 'https://chat.qwen.ai'
 const QWEN_AUTH_PATH = '/api/v2/users/status'
 const QWEN_COMPLETION_PATH = '/api/v2/chat/completions'
-const QWEN_LOCATORS = getProviderDefinition('qwen').locators
-const QWEN_COMPOSER_SELECTOR = '.message-input-textarea'
-const QWEN_SEND_BUTTON_SELECTOR =
-  '.message-input-container button.send-button, .chat-layout-input-container button.send-button'
-const QWEN_STOP_BUTTON_SELECTOR =
-  '.chat-layout-input-container button.stop-button'
-const QWEN_UPLOAD_TRIGGER_SELECTOR = joinCssLocatorCandidates(
-  QWEN_LOCATORS.capabilityTrigger
-)
-const QWEN_UPLOAD_MENU_ITEM_SELECTOR =
-  '[role="menuitem"][data-menu-id$="-upload"]'
-const QWEN_MODE_MENU_SELECTOR = joinCssLocatorCandidates(
-  QWEN_LOCATORS.capabilityMenu
-)
-const QWEN_MODE_MENU_ITEM_SELECTOR = joinCssLocatorCandidates(
-  QWEN_LOCATORS.capabilityItem
-)
-const QWEN_MODE_SUBMENU_SELECTOR = joinCssLocatorCandidates(
-  QWEN_LOCATORS.capabilitySubmenu
-)
-const QWEN_SELECTED_MODE_SELECTOR = joinCssLocatorCandidates(
-  QWEN_LOCATORS.selectedCapability
-)
-const QWEN_SELECTED_MODE_ICON_SELECTOR = joinCssLocatorCandidates(
-  QWEN_LOCATORS.selectedCapabilityIcon
-)
-const QWEN_SELECTED_MODE_CLOSE_SELECTOR = joinCssLocatorCandidates(
-  QWEN_LOCATORS.selectedCapabilityClose
-)
-const QWEN_MODE_MENU_ITEM_ICON_SELECTOR = joinCssLocatorCandidates(
-  QWEN_LOCATORS.capabilityItemIcon
-)
-const QWEN_FILE_CARD_SELECTOR = '.file-card-list .fileitem-btn'
-const QWEN_FILE_PARSE_STATUS_PATH = '/api/v2/files/parse/status'
-const QWEN_UPLOAD_TIMEOUT_MS = 60_000
 const QWEN_CDP_SETUP_TIMEOUT_MS = 5_000
-const QWEN_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
-  QWEN_LOCATORS.modelTrigger
-)
-const QWEN_MODEL_OPTION_SELECTOR = joinCssLocatorCandidates(
-  QWEN_LOCATORS.modelItem
-)
-const QWEN_VISIBLE_MODEL_LISTBOX_SELECTOR = joinCssLocatorCandidates(
-  QWEN_LOCATORS.modelListbox,
-  ':visible'
-)
-const QWEN_VISIBLE_MODEL_OPTION_SELECTOR = joinCssLocatorCandidates(
-  QWEN_LOCATORS.modelItem,
-  ':visible'
-)
-
-export type QwenActionCapability = string
-
-export type QwenActionCapabilityState =
-  | 'available'
-  | 'selected'
-  | 'cleared'
-  | 'disabled'
-  | 'unavailable'
-
-export interface QwenActionCapabilityInfo {
-  name: QwenActionCapability
-  state: Exclude<QwenActionCapabilityState, 'cleared'>
-}
-
-const QWEN_ACTION_CAPABILITIES = listProviderCapabilities('qwen').map(
-  (capability) => {
-    if (capability.kind !== 'action' || capability.target.kind !== 'menu_id') {
-      throw new Error(`Invalid Qwen capability definition: ${capability.key}`)
-    }
-    return {
-      name: capability.key,
-      menuId: capability.target.value,
-      scope: capability.target.scope,
-    }
-  }
-)
-
-function isQwenActionCapability(value: string): value is QwenActionCapability {
-  return QWEN_ACTION_CAPABILITIES.some(
-    (capability) => capability.name === value
-  )
-}
-
-function createQwenCapabilityError(
-  action: string,
-  message: string,
-  detailCode: string
-): ProviderAdapterError {
-  return new ProviderAdapterError(action, message, {
-    kind: 'ui',
-    recovery: 'none',
-    retryable: false,
-    maxAttempts: 1,
-    detailCode,
-  })
-}
 
 interface QwenOwnedRequest {
   request: Request
@@ -200,6 +105,9 @@ export class QwenAdapter extends ProviderAdapter {
 
   private conversationIdVal!: string | null
   private pendingText = ''
+  private get providerUi(): QwenUi {
+    return new QwenUi(this.page)
+  }
 
   protected override async init(options: AbortOptions = {}) {
     await super.init(options)
@@ -244,7 +152,11 @@ export class QwenAdapter extends ProviderAdapter {
           }
         )
       }
-      await this.waitForComposer('restore', this.getRestoreTimeoutMs(), signal)
+      await this.providerUi.waitForComposer(
+        'restore',
+        this.getRestoreTimeoutMs(),
+        signal
+      )
     } catch (error) {
       if (this.isRetryableError(error)) {
         throw new ProviderAdapterError(
@@ -428,90 +340,13 @@ export class QwenAdapter extends ProviderAdapter {
     return result.data
   }
 
-  public async changeModel(model: string): Promise<void> {
-    const modelNumber = Number(model.trim())
-    if (!Number.isSafeInteger(modelNumber) || modelNumber < 1) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `Qwen does not support model "${model}".`
-      )
-    }
-    const trigger = this.page.locator(QWEN_MODEL_TRIGGER_SELECTOR)
-    if ((await trigger.count()) !== 1) {
-      throw new ProviderAdapterError(
-        'changeModel',
-        'Qwen model selector was missing or ambiguous.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'qwen_model_trigger_invalid',
-        }
-      )
-    }
-    await trigger.first().click()
-
-    const visibleListboxes = this.page.locator(
-      QWEN_VISIBLE_MODEL_LISTBOX_SELECTOR
-    )
-    const scopedOptions = visibleListboxes.locator(QWEN_MODEL_OPTION_SELECTOR)
-    const globalOptions = this.page.locator(QWEN_VISIBLE_MODEL_OPTION_SELECTOR)
-    await waitAsync(
-      async () =>
-        (await scopedOptions.count().catch(() => 0)) > 0 ||
-        (await globalOptions.count().catch(() => 0)) > 0,
-      { timeoutMs: 5000 }
-    )
-    if ((await visibleListboxes.count()) > 1) {
-      throw new ProviderAdapterError(
-        'changeModel',
-        'Qwen model menu was ambiguous.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'qwen_model_menu_ambiguous',
-        }
-      )
-    }
-    const usesScopedOptions = (await scopedOptions.count()) > 0
-    const options = usesScopedOptions ? scopedOptions : globalOptions
-    if (
-      !usesScopedOptions &&
-      !(await options.evaluateAll(
-        (items) => new Set(items.map((item) => item.parentElement)).size === 1
-      ))
-    ) {
-      throw new ProviderAdapterError(
-        'changeModel',
-        'Qwen model options were ambiguous.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'qwen_model_options_ambiguous',
-        }
-      )
-    }
-    const modelIndex = modelNumber - 1
-    if ((await options.count()) <= modelIndex) {
-      await this.page.keyboard.press('Escape').catch(() => {})
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `Qwen does not have model ${modelNumber}.`
-      )
-    }
-    await options.nth(modelIndex).click()
+  public async changeModel(model: ResolvedProviderModel): Promise<void> {
+    await this.providerUi.selectModel(model)
   }
 
   public async attachText(text: string): Promise<void> {
     await this.wrapAdapterActionErrorAsync('attachText', async () => {
-      const composer = await this.getReadyComposer('attachText')
-      await composer.click()
-      await this.page.keyboard.insertText(text)
+      await this.providerUi.attachText(text)
       this.pendingText += text
     })
   }
@@ -520,28 +355,25 @@ export class QwenAdapter extends ProviderAdapter {
     text: string,
     options: AbortOptions
   ): Promise<() => Promise<void>> {
-    const composer = () => this.page.locator(QWEN_COMPOSER_SELECTOR)
+    const getLocators = () => this.providerUi.getRetryLocators()
     return await this.prepareRetrySubmitText(text, options, {
       provider: 'Qwen',
-      isComposerReady: async () => await this.isRetryComposerReady(composer()),
+      isComposerReady: async () =>
+        await this.isRetryComposerReady(getLocators().composer),
       readComposerText: async () =>
-        await this.readRetryComposerText(composer()),
+        await this.readRetryComposerText(getLocators().composer),
       writeText: async () => {
         this.pendingText = ''
         await this.attachText(text)
       },
       clearComposer: async () => {
-        await this.clearRetryComposerElements(composer())
+        await this.clearRetryComposerElements(getLocators().composer)
         this.pendingText = ''
       },
       isStopActive: async () =>
-        await this.isRetryControlActive(
-          this.page.locator(QWEN_STOP_BUTTON_SELECTOR)
-        ),
+        await this.isRetryControlActive(getLocators().stop),
       isSendReady: async () =>
-        await this.isRetryControlReady(
-          this.page.locator(QWEN_SEND_BUTTON_SELECTOR)
-        ),
+        await this.isRetryControlReady(getLocators().send),
     })
   }
 
@@ -550,122 +382,7 @@ export class QwenAdapter extends ProviderAdapter {
     waitForTextParsing = true
   ): Promise<void> {
     await this.wrapAdapterActionErrorAsync('attachFile', async () => {
-      const trigger = this.page.locator(QWEN_UPLOAD_TRIGGER_SELECTOR)
-      if (
-        (await trigger.count()) !== 1 ||
-        !(await trigger
-          .first()
-          .isVisible()
-          .catch(() => false)) ||
-        !(await trigger
-          .first()
-          .isEnabled()
-          .catch(() => false))
-      ) {
-        throw new ProviderAdapterUnsupportedError(
-          'attachFile',
-          'Qwen file upload is not available in the current conversation.'
-        )
-      }
-      const previousFileCount = await this.page
-        .locator(QWEN_FILE_CARD_SELECTOR)
-        .count()
-      const expectedFileCount = typeof path === 'string' ? 1 : path.length
-      await trigger.first().click()
-      const uploadItems = this.page.locator(QWEN_UPLOAD_MENU_ITEM_SELECTOR)
-      await waitAsync(
-        async () =>
-          (await uploadItems.count().catch(() => 0)) === 1 &&
-          (await uploadItems
-            .first()
-            .isVisible()
-            .catch(() => false)),
-        { timeoutMs: 5000 }
-      )
-      const [fileChooser] = await Promise.all([
-        this.page.waitForEvent('filechooser'),
-        uploadItems.first().click(),
-      ])
-      const uploadCompleted = createDeferred<void>()
-      let uploadSettled = false
-      const onResponse = (response: Response) => {
-        if (
-          response.request().method() !== 'POST' ||
-          !isQwenApiUrl(response.url(), QWEN_FILE_PARSE_STATUS_PATH)
-        ) {
-          return
-        }
-        void response
-          .json()
-          .then((payload: unknown) => {
-            if (uploadSettled || !isRecord(payload)) return
-            const rows: unknown[] = Array.isArray(payload.data)
-              ? payload.data
-              : []
-            const statuses = rows
-              .map((row) => (isRecord(row) ? row.status : null))
-              .filter((status): status is string => typeof status === 'string')
-            if (
-              statuses.length > 0 &&
-              statuses.every((status) => status === 'success')
-            ) {
-              uploadSettled = true
-              uploadCompleted.resolve()
-            } else if (
-              statuses.some(
-                (status) =>
-                  status !== 'running' &&
-                  status !== 'pending' &&
-                  status !== 'success'
-              )
-            ) {
-              uploadSettled = true
-              uploadCompleted.reject(
-                new ProviderAdapterError(
-                  'attachFile',
-                  'Qwen could not finish parsing the uploaded file.',
-                  {
-                    kind: 'protocol',
-                    recovery: 'none',
-                    retryable: false,
-                    maxAttempts: 1,
-                    detailCode: 'qwen_file_parse_failed',
-                  }
-                )
-              )
-            }
-          })
-          .catch(() => {})
-      }
-      this.page.on('response', onResponse)
-      try {
-        await fileChooser.setFiles(path)
-        await Promise.all([
-          waitAsync(
-            async () =>
-              (await this.page
-                .locator(QWEN_FILE_CARD_SELECTOR)
-                .count()
-                .catch(() => 0)) >=
-              previousFileCount + expectedFileCount,
-            { timeoutMs: QWEN_UPLOAD_TIMEOUT_MS }
-          ),
-          ...(waitForTextParsing
-            ? [
-                awaitWithTimeout(
-                  uploadCompleted.promise,
-                  QWEN_UPLOAD_TIMEOUT_MS,
-                  () =>
-                    new Error(
-                      'Timed out waiting for Qwen to parse the uploaded file.'
-                    )
-                ),
-              ]
-            : []),
-        ])
-      } finally {
-        this.page.off('response', onResponse)
-      }
+      await this.providerUi.attachFile(path, waitForTextParsing)
     })
   }
 
@@ -673,360 +390,18 @@ export class QwenAdapter extends ProviderAdapter {
     await this.attachFile(path, false)
   }
 
-  private async getVisibleActionCapabilityMenu(
-    action: string
-  ): Promise<Locator | null> {
-    const menus = this.page.locator(QWEN_MODE_MENU_SELECTOR)
-    const count = await menus.count().catch(() => 0)
-    let visibleMenu: Locator | null = null
-    for (let index = 0; index < count; index += 1) {
-      const menu = menus.nth(index)
-      if (!(await menu.isVisible().catch(() => false))) continue
-      if (visibleMenu !== null) {
-        throw createQwenCapabilityError(
-          action,
-          'Qwen capability menu is ambiguous.',
-          'qwen_capability_menu_ambiguous'
-        )
-      }
-      visibleMenu = menu
-    }
-    return visibleMenu
-  }
-
-  private async openActionCapabilityMenu(action: string): Promise<Locator> {
-    const existing = await this.getVisibleActionCapabilityMenu(action)
-    if (existing !== null) return existing
-
-    const trigger = this.page
-      .locator(QWEN_UPLOAD_TRIGGER_SELECTOR)
-      .filter({ visible: true })
-    if (
-      (await trigger.count().catch(() => 0)) !== 1 ||
-      !(await trigger
-        .first()
-        .isEnabled()
-        .catch(() => false))
-    ) {
-      throw createQwenCapabilityError(
-        action,
-        'Qwen mode menu is not available in the current conversation.',
-        'qwen_capability_menu_unavailable'
-      )
-    }
-
-    await trigger.first().click()
-    let openedMenu: Locator | null = null
-    let stableChecks = 0
-    try {
-      await waitAsync(
-        async () => {
-          try {
-            const current = await this.getVisibleActionCapabilityMenu(action)
-            if (current === null) {
-              openedMenu = null
-              stableChecks = 0
-              return false
-            }
-            openedMenu = current
-            stableChecks += 1
-            return stableChecks >= 2
-          } catch (error) {
-            if (
-              error instanceof ProviderAdapterError &&
-              error.detailCode === 'qwen_capability_menu_ambiguous'
-            ) {
-              openedMenu = null
-              stableChecks = 0
-              return false
-            }
-            throw error
-          }
-        },
-        { timeoutMs: 5000 }
-      )
-    } catch (error) {
-      await this.closeActionCapabilityMenu()
-      throw error
-    }
-    if (openedMenu === null) {
-      throw createQwenCapabilityError(
-        action,
-        'Qwen capability menu did not open.',
-        'qwen_capability_menu_missing'
-      )
-    }
-    return openedMenu
-  }
-
-  private async expandActionCapabilitySubmenu(
-    rootMenu: Locator,
-    action: string
-  ): Promise<Locator | null> {
-    const submenu = rootMenu
-      .locator(QWEN_MODE_SUBMENU_SELECTOR)
-      .filter({ visible: true })
-    let submenuCount = await submenu.count().catch(() => 0)
-    if (submenuCount === 0) return null
-    if (submenuCount !== 1) {
-      await waitAsync(
-        async () => (await submenu.count().catch(() => 0)) === 1,
-        { timeoutMs: 1000 }
-      ).catch(() => {})
-      submenuCount = await submenu.count().catch(() => 0)
-    }
-    if (submenuCount !== 1) {
-      throw createQwenCapabilityError(
-        action,
-        'Qwen capability submenu is ambiguous.',
-        'qwen_capability_submenu_ambiguous'
-      )
-    }
-
-    const submenuTrigger = submenu.first()
-    const popupId = await submenuTrigger
-      .getAttribute('aria-controls')
-      .catch(() => null)
-    if (popupId === null || !popupId.trim()) {
-      throw createQwenCapabilityError(
-        action,
-        'Qwen capability submenu has no controlled menu.',
-        'qwen_capability_submenu_owner_missing'
-      )
-    }
-    const popup = this.page
-      .locator(`[id="${popupId.replaceAll('"', '\\"')}"]`)
-      .filter({ visible: true })
-    await submenuTrigger.dispatchEvent('mouseover')
-    await waitAsync(async () => (await popup.count().catch(() => 0)) === 1, {
-      timeoutMs: 5000,
-    })
-    const popupMenu = popup.first()
-    const popupItems = popupMenu
-      .locator(QWEN_MODE_MENU_ITEM_SELECTOR)
-      .filter({ visible: true })
-    let previousCount = -1
-    let stableChecks = 0
-    await waitAsync(
-      async () => {
-        const itemCount = await popupItems.count().catch(() => 0)
-        if (itemCount === 0) {
-          previousCount = -1
-          stableChecks = 0
-          return false
-        }
-        if (itemCount === previousCount) {
-          stableChecks += 1
-        } else {
-          previousCount = itemCount
-          stableChecks = 1
-        }
-        return stableChecks >= 2
-      },
-      { timeoutMs: 5000 }
-    )
-    return popupMenu
-  }
-
-  private async closeActionCapabilityMenu(owner?: Locator): Promise<void> {
-    const menu =
-      owner ??
-      (await this.getVisibleActionCapabilityMenu('closeCapabilityMenu'))
-    if (menu === null || !(await menu.isVisible().catch(() => false))) {
-      return
-    }
-    await this.page.keyboard.press('Escape')
-    if (await menu.isVisible().catch(() => false)) {
-      await this.page.keyboard.press('Escape')
-    }
-    await waitAsync(async () => !(await menu.isVisible().catch(() => false)), {
-      timeoutMs: 5000,
-    })
-  }
-
-  private getActionCapabilityItem(
-    capability: QwenActionCapability,
-    rootMenu: Locator,
-    nestedMenu: Locator | null
-  ) {
-    const definition = QWEN_ACTION_CAPABILITIES.find(
-      (candidate) => candidate.name === capability
-    )
-    if (definition === undefined) {
-      throw new Error(`Qwen capability definition is missing: ${capability}`)
-    }
-    const scope =
-      definition.scope === 'nested' && nestedMenu !== null
-        ? nestedMenu
-        : rootMenu
-    return scope
-      .locator(
-        mapCssLocatorCandidates(
-          QWEN_LOCATORS.capabilityItem,
-          (candidate) => `${candidate}[data-menu-id$="-${definition.menuId}"]`
-        )
-      )
-      .filter({ visible: true })
-  }
-
-  private async readActionCapabilityIconReference(
-    owner: Locator,
-    action: string
-  ): Promise<string> {
-    const icons = owner.locator(QWEN_MODE_MENU_ITEM_ICON_SELECTOR)
-    if ((await icons.count().catch(() => 0)) !== 1) {
-      throw createQwenCapabilityError(
-        action,
-        'Qwen capability icon is missing or ambiguous.',
-        'qwen_capability_icon_invalid'
-      )
-    }
-    const icon = icons.first()
-    const reference =
-      (await icon.getAttribute('xlink:href').catch(() => null)) ??
-      (await icon.getAttribute('href').catch(() => null))
-    if (reference === null || !reference.trim()) {
-      throw createQwenCapabilityError(
-        action,
-        'Qwen capability icon does not expose a stable reference.',
-        'qwen_capability_icon_reference_missing'
-      )
-    }
-    return reference
-  }
-
-  private async readSelectedActionIconReference(
-    action: string
-  ): Promise<string | null> {
-    const selectedMode = this.page
-      .locator(QWEN_SELECTED_MODE_SELECTOR)
-      .filter({ visible: true })
-    const count = await selectedMode.count().catch(() => 0)
-    if (count === 0) return null
-    if (count !== 1) {
-      throw createQwenCapabilityError(
-        action,
-        'Qwen selected capability is ambiguous.',
-        'qwen_selected_capability_ambiguous'
-      )
-    }
-    const icons = selectedMode.first().locator(QWEN_SELECTED_MODE_ICON_SELECTOR)
-    if ((await icons.count().catch(() => 0)) !== 1) {
-      throw createQwenCapabilityError(
-        action,
-        'Qwen selected capability icon is missing or ambiguous.',
-        'qwen_selected_capability_icon_invalid'
-      )
-    }
-    const icon = icons.first()
-    const reference =
-      (await icon.getAttribute('xlink:href').catch(() => null)) ??
-      (await icon.getAttribute('href').catch(() => null))
-    if (reference === null || !reference.trim()) {
-      throw createQwenCapabilityError(
-        action,
-        'Qwen selected capability icon does not expose a stable reference.',
-        'qwen_selected_capability_icon_reference_missing'
-      )
-    }
-    return reference
-  }
-
   public async listActionCapabilities(): Promise<QwenActionCapabilityInfo[]> {
     return await this.wrapAdapterActionErrorAsync(
       'listCapabilities',
-      async () => {
-        const rootMenu = await this.openActionCapabilityMenu('listCapabilities')
-        try {
-          const nestedMenu = await this.expandActionCapabilitySubmenu(
-            rootMenu,
-            'listCapabilities'
-          )
-          const selectedIcon =
-            await this.readSelectedActionIconReference('listCapabilities')
-          const capabilities: QwenActionCapabilityInfo[] = []
-          for (const definition of QWEN_ACTION_CAPABILITIES) {
-            const capability = definition.name
-            const item = this.getActionCapabilityItem(
-              capability,
-              rootMenu,
-              nestedMenu
-            )
-            const itemCount = await item.count().catch(() => 0)
-            if (itemCount === 0) {
-              continue
-            }
-            if (itemCount !== 1) {
-              throw createQwenCapabilityError(
-                'listCapabilities',
-                `Qwen capability item is duplicated: ${capability}.`,
-                'qwen_capability_item_duplicated'
-              )
-            }
-            const disabled =
-              (await item.getAttribute('aria-disabled').catch(() => null)) ===
-              'true'
-            const itemIcon =
-              disabled || selectedIcon === null
-                ? null
-                : await this.readActionCapabilityIconReference(
-                    item,
-                    'listCapabilities'
-                  )
-            capabilities.push({
-              name: capability,
-              state: disabled
-                ? 'disabled'
-                : itemIcon === selectedIcon && selectedIcon !== null
-                  ? 'selected'
-                  : 'available',
-            })
-          }
-          return capabilities
-        } finally {
-          await this.closeActionCapabilityMenu(rootMenu)
-        }
-      }
+      async () => await this.providerUi.listActionCapabilities()
     )
   }
 
   public async clearActionCapability(): Promise<void> {
-    await this.wrapAdapterActionErrorAsync('clearCapability', async () => {
-      const selectedMode = this.page
-        .locator(QWEN_SELECTED_MODE_SELECTOR)
-        .filter({ visible: true })
-      const selectedCount = await selectedMode.count().catch(() => 0)
-      if (selectedCount === 0) {
-        return
-      }
-      if (selectedCount !== 1) {
-        throw createQwenCapabilityError(
-          'clearCapability',
-          'Qwen selected capability is ambiguous.',
-          'qwen_selected_capability_ambiguous'
-        )
-      }
-      await selectedMode.first().hover({ force: true })
-      const close = this.page
-        .locator(QWEN_SELECTED_MODE_SELECTOR)
-        .filter({ visible: true })
-        .first()
-        .locator(QWEN_SELECTED_MODE_CLOSE_SELECTOR)
-        .filter({ visible: true })
-      await waitAsync(async () => (await close.count().catch(() => 0)) === 1, {
-        timeoutMs: 1000,
-      })
-      await close.first().click({ force: true })
-      await waitAsync(
-        async () =>
-          (await this.page
-            .locator(QWEN_SELECTED_MODE_SELECTOR)
-            .filter({ visible: true })
-            .count()
-            .catch(() => 0)) === 0,
-        { timeoutMs: 5000 }
-      )
-    })
+    await this.wrapAdapterActionErrorAsync(
+      'clearCapability',
+      async () => await this.providerUi.clearActionCapability()
+    )
   }
 
   public async selectActionCapability(
@@ -1034,67 +409,12 @@ export class QwenAdapter extends ProviderAdapter {
   ): Promise<QwenActionCapabilityState> {
     return await this.wrapAdapterActionErrorAsync(
       'selectCapability',
-      async () => {
-        if (!isQwenActionCapability(capability)) {
-          return 'unavailable'
-        }
-
-        const rootMenu = await this.openActionCapabilityMenu('selectCapability')
-        try {
-          const nestedMenu = await this.expandActionCapabilitySubmenu(
-            rootMenu,
-            'selectCapability'
-          )
-          const item = this.getActionCapabilityItem(
-            capability,
-            rootMenu,
-            nestedMenu
-          )
-          const itemCount = await item.count().catch(() => 0)
-          if (itemCount === 0) {
-            return 'unavailable'
-          }
-          if (itemCount !== 1) {
-            throw createQwenCapabilityError(
-              'selectCapability',
-              `Qwen capability item is duplicated: ${capability}.`,
-              'qwen_capability_item_duplicated'
-            )
-          }
-          if (
-            (await item.getAttribute('aria-disabled').catch(() => null)) ===
-            'true'
-          ) {
-            return 'disabled'
-          }
-          const targetIcon = await this.readActionCapabilityIconReference(
-            item,
-            'selectCapability'
-          )
-          if (
-            (await this.readSelectedActionIconReference('selectCapability')) ===
-            targetIcon
-          ) {
-            return 'selected'
-          }
-          await item.click({ force: true })
-          await waitAsync(
-            async () =>
-              (await this.readSelectedActionIconReference(
-                'selectCapability'
-              )) === targetIcon,
-            { timeoutMs: 5000 }
-          )
-        } finally {
-          await this.closeActionCapabilityMenu(rootMenu)
-        }
-        return 'selected'
-      }
+      async () => await this.providerUi.selectActionCapability(capability)
     )
   }
 
   public override async stopGeneration(): Promise<void> {
-    await this.clickLocatorIfReady(this.page.locator(QWEN_STOP_BUTTON_SELECTOR))
+    await this.providerUi.stopGeneration()
   }
 
   protected getSubmitBlockedWarningMessage(): string {
@@ -1123,21 +443,11 @@ export class QwenAdapter extends ProviderAdapter {
           )
         }
 
-        const composer = await this.getReadyComposer('submit')
-        if ((await composer.inputValue()) !== pendingText) {
-          throw new ProviderAdapterError(
-            'submit',
-            'Qwen Composer content no longer matches the pending Portal request.',
-            {
-              kind: 'ui',
-              recovery: 'none',
-              retryable: false,
-              maxAttempts: 1,
-              detailCode: 'qwen_submit_text_mismatch',
-            }
-          )
-        }
-        const sendButton = await this.getReadySendButton(signal)
+        await this.providerUi.assertComposerText('submit', pendingText)
+        await this.providerUi.waitForSendReady(
+          this.getSubmitResponseTimeoutMs(),
+          signal
+        )
         await this.ensureSubmitAuth(signal)
         const requestStarted = createDeferred<void>()
         const targetResponse = createDeferred<Response>()
@@ -1235,7 +545,7 @@ export class QwenAdapter extends ProviderAdapter {
 
         try {
           this.emitSubmitDispatching(signal)
-          await sendButton.click()
+          await this.providerUi.clickSend()
           this.emitSubmitSent()
           throwIfAborted(signal)
 
@@ -1325,7 +635,7 @@ export class QwenAdapter extends ProviderAdapter {
           const rawResponse = await abortable(response.text(), signal)
           const parsed = parseQwenResponse(rawResponse)
           this.validateFinalResponse(parsed, submittedRequest)
-          await this.waitForComposer(
+          await this.providerUi.waitForComposer(
             'submit',
             this.getSubmitResponseTimeoutMs(),
             signal
@@ -1781,113 +1091,6 @@ export class QwenAdapter extends ProviderAdapter {
         detailCode: 'qwen_signed_out',
       }
     )
-  }
-
-  private async getReadyComposer(action: string) {
-    const composers = this.page.locator(QWEN_COMPOSER_SELECTOR)
-    if ((await composers.count()) !== 1) {
-      throw new ProviderAdapterError(
-        action,
-        'Qwen Composer was missing or ambiguous.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'qwen_composer_invalid',
-        }
-      )
-    }
-    const composer = composers.first()
-    if (
-      !(await composer.isVisible().catch(() => false)) ||
-      !(await composer.isEnabled().catch(() => false))
-    ) {
-      throw new ProviderAdapterError(action, 'Qwen Composer is not ready.', {
-        kind: 'ui',
-        recovery: 'none',
-        retryable: false,
-        maxAttempts: 1,
-        detailCode: 'qwen_composer_not_ready',
-      })
-    }
-    return composer
-  }
-
-  private async waitForComposer(
-    action: 'restore' | 'submit',
-    timeoutMs: number | null,
-    signal?: AbortSignal
-  ): Promise<void> {
-    await waitAsync(
-      async () => {
-        const composers = this.page.locator(QWEN_COMPOSER_SELECTOR)
-        return (
-          (await composers.count().catch(() => 0)) === 1 &&
-          (await composers
-            .first()
-            .isVisible()
-            .catch(() => false)) &&
-          (await composers
-            .first()
-            .isEnabled()
-            .catch(() => false))
-        )
-      },
-      {
-        timeoutMs,
-        signal,
-        onTimeout: async () => {
-          throw new ProviderAdapterError(
-            action,
-            action === 'restore'
-              ? 'Qwen did not become ready after loading.'
-              : 'Qwen finished responding, but the Composer did not become ready again.',
-            {
-              kind: 'ui',
-              recovery: 'none',
-              retryable: false,
-              maxAttempts: 1,
-              detailCode: 'qwen_composer_ready_timeout',
-            }
-          )
-        },
-      }
-    )
-  }
-
-  private async getReadySendButton(signal?: AbortSignal) {
-    const buttons = this.page.locator(QWEN_SEND_BUTTON_SELECTOR)
-    await waitAsync(
-      async () =>
-        (await buttons.count().catch(() => 0)) === 1 &&
-        (await buttons
-          .first()
-          .isVisible()
-          .catch(() => false)) &&
-        (await buttons
-          .first()
-          .isEnabled()
-          .catch(() => false)),
-      {
-        timeoutMs: this.getSubmitResponseTimeoutMs(),
-        signal,
-        onTimeout: async () => {
-          throw new ProviderAdapterError(
-            'submit',
-            'Qwen send button did not become ready.',
-            {
-              kind: 'ui',
-              recovery: 'none',
-              retryable: false,
-              maxAttempts: 1,
-              detailCode: 'qwen_send_button_not_ready',
-            }
-          )
-        },
-      }
-    )
-    return buttons.first()
   }
 
   private isRetryableError(error: unknown): boolean {

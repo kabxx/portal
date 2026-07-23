@@ -19,31 +19,16 @@ import {
   emptyHistoryResult,
   parseDeepSeekHistory,
 } from '../conversation-history.ts'
+import type { ResolvedProviderModel } from '../provider-model-catalog.ts'
 import {
-  getProviderDefinition,
-  joinCssLocatorCandidates,
-} from '../provider-definition-pack.ts'
+  DeepSeekUi,
+  type DeepSeekToggleCapability,
+  type DeepSeekToggleState,
+} from '../ui/deepseek/deepseek-ui.ts'
 
 const DEEPSEEK_CHAT_URL = 'https://chat.deepseek.com'
 const DEEPSEEK_CHAT_COMPLETION_URL =
   'https://chat.deepseek.com/api/v0/chat/completion'
-const DEEPSEEK_LOCATORS = getProviderDefinition('deepseek').locators
-const DEEPSEEK_READY_BUTTON_SELECTOR = 'div[role="button"][class*="bd74640a"]'
-const DEEPSEEK_TOGGLE_BUTTON_SELECTOR = joinCssLocatorCandidates(
-  DEEPSEEK_LOCATORS.capabilityToggle
-)
-const DEEPSEEK_UPLOAD_BUTTON_SELECTOR = 'div[role="button"].f02f0e25'
-const DEEPSEEK_SEND_BUTTON_SELECTOR = 'div._52c986b'
-const DEEPSEEK_SEND_BUTTON_DISABLED_CLASS = 'ds-button--disabled'
-const DEEPSEEK_MODEL_BUTTON_SELECTOR = joinCssLocatorCandidates(
-  DEEPSEEK_LOCATORS.modelItem
-)
-const DEEPSEEK_STOP_ICON_PATH_PREFIX =
-  'M2 4.88C2 3.68009 2 3.08013 2.30557 2.65954C2.40426 2.52371 2.52371 2.40426 2.65954'
-
-export type DeepSeekToggleCapability = 'thinking' | 'search'
-export type DeepSeekToggleState = 'on' | 'off'
-
 type DeepSeekParsedResponse = {
   messageId?: number
   parentId?: number
@@ -85,61 +70,26 @@ export class DeepSeekAdapter extends ProviderAdapter {
 
   private conversationIdVal!: string | null
 
-  private getReadyButton() {
-    return this.page.locator(DEEPSEEK_READY_BUTTON_SELECTOR)
-  }
-
-  private getToggleButton(capability: DeepSeekToggleCapability) {
-    const index = capability === 'thinking' ? 0 : 1
-    return this.page.locator(DEEPSEEK_TOGGLE_BUTTON_SELECTOR).nth(index)
-  }
-
-  private getUploadButton() {
-    return this.page.locator(DEEPSEEK_UPLOAD_BUTTON_SELECTOR).first()
-  }
-
-  private getSendButton() {
-    return this.page.locator(DEEPSEEK_SEND_BUTTON_SELECTOR).first()
-  }
-
-  private async isSendButtonReady(): Promise<boolean> {
-    const sendButton = this.getSendButton()
-    const className = await sendButton.getAttribute('class').catch(() => null)
-    return (
-      (await sendButton.isEnabled().catch(() => false)) &&
-      (await sendButton.isVisible().catch(() => false)) &&
-      !className?.split(/\s+/).includes(DEEPSEEK_SEND_BUTTON_DISABLED_CLASS)
-    )
+  private get ui(): DeepSeekUi {
+    return new DeepSeekUi(this.page)
   }
 
   public async hasToggleCapability(
     capability: DeepSeekToggleCapability
   ): Promise<boolean> {
-    const requiredCount = capability === 'thinking' ? 1 : 2
-    const count = await this.wrapAdapterActionErrorAsync(
+    return await this.wrapAdapterActionErrorAsync(
       `${capability}Available`,
-      async () =>
-        await this.page.locator(DEEPSEEK_TOGGLE_BUTTON_SELECTOR).count()
+      async () => await this.ui.hasToggleCapability(capability)
     )
-    return count >= requiredCount
   }
 
   public async getToggleState(
     capability: DeepSeekToggleCapability
   ): Promise<DeepSeekToggleState> {
-    if (!(await this.hasToggleCapability(capability))) {
-      throw new ProviderAdapterUnsupportedError(
-        `${capability}Status`,
-        `DeepSeek ${capability} capability is not available on this page.`
-      )
-    }
-
-    const value = await this.wrapAdapterActionErrorAsync(
+    return await this.wrapAdapterActionErrorAsync(
       `${capability}Status`,
-      async () =>
-        await this.getToggleButton(capability).getAttribute('aria-pressed')
+      async () => await this.ui.getToggleState(capability)
     )
-    return value === 'true' ? 'on' : 'off'
   }
 
   public async setToggleState(
@@ -148,14 +98,7 @@ export class DeepSeekAdapter extends ProviderAdapter {
   ): Promise<DeepSeekToggleState> {
     return await this.wrapAdapterActionErrorAsync(
       `${capability}Set`,
-      async () => {
-        const button = this.getToggleButton(capability)
-        const currentState = await this.getToggleState(capability)
-        if (currentState !== targetState) {
-          await button.click()
-        }
-        return await this.getToggleState(capability)
-      }
+      async () => await this.ui.setToggleState(capability, targetState)
     )
   }
 
@@ -164,35 +107,7 @@ export class DeepSeekAdapter extends ProviderAdapter {
     timeoutMs: number | null,
     signal?: AbortSignal
   ): Promise<void> {
-    await waitAsync(
-      async () => {
-        const readyButtons = this.getReadyButton()
-        if ((await readyButtons.count().catch(() => 0)) !== 1) return false
-        return await readyButtons
-          .first()
-          .isVisible()
-          .catch(() => false)
-      },
-      {
-        timeoutMs,
-        signal,
-        onTimeout: async () => {
-          throw new ProviderAdapterError(
-            action,
-            action === 'restore'
-              ? 'DeepSeek did not become ready after loading.'
-              : 'DeepSeek finished responding, but the page did not become ready for the next message.',
-            {
-              kind: 'ui',
-              recovery: 'none',
-              retryable: false,
-              maxAttempts: 1,
-              detailCode: 'deepseek_ready_button_missing',
-            }
-          )
-        },
-      }
-    )
+    await this.ui.waitForReady(action, timeoutMs, signal)
   }
 
   private isRetryableError(error: unknown): boolean {
@@ -403,36 +318,16 @@ export class DeepSeekAdapter extends ProviderAdapter {
   }
 
   public async isLoggedIn(): Promise<boolean> {
-    return (
-      this.page.url().startsWith(DEEPSEEK_CHAT_URL) &&
-      !this.page.url().includes('/sign_in')
-    )
+    return await this.ui.isLoggedIn()
   }
 
-  public async changeModel(model: string): Promise<void> {
-    const modelNumber = Number(model.trim())
-    if (!Number.isSafeInteger(modelNumber) || modelNumber < 1) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `DeepSeek does not support model "${model}".`
-      )
-    }
-
-    const modelIndex = modelNumber - 1
-    const modelButtons = this.page.locator(DEEPSEEK_MODEL_BUTTON_SELECTOR)
-    if ((await modelButtons.count()) <= modelIndex) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `DeepSeek does not have model ${modelNumber}.`
-      )
-    }
-    await modelButtons.nth(modelIndex).click()
+  public async changeModel(model: ResolvedProviderModel): Promise<void> {
+    await this.ui.selectModel(model)
   }
 
   public async attachText(text: string) {
     await this.wrapAdapterActionErrorAsync('attachText', async () => {
-      await this.page.locator('textarea').click()
-      await this.page.keyboard.insertText(text)
+      await this.ui.attachText(text)
     })
   }
 
@@ -440,53 +335,24 @@ export class DeepSeekAdapter extends ProviderAdapter {
     text: string,
     options: AbortOptions
   ): Promise<() => Promise<void>> {
-    const composer = () => this.page.locator('textarea')
-    const stopButton = () =>
-      this.page.locator(
-        `div[role="button"]:has(svg[viewBox^="0 0 16"] path[d^="${DEEPSEEK_STOP_ICON_PATH_PREFIX}"])`
-      )
+    const controls = this.ui.getRetryLocators()
     return await this.prepareRetrySubmitText(text, options, {
       provider: 'DeepSeek',
-      isComposerReady: async () => await this.isRetryComposerReady(composer()),
+      isComposerReady: async () =>
+        await this.isRetryComposerReady(controls.composer),
       readComposerText: async () =>
-        await this.readRetryComposerText(composer()),
+        await this.readRetryComposerText(controls.composer),
       writeText: async () => await this.attachText(text),
       clearComposer: async () =>
-        await this.clearRetryComposerElements(composer()),
-      isStopActive: async () => await this.isRetryControlActive(stopButton()),
-      isSendReady: async () =>
-        await this.isRetryControlReady(
-          this.page.locator(DEEPSEEK_SEND_BUTTON_SELECTOR)
-        ),
+        await this.clearRetryComposerElements(controls.composer),
+      isStopActive: async () => await this.isRetryControlActive(controls.stop),
+      isSendReady: async () => await this.isRetryControlReady(controls.send),
     })
   }
 
   public async attachFile(path: string | readonly string[]) {
     await this.wrapAdapterActionErrorAsync('attachFile', async () => {
-      const uploadButtons = this.page.locator(DEEPSEEK_UPLOAD_BUTTON_SELECTOR)
-      if ((await uploadButtons.count()) === 0) {
-        throw new ProviderAdapterUnsupportedError(
-          'attachFile',
-          'DeepSeek file upload is not available in the current conversation.'
-        )
-      }
-
-      const uploadButton = this.getUploadButton()
-      const isAvailable =
-        (await uploadButton.isVisible().catch(() => false)) &&
-        (await uploadButton.isEnabled().catch(() => false))
-      if (!isAvailable) {
-        throw new ProviderAdapterUnsupportedError(
-          'attachFile',
-          'DeepSeek file upload is not available in the current conversation.'
-        )
-      }
-
-      const [fileChooser] = await Promise.all([
-        this.page.waitForEvent('filechooser'),
-        uploadButton.click(),
-      ])
-      await fileChooser.setFiles(path)
+      await this.ui.attachFile(path)
     })
   }
 
@@ -495,11 +361,7 @@ export class DeepSeekAdapter extends ProviderAdapter {
   }
 
   public override async stopGeneration(): Promise<void> {
-    const stopButton = this.page.locator(
-      `div[role="button"]:has(svg[viewBox^="0 0 16"] path[d^="${DEEPSEEK_STOP_ICON_PATH_PREFIX}"])`
-    )
-
-    await this.clickLocatorIfReady(stopButton)
+    await this.ui.stopGeneration()
   }
 
   private isTargetCompletionRequest(
@@ -598,11 +460,10 @@ export class DeepSeekAdapter extends ProviderAdapter {
       return await this.wrapAdapterActionErrorAsync('submit', async () => {
         const { signal } = options
         throwIfAborted(signal)
-        const sendButton = this.getSendButton()
-        await waitAsync(async () => await this.isSendButtonReady(), {
-          timeoutMs: this.getSubmitResponseTimeoutMs(),
-          signal,
-        })
+        await this.ui.waitForSendReady(
+          this.getSubmitResponseTimeoutMs(),
+          signal
+        )
         throwIfAborted(signal)
         const fetchCaptureStartIndex = await this.getCapturedFetchEntryCount()
         const requestStarted = createDeferred<void>()
@@ -708,7 +569,7 @@ export class DeepSeekAdapter extends ProviderAdapter {
               await this.readCurrentStreamedResponseText(fetchCaptureStartIndex)
           )
           this.emitSubmitDispatching(signal)
-          await sendButton.click()
+          await this.ui.clickSend()
           this.emitSubmitSent()
           throwIfAborted(signal)
 

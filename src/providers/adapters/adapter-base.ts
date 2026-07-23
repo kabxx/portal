@@ -16,6 +16,7 @@ import {
   type ComposerLimit,
 } from '../composer-limit.ts'
 import type { ProviderId } from '../provider-id.ts'
+import type { ResolvedProviderModel } from '../provider-model-catalog.ts'
 
 export type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
 
@@ -224,7 +225,7 @@ export function isProviderAdapterError(
 }
 
 export interface ProviderAdapterOptions {
-  model: string | null
+  model: ResolvedProviderModel | null
   signal?: AbortSignal | undefined
 }
 
@@ -908,7 +909,7 @@ export abstract class ProviderAdapter<
     this.submitTextReporter = reporter
   }
 
-  public abstract changeModel(model: string): Promise<void>
+  public abstract changeModel(model: ResolvedProviderModel): Promise<void>
   public abstract attachText(text: string): Promise<void>
   public abstract attachFile(path: string | readonly string[]): Promise<void>
   public abstract attachImage(path: string | readonly string[]): Promise<void>

@@ -239,29 +239,28 @@ test('ThreadCommand agent forwards supported provider models', async () => {
       model: {
         key: '3.1-pro',
         option: 'extended',
-        adapterValue: '3+extended',
       },
       mode: 'agent',
     },
     {
       provider: 'chatgpt',
-      model: { key: 'chatgpt', option: null, adapterValue: '1' },
+      model: { key: 'chatgpt', option: null },
       mode: 'agent',
     },
     {
       provider: 'deepseek',
-      model: { key: 'expert', option: null, adapterValue: '2' },
+      model: { key: 'expert', option: null },
       mode: 'agent',
     },
     {
       provider: 'doubao',
-      model: { key: 'office-turbo', option: null, adapterValue: '3' },
+      model: { key: 'office-turbo', option: null },
       mode: 'agent',
     },
     { provider: 'grok', model: null, mode: 'agent' },
     {
       provider: 'glm',
-      model: { key: 'glm-5.1', option: null, adapterValue: '2' },
+      model: { key: 'glm-5.1', option: null },
       mode: 'agent',
     },
     {
@@ -269,13 +268,12 @@ test('ThreadCommand agent forwards supported provider models', async () => {
       model: {
         key: 'qwen3.8-max-preview',
         option: null,
-        adapterValue: '2',
       },
       mode: 'agent',
     },
     {
       provider: 'kimi',
-      model: { key: 'k2.6', option: null, adapterValue: '1' },
+      model: { key: 'k2.6', option: null },
       mode: 'agent',
     },
   ])
@@ -299,7 +297,6 @@ test('ThreadCommand chat shares named model validation and forwards chat mode', 
       model: {
         key: '3.6-flash',
         option: 'extended',
-        adapterValue: '2+extended',
       },
       mode: 'chat',
     },

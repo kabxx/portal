@@ -49,7 +49,9 @@ class StubProviderAdapter extends ProviderAdapter {
     return true
   }
 
-  public override async changeModel(_model: string): Promise<void> {}
+  public override async changeModel(
+    _model: Parameters<ProviderAdapter['changeModel']>[0]
+  ): Promise<void> {}
 
   public override async attachText(_text: string): Promise<void> {}
 

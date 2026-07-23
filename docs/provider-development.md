@@ -119,19 +119,19 @@ Check the states that are safely available: signed in and signed out, new and ex
 
 Adding the adapter file is only one part of registration. Search for exhaustive `ProviderId` unions, arrays, records, switches, and schema enums before considering registration complete.
 
-| Area               | Required change                                                                                                                                                                                 |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Adapter            | Add `src/providers/adapters/adapter-<id>.ts` and focused tests under `test/providers/adapters/`.                                                                                                |
-| Provider type      | Add the id to `src/providers/provider-id.ts`.                                                                                                                                                   |
-| App registry       | In `src/app.ts`, add the import, `PROVIDERS` entry, normalized name/aliases, `createAdapterForProvider` case, and a Provider prompt only when the Provider needs an extra boundary.             |
-| Resume URL         | Add strict HTTPS host/path recognition and canonicalization in `src/providers/provider-conversation-url.ts`, with positive, alias, malformed-encoding, wrong-host, and wrong-path tests.        |
-| Hooks              | Add the id to Provider normalization in `src/hooks/hook-config.ts` and update Hook tests.                                                                                                       |
-| Spawn              | Update the Provider list in the `spawn` description and input-schema enum in `src/tools/builtins/spawn-tool.ts`; update `test/tools/builtins/spawn-tool.test.ts`.                               |
-| Model argument     | Add the Provider's named models and per-model options to `src/providers/definitions/<id>.ts`; cover mapping and rejected forms in manifest, catalog, and command tests.                         |
-| Capabilities       | Put static capability metadata and supported target mappings in the Provider manifest; keep runtime discovery, dispatch behavior, and state verification in the Adapter.                        |
-| Locator leaves     | Put maintained model/capability CSS candidates in named manifest slots; keep owner scoping, visibility, uniqueness, XPath, dynamic selectors, clicks, waits, and state machines in the Adapter. |
-| User documentation | Update the brief lists in `README.md` and `docs/README.zh-CN.md`, plus the detailed matrix/counts in [Providers](providers.md); other docs only when needed.                                    |
-| Integration tests  | Update Provider lists, command completion, API/MCP listing, and any exhaustive records surfaced by TypeScript or repository search.                                                             |
+| Area               | Required change                                                                                                                                                                          |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Adapter            | Add `src/providers/adapters/adapter-<id>.ts`, delegate page behavior to Provider UI components, and add focused semantic tests under `test/providers/adapters/`.                         |
+| Provider UI        | Add Provider-local components under `src/providers/ui/<id>/`; keep selector candidates, DOM scoping, uniqueness, waits, actions, and page state inside this boundary.                    |
+| Provider type      | Add the id to `src/providers/provider-id.ts`.                                                                                                                                            |
+| App registry       | In `src/app.ts`, add the import, `PROVIDERS` entry, normalized name/aliases, `createAdapterForProvider` case, and a Provider prompt only when the Provider needs an extra boundary.      |
+| Resume URL         | Add strict HTTPS host/path recognition and canonicalization in `src/providers/provider-conversation-url.ts`, with positive, alias, malformed-encoding, wrong-host, and wrong-path tests. |
+| Hooks              | Add the id to Provider normalization in `src/hooks/hook-config.ts` and update Hook tests.                                                                                                |
+| Spawn              | Update the Provider list in the `spawn` description and input-schema enum in `src/tools/builtins/spawn-tool.ts`; update `test/tools/builtins/spawn-tool.test.ts`.                        |
+| Model argument     | Add the Provider's named models and per-model options to `src/providers/definitions/<id>.ts`; cover mapping and rejected forms in manifest, catalog, and command tests.                  |
+| Capabilities       | Put only static capability keys, descriptions, and kinds in the Provider definition; keep live discovery and dispatch behavior in the Provider UI component.                             |
+| User documentation | Update the brief lists in `README.md` and `docs/README.zh-CN.md`, plus the detailed matrix/counts in [Providers](providers.md); other docs only when needed.                             |
+| Integration tests  | Update Provider lists, command completion, API/MCP listing, and any exhaustive records surfaced by TypeScript or repository search.                                                      |
 
 Do not add an alias unless it is unambiguous and useful. Canonical conversation URLs must discard unrelated query/hash state and encode the conversation id exactly once.
 
@@ -161,20 +161,35 @@ Capabilities are optional structural interfaces, not base-class methods:
 
 Do not invent a capability that the current page does not expose. Account- or experiment-dependent controls must be discovered at runtime.
 
-The TypeScript manifests under `src/providers/definitions/` are imported as one
-strict immutable snapshot. A manifest can map existing Adapter behavior and
-provide named static CSS locator candidates, but it cannot add a Provider,
-arbitrary action, or new toggle implementation. Runtime semantic validation
-rejects duplicate positions, incompatible targets, and invalid locator slots at
-startup rather than activating a partial per-Provider fallback.
+The TypeScript definitions under `src/providers/definitions/` are imported as
+one strict immutable domain snapshot. Definitions contain public model keys,
+model option keys, and static capability metadata. They do not contain selector
+candidates, menu positions, DOM targets, or Adapter dispatch instructions.
 
-Locator candidates are data, not an interaction DSL. Do not put `:visible`,
-XPath, owner selection, `first`/`last`/`nth`, clicks, waits, or state checks in a
-manifest. Text-bearing attributes such as `aria-label`, `title`, `placeholder`,
-and `alt` are rejected along with visible-text selector syntax. Unit tests may
-read manifest values to avoid duplicating selector strings, but Adapter behavior
-tests must still cover missing and ambiguous UI; only a real browser smoke test
-proves that a selector still matches a Provider.
+Provider-local Page Component Objects under `src/providers/ui/<id>/` own the
+page boundary: static CSS candidates, owner scoping, uniqueness and visibility,
+dynamic selector construction, waits, clicks, and UI state verification. A
+simple Provider may use one UI component; a complex Provider may split auth,
+Composer, model, capability, attachment, and response concerns into focused
+components. Do not introduce a cross-Provider page-object inheritance tree.
+
+Adapters must not call `page.locator`, query the Provider DOM, or import selector
+helpers. They delegate page behavior to their Provider UI component and retain
+the semantic `ProviderAdapter` contract, navigation, network/protocol capture,
+response parsing, and history coordination.
+
+Static candidates registered through `defineProviderUiSelectors` are raw CSS,
+not an interaction DSL. Do not store `:visible`, XPath, comma unions, Playwright
+text engines, owner selection, `first`/`last`/`nth`, clicks, waits, or state
+checks in the selector tree. Text-bearing attributes such as `aria-label`,
+`title`, `placeholder`, and `alt` are rejected along with visible-text selector
+syntax. A verified XPath that cannot be expressed safely as CSS must remain a
+documented local exception beside the behavior that uses it.
+
+Adapter and UI behavior tests must use independent fixtures or local selector
+oracles; they must not import the production selector tree. This prevents a
+production selector and its test from changing incorrectly in lockstep. Only a
+real browser smoke test proves that a selector still matches the upstream page.
 
 ### Initialization order
 
@@ -190,16 +205,17 @@ Changing this order can make history or submit requests permanently unobservable
 
 Selector and readiness rules are review gates, not preferences.
 
-1. Prefer signals in this order: protocol/network events, stable data attributes, scoped DOM structure or roles, then a verified stable SVG signature.
-2. Do not identify state or control identity with visible text, translated labels, `getByText`, `hasText`, Accessible Name, or `aria-label`. `aria-label` is text and can change with copy or locale.
-3. Do not use rendered `width`, `height`, coordinates, spacing, or screen position. They change with responsive layout, zoom, fonts, and experiments.
-4. SVG matching must be scoped to the owning component and use only a verified stable prefix. Prefer `svg[viewBox^="0 0 21.2"]` over an exact match to the full SVG attribute or path.
-5. `viewBox` is an intrinsic icon signature, not a rendered responsive width or height. Do not substitute CSS dimensions for it.
-6. Require a unique, visible target. Verify `count === 1` before selecting the target. Check enabled or accessibility state only when the Provider's verified control semantics require it; an empty Composer may intentionally keep its send button disabled while the page is ready.
-7. `aria-disabled` is optional state data. It may be read after identity is established, but it is neither required on every site nor valid as the control's identity.
-8. Scope selectors to a stable owner such as the Composer, model menu, or response article. Do not search the whole page for a common icon or role.
-9. Generated CSS class names and exact class strings are fragile. Use a stable class fragment only when verified and when no stronger signal exists.
-10. If only text or responsive geometry is available, stop and document the limitation for review instead of silently adding the selector.
+1. Put all Provider DOM access in `src/providers/ui/<id>/`; runtime and Adapter code consume semantic methods only.
+2. Prefer signals in this order: protocol/network events, stable data attributes, scoped DOM structure or roles, then a verified stable SVG signature.
+3. Do not identify state or control identity with visible text, translated labels, `getByText`, `hasText`, Accessible Name, or `aria-label`. `aria-label` is text and can change with copy or locale.
+4. Do not use rendered `width`, `height`, coordinates, spacing, or screen position. They change with responsive layout, zoom, fonts, and experiments.
+5. SVG matching must be scoped to the owning component and use only a verified stable prefix. Prefer `svg[viewBox^="0 0 21.2"]` over an exact match to the full SVG attribute or path.
+6. `viewBox` is an intrinsic icon signature, not a rendered responsive width or height. Do not substitute CSS dimensions for it.
+7. Require a unique, visible target. Verify `count === 1` before selecting the target. Check enabled or accessibility state only when the Provider's verified control semantics require it; an empty Composer may intentionally keep its send button disabled while the page is ready.
+8. `aria-disabled` is optional state data. It may be read after identity is established, but it is neither required on every site nor valid as the control's identity.
+9. Scope selectors to a stable owner such as the Composer, model menu, or response article. Do not search the whole page for a common icon or role.
+10. Generated CSS class names and exact class strings are fragile. Use a stable class fragment only when verified and when no stronger signal exists.
+11. If only text or responsive geometry is available, stop and document the limitation for review instead of silently adding the selector.
 
 Example of a structurally scoped icon signal:
 
@@ -315,7 +331,7 @@ Use `node:test`, existing fake-page helpers, and sanitized protocol fixtures. Ad
 | URL             | Valid and alias URLs canonicalize; wrong scheme/host/path, empty ids, encoded ids, queries, and hashes are handled safely.                                                                                   |
 | Login and Ready | Signed in, signed out, redirect race, restricted/unrecoverable state, missing/duplicate controls, disabled state, and Composer-before-Ready behavior.                                                        |
 | Selectors       | The real scoped locator path is exercised; text/`aria-label` and responsive geometry are not used as hidden test shortcuts.                                                                                  |
-| Model           | Accepted positions/modes, unavailable entries, selection verification, menu cleanup, and unsupported behavior.                                                                                               |
+| Model           | Accepted named keys/options, Provider-local UI mapping and order, unavailable entries, selection verification, menu cleanup, and unsupported behavior.                                                       |
 | Upload          | File and image paths, multiple files where supported, missing/disabled controls, and no false success claim.                                                                                                 |
 | Submit          | Stale baseline, request ownership, delayed start, streaming, tool continuations, HTTP/protocol errors, partial/multiple streams, terminal state, timeout, and no duplicate retry after uncertain acceptance. |
 | Cancellation    | Abort propagation, Provider stop attempt, listener/timer cleanup, and reusable page state.                                                                                                                   |
@@ -374,8 +390,11 @@ Final review:
 - [ ] The Provider drives the real web product, not a model API.
 - [ ] Every registration point and exhaustive Provider list is updated.
 - [ ] Required adapter methods exist; unsupported operations fail explicitly.
+- [ ] Provider DOM selectors and interactions live in Provider UI components; Adapter and runtime code use semantic methods and contain no Provider DOM queries.
+- [ ] Provider definitions contain domain metadata only; UI positions, selector candidates, and dispatch targets are not public domain fields.
 - [ ] Login, restricted access, Ready, request start, streaming, completion, and post-completion readiness are separate.
 - [ ] No selector depends on text, `aria-label`, Accessible Name, rendered size, coordinates, or responsive position.
+- [ ] Adapter/UI tests use independent fixtures or local oracles rather than importing production selector trees.
 - [ ] SVG identity is scoped and prefix-matched; targets are unique and visible, with Provider-specific enabled state handled according to verified page semantics.
 - [ ] Submit ownership excludes stale/unrelated traffic and uncertain outcomes cannot duplicate messages.
 - [ ] Streaming, continuation, completion, cancellation, and cleanup use real protocol evidence.

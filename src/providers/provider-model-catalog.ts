@@ -7,7 +7,6 @@ import {
 export interface ResolvedProviderModel {
   readonly key: string
   readonly option: string | null
-  readonly adapterValue: string
 }
 
 export class ProviderModelSelectionError extends Error {
@@ -57,7 +56,6 @@ export function resolveProviderModel(
     return {
       key,
       option: null,
-      adapterValue: String(definition.position),
     }
   }
 
@@ -74,15 +72,22 @@ export function resolveProviderModel(
     )
   }
 
-  const suffix =
-    optionDefinition.target.kind === 'menu_position'
-      ? String(optionDefinition.target.position)
-      : optionDefinition.target.value
   return {
     key,
     option: optionKey,
-    adapterValue: `${definition.position}+${suffix}`,
   }
+}
+
+export function isResolvedProviderModelSupported(
+  provider: ProviderId,
+  model: ResolvedProviderModel
+): boolean {
+  const definition = getModelDefinition(provider, model.key)
+  return (
+    definition !== null &&
+    (model.option === null ||
+      definition.options.some((option) => option.key === model.option))
+  )
 }
 
 function normalizeKey(value: string): string {

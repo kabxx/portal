@@ -4,14 +4,13 @@ import assert from 'node:assert/strict'
 
 import { ProviderAdapterUnsupportedError } from '../../../src/providers/adapters/adapter-base.ts'
 import { DeepSeekAdapter } from '../../../src/providers/adapters/adapter-deepseek.ts'
-import {
-  getProviderDefinition,
-  joinCssLocatorCandidates,
-} from '../../../src/providers/provider-definition-pack.ts'
 import { isAbortError } from '../../../src/runtime/runtime-cancellation.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
-const DEEPSEEK_LOCATORS = getProviderDefinition('deepseek').locators
+const DEEPSEEK_TEST_SELECTORS = {
+  capabilityToggle: 'div.f79352dc',
+  modelItem: 'div.b0db7355 div[role="radio"][data-model-type]',
+} as const
 
 type DeepSeekAdapterHarness = Pick<DeepSeekAdapter, keyof DeepSeekAdapter> & {
   page: unknown
@@ -450,7 +449,7 @@ test('DeepSeekAdapter treats zero toggle buttons as no toggle capabilities', asy
 test('DeepSeekAdapter changes model by data-model-type', async () => {
   const adapter = createTestDeepSeekAdapter()
   const modelButtons = {
-    default: createModelButton(),
+    quick: createModelButton(),
     expert: createModelButton(),
     vision: createModelButton(),
   }
@@ -463,9 +462,9 @@ test('DeepSeekAdapter changes model by data-model-type', async () => {
     modelButtons
   )
 
-  await adapter.changeModel('2')
+  await adapter.changeModel({ key: 'expert', option: null })
 
-  assert.equal(modelButtons.default.clicks, 0)
+  assert.equal(modelButtons.quick.clicks, 0)
   assert.equal(modelButtons.expert.clicks, 1)
   assert.equal(modelButtons.vision.clicks, 0)
 })
@@ -475,16 +474,16 @@ test('DeepSeekAdapter rejects unsupported model names', async () => {
   adapter.page = createDeepSeekPage(createSendButton())
 
   await assert.rejects(
-    adapter.changeModel('unknown'),
+    adapter.changeModel({ key: 'unknown', option: null }),
     /DeepSeek does not support model "unknown"\./
   )
   await assert.rejects(
-    adapter.changeModel('expert'),
-    /DeepSeek does not support model "expert"\./
+    adapter.changeModel({ key: 'quick', option: 'extended' }),
+    /DeepSeek model "quick" does not support option "extended"\./
   )
   await assert.rejects(
-    adapter.changeModel('4'),
-    /DeepSeek does not have model 4\./
+    adapter.changeModel({ key: 'vision', option: null }),
+    /DeepSeek does not have model "vision"\./
   )
 })
 
@@ -579,10 +578,7 @@ function createDeepSeekPage(
   uploadButton?: ReturnType<typeof createUploadButton>,
   stopButton?: ReturnType<typeof createStopButton>,
   modelButtons: Partial<
-    Record<
-      'default' | 'expert' | 'vision',
-      ReturnType<typeof createModelButton>
-    >
+    Record<'quick' | 'expert' | 'vision', ReturnType<typeof createModelButton>>
   > = {}
 ) {
   const emitter = new EventEmitter()
@@ -608,10 +604,7 @@ function createDeepSeekPage(
           first: () => readyButtonTarget,
         }
       }
-      if (
-        selector ===
-        joinCssLocatorCandidates(DEEPSEEK_LOCATORS.capabilityToggle)
-      ) {
+      if (selector === DEEPSEEK_TEST_SELECTORS.capabilityToggle) {
         return {
           count: async () => toggleButtons.length,
           nth: (index: number) => toggleButtons[index] ?? missingToggleButton,
@@ -623,8 +616,8 @@ function createDeepSeekPage(
           first: () => uploadButton ?? missingUploadButton,
         }
       }
-      if (selector === joinCssLocatorCandidates(DEEPSEEK_LOCATORS.modelItem)) {
-        const modelOrder = ['default', 'expert', 'vision'] as const
+      if (selector === DEEPSEEK_TEST_SELECTORS.modelItem) {
+        const modelOrder = ['quick', 'expert', 'vision'] as const
         return {
           count: async () =>
             modelOrder.filter((model) => modelButtons[model]).length,

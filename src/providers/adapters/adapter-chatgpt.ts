@@ -25,65 +25,13 @@ import {
   parseChatGptWebSocketFrames,
   type ChatGPTParsedResponse,
 } from '../chatgpt-response-parser.ts'
-import {
-  getProviderDefinition,
-  joinCssLocatorCandidates,
-  listProviderCapabilities,
-  mapCssLocatorCandidates,
-} from '../provider-definition-pack.ts'
+import type { ResolvedProviderModel } from '../provider-model-catalog.ts'
+import { ChatGPTUi } from '../ui/chatgpt/chatgpt-ui.ts'
 
 const CHATGPT_CHAT_URL = 'https://chatgpt.com'
 const CHATGPT_CHAT_WS_URL = 'wss://ws.chatgpt.com/p18/ws/user'
-const CHATGPT_LOCATORS = getProviderDefinition('chatgpt').locators
-const CHATGPT_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
-  CHATGPT_LOCATORS.modelTrigger,
-  ':visible'
-)
-const CHATGPT_MODEL_DIRECT_MENU_SELECTOR = joinCssLocatorCandidates(
-  CHATGPT_LOCATORS.modelDirectMenu,
-  ':visible'
-)
-const CHATGPT_MODEL_PICKER_SELECTOR = joinCssLocatorCandidates(
-  CHATGPT_LOCATORS.modelPicker,
-  ':visible'
-)
-const CHATGPT_MODEL_DIRECT_ITEM_SELECTOR = joinCssLocatorCandidates(
-  CHATGPT_LOCATORS.modelDirectItem
-)
-const CHATGPT_MODEL_MODE_ITEM_SELECTOR = joinCssLocatorCandidates(
-  CHATGPT_LOCATORS.modelModeItem
-)
-const CHATGPT_MODEL_MENU_ITEM_SELECTOR = joinCssLocatorCandidates(
-  CHATGPT_LOCATORS.modelMenuItem
-)
-const CHATGPT_CAPABILITY_TRIGGER_SELECTOR = joinCssLocatorCandidates(
-  CHATGPT_LOCATORS.capabilityTrigger
-)
-const CHATGPT_CAPABILITY_GROUP_SELECTOR = joinCssLocatorCandidates(
-  CHATGPT_LOCATORS.capabilityGroup
-)
-const CHATGPT_ACTION_CAPABILITIES = listProviderCapabilities('chatgpt').map(
-  (capability) => {
-    if (
-      capability.kind !== 'action' ||
-      capability.target.kind !== 'menu_position'
-    ) {
-      throw new Error(
-        `Invalid ChatGPT capability definition: ${capability.key}`
-      )
-    }
-    return {
-      name: capability.key,
-      position: capability.target.position,
-    }
-  }
-)
 const CHATGPT_RESPONSE_IDLE_TIMEOUT_MS = 60000
 const CHATGPT_FINISHED_RESPONSE_SETTLE_MS = 1000
-
-function toCssString(value: string): string {
-  return JSON.stringify(value)
-}
 
 export type ChatGPTActionCapability = string
 
@@ -125,6 +73,10 @@ export class ChatGPTAdapter extends ProviderAdapter {
 
   private lastParsedResponse!: ChatGPTParsedResponse | null
   private websocketFrames!: string[]
+
+  private get ui(): ChatGPTUi {
+    return new ChatGPTUi(this.page)
+  }
 
   private isRetryableError(error: unknown): boolean {
     if (error instanceof ProviderAdapterUnsupportedError) {
@@ -222,7 +174,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
           }
         )
       }
-      await this.waitForComposerReady(
+      await this.ui.waitForComposerReady(
         'restore',
         this.getRestoreTimeoutMs(),
         signal
@@ -263,154 +215,16 @@ export class ChatGPTAdapter extends ProviderAdapter {
   }
 
   public async isLoggedIn(): Promise<boolean> {
-    if (!this.page.url().startsWith(CHATGPT_CHAT_URL)) {
-      return false
-    }
-
-    const loginButtonVisible = await this.page
-      .getByTestId('login-button')
-      .isVisible()
-      .catch(() => false)
-    const noAuthModalVisible = await this.page
-      .locator('#modal-no-auth-login')
-      .isVisible()
-      .catch(() => false)
-    const expiredSessionVisible = await this.page
-      .locator('#modal-expired-session')
-      .isVisible()
-      .catch(() => false)
-
-    return !loginButtonVisible && !noAuthModalVisible && !expiredSessionVisible
+    return await this.ui.isLoggedIn()
   }
 
-  public async changeModel(model: string): Promise<void> {
-    const normalized = model.trim()
-    const match = normalized.match(/^([1-9]\d*)(?:\+([1-9]\d*))?$/)
-    if (match === null) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `ChatGPT does not support model "${model}".`
-      )
-    }
-    const modelNumber = Number(match[1])
-    const modeNumber = match[2] === undefined ? null : Number(match[2])
-    const modelIndex = modelNumber - 1
-    const modeIndex = modeNumber === null ? null : modeNumber - 1
-    const directMenus = this.page.locator(CHATGPT_MODEL_DIRECT_MENU_SELECTOR)
-
-    const openPicker = async () => {
-      const triggers = this.page.locator(CHATGPT_MODEL_TRIGGER_SELECTOR)
-      if ((await triggers.count()) !== 1) {
-        throw new ProviderAdapterError(
-          'changeModel',
-          'ChatGPT model selector was missing or ambiguous.',
-          {
-            kind: 'ui',
-            recovery: 'none',
-            retryable: false,
-            maxAttempts: 1,
-            detailCode: 'chatgpt_model_trigger_invalid',
-          }
-        )
-      }
-      await triggers.first().click()
-      const picker = this.page.locator(CHATGPT_MODEL_PICKER_SELECTOR)
-      await waitAsync(
-        async () =>
-          (await picker.count().catch(() => 0)) > 0 ||
-          (await directMenus.count().catch(() => 0)) > 0,
-        { timeoutMs: 5000 }
-      )
-      if ((await picker.count()) > 1 || (await directMenus.count()) > 1) {
-        throw new ProviderAdapterError(
-          'changeModel',
-          'ChatGPT model menu was ambiguous.',
-          {
-            kind: 'ui',
-            recovery: 'none',
-            retryable: false,
-            maxAttempts: 1,
-            detailCode: 'chatgpt_model_menu_ambiguous',
-          }
-        )
-      }
-      return picker.first()
-    }
-
-    let picker = await openPicker()
-    if (!(await picker.isVisible().catch(() => false))) {
-      if (modeIndex !== null) {
-        throw new ProviderAdapterUnsupportedError(
-          'changeModel',
-          'ChatGPT model modes are unavailable.'
-        )
-      }
-      const directModelItems = directMenus
-        .first()
-        .locator(CHATGPT_MODEL_DIRECT_ITEM_SELECTOR)
-      if ((await directModelItems.count()) <= modelIndex) {
-        throw new ProviderAdapterUnsupportedError(
-          'changeModel',
-          `ChatGPT does not have model ${modelNumber}.`
-        )
-      }
-      await directModelItems.nth(modelIndex).click()
-      return
-    }
-
-    if (modeIndex !== null) {
-      const modeItems = picker.locator(CHATGPT_MODEL_MODE_ITEM_SELECTOR)
-      if ((await modeItems.count()) <= modeIndex) {
-        throw new ProviderAdapterUnsupportedError(
-          'changeModel',
-          `ChatGPT does not have model mode ${modeNumber}.`
-        )
-      }
-      await modeItems.nth(modeIndex).click()
-      picker = await openPicker()
-    }
-
-    const modelMenuItems = picker.locator(CHATGPT_MODEL_MENU_ITEM_SELECTOR)
-    if ((await modelMenuItems.count()) === 0) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        'ChatGPT model menu is unavailable.'
-      )
-    }
-    const modelMenuItem = modelMenuItems.first()
-    const modelMenuId = await modelMenuItem
-      .getAttribute('aria-controls')
-      .catch(() => null)
-    if (modelMenuId === null || modelMenuId.trim() === '') {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        'ChatGPT model menu is unavailable.'
-      )
-    }
-    await modelMenuItem.click()
-
-    const modelItems = this.page.locator(
-      mapCssLocatorCandidates(
-        CHATGPT_LOCATORS.modelItem,
-        (candidate) => `[id=${toCssString(modelMenuId)}] ${candidate}`
-      )
-    )
-    await waitAsync(async () => (await modelItems.count().catch(() => 0)) > 0, {
-      timeoutMs: 5000,
-    })
-    if ((await modelItems.count()) <= modelIndex) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `ChatGPT does not have model ${modelNumber}.`
-      )
-    }
-    await modelItems.nth(modelIndex).click()
+  public async changeModel(model: ResolvedProviderModel): Promise<void> {
+    await this.ui.changeModel(model)
   }
 
   public async attachText(text: string) {
     await this.wrapAdapterActionErrorAsync('attachText', async () => {
-      await this.page.locator('#prompt-textarea').click()
-      await this.page.keyboard.insertText(text)
+      await this.ui.attachText(text)
     })
   }
 
@@ -418,7 +232,8 @@ export class ChatGPTAdapter extends ProviderAdapter {
     text: string,
     options: AbortOptions
   ): Promise<() => Promise<void>> {
-    const composer = () => this.page.locator('#prompt-textarea')
+    const ui = this.ui
+    const composer = () => ui.getRetryComposer()
     return await this.prepareRetrySubmitText(text, options, {
       provider: 'ChatGPT',
       isComposerReady: async () => await this.isRetryComposerReady(composer()),
@@ -428,68 +243,22 @@ export class ChatGPTAdapter extends ProviderAdapter {
       clearComposer: async () =>
         await this.clearRetryComposerElements(composer()),
       isStopActive: async () =>
-        await this.isRetryControlActive(
-          this.page.locator('button[data-testid="stop-button"]')
-        ),
+        await this.isRetryControlActive(ui.getRetryStopButton()),
       isSendReady: async () =>
-        await this.isRetryControlReady(
-          this.page.locator('#composer-submit-button')
-        ),
+        await this.isRetryControlReady(ui.getRetrySendButton()),
     })
   }
 
   public async attachFile(path: string | readonly string[]) {
     await this.wrapAdapterActionErrorAsync('attachFile', async () => {
-      await this.page.locator(CHATGPT_CAPABILITY_TRIGGER_SELECTOR).click()
-      const [fileChooser] = await Promise.all([
-        this.page.waitForEvent('filechooser'),
-        this.page
-          .locator(CHATGPT_CAPABILITY_GROUP_SELECTOR)
-          .nth(0)
-          .locator('xpath=./div')
-          .nth(0)
-          .click(),
-      ])
-      await fileChooser.setFiles(path)
+      await this.ui.attachFile(path)
     })
-  }
-
-  private getCapabilityGroup() {
-    return this.page.locator(CHATGPT_CAPABILITY_GROUP_SELECTOR).nth(1)
-  }
-
-  private getCapabilityOption(index: number) {
-    return this.getCapabilityGroup().locator('xpath=./div').nth(index)
-  }
-
-  private async openCapabilityMenu(): Promise<void> {
-    const capabilityGroup = this.getCapabilityGroup()
-    if ((await capabilityGroup.count().catch(() => 0)) > 0) {
-      return
-    }
-
-    await this.page.locator(CHATGPT_CAPABILITY_TRIGGER_SELECTOR).click()
-    await waitAsync(
-      async () => (await capabilityGroup.count().catch(() => 0)) > 0,
-      {
-        timeoutMs: 1000,
-      }
-    ).catch(() => {})
   }
 
   public async listActionCapabilities(): Promise<
     ChatGPTActionCapabilityInfo[]
   > {
-    await this.openCapabilityMenu()
-    const capabilityGroup = this.getCapabilityGroup()
-    if ((await capabilityGroup.count().catch(() => 0)) === 0) {
-      return []
-    }
-
-    return CHATGPT_ACTION_CAPABILITIES.map((capability) => ({
-      name: capability.name,
-      state: 'available',
-    }))
+    return await this.ui.listActionCapabilities()
   }
 
   public async selectActionCapability(
@@ -497,23 +266,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
   ): Promise<ChatGPTActionCapabilityState> {
     return await this.wrapAdapterActionErrorAsync(
       'selectCapability',
-      async () => {
-        const definition = CHATGPT_ACTION_CAPABILITIES.find(
-          (candidate) => candidate.name === capability
-        )
-        if (definition === undefined) {
-          return 'unavailable'
-        }
-
-        await this.openCapabilityMenu()
-        const capabilityGroup = this.getCapabilityGroup()
-        if ((await capabilityGroup.count().catch(() => 0)) === 0) {
-          return 'unavailable'
-        }
-
-        await this.getCapabilityOption(definition.position - 1).click()
-        return 'selected'
-      }
+      async () => await this.ui.selectActionCapability(capability)
     )
   }
 
@@ -522,9 +275,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
   }
 
   public override async stopGeneration(): Promise<void> {
-    await this.clickLocatorIfReady(
-      this.page.locator('button[data-testid="stop-button"]')
-    )
+    await this.ui.stopGeneration()
   }
 
   private isTargetConversationRequest(
@@ -606,68 +357,12 @@ export class ChatGPTAdapter extends ProviderAdapter {
     return CHATGPT_FINISHED_RESPONSE_SETTLE_MS
   }
 
-  private getComposerSpeechButton() {
-    return this.page.locator('button[style*="--vt-composer-speech-button"]')
-  }
-
-  private getComposerDataTestIdSendButton() {
-    return this.page.locator('button[data-testid="send-button"]')
-  }
-
-  private async isLocatorReady(locator: {
-    count: () => Promise<number>
-    first: () => {
-      isVisible: () => Promise<boolean>
-      isEnabled: () => Promise<boolean>
-    }
-  }): Promise<boolean> {
-    if ((await locator.count().catch(() => 0)) !== 1) return false
-    const target = locator.first()
-    return (
-      (await target.isVisible().catch(() => false)) &&
-      (await target.isEnabled().catch(() => false))
-    )
-  }
-
-  private async waitForComposerReady(
-    action: 'restore' | 'submit',
-    timeoutMs: number | null,
-    signal?: AbortSignal
-  ): Promise<void> {
-    const speechButton = this.getComposerSpeechButton()
-    const dataTestIdSendButton = this.getComposerDataTestIdSendButton()
-    await waitAsync(
-      async () =>
-        (await this.isLocatorReady(speechButton)) ||
-        (await this.isLocatorReady(dataTestIdSendButton)),
-      {
-        timeoutMs,
-        signal,
-        onTimeout: async () => {
-          throw new ProviderAdapterError(
-            action,
-            action === 'restore'
-              ? 'ChatGPT did not become ready after loading.'
-              : 'ChatGPT finished responding, but the page did not become ready for the next message.',
-            {
-              kind: 'ui',
-              recovery: 'none',
-              retryable: false,
-              maxAttempts: 1,
-              detailCode: 'chatgpt_composer_ready_button_missing',
-            }
-          )
-        },
-      }
-    )
-  }
-
   public async submit(options: AbortOptions = {}): Promise<string> {
     try {
       return await this.wrapAdapterActionErrorAsync('submit', async () => {
         const { signal } = options
         throwIfAborted(signal)
-        const sendButton = this.page.locator('#composer-submit-button')
+        const sendButton = this.ui.getSendButton()
         const frameStart = this.websocketFrames.length
         let requestStartedAt: number | null = null
         await waitAsync(
@@ -1047,7 +742,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
           }
           this.lastParsedResponse = parsedResponse
           this.websocketFrames = this.websocketFrames.slice(frameStart)
-          await this.waitForComposerReady(
+          await this.ui.waitForComposerReady(
             'submit',
             this.getSubmitResponseTimeoutMs(),
             signal

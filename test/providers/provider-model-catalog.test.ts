@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  isResolvedProviderModelSupported,
   listProviderModelOptions,
   listProviderModels,
   ProviderModelSelectionError,
@@ -10,7 +11,7 @@ import {
 import { PROVIDER_DEFINITIONS } from '../../src/providers/provider-definition-pack.ts'
 import { PROVIDER_IDS } from '../../src/providers/provider-id.ts'
 
-test('provider model catalog resolves names to internal menu positions', () => {
+test('provider model catalog resolves names to semantic selections', () => {
   for (const provider of PROVIDER_IDS) {
     const definitions = PROVIDER_DEFINITIONS[provider].models
     assert.deepEqual(
@@ -21,14 +22,12 @@ test('provider model catalog resolves names to internal menu positions', () => {
       assert.deepEqual(resolveProviderModel(provider, definition.key), {
         key: definition.key,
         option: null,
-        adapterValue: String(definition.position),
       })
     }
   }
   assert.deepEqual(resolveProviderModel('gemini', '3.1-PRO', 'EXTENDED'), {
     key: '3.1-pro',
     option: 'extended',
-    adapterValue: '3+extended',
   })
   assert.equal(resolveProviderModel('grok', null), null)
 })
@@ -43,6 +42,30 @@ test('provider model catalog exposes model-specific options', () => {
     }
   }
   assert.deepEqual(listProviderModelOptions('deepseek', 'expert'), [])
+})
+
+test('provider model catalog validates semantic selections without owning UI order', () => {
+  assert.equal(
+    isResolvedProviderModelSupported('gemini', {
+      key: '3.1-pro',
+      option: 'extended',
+    }),
+    true
+  )
+  assert.equal(
+    isResolvedProviderModelSupported('gemini', {
+      key: '3.1-pro',
+      option: 'unsupported',
+    }),
+    false
+  )
+  assert.equal(
+    isResolvedProviderModelSupported('grok', {
+      key: 'missing',
+      option: null,
+    }),
+    false
+  )
 })
 
 test('provider model catalog rejects numeric, unknown, and misplaced options', () => {
