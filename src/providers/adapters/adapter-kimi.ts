@@ -21,21 +21,44 @@ import {
   emptyHistoryResult,
   parseKimiHistory,
 } from '../conversation-history.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+} from '../provider-definition-pack.ts'
 
 const KIMI_CHAT_URL = 'https://www.kimi.com'
+const KIMI_LOCATORS = getProviderDefinition('kimi').locators
 const KIMI_INPUT_SELECTOR =
   '.chat-editor .chat-input-editor[contenteditable="true"]'
 const KIMI_SEND_SELECTOR = '.chat-editor .send-button-container'
 const KIMI_STOP_SELECTOR = '.chat-editor .send-button-container.stop'
-const KIMI_MODEL_TRIGGER_SELECTOR = '.chat-editor .current-model'
-const KIMI_MODEL_MENU_SELECTOR = '.models-popover'
-const KIMI_MODEL_ITEM_SELECTOR = '.models-popover .model-item'
-const KIMI_TOOLKIT_TRIGGER_SELECTOR = '.chat-editor .toolkit-trigger-btn'
-const KIMI_TOOLKIT_POPOVER_SELECTOR = '.toolkit-popover'
-const KIMI_SEARCH_ITEM_SELECTOR = '.toolkit-item:has(svg[name="InternetOn"])'
-const KIMI_SEARCH_POPOVER_SELECTOR = '.connect-popover'
-const KIMI_SEARCH_OPTION_SELECTOR = '.connect-item'
-const KIMI_SELECTED_OPTION_ICON_SELECTOR = 'svg[name="Check"]'
+const KIMI_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
+  KIMI_LOCATORS.modelTrigger
+)
+const KIMI_MODEL_MENU_SELECTOR = joinCssLocatorCandidates(
+  KIMI_LOCATORS.modelMenu
+)
+const KIMI_MODEL_ITEM_SELECTOR = joinCssLocatorCandidates(
+  KIMI_LOCATORS.modelItem
+)
+const KIMI_TOOLKIT_TRIGGER_SELECTOR = joinCssLocatorCandidates(
+  KIMI_LOCATORS.capabilityTrigger
+)
+const KIMI_TOOLKIT_POPOVER_SELECTOR = joinCssLocatorCandidates(
+  KIMI_LOCATORS.capabilityPopover
+)
+const KIMI_SEARCH_ITEM_SELECTOR = joinCssLocatorCandidates(
+  KIMI_LOCATORS.searchItem
+)
+const KIMI_SEARCH_POPOVER_SELECTOR = joinCssLocatorCandidates(
+  KIMI_LOCATORS.searchPopover
+)
+const KIMI_SEARCH_OPTION_SELECTOR = joinCssLocatorCandidates(
+  KIMI_LOCATORS.searchOption
+)
+const KIMI_SELECTED_OPTION_ICON_SELECTOR = joinCssLocatorCandidates(
+  KIMI_LOCATORS.selectedOptionIcon
+)
 const KIMI_SEARCH_STORAGE_KEY = 'selectSearch'
 const KIMI_FILE_INPUT_SELECTOR = '.toolkit-popover input[type="file"]'
 const KIMI_FILE_CARD_SELECTOR = '.chat-editor .file-card-container'

@@ -1,16 +1,15 @@
 import type { ProviderId } from '../../providers/provider-id.ts'
 import { ProviderAdapterUnsupportedError } from '../../providers/adapters/adapter-base.ts'
+import {
+  getProviderCapability,
+  listProviderCapabilities,
+  type ProviderCapabilityDefinition,
+} from '../../providers/provider-definition-pack.ts'
 import type { RuntimeCore } from '../../runtime/runtime-core.ts'
 import type { CliCommandContext, CommandResult } from '../core/command-types.ts'
 import { getActiveThread } from '../core/command-types.ts'
 
 const THREAD_CAPABILITY_LABEL = '/thread capability'
-
-interface ProviderCapability {
-  name: string
-  description: string
-  kind: 'toggle' | 'action'
-}
 
 export interface ProviderCapabilityState {
   name: string
@@ -24,7 +23,11 @@ type ActionCapabilityState =
   | 'disabled'
   | 'unavailable'
 
-type ToggleCapability = 'thinking' | 'search' | 'advanced_search'
+type ToggleCapabilityDefinition = Extract<
+  ProviderCapabilityDefinition,
+  { kind: 'toggle' }
+>
+type ToggleCapability = ToggleCapabilityDefinition['target']['value']
 type ToggleState = 'on' | 'off'
 
 interface ActionCapabilityInfo {
@@ -48,51 +51,6 @@ export interface ProviderCapabilityExecution {
   status: ProviderCapabilityStatus
   result: ProviderCapabilityResult
 }
-
-const PROVIDER_CAPABILITIES: Record<ProviderId, readonly ProviderCapability[]> =
-  {
-    chatgpt: [],
-    gemini: [],
-    deepseek: [
-      {
-        name: 'thinking',
-        description: 'Deep thinking mode.',
-        kind: 'toggle',
-      },
-      {
-        name: 'search',
-        description: 'Smart search mode.',
-        kind: 'toggle',
-      },
-    ],
-    doubao: [],
-    grok: [],
-    glm: [
-      {
-        name: 'thinking',
-        description: 'Deep thinking mode.',
-        kind: 'toggle',
-      },
-      {
-        name: 'search',
-        description: 'Smart search mode.',
-        kind: 'toggle',
-      },
-      {
-        name: 'advanced_search',
-        description: 'Multi-round advanced search mode.',
-        kind: 'toggle',
-      },
-    ],
-    qwen: [],
-    kimi: [
-      {
-        name: 'search',
-        description: 'Web search mode.',
-        kind: 'toggle',
-      },
-    ],
-  }
 
 export async function executeThreadCapability(
   context: CliCommandContext,
@@ -185,21 +143,22 @@ export async function listProviderCapabilityStates(
     }
 
     const states: ProviderCapabilityState[] = []
-    for (const capability of PROVIDER_CAPABILITIES[provider]) {
-      if (!isToggleCapability(capability.name)) continue
+    for (const capability of listProviderCapabilities(provider)) {
+      if (capability.kind !== 'toggle') continue
+      const adapterCapability = capability.target.value
       if (provider === 'kimi') {
         try {
           states.push({
-            name: capability.name,
-            state: await adapter.getToggleState(capability.name),
+            name: capability.key,
+            state: await adapter.getToggleState(adapterCapability),
           })
         } catch (error) {
           if (!(error instanceof ProviderAdapterUnsupportedError)) throw error
         }
-      } else if (await adapter.hasToggleCapability(capability.name)) {
+      } else if (await adapter.hasToggleCapability(adapterCapability)) {
         states.push({
-          name: capability.name,
-          state: await adapter.getToggleState(capability.name),
+          name: capability.key,
+          state: await adapter.getToggleState(adapterCapability),
         })
       }
     }
@@ -248,12 +207,8 @@ export async function executeProviderCapability(
     }
   }
 
-  if (
-    !isToggleCapability(name) ||
-    !PROVIDER_CAPABILITIES[provider].some(
-      (capability) => capability.name === name
-    )
-  ) {
+  const capabilityDefinition = getProviderCapability(provider, name)
+  if (capabilityDefinition?.kind !== 'toggle') {
     return {
       status: 'unknown_capability',
       result: {
@@ -288,7 +243,7 @@ export async function executeProviderCapability(
     }
   }
 
-  const capability = name
+  const capability = capabilityDefinition.target.value
   if (provider !== 'kimi' && !(await adapter.hasToggleCapability(capability))) {
     return {
       status: 'unsupported_provider',
@@ -327,7 +282,7 @@ export async function executeProviderCapability(
     status: 'ok',
     result: {
       title: THREAD_CAPABILITY_LABEL,
-      body: `${provider}.${name}: ${state}`,
+      body: `${provider}.${capabilityDefinition.key}: ${state}`,
       format: 'plain',
     },
   }
@@ -469,12 +424,6 @@ function isToggleCapabilityAdapter(adapter: unknown): adapter is {
     typeof adapter.hasToggleCapability === 'function' &&
     'setToggleState' in adapter &&
     typeof adapter.setToggleState === 'function'
-  )
-}
-
-function isToggleCapability(value: string): value is ToggleCapability {
-  return (
-    value === 'thinking' || value === 'search' || value === 'advanced_search'
   )
 }
 

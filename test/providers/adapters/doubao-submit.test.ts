@@ -3,8 +3,21 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { DoubaoAdapter } from '../../../src/providers/adapters/adapter-doubao.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+} from '../../../src/providers/provider-definition-pack.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
+const DOUBAO_LOCATORS = getProviderDefinition('doubao').locators
+const DOUBAO_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
+  DOUBAO_LOCATORS.modelTrigger,
+  ':visible'
+)
+const DOUBAO_MODEL_MENU_SELECTOR = joinCssLocatorCandidates(
+  DOUBAO_LOCATORS.modelMenu,
+  ':visible'
+)
 const DOUBAO_DESKTOP_PROMOTION_CLOSE_SELECTOR =
   'xpath=//img[contains(@src, "/obj/flow-doubao/samantha/jianti.png")]/preceding-sibling::button[@type="button"][1]'
 
@@ -823,10 +836,7 @@ function createDoubaoPage(
       if (selector === 'div[class*="container-YCWnMI"]') {
         return readyContainerLocator
       }
-      if (
-        selector ===
-        'button[data-dbx-name="button"]:has(img[src*="mode_"]):visible, button[data-dbx-name="button"][aria-haspopup="menu"]:visible'
-      ) {
+      if (selector === DOUBAO_MODEL_TRIGGER_SELECTOR) {
         const trigger = {
           click: async () => {
             stopOptions.modelMenu?.open()
@@ -837,10 +847,7 @@ function createDoubaoPage(
           first: () => trigger,
         }
       }
-      if (
-        selector ===
-        'div[data-slot="dropdown-menu-content"]:visible, [role="menu"]:visible'
-      ) {
+      if (selector === DOUBAO_MODEL_MENU_SELECTOR) {
         return {
           count: async () =>
             stopOptions.modelMenu === undefined
@@ -1235,16 +1242,19 @@ function createDoubaoCapabilityPage({
     },
     locator: (selector: string) => {
       if (
-        selector === '[style*="--chat-input-tool-button-overflow-list-gap"]'
+        selector === joinCssLocatorCandidates(DOUBAO_LOCATORS.capabilityToolbar)
       ) {
         return toolbar
       }
-      if (selector === '[class*="text-g-exit-skill-btn-text"][data-value]') {
+      if (
+        selector ===
+        joinCssLocatorCandidates(DOUBAO_LOCATORS.selectedCapability)
+      ) {
         return selectedChip
       }
       if (
         selector ===
-        '[data-radix-popper-content-wrapper] [role="dialog"][data-state="open"]'
+        joinCssLocatorCandidates(DOUBAO_LOCATORS.capabilityOverflowPopover)
       ) {
         return popover
       }

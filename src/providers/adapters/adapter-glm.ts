@@ -17,21 +17,36 @@ import { retryAsync } from '../../shared/retry.ts'
 import { waitAsync } from '../../shared/wait.ts'
 import type { Locator } from 'playwright'
 import { emptyHistoryResult, parseGlmHistory } from '../conversation-history.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+} from '../provider-definition-pack.ts'
 
 const GLM_CHAT_URL = 'https://chat.z.ai'
+const GLM_LOCATORS = getProviderDefinition('glm').locators
 const GLM_READY_BUTTON_SELECTOR = '#send-message-button'
 const GLM_COMPOSER_SELECTOR = '#chat-input'
 const GLM_UPLOAD_BUTTON_SELECTOR = '#upload-file-button'
-const GLM_MODEL_TRIGGER_SELECTOR = 'button[id^="model-selector-"]'
-const GLM_MODEL_MENU_SELECTOR = '[data-dropdown-menu-content]'
-const GLM_MODEL_ITEM_SELECTOR = 'button[data-value]'
+const GLM_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
+  GLM_LOCATORS.modelTrigger
+)
+const GLM_MODEL_ITEM_SELECTOR = joinCssLocatorCandidates(GLM_LOCATORS.modelItem)
+const GLM_VISIBLE_MODEL_MENU_SELECTOR = joinCssLocatorCandidates(
+  GLM_LOCATORS.modelMenu,
+  ':visible'
+)
+const GLM_VISIBLE_MODEL_ITEM_SELECTOR = joinCssLocatorCandidates(
+  GLM_LOCATORS.modelItem,
+  ':visible'
+)
 const GLM_STOP_BUTTON_SELECTOR =
   '.messageInputContainer button.bg-black.rounded-full'
 const GLM_SIGNED_OUT_AVATAR_SELECTOR =
   'div.pointer-events-auto.px-1\\.5.pb-3\\.5 > button > svg[viewBox^="0 0 20"] path[fill-rule="evenodd"][clip-rule="evenodd"]'
 const GLM_BLOCKING_DIALOG_SELECTOR = '[data-dialog-overlay][data-state="open"]'
-const GLM_ADVANCED_SEARCH_SWITCH_SELECTOR =
-  '[data-tooltip-content] button[role="switch"][data-switch-root]'
+const GLM_ADVANCED_SEARCH_SWITCH_SELECTOR = joinCssLocatorCandidates(
+  GLM_LOCATORS.advancedSearchSwitch
+)
 const GLM_HISTORY_POLL_MS = 100
 
 export type GlmToggleCapability = 'thinking' | 'search' | 'advanced_search'
@@ -40,8 +55,8 @@ export type GlmToggleState = 'on' | 'off'
 type GlmDirectToggleCapability = Exclude<GlmToggleCapability, 'advanced_search'>
 
 const GLM_TOGGLE_BUTTON_SELECTORS: Record<GlmDirectToggleCapability, string> = {
-  thinking: 'button[data-autothink]',
-  search: 'button[data-active]:has(svg[viewBox^="0 0 15"])',
+  thinking: joinCssLocatorCandidates(GLM_LOCATORS.thinkingToggle),
+  search: joinCssLocatorCandidates(GLM_LOCATORS.searchToggle),
 }
 
 interface GlmStreamError {
@@ -679,11 +694,9 @@ export class GlmAdapter extends ProviderAdapter {
       )
     }
     await triggers.first().click()
-    const visibleMenus = this.page.locator(`${GLM_MODEL_MENU_SELECTOR}:visible`)
+    const visibleMenus = this.page.locator(GLM_VISIBLE_MODEL_MENU_SELECTOR)
     const scopedModelItems = visibleMenus.locator(GLM_MODEL_ITEM_SELECTOR)
-    const globalModelItems = this.page.locator(
-      `${GLM_MODEL_ITEM_SELECTOR}:visible`
-    )
+    const globalModelItems = this.page.locator(GLM_VISIBLE_MODEL_ITEM_SELECTOR)
     await waitAsync(
       async () =>
         (await scopedModelItems.count().catch(() => 0)) > 0 ||

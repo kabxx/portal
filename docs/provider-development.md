@@ -119,18 +119,19 @@ Check the states that are safely available: signed in and signed out, new and ex
 
 Adding the adapter file is only one part of registration. Search for exhaustive `ProviderId` unions, arrays, records, switches, and schema enums before considering registration complete.
 
-| Area               | Required change                                                                                                                                                                           |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Adapter            | Add `src/providers/adapters/adapter-<id>.ts` and focused tests under `test/providers/adapters/`.                                                                                          |
-| Provider type      | Add the id to `src/providers/provider-id.ts`.                                                                                                                                             |
-| App registry       | In `src/app.ts`, add the import, `PROVIDERS` entry, normalized name/aliases, `createAdapterForProvider` case, and a Provider prompt only when the Provider needs an extra boundary.       |
-| Resume URL         | Add strict HTTPS host/path recognition and canonicalization in `src/providers/provider-conversation-url.ts`, with positive, alias, malformed-encoding, wrong-host, and wrong-path tests.  |
-| Hooks              | Add the id to Provider normalization in `src/hooks/hook-config.ts` and update Hook tests.                                                                                                 |
-| Spawn              | Update the Provider list in the `spawn` description and input-schema enum in `src/tools/builtins/spawn-tool.ts`; update `test/tools/builtins/spawn-tool.test.ts`.                         |
-| Model argument     | Add the Provider's named models and per-model options to `src/providers/provider-model-catalog.ts`; cover every mapping plus accepted/rejected forms in catalog and command tests.        |
-| Capabilities       | If applicable, update `src/cli-commands/commands/command-thread-capability.ts`: capability records, display-name records, toggle/action Provider type guards, dispatch unions, and tests. |
-| User documentation | Update the brief lists in `README.md` and `docs/README.zh-CN.md`, plus the detailed matrix/counts in [Providers](providers.md); other docs only when needed.                              |
-| Integration tests  | Update Provider lists, command completion, API/MCP listing, and any exhaustive records surfaced by TypeScript or repository search.                                                       |
+| Area               | Required change                                                                                                                                                                                 |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Adapter            | Add `src/providers/adapters/adapter-<id>.ts` and focused tests under `test/providers/adapters/`.                                                                                                |
+| Provider type      | Add the id to `src/providers/provider-id.ts`.                                                                                                                                                   |
+| App registry       | In `src/app.ts`, add the import, `PROVIDERS` entry, normalized name/aliases, `createAdapterForProvider` case, and a Provider prompt only when the Provider needs an extra boundary.             |
+| Resume URL         | Add strict HTTPS host/path recognition and canonicalization in `src/providers/provider-conversation-url.ts`, with positive, alias, malformed-encoding, wrong-host, and wrong-path tests.        |
+| Hooks              | Add the id to Provider normalization in `src/hooks/hook-config.ts` and update Hook tests.                                                                                                       |
+| Spawn              | Update the Provider list in the `spawn` description and input-schema enum in `src/tools/builtins/spawn-tool.ts`; update `test/tools/builtins/spawn-tool.test.ts`.                               |
+| Model argument     | Add the Provider's named models and per-model options to `src/providers/definitions/<id>.ts`; cover mapping and rejected forms in manifest, catalog, and command tests.                         |
+| Capabilities       | Put static capability metadata and supported target mappings in the Provider manifest; keep runtime discovery, dispatch behavior, and state verification in the Adapter.                        |
+| Locator leaves     | Put maintained model/capability CSS candidates in named manifest slots; keep owner scoping, visibility, uniqueness, XPath, dynamic selectors, clicks, waits, and state machines in the Adapter. |
+| User documentation | Update the brief lists in `README.md` and `docs/README.zh-CN.md`, plus the detailed matrix/counts in [Providers](providers.md); other docs only when needed.                                    |
+| Integration tests  | Update Provider lists, command completion, API/MCP listing, and any exhaustive records surfaced by TypeScript or repository search.                                                             |
 
 Do not add an alias unless it is unambiguous and useful. Canonical conversation URLs must discard unrelated query/hash state and encode the conversation id exactly once.
 
@@ -159,6 +160,21 @@ Capabilities are optional structural interfaces, not base-class methods:
 - action Providers expose `listActionCapabilities`, `selectActionCapability`, and optionally `clearActionCapability`.
 
 Do not invent a capability that the current page does not expose. Account- or experiment-dependent controls must be discovered at runtime.
+
+The TypeScript manifests under `src/providers/definitions/` are imported as one
+strict immutable snapshot. A manifest can map existing Adapter behavior and
+provide named static CSS locator candidates, but it cannot add a Provider,
+arbitrary action, or new toggle implementation. Runtime semantic validation
+rejects duplicate positions, incompatible targets, and invalid locator slots at
+startup rather than activating a partial per-Provider fallback.
+
+Locator candidates are data, not an interaction DSL. Do not put `:visible`,
+XPath, owner selection, `first`/`last`/`nth`, clicks, waits, or state checks in a
+manifest. Text-bearing attributes such as `aria-label`, `title`, `placeholder`,
+and `alt` are rejected along with visible-text selector syntax. Unit tests may
+read manifest values to avoid duplicating selector strings, but Adapter behavior
+tests must still cover missing and ambiguous UI; only a real browser smoke test
+proves that a selector still matches a Provider.
 
 ### Initialization order
 
