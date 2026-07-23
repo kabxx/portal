@@ -3,13 +3,16 @@ import assert from 'node:assert/strict'
 import fs from 'fs/promises'
 import os from 'os'
 import path from 'path'
+import Database from 'better-sqlite3'
 
 import {
   buildThreadHistoryTitle,
   createThreadStore,
   parseThreadHistoryId,
   parseThreadHistoryLimit,
+  THREAD_STORE_SCHEMA_VERSION,
   ThreadStore,
+  ThreadStoreSchemaError,
 } from '../../src/threads/thread-store.ts'
 
 async function createStore() {
@@ -44,6 +47,121 @@ test('createThreadStore preserves a malformed database and fails initialization'
   try {
     await assert.rejects(createThreadStore(storagePath))
     assert.equal(await fs.readFile(storagePath, 'utf8'), original)
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('createThreadStore resets the unpublished legacy schema', async () => {
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'portal-history-legacy-')
+  )
+  const storagePath = path.join(directory, 'threads.db')
+  const legacy = new Database(storagePath)
+  legacy.exec(`
+    CREATE TABLE thread_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT NOT NULL,
+      conversation_url TEXT NOT NULL UNIQUE,
+      title TEXT,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT NOT NULL
+    );
+    INSERT INTO thread_history
+      (provider, conversation_url, title, created_at, last_used_at)
+    VALUES
+      ('chatgpt', 'https://chatgpt.com/c/legacy', 'legacy', '2026-01-01', '2026-01-01');
+  `)
+  legacy.close()
+
+  const store = await createThreadStore(storagePath)
+  try {
+    assert.equal(store.getSchemaVersion(), THREAD_STORE_SCHEMA_VERSION)
+    assert.deepEqual(await store.list(), [])
+
+    const inspection = new Database(storagePath, { readonly: true })
+    try {
+      const tables = inspection
+        .prepare<
+          [],
+          { name: string }
+        >("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        .all()
+      assert.deepEqual(
+        tables.map(({ name }) => name),
+        ['schema_version', 'threads']
+      )
+    } finally {
+      inspection.close()
+    }
+  } finally {
+    store.close()
+    await fs.rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('createThreadStore rejects a structurally invalid legacy schema without resetting it', async () => {
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'portal-history-invalid-schema-')
+  )
+  const storagePath = path.join(directory, 'threads.db')
+  const invalid = new Database(storagePath)
+  invalid.exec('CREATE TABLE thread_history (id INTEGER PRIMARY KEY);')
+  invalid.close()
+
+  try {
+    await assert.rejects(createThreadStore(storagePath), ThreadStoreSchemaError)
+    const inspection = new Database(storagePath, { readonly: true })
+    try {
+      const table = inspection
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'thread_history'"
+        )
+        .get()
+      assert.ok(table)
+    } finally {
+      inspection.close()
+    }
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('createThreadStore rejects a current schema with broken constraints', async () => {
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'portal-history-invalid-current-schema-')
+  )
+  const storagePath = path.join(directory, 'threads.db')
+  const invalid = new Database(storagePath)
+  invalid.exec(`
+    CREATE TABLE schema_version (
+      id INTEGER PRIMARY KEY,
+      version INTEGER NOT NULL
+    );
+    INSERT INTO schema_version (id, version) VALUES (1, 1);
+    CREATE TABLE threads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT,
+      conversation_url TEXT,
+      title TEXT,
+      created_at TEXT,
+      last_used_at TEXT
+    );
+    PRAGMA user_version = 1;
+  `)
+  invalid.close()
+
+  try {
+    await assert.rejects(createThreadStore(storagePath), ThreadStoreSchemaError)
+    const inspection = new Database(storagePath, { readonly: true })
+    try {
+      const version = inspection
+        .prepare('SELECT version FROM schema_version WHERE id = 1')
+        .get()
+      assert.ok(version)
+    } finally {
+      inspection.close()
+    }
   } finally {
     await fs.rm(directory, { recursive: true, force: true })
   }

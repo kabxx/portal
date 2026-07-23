@@ -4,13 +4,11 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import {
-  RuntimeCore,
-  providerRetryDelayMs,
-} from '../../src/runtime/runtime-core.ts'
+import { RuntimeCore } from '../../src/runtime/runtime-core.ts'
 import {
   ProviderAdapter,
   ProviderAdapterError,
+  ProviderResponseTimeoutError,
   type AbortOptions,
   type ProviderTimingOptions,
 } from '../../src/providers/adapters/adapter-base.ts'
@@ -161,7 +159,7 @@ class RetryToolResultAdapter extends LimitedFakeAdapter {
   }
 }
 
-class PersistentRetryToolResultAdapter extends LimitedFakeAdapter {
+class RetryableToolResultAdapter extends LimitedFakeAdapter {
   private submitCalls = 0
 
   public override async submit(options?: AbortOptions): Promise<string> {
@@ -299,10 +297,9 @@ class RetryRestoreAdapter extends FakeAdapter {
   }
 }
 
-function createRuntimeWithRetryDelays(
+function createRuntimeForRetryTests(
   adapter: ProviderAdapter,
-  tools: ToolConstructor[] = [],
-  delays: readonly number[] = [0]
+  tools: ToolConstructor[] = []
 ): RuntimeCore {
   return new RuntimeCore(
     adapter,
@@ -315,8 +312,7 @@ function createRuntimeWithRetryDelays(
     null,
     [],
     null,
-    3,
-    delays
+    3
   )
 }
 
@@ -785,60 +781,32 @@ test('RuntimeCore propagates submit aborts to the adapter watchdog signal', asyn
   assert.equal(submitSignal?.aborted, true)
 })
 
-test('RuntimeCore retries a provider response timeout through the retry transaction', async () => {
+test('RuntimeCore does not replay a submit after the response outcome becomes unknown', async () => {
   const adapter = new TimeoutThenSuccessAdapter()
-  const runtime = createRuntimeWithRetryDelays(adapter)
-  const statuses: string[] = []
+  const runtime = createRuntimeForRetryTests(adapter)
 
-  const assistant = await runtime.submitUserInput('Wait for recovery.', {
-    onStatus: async (message) => {
-      statuses.push(message)
-    },
-  })
-
-  assert.equal(assistant, 'Done.')
-  assert.equal(adapter.submitSignals.length, 2)
-  assert.equal(adapter.stopCalls, 1)
-  assert.deepEqual(adapter.retryPreparedTexts, ['Wait for recovery.'])
-  assert.equal(
-    statuses[0],
-    'Provider did not send response activity within 10ms after submit. Retrying in 0s.'
+  await assert.rejects(
+    runtime.submitUserInput('Do not duplicate this.'),
+    ProviderResponseTimeoutError
   )
+
+  assert.equal(adapter.submitSignals.length, 1)
+  assert.equal(adapter.stopCalls, 1)
+  assert.deepEqual(adapter.retryPreparedTexts, [])
 })
 
-test('RuntimeCore sends rate limits directly to persistent retry without an immediate bounded retry', async () => {
+test('RuntimeCore honors an explicitly retryable provider error within its attempt limit', async () => {
   const adapter = new RateLimitThenSuccessAdapter()
-  const runtime = createRuntimeWithRetryDelays(adapter)
+  const runtime = createRuntimeForRetryTests(adapter)
 
   assert.equal(await runtime.submitUserInput('Try later.'), 'Done.')
-  assert.deepEqual(adapter.retryPreparedTexts, ['Try later.'])
-  assert.deepEqual(adapter.attachedTexts, ['Try later.', 'Try later.'])
-})
-
-test('RuntimeCore uses 5s, 10s, 20s, then capped 30s persistent retry delays', () => {
-  assert.deepEqual(
-    [0, 1, 2, 3, 4, 20].map((attempt) => providerRetryDelayMs(attempt)),
-    [5_000, 10_000, 20_000, 30_000, 30_000, 30_000]
-  )
-})
-
-test('RuntimeCore cancels a persistent retry while waiting without preparing another submit', async () => {
-  const adapter = new RateLimitThenSuccessAdapter()
-  const runtime = createRuntimeWithRetryDelays(adapter, [], [10_000])
-  const controller = new AbortController()
-  const submission = runtime.submitUserInput('Cancel retry.', {
-    signal: controller.signal,
-    onStatus: async () =>
-      controller.abort(new PortalAbortError('cancel retry')),
-  })
-
-  await assert.rejects(submission, PortalAbortError)
   assert.deepEqual(adapter.retryPreparedTexts, [])
+  assert.deepEqual(adapter.attachedTexts, ['Try later.', 'Try later.'])
 })
 
 test('RuntimeCore resets API stream state after a partial failed attempt', async () => {
   const adapter = new RateLimitThenSuccessAdapter(1, true)
-  const runtime = createRuntimeWithRetryDelays(adapter)
+  const runtime = createRuntimeForRetryTests(adapter)
   const streams: string[] = []
   let resets = 0
 
@@ -864,15 +832,16 @@ test('RuntimeCore re-sends a completed tool result without executing the tool tw
     '<tool>{"tool":"retry_counting_tool","params":{}}</tool>',
     'Finished after retry.',
   ])
-  const runtime = createRuntimeWithRetryDelays(adapter, [RetryCountingTool])
+  const runtime = createRuntimeForRetryTests(adapter, [RetryCountingTool])
 
   assert.equal(
     await runtime.submitUserInput('Use the tool.'),
     'Finished after retry.'
   )
   assert.equal(retryCountingToolCalls, 1)
-  assert.equal(adapter.retryPreparedTexts.length, 1)
-  assert.match(adapter.retryPreparedTexts[0] ?? '', /^### Tool Result ###/)
+  assert.equal(adapter.retryPreparedTexts.length, 0)
+  assert.match(adapter.attachedTexts[1] ?? '', /^### Tool Result ###/)
+  assert.equal(adapter.attachedTexts[1], adapter.attachedTexts[2])
 })
 
 test('RuntimeCore cancels an adapter restore during retry recovery', async () => {
@@ -1336,11 +1305,11 @@ test('RuntimeCore keeps an over-limit delivery stable across submit recovery wit
   assert.equal(replacement.delivery.status, 'not_delivered')
 })
 
-test('RuntimeCore reuses one over-limit delivery across persistent retry without repeating local effects', async () => {
-  const adapter = new PersistentRetryToolResultAdapter(
+test('RuntimeCore reuses one over-limit delivery across a bounded retry without repeating local effects', async () => {
+  const adapter = new RetryableToolResultAdapter(
     [
       '<tool>{"tool":"oversized_outcome_tool","params":{"outcome":"success"}}</tool>',
-      'Handled after persistent retry.',
+      'Handled after bounded retry.',
     ],
     {
       kind: 'known',
@@ -1369,8 +1338,7 @@ test('RuntimeCore reuses one over-limit delivery across persistent retry without
     null,
     [],
     dispatcher,
-    3,
-    [0]
+    3
   )
   const scope = createHookScope({
     name: 'record-result',
@@ -1392,7 +1360,7 @@ test('RuntimeCore reuses one over-limit delivery across persistent retry without
         streamResets += 1
       },
     }),
-    'Handled after persistent retry.'
+    'Handled after bounded retry.'
   )
 
   assert.equal(oversizedOutcomeToolCalls, 1)
@@ -1403,7 +1371,6 @@ test('RuntimeCore reuses one over-limit delivery across persistent retry without
   assert.ok(isRecord(hookResult))
   assert.match(String(hookResult.content), /^success:x{1000}$/)
   assert.equal(streamResets, 1)
-  assert.equal(adapter.retryPreparedTexts.length, 1)
+  assert.equal(adapter.retryPreparedTexts.length, 0)
   assert.equal(adapter.attachedTexts[1], adapter.attachedTexts[2])
-  assert.equal(adapter.retryPreparedTexts[0], adapter.attachedTexts[1])
 })

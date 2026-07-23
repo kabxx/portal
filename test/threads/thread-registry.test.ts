@@ -66,7 +66,7 @@ test('ThreadRegistry records tool results and errors without updating thread met
   assert.equal(manager.getThread(thread.id)?.updatedAt, 3)
 })
 
-test('ThreadRegistry leaves no active thread after closing the active thread', () => {
+test('ThreadRegistry removes thread records without retaining closed turns', () => {
   const manager = new ThreadRegistry()
   const first = manager.addThread({
     id: manager.createThreadId(),
@@ -74,7 +74,7 @@ test('ThreadRegistry leaves no active thread after closing the active thread', (
     runtime: createFakeRuntime(),
     createdAt: 1,
   })
-  manager.addThread({
+  const second = manager.addThread({
     id: manager.createThreadId(),
     provider: 'gemini',
     runtime: createFakeRuntime(),
@@ -82,8 +82,7 @@ test('ThreadRegistry leaves no active thread after closing the active thread', (
   })
 
   assert.ok(manager.removeThread(first.id))
-  assert.equal(manager.getActiveThread()?.id, 't-2')
-
-  assert.ok(manager.removeThread('t-2'))
-  assert.equal(manager.getActiveThread(), null)
+  assert.equal(manager.getThread(first.id), null)
+  assert.ok(manager.removeThread(second.id))
+  assert.equal(manager.getThread(second.id), null)
 })

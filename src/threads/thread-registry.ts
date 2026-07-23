@@ -58,8 +58,6 @@ export interface ThreadRecord {
   provider: ProviderId
   runtime: RuntimeCore
   title: string | null
-  conversationId: string | null
-  conversationUrl: string | null
   createdAt: number
   updatedAt: number
   pinned: boolean
@@ -67,7 +65,6 @@ export interface ThreadRecord {
 }
 
 interface ThreadRegistryState {
-  activeThreadId: string | null
   threads: Map<string, ThreadRecord>
 }
 
@@ -82,7 +79,6 @@ interface CreateThreadInput {
 
 export class ThreadRegistry {
   private readonly state: ThreadRegistryState = {
-    activeThreadId: null,
     threads: new Map<string, ThreadRecord>(),
   }
   private nextThreadNumber = 1
@@ -94,25 +90,18 @@ export class ThreadRegistry {
     return threadId
   }
 
-  public clearActiveThread(): void {
-    this.state.activeThreadId = null
-  }
-
   public addThread(input: CreateThreadInput): ThreadRecord {
     const thread: ThreadRecord = {
       id: input.id,
       provider: input.provider,
       runtime: input.runtime,
       title: input.title ?? null,
-      conversationId: input.runtime.conversationId,
-      conversationUrl: input.runtime.conversationUrl,
       createdAt: input.createdAt,
       updatedAt: input.createdAt,
       pinned: input.pinned ?? false,
       turns: [],
     }
     this.state.threads.set(thread.id, thread)
-    this.state.activeThreadId = thread.id
     return thread
   }
 
@@ -126,44 +115,13 @@ export class ThreadRegistry {
     return this.state.threads.get(id) ?? null
   }
 
-  public getActiveThread(): ThreadRecord | null {
-    return this.state.activeThreadId === null
-      ? null
-      : this.getThread(this.state.activeThreadId)
-  }
-
-  public switchThread(id: string): ThreadRecord | null {
-    const thread = this.getThread(id)
-    if (thread === null) {
-      return null
-    }
-    this.state.activeThreadId = id
-    thread.updatedAt = Date.now()
-    return thread
-  }
-
   public removeThread(id: string): ThreadRecord | null {
     const thread = this.getThread(id)
     if (thread === null) {
       return null
     }
     this.state.threads.delete(id)
-
-    if (this.state.activeThreadId === id) {
-      this.state.activeThreadId = null
-    }
-
     return thread
-  }
-
-  public syncConversation(threadId: string) {
-    const thread = this.getThread(threadId)
-    if (thread === null) {
-      return
-    }
-    thread.conversationId = thread.runtime.conversationId
-    thread.conversationUrl = thread.runtime.conversationUrl
-    thread.updatedAt = Date.now()
   }
 
   public beginTurn(threadId: string, userText: string): TurnRecord | null {
@@ -192,7 +150,6 @@ export class ThreadRegistry {
       thread.title = this.toTitle(userText)
     }
     thread.updatedAt = createdAt
-    this.syncConversation(threadId)
     return turn
   }
 
@@ -218,7 +175,6 @@ export class ThreadRegistry {
       return null
     }
     turn.status = status
-    this.syncConversation(threadId)
     return turn
   }
 

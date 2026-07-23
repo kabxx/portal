@@ -73,7 +73,7 @@ commit, an unregistered managed directory or a temporary removal directory may
 remain under `data/`; portal does not automatically recover those crash
 orphans.
 
-The HTTP API accepts the same install inputs through `POST /v1/skills` with
+The HTTP API accepts the same install inputs through `POST /skills` with
 `{ "source": "...", "registryUrl": "..." }`. Omit `registryUrl` for a local
 path or direct remote source. See [HTTP API](api.md).
 
@@ -94,7 +94,7 @@ applies the Skill only to that turn. With no trailing task, the model is told to
 ask what to do. An unknown or unavailable `$name` prefix remains ordinary user
 input.
 
-`POST /v1/threads/:threadId/skill` provides the activation-only form by name;
+`POST /threads/:threadId/skill` provides the activation-only form by name;
 it does not synthesize the combined `$name task` form.
 
 ## Registry

@@ -12,26 +12,26 @@ Provider-specific website behavior stays behind adapters. The runtime understand
 
 ## Component map
 
-| Area              | Main files                              | Responsibility                                                                                      |
-| ----------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Process entry     | `src/index.ts`, `src/app.ts`            | Parse options, build services, run input dispatch, coordinate cancellation, and shut down           |
-| Configuration     | `src/config/`                           | Create, validate, comment, lock, and atomically update `data/config.yaml`                           |
-| HTTP API          | `src/api/`                              | Serve authenticated routes, thread operations, and per-thread SSE event streams                     |
-| MCP Server        | `src/mcp-server/`                       | Expose selected thread operations through an independent Streamable HTTP MCP listener               |
-| Browser platform  | `src/platform/`                         | Launch Chromium, connect over CDP, and manage platform-specific process lifetime                    |
-| Provider adapters | `src/providers/adapters/`               | Navigate pages, detect login/readiness, submit, stream, upload, select models, and stop output      |
-| Provider data     | `src/providers/definitions/`            | Typed immutable manifests for models, options, static capabilities, and semantic locator leaves     |
-| History parsing   | `src/providers/conversation-history.ts` | Convert eight provider history formats into visible user/assistant messages                         |
-| Runtime           | `src/runtime/`                          | Build setup prompts, initialize runtimes, execute tool loops, retry, recover, and cancel            |
-| Threads           | `src/threads/`                          | Track active threads and local turns in memory; persist URL history metadata in SQLite              |
-| Commands          | `src/cli-commands/`                     | Tokenize and dispatch slash commands                                                                |
-| Tools             | `src/tools/`                            | Define schemas, render the tool protocol, validate calls, execute tools, and report progress        |
-| Command processes | `src/processes/`                        | Track command jobs, bound output, and terminate process trees                                       |
-| Terminal UI       | `src/terminal-ui/`                      | Manage home/thread timelines, live assistant/command bubbles, input history, wrapping, and keys     |
-| Instructions      | `src/instructions/`                     | Discover optional Codex/Claude files, enforce read limits, and activate path-scoped rules           |
-| Skills            | `src/skills/`                           | Validate manifests, install sources, maintain the registry, snapshot catalogs, and load content     |
-| MCP               | `src/mcp/`                              | Parse config, connect per-thread clients, cache tools, call tools, and render attachments           |
-| Hooks             | `src/hooks/`                            | Load immutable snapshots, run command/model handlers, gate Tool calls, and publish execution events |
+| Area              | Main files                              | Responsibility                                                                                                                                                        |
+| ----------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Process entry     | `src/index.ts`, `src/app.ts`            | Parse options, build services, run input dispatch, coordinate cancellation, and shut down                                                                             |
+| Configuration     | `src/config/`                           | Create, validate, comment, lock, and atomically update `data/config.yaml`                                                                                             |
+| HTTP API          | `src/api/`                              | Serve authenticated routes, thread operations, and per-thread SSE event streams                                                                                       |
+| MCP Server        | `src/mcp-server/`                       | Expose selected thread operations through an independent Streamable HTTP MCP listener                                                                                 |
+| Browser platform  | `src/platform/`                         | Launch Chromium, connect over CDP, and manage platform-specific process lifetime                                                                                      |
+| Provider adapters | `src/providers/adapters/`               | Navigate pages, detect login/readiness, submit, stream, upload, select models, and stop output                                                                        |
+| Provider data     | `src/providers/definitions/`            | Typed immutable manifests for models, options, static capabilities, and semantic locator leaves                                                                       |
+| History parsing   | `src/providers/conversation-history.ts` | Convert eight provider history formats into visible user/assistant messages                                                                                           |
+| Runtime           | `src/runtime/`                          | Build setup prompts, initialize runtimes, execute tool loops, retry, recover, and cancel                                                                              |
+| Threads           | `src/threads/`                          | `ThreadLifecycleService` owns create/resume/send/close admission; registries track runtime identity, selection, and local turns; SQLite persists URL history metadata |
+| Commands          | `src/cli-commands/`                     | Tokenize and dispatch slash commands                                                                                                                                  |
+| Tools             | `src/tools/`                            | Define schemas, render the tool protocol, validate calls, execute tools, and report progress                                                                          |
+| Command processes | `src/processes/`                        | Track command jobs, bound output, and terminate process trees                                                                                                         |
+| Terminal UI       | `src/terminal-ui/`                      | Manage home/thread timelines, live assistant/command bubbles, input history, wrapping, and keys                                                                       |
+| Instructions      | `src/instructions/`                     | Discover optional Codex/Claude files, enforce read limits, and activate path-scoped rules                                                                             |
+| Skills            | `src/skills/`                           | Validate manifests, install sources, maintain the registry, snapshot catalogs, and load content                                                                       |
+| MCP               | `src/mcp/`                              | Parse config, connect per-thread clients, cache tools, call tools, and render attachments                                                                             |
+| Hooks             | `src/hooks/`                            | Load immutable snapshots, run command/model handlers, gate Tool calls, and publish execution events                                                                   |
 
 Pure provider transport decoding lives outside the page adapters. For example, ChatGPT responses are decoded in `src/providers/chatgpt-response-parser.ts`.
 
@@ -68,7 +68,8 @@ sequenceDiagram
     participant Threads
     participant UI
 
-    App->>Adapter: create page and restore new conversation
+    App->>Lifecycle: thread.create(provider, mode)
+    Lifecycle->>Adapter: create page and restore new conversation
     Adapter->>Web: navigate, verify login and composer readiness
     Factory->>MCP: connect enabled servers in parallel
     Factory->>Skills: snapshot enabled Skill metadata
@@ -79,8 +80,9 @@ sequenceDiagram
         Factory->>Web: submit minimal setup handshake
     end
     Web-->>Factory: response containing READY
-    App->>Threads: register active thread
-    App->>UI: switch to empty thread timeline
+    Lifecycle->>Threads: atomically claim URL and commit runtime
+    Lifecycle->>Threads: register committed thread
+    Lifecycle->>UI: publish ready event and activate when requested
     App->>UI: render Thread t-N is ready
 ```
 
@@ -107,15 +109,14 @@ executed, so chat mode is not a sandbox.
 
 Resume accepts a normalized provider URL or a `#history-id` resolved through `ThreadStore`.
 
-1. Reject unsupported URLs and duplicate open conversations.
+1. Resolve the URL and reserve its canonical form; reject unsupported or already-open conversations.
 2. Create an adapter directly on the existing provider URL and wait for login/readiness.
 3. Read the current Skills, MCP, and project-instruction configuration.
 4. Build the runtime with `setupMode: 'skip'`; no new setup/catalog turn is sent.
-5. Register the thread and switch to its empty timeline.
-6. Render the existing ready status bubble.
-7. Load the provider's visible remote history and append user/assistant messages.
-8. Render a Markdown warning if history is incomplete or unavailable.
-9. Update the SQLite URL record.
+5. Load the provider's visible remote history before admission. A non-abort history error becomes an incomplete-history warning.
+6. Atomically claim the URL, commit the runtime, and register the thread.
+7. Publish the ready event, activate only for the TUI source, and append the history display event.
+8. Update the SQLite URL record as a best-effort metadata effect.
 
 The resumed web conversation already contains its provider-side context. Sending old messages again would duplicate context, so history hydration is display-only.
 
@@ -230,17 +231,19 @@ The base adapter installs fetch/XHR capture before navigation for submit flows. 
 
 ## Thread state and timelines
 
-Three stores serve different purposes:
+Four process stores and one persistent index serve different purposes:
 
-| Store                        | Lifetime        | Contents                                                                   |
-| ---------------------------- | --------------- | -------------------------------------------------------------------------- |
-| `ThreadRegistry`             | Current process | Active runtimes, active id, local turns, assistant/tool/status/error items |
-| `TerminalController` cache   | Current process | One home timeline plus one rendered timeline per active thread             |
-| `ThreadStore` / `threads.db` | Persistent      | Provider, normalized conversation URL, title, created/last-used times      |
+| Store                        | Lifetime        | Contents                                                                                             |
+| ---------------------------- | --------------- | ---------------------------------------------------------------------------------------------------- |
+| `ThreadRuntimeRegistry`      | Current process | URL reservations/claims, runtime identity, lifecycle state, history quality, and admission snapshots |
+| `ThreadRegistry`             | Current process | Local turn ledger and the runtime/provider handles needed to submit turns                            |
+| `ThreadSelectionController`  | Current process | TUI-only active thread selection; API/MCP admission never changes it                                 |
+| `TerminalController` cache   | Current process | One home timeline plus one rendered timeline per active thread                                       |
+| `ThreadStore` / `threads.db` | Persistent      | Provider, normalized conversation URL, title, created/last-used times                                |
 
-Switching a thread first saves the visible timeline under the previous key and restores the target array. It does not navigate or request remote history again. `detach` clears active selection and returns to the home timeline. Closing the active thread removes its cache and also returns home; closing a background thread keeps the current timeline visible. The same behavior applies when the user closes a provider tab directly. Any active operation is cancelled first, concurrent close requests share one close task, and portal makes two bounded settlement waits before force-closing the logical thread if the operation remains stuck. Page close events caused by portal shutdown are ignored by this thread-level path.
+`ThreadLifecycleService` is the only owner of create, resume, send-operation admission, cancellation, and close. Switching a thread only changes the TUI selection; it does not navigate or request remote history again. `detach` clears active selection and returns to the home timeline. Closing the active thread removes its cache and also returns home; closing a background thread keeps the current timeline visible. The same behavior applies when the user closes a provider tab directly. Any active operation is cancelled first, concurrent close requests share one close task, and a provider-page close makes two bounded settlement waits before force-closing the logical thread if the operation remains stuck. Normal user close keeps the URL claim while cancellation is still pending.
 
-Remote resume history is rendered directly into the thread timeline. Its hydration is registered as a thread operation, so closing the provider page cancels hydration before removing the thread. History is not converted into `ThreadRegistry` turns, so local turn counts represent only inputs submitted during the current process. After startup completes, the home timeline receives one in-memory welcome entry; it is cached and restored like other home timeline entries.
+Remote resume history is rendered directly into the thread timeline after the runtime has been prepared and before it is admitted. History is not converted into `ThreadRegistry` turns, so local turn counts represent only inputs submitted during the current process. After startup completes, the home timeline receives one in-memory welcome entry; it is cached and restored like other home timeline entries.
 
 The SQLite database is an index for reopening conversations, not a transcript database. The provider website remains the source of conversation content.
 
@@ -253,7 +256,7 @@ Long-running app operations receive an `AbortSignal`.
 - Idle `Ctrl+D` with empty input requests shutdown.
 - `/exit` requests the same shutdown path.
 
-Provider failures are classified by kind, retryability, and recovery action. Authentication errors retain the adapter page and enter a login-wait loop. Ordinary retryable network/page failures use bounded retries and adapter restore. Explicit rate-limit errors and provider response activity timeouts instead keep the current payload and retry with 5, 10, 20, then capped 30 second delays until success, a retry preflight failure, or cancellation. This persistent path never restores the page: before each replay the adapter requires one empty editable Composer, no active stop control, an exact write/readback match, and one ready send control. A failure after writing but before dispatch clears every matching Composer; once dispatch starts, input is no longer rolled back. Other UI or protocol errors remain visible in the current timeline.
+Provider failures are classified by kind, retryability, and recovery action. Authentication errors retain the adapter page and enter a login-wait loop. Ordinary retryable network/page failures use bounded retries and adapter restore. A response activity timeout is an unknown submit outcome and ends the current operation without replaying the payload, because the original request may already have reached the Provider. Other UI or protocol errors remain visible in the current timeline.
 
 Cancellation is propagated through provider submit, runtime retries, tools, Skill installation, MCP requests, and app operations, except for the detached waiter behavior of `run_command` described above. Shutdown closes job admission and stops all active command jobs before closing providers. It uses bounded close waits so a hanging provider page or transport cannot block process exit indefinitely.
 

@@ -27,7 +27,7 @@ listeners:
     token: null
 ```
 
-When `token` is neither `null` nor the exact empty string `""`, every `/v1/*`
+When `token` is neither `null` nor the exact empty string `""`, every `/*`
 request must include `Authorization: Bearer <token>`. Portal preserves Token
 strings exactly and does not trim whitespace. `/health` is always
 unauthenticated. Host and authentication are independent; an unauthenticated
@@ -45,20 +45,20 @@ The API addresses a thread directly. It does not introduce a separate
 `session`, `run`, or `turn` resource, and it does not expose MCP attachment
 operations.
 
-| Method   | Path                             | Purpose                                                                   |
-| -------- | -------------------------------- | ------------------------------------------------------------------------- |
-| `GET`    | `/health`                        | Liveness check                                                            |
-| `GET`    | `/v1/status`                     | Portal and API status                                                     |
-| `GET`    | `/v1/providers`                  | Supported provider ids                                                    |
-| `GET`    | `/v1/threads`                    | List active threads                                                       |
-| `POST`   | `/v1/threads`                    | Create a thread; body: `provider`, optional `model`, `option`, and `mode` |
-| `POST`   | `/v1/threads/resume`             | Resume; body: `conversationUrl`                                           |
-| `GET`    | `/v1/threads/:threadId`          | Get thread metadata                                                       |
-| `DELETE` | `/v1/threads/:threadId`          | Close a thread                                                            |
-| `POST`   | `/v1/threads/:threadId/messages` | Submit `{ "input": "..." }`; returns `202`                                |
-| `POST`   | `/v1/threads/:threadId/cancel`   | Cancel the current thread operation; idempotent                           |
-| `POST`   | `/v1/threads/:threadId/reload`   | Reload the provider page; returns `202`                                   |
-| `GET`    | `/v1/threads/:threadId/events`   | Subscribe to SSE events; multiple clients are allowed                     |
+| Method   | Path                          | Purpose                                                                   |
+| -------- | ----------------------------- | ------------------------------------------------------------------------- |
+| `GET`    | `/health`                     | Liveness check                                                            |
+| `GET`    | `/status`                     | Portal and API status                                                     |
+| `GET`    | `/providers`                  | Supported provider ids                                                    |
+| `GET`    | `/threads`                    | List active threads                                                       |
+| `POST`   | `/threads`                    | Create a thread; body: `provider`, optional `model`, `option`, and `mode` |
+| `POST`   | `/threads/resume`             | Resume; body: `conversationUrl`                                           |
+| `GET`    | `/threads/:threadId`          | Get thread metadata                                                       |
+| `DELETE` | `/threads/:threadId`          | Close a thread                                                            |
+| `POST`   | `/threads/:threadId/messages` | Submit `{ "input": "..." }`; returns `202`                                |
+| `POST`   | `/threads/:threadId/cancel`   | Cancel the current thread operation; idempotent                           |
+| `POST`   | `/threads/:threadId/reload`   | Reload the provider page; returns `202`                                   |
+| `GET`    | `/threads/:threadId/events`   | Subscribe to SSE events; multiple clients are allowed                     |
 
 Only one operation may run on a given thread at a time. A conflicting message
 or reload returns `409 THREAD_BUSY`; it is not queued. Different threads can
@@ -70,7 +70,7 @@ The optional `model` and `option` fields use the named keys documented in
 Subscribe to the SSE endpoint before sending the reload request when the
 `thread.action` `started` event must not be missed.
 
-`POST /v1/threads` accepts an optional `mode` of `"agent"` or `"chat"` and
+`POST /threads` accepts an optional `mode` of `"agent"` or `"chat"` and
 defaults to `"agent"`. Agent creation sends the full portal setup prompt. Chat
 creation sends only the shared `READY` handshake; the response must contain
 `READY` as a case-insensitive whole word. Chat runtimes still connect configured
@@ -85,17 +85,17 @@ case.
 
 ## Skills
 
-`POST /v1/threads/:threadId/skill` with `{ "name": "skill-name" }` starts the
+`POST /threads/:threadId/skill` with `{ "name": "skill-name" }` starts the
 same activation-only form as typing `$skill-name` in the TUI. The combined
 `$skill-name task` form is intentionally not synthesized by this API.
 
-| Method   | Path                          | Body or purpose                                                                                                             |
-| -------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `POST`   | `/v1/threads/:threadId/skill` | `{ "name": "skill-name" }`; starts one activation-only turn and returns `202`                                               |
-| `GET`    | `/v1/skills`                  | List registered Skills and validation issues                                                                                |
-| `POST`   | `/v1/skills`                  | `{ "source": "...", "registryUrl": "..." }`; optional registry; returns `201` with `{ "skills": [...], "warnings": [...] }` |
-| `PUT`    | `/v1/skills/:name`            | `{ "enabled": true }` or `{ "enabled": false }`                                                                             |
-| `DELETE` | `/v1/skills/:name`            | Remove the registration and managed download; returns `{ "removed": true, "name": "...", "warnings": [...] }`               |
+| Method   | Path                       | Body or purpose                                                                                                             |
+| -------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `POST`   | `/threads/:threadId/skill` | `{ "name": "skill-name" }`; starts one activation-only turn and returns `202`                                               |
+| `GET`    | `/skills`                  | List registered Skills and validation issues                                                                                |
+| `POST`   | `/skills`                  | `{ "source": "...", "registryUrl": "..." }`; optional registry; returns `201` with `{ "skills": [...], "warnings": [...] }` |
+| `PUT`    | `/skills/:name`            | `{ "enabled": true }` or `{ "enabled": false }`                                                                             |
+| `DELETE` | `/skills/:name`            | Remove the registration and managed download; returns `{ "removed": true, "name": "...", "warnings": [...] }`               |
 
 For a Hub install, `source` is the Skill name and `registryUrl` is the HTTP(S)
 registry root. For local directories and direct URLs, omit `registryUrl`. See
@@ -103,14 +103,14 @@ registry root. For local directories and direct URLs, omit `registryUrl`. See
 
 ## MCP
 
-| Method   | Path                                              | Body or purpose                                                           |
-| -------- | ------------------------------------------------- | ------------------------------------------------------------------------- |
-| `GET`    | `/v1/mcp/servers`                                 | List configured servers with secrets redacted                             |
-| `POST`   | `/v1/mcp/servers`                                 | `{ "name": "server", ...config }`; adds a server; returns `201`           |
-| `PUT`    | `/v1/mcp/servers/:name`                           | `{ "enabled": true }`, `{ "enabled": false }`, or `{ "config": { ... } }` |
-| `DELETE` | `/v1/mcp/servers/:name`                           | Remove a configured server                                                |
-| `GET`    | `/v1/threads/:threadId/mcp/resources?server=name` | List Resources in the active runtime; `server` is optional                |
-| `GET`    | `/v1/threads/:threadId/mcp/prompts?server=name`   | List Prompts in the active runtime; `server` is optional                  |
+| Method   | Path                                           | Body or purpose                                                           |
+| -------- | ---------------------------------------------- | ------------------------------------------------------------------------- |
+| `GET`    | `/mcp/servers`                                 | List configured servers with secrets redacted                             |
+| `POST`   | `/mcp/servers`                                 | `{ "name": "server", ...config }`; adds a server; returns `201`           |
+| `PUT`    | `/mcp/servers/:name`                           | `{ "enabled": true }`, `{ "enabled": false }`, or `{ "config": { ... } }` |
+| `DELETE` | `/mcp/servers/:name`                           | Remove a configured server                                                |
+| `GET`    | `/threads/:threadId/mcp/resources?server=name` | List Resources in the active runtime; `server` is optional                |
+| `GET`    | `/threads/:threadId/mcp/prompts?server=name`   | List Prompts in the active runtime; `server` is optional                  |
 
 The POST config is the same server object accepted under `mcpServers` after
 removing `name`; PUT replacement wraps that object in `config`. Runtime
@@ -122,11 +122,11 @@ only `hasHeaders`/`hasEnv`; credentials are never returned by the API.
 
 ## Provider capabilities
 
-| Method   | Path                                       | Body or purpose                                                                                                 |
-| -------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `GET`    | `/v1/threads/:threadId/capabilities`       | List controls exposed by the active provider page                                                               |
-| `PUT`    | `/v1/threads/:threadId/capabilities/:name` | `{ "state": "on" }`/`{ "state": "off" }` for toggles; `{ "state": "selected" }`/`{ "state": "on" }` for actions |
-| `DELETE` | `/v1/threads/:threadId/capabilities/:name` | Set a toggle to `off`, or clear the selected action                                                             |
+| Method   | Path                                    | Body or purpose                                                                                                 |
+| -------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/threads/:threadId/capabilities`       | List controls exposed by the active provider page                                                               |
+| `PUT`    | `/threads/:threadId/capabilities/:name` | `{ "state": "on" }`/`{ "state": "off" }` for toggles; `{ "state": "selected" }`/`{ "state": "on" }` for actions |
+| `DELETE` | `/threads/:threadId/capabilities/:name` | Set a toggle to `off`, or clear the selected action                                                             |
 
 Toggle states and dynamic action names follow the same provider-specific rules
 as `/thread capability`. Unsupported states and unavailable controls return
@@ -142,8 +142,9 @@ The event names are:
 `message.failed`, `message.cancelled`, `thread.closed`, `thread.action`, and
 `hook.execution`.
 
-`thread.closed` is the terminal event for a thread whose Provider page was
-closed outside portal. Its data contains `reason: "provider_page_closed"`.
+`thread.closed` is the terminal event for every successful thread close. Its
+data contains `reason: "user"`, `"provider_page_closed"`, `"shutdown"`, or
+`"provision_failed"`.
 When an active message settles during coordinated cancellation,
 `message.cancelled` is emitted first. If cancellation reaches its bounded
 force-close fallback, `thread.closed` can be the only terminal event. After
@@ -177,12 +178,12 @@ Example:
 
 ```bash
 curl -N -H "Authorization: Bearer $PORTAL_TOKEN" \
-  http://127.0.0.1:8787/v1/threads/t-1/events
+  http://127.0.0.1:8787/threads/t-1/events
 
 curl -X POST -H "Authorization: Bearer $PORTAL_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"input":"检查当前页面状态"}' \
-  http://127.0.0.1:8787/v1/threads/t-1/messages
+  http://127.0.0.1:8787/threads/t-1/messages
 ```
 
 Errors use the form `{ "error": { "code": "...", "message": "..." } }`.

@@ -116,7 +116,7 @@ function createHandlers(calls: string[], includeReload = true): ApiHandlers {
   }
 }
 
-test('PortalApiServer authenticates v1 routes and preserves thread-scoped results', async () => {
+test('PortalApiServer authenticates routes and preserves thread-scoped results', async () => {
   const calls: string[] = []
   const server = new PortalApiServer({
     host: '127.0.0.1',
@@ -135,7 +135,6 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
     assert.deepEqual(await health.json(), {
       ok: true,
       service: 'portal',
-      apiVersion: 'v1',
     })
 
     const queriedHealth = await fetch(`${address}/health?probe=1`)
@@ -143,16 +142,15 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
     assert.deepEqual(await queriedHealth.json(), {
       ok: true,
       service: 'portal',
-      apiVersion: 'v1',
     })
 
-    const unauthorized = await fetch(`${address}/v1/status?probe=1`)
+    const unauthorized = await fetch(`${address}/status?probe=1`)
     assert.equal(unauthorized.status, 401)
     assert.deepEqual(await unauthorized.json(), {
       error: { code: 'AUTH_INVALID', message: 'Invalid API token.' },
     })
 
-    const lowercaseBearer = await fetch(`${address}/v1/status`, {
+    const lowercaseBearer = await fetch(`${address}/status`, {
       headers: { Authorization: 'bearer secret' },
     })
     assert.equal(lowercaseBearer.status, 200)
@@ -161,7 +159,7 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
       Authorization: 'Bearer secret',
       'Content-Type': 'application/json',
     }
-    const created = await fetch(`${address}/v1/threads`, {
+    const created = await fetch(`${address}/threads`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -179,7 +177,7 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
       option: 'extended',
       mode: 'chat',
     })
-    const message = await fetch(`${address}/v1/threads/t-1/messages`, {
+    const message = await fetch(`${address}/threads/t-1/messages`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ input: 'hello' }),
@@ -192,7 +190,7 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
       input: 'hello',
     })
 
-    const skill = await fetch(`${address}/v1/threads/t-1/skill`, {
+    const skill = await fetch(`${address}/threads/t-1/skill`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ name: 'review' }),
@@ -205,7 +203,7 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
       skill: 'review',
     })
 
-    const skillCollection = await fetch(`${address}/v1/skills`, {
+    const skillCollection = await fetch(`${address}/skills`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ source: 'C:\\skill-collection' }),
@@ -227,7 +225,7 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
       warnings: [],
     })
 
-    const removedSkill = await fetch(`${address}/v1/skills/beta-skill`, {
+    const removedSkill = await fetch(`${address}/skills/beta-skill`, {
       method: 'DELETE',
       headers: { Authorization: 'Bearer secret' },
     })
@@ -238,7 +236,7 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
       warnings: ['cleanup warning'],
     })
 
-    const reload = await fetch(`${address}/v1/threads/t-1/reload`, {
+    const reload = await fetch(`${address}/threads/t-1/reload`, {
       method: 'POST',
       headers: { Authorization: 'Bearer secret' },
     })
@@ -251,7 +249,7 @@ test('PortalApiServer authenticates v1 routes and preserves thread-scoped result
       threadId: 't-1',
     })
 
-    const mcp = await fetch(`${address}/v1/mcp/servers/local`, {
+    const mcp = await fetch(`${address}/mcp/servers/local`, {
       method: 'PUT',
       headers,
       body: JSON.stringify({
@@ -293,31 +291,27 @@ test('PortalApiServer routes capability list, toggle updates, and clears', async
   await server.start()
   try {
     const address = server.address()
-    const listed = await fetch(`${address}/v1/threads/t-1/capabilities`)
+    const listed = await fetch(`${address}/threads/t-1/capabilities`)
     assert.equal(listed.status, 200)
     assert.deepEqual(await listed.json(), {
       provider: 'deepseek',
       capabilities: [{ name: 'search', state: 'off' }],
     })
 
-    const updated = await fetch(
-      `${address}/v1/threads/t-1/capabilities/search`,
-      {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ state: 'off' }),
-      }
-    )
+    const updated = await fetch(`${address}/threads/t-1/capabilities/search`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state: 'off' }),
+    })
     assert.equal(updated.status, 200)
     assert.deepEqual(await updated.json(), {
       name: 'search',
       state: 'off',
     })
 
-    const cleared = await fetch(
-      `${address}/v1/threads/t-1/capabilities/search`,
-      { method: 'DELETE' }
-    )
+    const cleared = await fetch(`${address}/threads/t-1/capabilities/search`, {
+      method: 'DELETE',
+    })
     assert.equal(cleared.status, 200)
     assert.deepEqual(await cleared.json(), {
       name: 'search',
@@ -344,7 +338,7 @@ test('PortalApiServer enforces the configured request body limit', async () => {
 
   await server.start()
   try {
-    const response = await fetch(`${server.address()}/v1/threads`, {
+    const response = await fetch(`${server.address()}/threads`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: 'deepseek', padding: 'x'.repeat(32) }),
@@ -518,7 +512,7 @@ test('PortalApiServer allows non-loopback listeners without authentication', asy
       auth: false,
     })
     const address = server.address()!.replace('0.0.0.0', '127.0.0.1')
-    const response = await fetch(`${address}/v1/status`)
+    const response = await fetch(`${address}/status`)
     assert.equal(response.status, 200)
   } finally {
     await server.stop()
@@ -536,7 +530,7 @@ test('PortalApiServer treats whitespace as an enabled token', async () => {
   await server.start()
   try {
     assert.equal(server.status().auth, true)
-    const response = await fetch(`${server.address()}/v1/status`)
+    const response = await fetch(`${server.address()}/status`)
     assert.equal(response.status, 401)
   } finally {
     await server.stop()
@@ -555,7 +549,7 @@ test('PortalApiServer reports unsupported thread reload handlers', async () => {
   try {
     const address = server.address()
     assert.notEqual(address, null)
-    const response = await fetch(`${address}/v1/threads/t-1/reload`, {
+    const response = await fetch(`${address}/threads/t-1/reload`, {
       method: 'POST',
     })
     assert.equal(response.status, 501)
@@ -583,7 +577,7 @@ test('PortalApiServer rejects an empty MCP server request as invalid', async () 
   try {
     const address = server.address()
     assert.notEqual(address, null)
-    const response = await fetch(`${address}/v1/mcp/servers`, {
+    const response = await fetch(`${address}/mcp/servers`, {
       method: 'POST',
     })
     assert.equal(response.status, 400)
@@ -609,7 +603,7 @@ test('PortalApiServer rejects empty thread create and resume bodies', async () =
 
   await server.start()
   try {
-    for (const route of ['/v1/threads', '/v1/threads/resume']) {
+    for (const route of ['/threads', '/threads/resume']) {
       const response = await fetch(`${server.address()}${route}`, {
         method: 'POST',
       })
@@ -645,7 +639,7 @@ test('PortalApiServer maps invalid and duplicate MCP configurations', async () =
   await server.start()
   try {
     const address = server.address()
-    const invalid = await fetch(`${address}/v1/mcp/servers`, {
+    const invalid = await fetch(`${address}/mcp/servers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'local' }),
@@ -658,7 +652,7 @@ test('PortalApiServer maps invalid and duplicate MCP configurations', async () =
       },
     })
 
-    const duplicate = await fetch(`${address}/v1/mcp/servers/local`, {
+    const duplicate = await fetch(`${address}/mcp/servers/local`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -691,8 +685,8 @@ test('PortalApiServer broadcasts one thread event to multiple SSE clients', asyn
     const address = server.address()
     assert.notEqual(address, null)
     const responses = await Promise.all([
-      fetch(`${address}/v1/threads/t-1/events`),
-      fetch(`${address}/v1/threads/t-1/events`),
+      fetch(`${address}/threads/t-1/events`),
+      fetch(`${address}/threads/t-1/events`),
     ])
     for (const response of responses) {
       assert.equal(response.status, 200)
@@ -824,14 +818,14 @@ test('PortalApiServer removes an SSE subscriber after HTTP cancellation', async 
   await server.start()
   const readers: ReadableStreamDefaultReader<Uint8Array>[] = []
   try {
-    const first = await fetch(`${server.address()}/v1/threads/t-1/events`)
+    const first = await fetch(`${server.address()}/threads/t-1/events`)
     const firstReader = first.body!.getReader()
     readers.push(firstReader)
     await firstReader.read()
     await firstReader.cancel()
     await new Promise<void>((resolve) => setImmediate(resolve))
 
-    const replacement = await fetch(`${server.address()}/v1/threads/t-1/events`)
+    const replacement = await fetch(`${server.address()}/threads/t-1/events`)
     const replacementReader = replacement.body!.getReader()
     readers.push(replacementReader)
     await replacementReader.read()
@@ -853,7 +847,7 @@ test('PortalApiServer removes an SSE subscriber after HTTP cancellation', async 
 async function connectSse(
   server: PortalApiServer
 ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
-  const response = await fetch(`${server.address()}/v1/threads/t-1/events`)
+  const response = await fetch(`${server.address()}/threads/t-1/events`)
   assert.equal(response.status, 200)
   assert.notEqual(response.body, null)
   const reader = response.body!.getReader()
