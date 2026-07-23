@@ -4,7 +4,26 @@ import assert from 'node:assert/strict'
 
 import { ChatGPTAdapter } from '../../../src/providers/adapters/adapter-chatgpt.ts'
 import { createDeferred } from '../../../src/providers/adapters/adapter-base.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+  mapCssLocatorCandidates,
+} from '../../../src/providers/provider-definition-pack.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
+
+const CHATGPT_LOCATORS = getProviderDefinition('chatgpt').locators
+const CHATGPT_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
+  CHATGPT_LOCATORS.modelTrigger,
+  ':visible'
+)
+const CHATGPT_MODEL_DIRECT_MENU_SELECTOR = joinCssLocatorCandidates(
+  CHATGPT_LOCATORS.modelDirectMenu,
+  ':visible'
+)
+const CHATGPT_MODEL_PICKER_SELECTOR = joinCssLocatorCandidates(
+  CHATGPT_LOCATORS.modelPicker,
+  ':visible'
+)
 
 type MockButton = {
   first: () => unknown
@@ -1029,13 +1048,17 @@ function createChatGPTModelPage({
     first: () => picker,
     isVisible: async () => pickerOpen,
     locator: (selector: string) => {
-      if (selector === 'div[role="group"] div[role="menuitemradio"]') {
+      if (
+        selector === joinCssLocatorCandidates(CHATGPT_LOCATORS.modelModeItem)
+      ) {
         return {
           count: async () => modeItems.length,
           nth: (index: number) => modeItems[index],
         }
       }
-      if (selector === 'div[role="menuitem"]') {
+      if (
+        selector === joinCssLocatorCandidates(CHATGPT_LOCATORS.modelMenuItem)
+      ) {
         return {
           count: async () => 1,
           first: () => ({
@@ -1059,13 +1082,10 @@ function createChatGPTModelPage({
   return {
     events,
     locator: (selector: string) => {
-      if (selector === '[role="menu"]:visible') {
+      if (selector === CHATGPT_MODEL_DIRECT_MENU_SELECTOR) {
         return { count: async () => 0, first: () => picker }
       }
-      if (
-        selector ===
-        'button.__composer-pill:visible, button[aria-label="模型选择器"]:visible'
-      ) {
+      if (selector === CHATGPT_MODEL_TRIGGER_SELECTOR) {
         const trigger = {
           count: async () => 1,
           first: () => trigger,
@@ -1076,13 +1096,16 @@ function createChatGPTModelPage({
         }
         return trigger
       }
-      if (
-        selector ===
-        'div[data-testid="composer-intelligence-picker-content"]:visible'
-      ) {
+      if (selector === CHATGPT_MODEL_PICKER_SELECTOR) {
         return picker
       }
-      if (selector === '[id="chatgpt-model-menu"] div[role="menuitemradio"]') {
+      if (
+        selector ===
+        mapCssLocatorCandidates(
+          CHATGPT_LOCATORS.modelItem,
+          (candidate) => `[id="chatgpt-model-menu"] ${candidate}`
+        )
+      ) {
         return modelMenu
       }
       throw new Error(`Unexpected selector: ${selector}`)
@@ -1119,7 +1142,10 @@ function createChatGPTDirectModelPage({
   }
   const menu = {
     locator: (selector: string) => {
-      assert.equal(selector, '[role="menuitemradio"]')
+      assert.equal(
+        selector,
+        joinCssLocatorCandidates(CHATGPT_LOCATORS.modelDirectItem)
+      )
       return directModelItems
     },
   }
@@ -1137,20 +1163,14 @@ function createChatGPTDirectModelPage({
   return {
     events,
     locator: (selector: string) => {
-      if (selector === '[role="menu"]:visible') return directMenus
-      if (
-        selector ===
-        'button.__composer-pill:visible, button[aria-label="模型选择器"]:visible'
-      ) {
+      if (selector === CHATGPT_MODEL_DIRECT_MENU_SELECTOR) return directMenus
+      if (selector === CHATGPT_MODEL_TRIGGER_SELECTOR) {
         return {
           count: async () => triggerCount,
           first: () => trigger,
         }
       }
-      if (
-        selector ===
-        'div[data-testid="composer-intelligence-picker-content"]:visible'
-      ) {
+      if (selector === CHATGPT_MODEL_PICKER_SELECTOR) {
         return pickerCollection
       }
       throw new Error(`Unexpected selector: ${selector}`)
@@ -1200,21 +1220,24 @@ function createChatGPTCapabilityPage({
       }
     },
   }
+  const capabilityTrigger = {
+    click: async () => {
+      events.push('click:plus')
+      menuOpen = true
+    },
+  }
   return {
     events,
-    getByTestId: (testId: string) => {
-      if (testId !== 'composer-plus-btn') {
-        throw new Error(`Unexpected test id: ${testId}`)
-      }
-      return {
-        click: async () => {
-          events.push('click:plus')
-          menuOpen = true
-        },
-      }
-    },
     locator: (selector: string) => {
-      if (selector !== 'div[role="group"][class*="empty:hidden"]') {
+      if (
+        selector ===
+        joinCssLocatorCandidates(CHATGPT_LOCATORS.capabilityTrigger)
+      ) {
+        return capabilityTrigger
+      }
+      if (
+        selector !== joinCssLocatorCandidates(CHATGPT_LOCATORS.capabilityGroup)
+      ) {
         throw new Error(`Unexpected selector: ${selector}`)
       }
       return {

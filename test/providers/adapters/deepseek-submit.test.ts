@@ -4,8 +4,14 @@ import assert from 'node:assert/strict'
 
 import { ProviderAdapterUnsupportedError } from '../../../src/providers/adapters/adapter-base.ts'
 import { DeepSeekAdapter } from '../../../src/providers/adapters/adapter-deepseek.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+} from '../../../src/providers/provider-definition-pack.ts'
 import { isAbortError } from '../../../src/runtime/runtime-cancellation.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
+
+const DEEPSEEK_LOCATORS = getProviderDefinition('deepseek').locators
 
 type DeepSeekAdapterHarness = Pick<DeepSeekAdapter, keyof DeepSeekAdapter> & {
   page: unknown
@@ -602,7 +608,10 @@ function createDeepSeekPage(
           first: () => readyButtonTarget,
         }
       }
-      if (selector === 'div.f79352dc') {
+      if (
+        selector ===
+        joinCssLocatorCandidates(DEEPSEEK_LOCATORS.capabilityToggle)
+      ) {
         return {
           count: async () => toggleButtons.length,
           nth: (index: number) => toggleButtons[index] ?? missingToggleButton,
@@ -614,7 +623,7 @@ function createDeepSeekPage(
           first: () => uploadButton ?? missingUploadButton,
         }
       }
-      if (selector === 'div.b0db7355 div[role="radio"][data-model-type]') {
+      if (selector === joinCssLocatorCandidates(DEEPSEEK_LOCATORS.modelItem)) {
         const modelOrder = ['default', 'expert', 'vision'] as const
         return {
           count: async () =>

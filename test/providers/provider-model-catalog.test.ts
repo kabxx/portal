@@ -7,41 +7,23 @@ import {
   ProviderModelSelectionError,
   resolveProviderModel,
 } from '../../src/providers/provider-model-catalog.ts'
-import type { ProviderId } from '../../src/providers/provider-id.ts'
-
-const PROVIDERS: readonly ProviderId[] = [
-  'chatgpt',
-  'gemini',
-  'deepseek',
-  'doubao',
-  'grok',
-  'glm',
-  'qwen',
-  'kimi',
-]
+import { PROVIDER_DEFINITIONS } from '../../src/providers/provider-definition-pack.ts'
+import { PROVIDER_IDS } from '../../src/providers/provider-id.ts'
 
 test('provider model catalog resolves names to internal menu positions', () => {
-  const expected = {
-    chatgpt: ['chatgpt'],
-    gemini: ['3.5-flash-lite', '3.6-flash', '3.1-pro'],
-    deepseek: ['quick', 'expert', 'vision'],
-    doubao: ['quick', 'expert', 'office-turbo', 'office-pro'],
-    grok: ['fast', 'auto', 'expert', 'heavy'],
-    glm: ['glm-5.2', 'glm-5.1', 'glm-5-turbo', 'glm-5v-turbo', 'glm-4.7'],
-    qwen: ['qwen3.7-plus', 'qwen3.8-max-preview', 'qwen3.7-max'],
-    kimi: ['k2.6', 'k3', 'k3-cluster'],
-  } as const satisfies Readonly<Record<ProviderId, readonly string[]>>
-
-  for (const provider of PROVIDERS) {
-    const models = expected[provider]
-    assert.deepEqual(listProviderModels(provider), models)
-    models.forEach((model, index) => {
-      assert.deepEqual(resolveProviderModel(provider, model), {
-        key: model,
+  for (const provider of PROVIDER_IDS) {
+    const definitions = PROVIDER_DEFINITIONS[provider].models
+    assert.deepEqual(
+      listProviderModels(provider),
+      definitions.map((model) => model.key)
+    )
+    for (const definition of definitions) {
+      assert.deepEqual(resolveProviderModel(provider, definition.key), {
+        key: definition.key,
         option: null,
-        adapterValue: String(index + 1),
+        adapterValue: String(definition.position),
       })
-    })
+    }
   }
   assert.deepEqual(resolveProviderModel('gemini', '3.1-PRO', 'EXTENDED'), {
     key: '3.1-pro',
@@ -52,14 +34,19 @@ test('provider model catalog resolves names to internal menu positions', () => {
 })
 
 test('provider model catalog exposes model-specific options', () => {
-  for (const model of listProviderModels('gemini')) {
-    assert.deepEqual(listProviderModelOptions('gemini', model), ['extended'])
+  for (const provider of PROVIDER_IDS) {
+    for (const model of PROVIDER_DEFINITIONS[provider].models) {
+      assert.deepEqual(
+        listProviderModelOptions(provider, model.key),
+        model.options.map((option) => option.key)
+      )
+    }
   }
   assert.deepEqual(listProviderModelOptions('deepseek', 'expert'), [])
 })
 
 test('provider model catalog rejects numeric, unknown, and misplaced options', () => {
-  for (const provider of PROVIDERS) {
+  for (const provider of PROVIDER_IDS) {
     assert.throws(
       () => resolveProviderModel(provider, '1'),
       ProviderModelSelectionError

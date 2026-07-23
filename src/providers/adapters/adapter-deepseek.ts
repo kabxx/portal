@@ -19,17 +19,25 @@ import {
   emptyHistoryResult,
   parseDeepSeekHistory,
 } from '../conversation-history.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+} from '../provider-definition-pack.ts'
 
 const DEEPSEEK_CHAT_URL = 'https://chat.deepseek.com'
 const DEEPSEEK_CHAT_COMPLETION_URL =
   'https://chat.deepseek.com/api/v0/chat/completion'
+const DEEPSEEK_LOCATORS = getProviderDefinition('deepseek').locators
 const DEEPSEEK_READY_BUTTON_SELECTOR = 'div[role="button"][class*="bd74640a"]'
-const DEEPSEEK_TOGGLE_BUTTON_SELECTOR = 'div.f79352dc'
+const DEEPSEEK_TOGGLE_BUTTON_SELECTOR = joinCssLocatorCandidates(
+  DEEPSEEK_LOCATORS.capabilityToggle
+)
 const DEEPSEEK_UPLOAD_BUTTON_SELECTOR = 'div[role="button"].f02f0e25'
 const DEEPSEEK_SEND_BUTTON_SELECTOR = 'div._52c986b'
 const DEEPSEEK_SEND_BUTTON_DISABLED_CLASS = 'ds-button--disabled'
-const DEEPSEEK_MODEL_BUTTON_SELECTOR =
-  'div.b0db7355 div[role="radio"][data-model-type]'
+const DEEPSEEK_MODEL_BUTTON_SELECTOR = joinCssLocatorCandidates(
+  DEEPSEEK_LOCATORS.modelItem
+)
 const DEEPSEEK_STOP_ICON_PATH_PREFIX =
   'M2 4.88C2 3.68009 2 3.08013 2.30557 2.65954C2.40426 2.52371 2.52371 2.40426 2.65954'
 
