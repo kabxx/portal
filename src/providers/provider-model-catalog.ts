@@ -1,17 +1,8 @@
 import type { ProviderId } from './provider-id.ts'
-
-type ModelOptionTarget =
-  | { readonly kind: 'menu_position'; readonly position: number }
-  | { readonly kind: 'suffix'; readonly value: 'extended' }
-
-interface ProviderModelDefinition {
-  readonly position: number
-  readonly options?: Readonly<Record<string, ModelOptionTarget>>
-}
-
-type ProviderModelCatalog = Readonly<
-  Record<ProviderId, Readonly<Record<string, ProviderModelDefinition>>>
->
+import {
+  getProviderDefinition,
+  type ProviderModelDefinition,
+} from './provider-definition-pack.ts'
 
 export interface ResolvedProviderModel {
   readonly key: string
@@ -26,62 +17,8 @@ export class ProviderModelSelectionError extends Error {
   }
 }
 
-const MODEL_CATALOG = {
-  chatgpt: {
-    chatgpt: { position: 1 },
-  },
-  gemini: {
-    '3.5-flash-lite': {
-      position: 1,
-      options: { extended: { kind: 'suffix', value: 'extended' } },
-    },
-    '3.6-flash': {
-      position: 2,
-      options: { extended: { kind: 'suffix', value: 'extended' } },
-    },
-    '3.1-pro': {
-      position: 3,
-      options: { extended: { kind: 'suffix', value: 'extended' } },
-    },
-  },
-  deepseek: {
-    quick: { position: 1 },
-    expert: { position: 2 },
-    vision: { position: 3 },
-  },
-  doubao: {
-    quick: { position: 1 },
-    expert: { position: 2 },
-    'office-turbo': { position: 3 },
-    'office-pro': { position: 4 },
-  },
-  grok: {
-    fast: { position: 1 },
-    auto: { position: 2 },
-    expert: { position: 3 },
-    heavy: { position: 4 },
-  },
-  glm: {
-    'glm-5.2': { position: 1 },
-    'glm-5.1': { position: 2 },
-    'glm-5-turbo': { position: 3 },
-    'glm-5v-turbo': { position: 4 },
-    'glm-4.7': { position: 5 },
-  },
-  qwen: {
-    'qwen3.7-plus': { position: 1 },
-    'qwen3.8-max-preview': { position: 2 },
-    'qwen3.7-max': { position: 3 },
-  },
-  kimi: {
-    'k2.6': { position: 1 },
-    k3: { position: 2 },
-    'k3-cluster': { position: 3 },
-  },
-} as const satisfies ProviderModelCatalog
-
 export function listProviderModels(provider: ProviderId): readonly string[] {
-  return Object.keys(MODEL_CATALOG[provider])
+  return getProviderDefinition(provider).models.map((model) => model.key)
 }
 
 export function listProviderModelOptions(
@@ -89,7 +26,9 @@ export function listProviderModelOptions(
   model: string
 ): readonly string[] {
   const definition = getModelDefinition(provider, model)
-  return definition === null ? [] : Object.keys(definition.options ?? {})
+  return definition === null
+    ? []
+    : definition.options.map((option) => option.key)
 }
 
 export function resolveProviderModel(
@@ -123,9 +62,11 @@ export function resolveProviderModel(
   }
 
   const optionKey = normalizeKey(option)
-  const target = definition.options?.[optionKey]
-  if (target === undefined) {
-    const available = Object.keys(definition.options ?? {})
+  const optionDefinition = definition.options.find(
+    (candidate) => candidate.key === optionKey
+  )
+  if (optionDefinition === undefined) {
+    const available = definition.options.map((candidate) => candidate.key)
     throw new ProviderModelSelectionError(
       available.length === 0
         ? `${provider} model "${key}" does not support model options.`
@@ -134,7 +75,9 @@ export function resolveProviderModel(
   }
 
   const suffix =
-    target.kind === 'menu_position' ? String(target.position) : target.value
+    optionDefinition.target.kind === 'menu_position'
+      ? String(optionDefinition.target.position)
+      : optionDefinition.target.value
   return {
     key,
     option: optionKey,
@@ -151,7 +94,9 @@ function getModelDefinition(
   model: string
 ): ProviderModelDefinition | null {
   const normalized = normalizeKey(model)
-  const definitions: Readonly<Record<string, ProviderModelDefinition>> =
-    MODEL_CATALOG[provider]
-  return definitions[normalized] ?? null
+  return (
+    getProviderDefinition(provider).models.find(
+      (definition) => definition.key === normalized
+    ) ?? null
+  )
 }

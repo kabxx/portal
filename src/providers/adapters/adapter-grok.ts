@@ -15,9 +15,14 @@ import {
   emptyHistoryResult,
   parseGrokHistory,
 } from '../conversation-history.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+} from '../provider-definition-pack.ts'
 
 const GROK_CHAT_URL = 'https://grok.com'
 const GROK_SUBSCRIBE_URL = 'https://grok.com/#subscribe'
+const GROK_LOCATORS = getProviderDefinition('grok').locators
 const GROK_SIGNED_OUT_ACTIONS_SELECTOR =
   '[data-testid="drop-ui"] main > div:first-child button[aria-haspopup="menu"] + button[data-slot="button"] + button[data-slot="button"]'
 const GROK_INPUT_SELECTOR =
@@ -26,9 +31,12 @@ const GROK_VOICE_MODE_READY_SELECTOR =
   'form:has([data-testid="chat-input"]) div:has(> [data-query-bar-mode-select]) button[type="button"]:has(> div > div:nth-child(6):last-child)'
 const GROK_SUBMIT_BUTTON_SELECTOR = '[data-testid="chat-submit"]'
 const GROK_FILE_INPUT_SELECTOR = 'input[type="file"][name="files"]'
-const GROK_MODEL_TRIGGER_SELECTOR = '#model-select-trigger'
-const GROK_MODEL_MENU_SELECTOR =
-  '[data-radix-popper-content-wrapper] [role="menu"][data-state="open"]'
+const GROK_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
+  GROK_LOCATORS.modelTrigger
+)
+const GROK_MODEL_MENU_SELECTOR = joinCssLocatorCandidates(
+  GROK_LOCATORS.modelMenu
+)
 const GROK_MODEL_ITEM_SELECTOR =
   'xpath=./div[@role="menuitem" and contains(@class, "ps-2.5") and contains(@class, "flex-row")]'
 const GROK_WEBSOCKET_URL = 'wss://grok.com/ws/mgw/'

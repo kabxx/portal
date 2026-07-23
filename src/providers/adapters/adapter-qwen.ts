@@ -26,44 +26,68 @@ import {
   type QwenParsedResponse,
   type QwenStreamError,
 } from '../qwen-response-parser.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+  listProviderCapabilities,
+  mapCssLocatorCandidates,
+} from '../provider-definition-pack.ts'
 
 const QWEN_CHAT_URL = 'https://chat.qwen.ai'
 const QWEN_AUTH_PATH = '/api/v2/users/status'
 const QWEN_COMPLETION_PATH = '/api/v2/chat/completions'
+const QWEN_LOCATORS = getProviderDefinition('qwen').locators
 const QWEN_COMPOSER_SELECTOR = '.message-input-textarea'
 const QWEN_SEND_BUTTON_SELECTOR =
   '.message-input-container button.send-button, .chat-layout-input-container button.send-button'
 const QWEN_STOP_BUTTON_SELECTOR =
   '.chat-layout-input-container button.stop-button'
-const QWEN_UPLOAD_TRIGGER_SELECTOR = '.mode-select-open[role="button"]'
+const QWEN_UPLOAD_TRIGGER_SELECTOR = joinCssLocatorCandidates(
+  QWEN_LOCATORS.capabilityTrigger
+)
 const QWEN_UPLOAD_MENU_ITEM_SELECTOR =
   '[role="menuitem"][data-menu-id$="-upload"]'
-const QWEN_MODE_MENU_SELECTOR = '.mode-select-dropdown [role="menu"]'
-const QWEN_MODE_MENU_ITEM_SELECTOR = ':scope > [role="menuitem"][data-menu-id]'
-const QWEN_MODE_SUBMENU_SELECTOR = '[role="menuitem"][aria-haspopup="true"]'
-const QWEN_SELECTED_MODE_SELECTOR = '.mode-select-current-mode'
-const QWEN_SELECTED_MODE_ICON_SELECTOR = '.mode-select-current-mode-icon use'
-const QWEN_SELECTED_MODE_CLOSE_SELECTOR = '.mode-select-current-mode-close'
-const QWEN_MODE_MENU_ITEM_ICON_SELECTOR = '.mode-select-dropdown-item-icon use'
+const QWEN_MODE_MENU_SELECTOR = joinCssLocatorCandidates(
+  QWEN_LOCATORS.capabilityMenu
+)
+const QWEN_MODE_MENU_ITEM_SELECTOR = joinCssLocatorCandidates(
+  QWEN_LOCATORS.capabilityItem
+)
+const QWEN_MODE_SUBMENU_SELECTOR = joinCssLocatorCandidates(
+  QWEN_LOCATORS.capabilitySubmenu
+)
+const QWEN_SELECTED_MODE_SELECTOR = joinCssLocatorCandidates(
+  QWEN_LOCATORS.selectedCapability
+)
+const QWEN_SELECTED_MODE_ICON_SELECTOR = joinCssLocatorCandidates(
+  QWEN_LOCATORS.selectedCapabilityIcon
+)
+const QWEN_SELECTED_MODE_CLOSE_SELECTOR = joinCssLocatorCandidates(
+  QWEN_LOCATORS.selectedCapabilityClose
+)
+const QWEN_MODE_MENU_ITEM_ICON_SELECTOR = joinCssLocatorCandidates(
+  QWEN_LOCATORS.capabilityItemIcon
+)
 const QWEN_FILE_CARD_SELECTOR = '.file-card-list .fileitem-btn'
 const QWEN_FILE_PARSE_STATUS_PATH = '/api/v2/files/parse/status'
 const QWEN_UPLOAD_TIMEOUT_MS = 60_000
 const QWEN_CDP_SETUP_TIMEOUT_MS = 5_000
-const QWEN_MODEL_TRIGGER_SELECTOR =
-  '#qwen-chat-header-left [role="button"][aria-haspopup="listbox"]'
-const QWEN_MODEL_LISTBOX_SELECTOR = '[role="listbox"]'
-const QWEN_MODEL_OPTION_SELECTOR = '[role="option"]'
+const QWEN_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
+  QWEN_LOCATORS.modelTrigger
+)
+const QWEN_MODEL_OPTION_SELECTOR = joinCssLocatorCandidates(
+  QWEN_LOCATORS.modelItem
+)
+const QWEN_VISIBLE_MODEL_LISTBOX_SELECTOR = joinCssLocatorCandidates(
+  QWEN_LOCATORS.modelListbox,
+  ':visible'
+)
+const QWEN_VISIBLE_MODEL_OPTION_SELECTOR = joinCssLocatorCandidates(
+  QWEN_LOCATORS.modelItem,
+  ':visible'
+)
 
-export type QwenActionCapability =
-  | 'deep_research'
-  | 'image_generation'
-  | 'video_generation'
-  | 'web_dev'
-  | 'slides'
-  | 'search'
-  | 'artifacts'
-  | 'learn'
-  | 'travel'
+export type QwenActionCapability = string
 
 export type QwenActionCapabilityState =
   | 'available'
@@ -77,37 +101,23 @@ export interface QwenActionCapabilityInfo {
   state: Exclude<QwenActionCapabilityState, 'cleared'>
 }
 
-const QWEN_ACTION_CAPABILITIES: readonly QwenActionCapability[] = [
-  'deep_research',
-  'image_generation',
-  'video_generation',
-  'web_dev',
-  'slides',
-  'search',
-  'artifacts',
-  'learn',
-  'travel',
-]
-const QWEN_ACTION_CAPABILITY_MENU_IDS: Record<QwenActionCapability, string> = {
-  deep_research: 'deep_research',
-  image_generation: 't2i',
-  video_generation: 't2v',
-  web_dev: 'web_dev',
-  slides: 'slides',
-  search: 'search',
-  artifacts: 'artifacts',
-  learn: 'learn',
-  travel: 'travel',
-}
-const QWEN_NESTED_ACTION_CAPABILITIES: readonly QwenActionCapability[] = [
-  'search',
-  'artifacts',
-  'learn',
-  'travel',
-]
+const QWEN_ACTION_CAPABILITIES = listProviderCapabilities('qwen').map(
+  (capability) => {
+    if (capability.kind !== 'action' || capability.target.kind !== 'menu_id') {
+      throw new Error(`Invalid Qwen capability definition: ${capability.key}`)
+    }
+    return {
+      name: capability.key,
+      menuId: capability.target.value,
+      scope: capability.target.scope,
+    }
+  }
+)
 
 function isQwenActionCapability(value: string): value is QwenActionCapability {
-  return (QWEN_ACTION_CAPABILITIES as readonly string[]).includes(value)
+  return QWEN_ACTION_CAPABILITIES.some(
+    (capability) => capability.name === value
+  )
 }
 
 function createQwenCapabilityError(
@@ -443,12 +453,10 @@ export class QwenAdapter extends ProviderAdapter {
     await trigger.first().click()
 
     const visibleListboxes = this.page.locator(
-      `${QWEN_MODEL_LISTBOX_SELECTOR}:visible`
+      QWEN_VISIBLE_MODEL_LISTBOX_SELECTOR
     )
     const scopedOptions = visibleListboxes.locator(QWEN_MODEL_OPTION_SELECTOR)
-    const globalOptions = this.page.locator(
-      `${QWEN_MODEL_OPTION_SELECTOR}:visible`
-    )
+    const globalOptions = this.page.locator(QWEN_VISIBLE_MODEL_OPTION_SELECTOR)
     await waitAsync(
       async () =>
         (await scopedOptions.count().catch(() => 0)) > 0 ||
@@ -841,11 +849,23 @@ export class QwenAdapter extends ProviderAdapter {
     rootMenu: Locator,
     nestedMenu: Locator | null
   ) {
-    const isNested = QWEN_NESTED_ACTION_CAPABILITIES.includes(capability)
-    const scope = isNested && nestedMenu !== null ? nestedMenu : rootMenu
-    const menuId = QWEN_ACTION_CAPABILITY_MENU_IDS[capability]
+    const definition = QWEN_ACTION_CAPABILITIES.find(
+      (candidate) => candidate.name === capability
+    )
+    if (definition === undefined) {
+      throw new Error(`Qwen capability definition is missing: ${capability}`)
+    }
+    const scope =
+      definition.scope === 'nested' && nestedMenu !== null
+        ? nestedMenu
+        : rootMenu
     return scope
-      .locator(`${QWEN_MODE_MENU_ITEM_SELECTOR}[data-menu-id$="-${menuId}"]`)
+      .locator(
+        mapCssLocatorCandidates(
+          QWEN_LOCATORS.capabilityItem,
+          (candidate) => `${candidate}[data-menu-id$="-${definition.menuId}"]`
+        )
+      )
       .filter({ visible: true })
   }
 
@@ -925,7 +945,8 @@ export class QwenAdapter extends ProviderAdapter {
           const selectedIcon =
             await this.readSelectedActionIconReference('listCapabilities')
           const capabilities: QwenActionCapabilityInfo[] = []
-          for (const capability of QWEN_ACTION_CAPABILITIES) {
+          for (const definition of QWEN_ACTION_CAPABILITIES) {
+            const capability = definition.name
             const item = this.getActionCapabilityItem(
               capability,
               rootMenu,

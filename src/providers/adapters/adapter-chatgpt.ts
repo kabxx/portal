@@ -25,19 +25,59 @@ import {
   parseChatGptWebSocketFrames,
   type ChatGPTParsedResponse,
 } from '../chatgpt-response-parser.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+  listProviderCapabilities,
+  mapCssLocatorCandidates,
+} from '../provider-definition-pack.ts'
 
 const CHATGPT_CHAT_URL = 'https://chatgpt.com'
 const CHATGPT_CHAT_WS_URL = 'wss://ws.chatgpt.com/p18/ws/user'
-const CHATGPT_PLUS_MENU_GROUP_SELECTOR =
-  'div[role="group"][class*="empty:hidden"]'
-const CHATGPT_INTELLIGENCE_PICKER_SELECTOR =
-  'div[data-testid="composer-intelligence-picker-content"]'
-const CHATGPT_ACTION_CAPABILITIES = [
-  'image_create',
-  'web_search',
-  'deep_research',
-  'openai_platform',
-] as const
+const CHATGPT_LOCATORS = getProviderDefinition('chatgpt').locators
+const CHATGPT_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
+  CHATGPT_LOCATORS.modelTrigger,
+  ':visible'
+)
+const CHATGPT_MODEL_DIRECT_MENU_SELECTOR = joinCssLocatorCandidates(
+  CHATGPT_LOCATORS.modelDirectMenu,
+  ':visible'
+)
+const CHATGPT_MODEL_PICKER_SELECTOR = joinCssLocatorCandidates(
+  CHATGPT_LOCATORS.modelPicker,
+  ':visible'
+)
+const CHATGPT_MODEL_DIRECT_ITEM_SELECTOR = joinCssLocatorCandidates(
+  CHATGPT_LOCATORS.modelDirectItem
+)
+const CHATGPT_MODEL_MODE_ITEM_SELECTOR = joinCssLocatorCandidates(
+  CHATGPT_LOCATORS.modelModeItem
+)
+const CHATGPT_MODEL_MENU_ITEM_SELECTOR = joinCssLocatorCandidates(
+  CHATGPT_LOCATORS.modelMenuItem
+)
+const CHATGPT_CAPABILITY_TRIGGER_SELECTOR = joinCssLocatorCandidates(
+  CHATGPT_LOCATORS.capabilityTrigger
+)
+const CHATGPT_CAPABILITY_GROUP_SELECTOR = joinCssLocatorCandidates(
+  CHATGPT_LOCATORS.capabilityGroup
+)
+const CHATGPT_ACTION_CAPABILITIES = listProviderCapabilities('chatgpt').map(
+  (capability) => {
+    if (
+      capability.kind !== 'action' ||
+      capability.target.kind !== 'menu_position'
+    ) {
+      throw new Error(
+        `Invalid ChatGPT capability definition: ${capability.key}`
+      )
+    }
+    return {
+      name: capability.key,
+      position: capability.target.position,
+    }
+  }
+)
 const CHATGPT_RESPONSE_IDLE_TIMEOUT_MS = 60000
 const CHATGPT_FINISHED_RESPONSE_SETTLE_MS = 1000
 
@@ -45,8 +85,7 @@ function toCssString(value: string): string {
   return JSON.stringify(value)
 }
 
-export type ChatGPTActionCapability =
-  (typeof CHATGPT_ACTION_CAPABILITIES)[number]
+export type ChatGPTActionCapability = string
 
 export type ChatGPTActionCapabilityState =
   | 'available'
@@ -257,12 +296,10 @@ export class ChatGPTAdapter extends ProviderAdapter {
     const modeNumber = match[2] === undefined ? null : Number(match[2])
     const modelIndex = modelNumber - 1
     const modeIndex = modeNumber === null ? null : modeNumber - 1
-    const directMenus = this.page.locator('[role="menu"]:visible')
+    const directMenus = this.page.locator(CHATGPT_MODEL_DIRECT_MENU_SELECTOR)
 
     const openPicker = async () => {
-      const triggers = this.page.locator(
-        'button.__composer-pill:visible, button[aria-label="模型选择器"]:visible'
-      )
+      const triggers = this.page.locator(CHATGPT_MODEL_TRIGGER_SELECTOR)
       if ((await triggers.count()) !== 1) {
         throw new ProviderAdapterError(
           'changeModel',
@@ -277,9 +314,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
         )
       }
       await triggers.first().click()
-      const picker = this.page.locator(
-        `${CHATGPT_INTELLIGENCE_PICKER_SELECTOR}:visible`
-      )
+      const picker = this.page.locator(CHATGPT_MODEL_PICKER_SELECTOR)
       await waitAsync(
         async () =>
           (await picker.count().catch(() => 0)) > 0 ||
@@ -312,7 +347,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
       }
       const directModelItems = directMenus
         .first()
-        .locator('[role="menuitemradio"]')
+        .locator(CHATGPT_MODEL_DIRECT_ITEM_SELECTOR)
       if ((await directModelItems.count()) <= modelIndex) {
         throw new ProviderAdapterUnsupportedError(
           'changeModel',
@@ -324,9 +359,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
     }
 
     if (modeIndex !== null) {
-      const modeItems = picker.locator(
-        'div[role="group"] div[role="menuitemradio"]'
-      )
+      const modeItems = picker.locator(CHATGPT_MODEL_MODE_ITEM_SELECTOR)
       if ((await modeItems.count()) <= modeIndex) {
         throw new ProviderAdapterUnsupportedError(
           'changeModel',
@@ -337,7 +370,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
       picker = await openPicker()
     }
 
-    const modelMenuItems = picker.locator('div[role="menuitem"]')
+    const modelMenuItems = picker.locator(CHATGPT_MODEL_MENU_ITEM_SELECTOR)
     if ((await modelMenuItems.count()) === 0) {
       throw new ProviderAdapterUnsupportedError(
         'changeModel',
@@ -357,7 +390,10 @@ export class ChatGPTAdapter extends ProviderAdapter {
     await modelMenuItem.click()
 
     const modelItems = this.page.locator(
-      `[id=${toCssString(modelMenuId)}] div[role="menuitemradio"]`
+      mapCssLocatorCandidates(
+        CHATGPT_LOCATORS.modelItem,
+        (candidate) => `[id=${toCssString(modelMenuId)}] ${candidate}`
+      )
     )
     await waitAsync(async () => (await modelItems.count().catch(() => 0)) > 0, {
       timeoutMs: 5000,
@@ -404,11 +440,11 @@ export class ChatGPTAdapter extends ProviderAdapter {
 
   public async attachFile(path: string | readonly string[]) {
     await this.wrapAdapterActionErrorAsync('attachFile', async () => {
-      await this.page.getByTestId('composer-plus-btn').click()
+      await this.page.locator(CHATGPT_CAPABILITY_TRIGGER_SELECTOR).click()
       const [fileChooser] = await Promise.all([
         this.page.waitForEvent('filechooser'),
         this.page
-          .locator(CHATGPT_PLUS_MENU_GROUP_SELECTOR)
+          .locator(CHATGPT_CAPABILITY_GROUP_SELECTOR)
           .nth(0)
           .locator('xpath=./div')
           .nth(0)
@@ -419,7 +455,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
   }
 
   private getCapabilityGroup() {
-    return this.page.locator(CHATGPT_PLUS_MENU_GROUP_SELECTOR).nth(1)
+    return this.page.locator(CHATGPT_CAPABILITY_GROUP_SELECTOR).nth(1)
   }
 
   private getCapabilityOption(index: number) {
@@ -432,7 +468,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
       return
     }
 
-    await this.page.getByTestId('composer-plus-btn').click()
+    await this.page.locator(CHATGPT_CAPABILITY_TRIGGER_SELECTOR).click()
     await waitAsync(
       async () => (await capabilityGroup.count().catch(() => 0)) > 0,
       {
@@ -450,8 +486,8 @@ export class ChatGPTAdapter extends ProviderAdapter {
       return []
     }
 
-    return CHATGPT_ACTION_CAPABILITIES.map((name) => ({
-      name,
+    return CHATGPT_ACTION_CAPABILITIES.map((capability) => ({
+      name: capability.name,
       state: 'available',
     }))
   }
@@ -462,8 +498,10 @@ export class ChatGPTAdapter extends ProviderAdapter {
     return await this.wrapAdapterActionErrorAsync(
       'selectCapability',
       async () => {
-        const capabilityIndex = CHATGPT_ACTION_CAPABILITIES.indexOf(capability)
-        if (capabilityIndex < 0) {
+        const definition = CHATGPT_ACTION_CAPABILITIES.find(
+          (candidate) => candidate.name === capability
+        )
+        if (definition === undefined) {
           return 'unavailable'
         }
 
@@ -473,7 +511,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
           return 'unavailable'
         }
 
-        await this.getCapabilityOption(capabilityIndex).click()
+        await this.getCapabilityOption(definition.position - 1).click()
         return 'selected'
       }
     )

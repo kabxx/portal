@@ -3,8 +3,13 @@ import assert from 'node:assert/strict'
 
 import { ProviderAdapterUnsupportedError } from '../../../src/providers/adapters/adapter-base.ts'
 import { GrokAdapter } from '../../../src/providers/adapters/adapter-grok.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+} from '../../../src/providers/provider-definition-pack.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
+const GROK_LOCATORS = getProviderDefinition('grok').locators
 const GROK_VOICE_MODE_READY_SELECTOR =
   'form:has([data-testid="chat-input"]) div:has(> [data-query-bar-mode-select]) button[type="button"]:has(> div > div:nth-child(6):last-child)'
 
@@ -331,13 +336,10 @@ function createGrokPage({
       if (selector === 'input[type="file"][name="files"]') {
         return fileInput
       }
-      if (selector === '#model-select-trigger') {
+      if (selector === joinCssLocatorCandidates(GROK_LOCATORS.modelTrigger)) {
         return modelTrigger
       }
-      if (
-        selector ===
-        '[data-radix-popper-content-wrapper] [role="menu"][data-state="open"]'
-      ) {
+      if (selector === joinCssLocatorCandidates(GROK_LOCATORS.modelMenu)) {
         return modelMenu
       }
       if (

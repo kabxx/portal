@@ -4,7 +4,13 @@ import assert from 'node:assert/strict'
 
 import { ProviderAdapterError } from '../../../src/providers/adapters/adapter-base.ts'
 import { GeminiAdapter } from '../../../src/providers/adapters/adapter-gemini.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+} from '../../../src/providers/provider-definition-pack.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
+
+const GEMINI_LOCATORS = getProviderDefinition('gemini').locators
 
 type GeminiAdapterHarness = Pick<GeminiAdapter, keyof GeminiAdapter> & {
   page: unknown
@@ -575,7 +581,7 @@ function createGeminiModelPage({ extended = false, itemCount = 5 } = {}) {
     last: () => modelMenu,
     isVisible: async () => menuOpen,
     locator: (selector: string) => {
-      if (selector !== 'gem-menu-item') {
+      if (selector !== joinCssLocatorCandidates(GEMINI_LOCATORS.modelItem)) {
         throw new Error(`Unexpected model menu selector: ${selector}`)
       }
       return {
@@ -589,7 +595,7 @@ function createGeminiModelPage({ extended = false, itemCount = 5 } = {}) {
     events,
     isExtended: () => extensionEnabled,
     locator: (selector: string) => {
-      if (selector === '[data-test-id="bard-mode-menu-button"]') {
+      if (selector === joinCssLocatorCandidates(GEMINI_LOCATORS.modelTrigger)) {
         return trigger
       }
       if (
@@ -598,7 +604,7 @@ function createGeminiModelPage({ extended = false, itemCount = 5 } = {}) {
       ) {
         return secondaryText
       }
-      if (selector === 'gem-menu[data-test-id="gem-mode-menu"]') {
+      if (selector === joinCssLocatorCandidates(GEMINI_LOCATORS.modelMenu)) {
         return modelMenu
       }
       throw new Error(`Unexpected selector: ${selector}`)
@@ -635,7 +641,9 @@ function createGeminiCapabilityPage(
       events.push(`click:${capability.name}`)
     },
     locator: (selector: string) => {
-      if (selector !== '[data-mat-icon-name]') {
+      if (
+        selector !== joinCssLocatorCandidates(GEMINI_LOCATORS.capabilityIcon)
+      ) {
         throw new Error(`Unexpected capability icon selector: ${selector}`)
       }
       const icon = {
@@ -672,10 +680,14 @@ function createGeminiCapabilityPage(
   return {
     events,
     locator: (selector: string) => {
-      if (selector === 'div.has-model-picker button') {
+      if (
+        selector === joinCssLocatorCandidates(GEMINI_LOCATORS.toolsMenuTrigger)
+      ) {
         return trigger
       }
-      if (selector === 'button[role="menuitemcheckbox"]') {
+      if (
+        selector === joinCssLocatorCandidates(GEMINI_LOCATORS.capabilityItem)
+      ) {
         const visibleButtons =
           menuOpen && moreToolsOpen ? [...buttons, ...moreButtons] : buttons
         return {
@@ -683,12 +695,14 @@ function createGeminiCapabilityPage(
           nth: (index: number) => visibleButtons[index],
         }
       }
-      if (selector === 'button[data-test-id="more-tools-button"]') {
+      if (
+        selector === joinCssLocatorCandidates(GEMINI_LOCATORS.moreToolsTrigger)
+      ) {
         return moreToolsButton
       }
       if (
         selector ===
-        'gem-button[data-test-id="deselect-drawer-item-gem-button"] > button'
+        joinCssLocatorCandidates(GEMINI_LOCATORS.selectedCapability)
       ) {
         return selectedButton
       }
