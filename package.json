@@ -54,7 +54,7 @@
     "fs-native-extensions": "1.5.0",
     "ink": "git+https://github.com/kabxx/ink4portal.git#303e014a7c6b36630b90facddedc2e98f12f6e61",
     "koffi": "^3.0.2",
-    "markdansi": "github:kabxx/Markdansi4portal#c075195137fbf91b9d610543a999bf5913730859",
+    "markdansi": "github:kabxx/Markdansi4portal#e5985675fb6124b231b44d6e1e6a43a04db021aa",
     "node-unrar-js": "^2.0.2",
     "playwright": "^1.59.1",
     "react": "^19.2.7",
