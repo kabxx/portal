@@ -17,6 +17,7 @@ import type { HookCatalog } from '../hooks/hook-catalog.ts'
 import type { HookDispatcher } from '../hooks/hook-dispatcher.ts'
 import type { HookExecutionScope } from '../hooks/hook-types.ts'
 import { ComposerLimitExceededError } from '../providers/composer-limit.ts'
+import { ThreadSelectionController } from './thread-selection.ts'
 
 export interface ThreadHandle {
   id: string
@@ -35,6 +36,7 @@ interface CreateThreadInput {
   createdAt: number
   origin?: 'new' | 'resumed'
   source?: HookExecutionScope['source']
+  activate?: boolean
 }
 
 export interface ThreadInputHandlers {
@@ -94,6 +96,7 @@ export class ThreadCloseCleanupError extends Error {
 
 export class ThreadManager {
   private readonly threads = new ThreadRegistry()
+  private readonly selection: ThreadSelectionController
   private readonly runningThreadIds = new Set<string>()
   private readonly ready = new Map<string, Promise<void>>()
   private readonly pageCloseListeners = new Set<(threadId: string) => void>()
@@ -103,8 +106,11 @@ export class ThreadManager {
   public constructor(
     private readonly hookCatalog: HookCatalog | null = null,
     private readonly hookDispatcher: HookDispatcher | null = null,
-    private readonly cwd: string = process.cwd()
-  ) {}
+    private readonly cwd: string = process.cwd(),
+    selection?: ThreadSelectionController
+  ) {
+    this.selection = selection ?? new ThreadSelectionController()
+  }
 
   public createThreadId(): string {
     return this.threads.createThreadId()
@@ -118,12 +124,17 @@ export class ThreadManager {
   }
 
   public addThread(thread: CreateThreadInput): ThreadHandle {
+    const activate = thread.activate ?? true
     this.threads.addThread({
       id: thread.id,
       provider: thread.provider,
       runtime: thread.runtime,
       createdAt: thread.createdAt,
     })
+    this.selection.register(thread.id)
+    if (activate) {
+      this.selection.switch(thread.id)
+    }
     const handle = this.toThreadHandle(thread.id)
     if (this.hookCatalog !== null && this.hookDispatcher !== null) {
       const scope = this.createHookScope(
@@ -173,7 +184,9 @@ export class ThreadManager {
   }
 
   public getActiveThread(): ThreadHandle | null {
-    const thread = this.threads.getActiveThread()
+    const activeThreadId = this.selection.getActiveId()
+    const thread =
+      activeThreadId === null ? null : this.threads.getThread(activeThreadId)
     return thread === null ? null : this.toThreadHandle(thread.id)
   }
 
@@ -182,12 +195,15 @@ export class ThreadManager {
   }
 
   public switchThread(id: string): ThreadHandle | null {
-    const thread = this.threads.switchThread(id)
+    const thread = this.threads.getThread(id)
+    if (thread === null || !this.selection.switch(id)) {
+      return null
+    }
     return thread === null ? null : this.toThreadHandle(thread.id)
   }
 
   public deactivateThread(): void {
-    this.threads.clearActiveThread()
+    this.selection.clearActive()
   }
 
   public resumeLastThread(): ThreadHandle | null {
@@ -242,6 +258,7 @@ export class ThreadManager {
       failures.push(error)
     }
     this.threads.removeThread(id)
+    this.selection.detach(id)
     this.ready.delete(id)
     if (this.hookCatalog !== null && this.hookDispatcher !== null) {
       const scope = this.createHookScope(
@@ -454,8 +471,6 @@ export class ThreadManager {
         )
       }
       throw error
-    } finally {
-      this.threads.syncConversation(thread.id)
     }
   }
 

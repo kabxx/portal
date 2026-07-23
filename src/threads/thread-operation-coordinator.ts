@@ -17,12 +17,14 @@ export interface ThreadOperationSnapshot {
 
 export interface ThreadOperationHandle extends ThreadOperationSnapshot {
   done: Promise<void>
+  /** Resolves after the runner and any cancellation/stop target have settled. */
+  settled?: Promise<void>
   cancel(): Promise<boolean>
 }
 
 export type StartThreadOperationResult =
   | { accepted: true; operation: ThreadOperationHandle }
-  | { accepted: false; reason: 'running' | 'closing' }
+  | { accepted: false; reason: 'not_found' | 'running' | 'closing' }
 
 interface MutableThreadOperation {
   token: symbol
@@ -32,6 +34,8 @@ interface MutableThreadOperation {
   controller: AbortController
   stopTarget: OperationStopTarget | null
   done: Promise<void>
+  settled: Promise<void>
+  resolveSettled: () => void
   cancellation: Promise<void> | null
 }
 
@@ -78,6 +82,10 @@ export class ThreadOperationCoordinator {
 
     const token = Symbol(threadId)
     const controller = new AbortController()
+    let resolveSettled!: () => void
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve
+    })
     const operation: MutableThreadOperation = {
       token,
       threadId,
@@ -86,6 +94,8 @@ export class ThreadOperationCoordinator {
       controller,
       stopTarget,
       done: Promise.resolve(),
+      settled,
+      resolveSettled,
       cancellation: null,
     }
     this.operations.set(threadId, operation)
@@ -108,6 +118,7 @@ export class ThreadOperationCoordinator {
           this.operations.get(threadId)?.token === token
         ) {
           this.operations.delete(threadId)
+          operation.resolveSettled()
         }
       })
 
@@ -138,8 +149,8 @@ export class ThreadOperationCoordinator {
     )
   }
 
-  public async cancel(threadId: string): Promise<void> {
-    await this.cancelOperation(threadId, 'cancelling')
+  public async cancel(threadId: string): Promise<boolean> {
+    return await this.cancelOperation(threadId, 'cancelling')
   }
 
   public async waitForIdle(threadId: string): Promise<boolean> {
@@ -231,8 +242,7 @@ export class ThreadOperationCoordinator {
     if (operation === undefined || operation.token !== token) {
       return false
     }
-    await this.cancelMutableOperation(operation, 'cancelling')
-    return true
+    return await this.cancelMutableOperation(operation, 'cancelling')
   }
 
   private async cancelMutableOperation(
@@ -255,6 +265,7 @@ export class ThreadOperationCoordinator {
       if (this.operations.get(threadId)?.token === operation.token) {
         this.operations.delete(threadId)
       }
+      operation.resolveSettled()
     })
     return await waitForSettlement(
       operation.cancellation,
@@ -276,6 +287,7 @@ export class ThreadOperationCoordinator {
     return {
       ...this.toSnapshot(operation),
       done: operation.done,
+      settled: operation.settled,
       cancel: async () =>
         await this.cancelOwnedOperation(operation.threadId, operation.token),
     }

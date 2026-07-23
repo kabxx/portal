@@ -319,30 +319,29 @@ export class PortalApiServer {
     fastify.get('/health', async () => ({
       ok: true,
       service: 'portal',
-      apiVersion: 'v1',
     }))
-    fastify.get('/v1/status', async () => await this.options.handlers.status())
+    fastify.get('/status', async () => await this.options.handlers.status())
     fastify.get(
-      '/v1/providers',
+      '/providers',
       async () => await this.options.handlers.providers()
     )
     fastify.get(
-      '/v1/threads',
+      '/threads',
       async () => await this.options.handlers.listThreads()
     )
     fastify.get<{ Params: { threadId: string } }>(
-      '/v1/threads/:threadId',
+      '/threads/:threadId',
       async (request) =>
         await this.options.handlers.getThread(request.params.threadId)
     )
-    fastify.post<{ Body: unknown }>('/v1/threads', async (request, reply) => {
+    fastify.post<{ Body: unknown }>('/threads', async (request, reply) => {
       const body = requireRecordBody(request.body)
       return await reply
         .code(201)
         .send(await this.options.handlers.createThread(body))
     })
     fastify.post<{ Body: unknown }>(
-      '/v1/threads/resume',
+      '/threads/resume',
       async (request, reply) => {
         const body = requireRecordBody(request.body)
         return await reply
@@ -351,14 +350,14 @@ export class PortalApiServer {
       }
     )
     fastify.delete<{ Params: { threadId: string } }>(
-      '/v1/threads/:threadId',
+      '/threads/:threadId',
       async (request) =>
         await this.options.handlers.closeThread(request.params.threadId)
     )
     fastify.post<{
       Params: { threadId: string }
       Body: { input?: unknown }
-    }>('/v1/threads/:threadId/messages', async (request, reply) => {
+    }>('/threads/:threadId/messages', async (request, reply) => {
       const body = requireRecordBody(request.body)
       if (typeof body.input !== 'string' || body.input.trim() === '') {
         throw new ApiHttpError(
@@ -374,12 +373,12 @@ export class PortalApiServer {
       return await reply.code(202).send(result)
     })
     fastify.post<{ Params: { threadId: string } }>(
-      '/v1/threads/:threadId/cancel',
+      '/threads/:threadId/cancel',
       async (request) =>
         await this.options.handlers.cancelMessage(request.params.threadId)
     )
     fastify.post<{ Params: { threadId: string } }>(
-      '/v1/threads/:threadId/reload',
+      '/threads/:threadId/reload',
       async (request, reply) => {
         if (this.options.handlers.reloadThread === undefined) {
           throw new ApiHttpError(
@@ -396,7 +395,7 @@ export class PortalApiServer {
       }
     )
     fastify.get<{ Params: { threadId: string } }>(
-      '/v1/threads/:threadId/events',
+      '/threads/:threadId/events',
       async (request, reply) => {
         await this.options.handlers.getThread(request.params.threadId)
         reply.hijack()
@@ -413,7 +412,7 @@ export class PortalApiServer {
     fastify.post<{
       Params: { threadId: string }
       Body: { name?: unknown }
-    }>('/v1/threads/:threadId/skill', async (request, reply) => {
+    }>('/threads/:threadId/skill', async (request, reply) => {
       const body = requireRecordBody(request.body)
       if (typeof body.name !== 'string' || body.name.trim() === '') {
         throw new ApiHttpError(
@@ -429,14 +428,14 @@ export class PortalApiServer {
       return await reply.code(202).send(result)
     })
     fastify.get<{ Params: { threadId: string } }>(
-      '/v1/threads/:threadId/capabilities',
+      '/threads/:threadId/capabilities',
       async (request) =>
         await this.options.handlers.listCapabilities(request.params.threadId)
     )
     fastify.put<{
       Params: { threadId: string; name: string }
       Body: { state?: unknown }
-    }>('/v1/threads/:threadId/capabilities/:name', async (request) => {
+    }>('/threads/:threadId/capabilities/:name', async (request) => {
       const body = requireRecordBody(request.body)
       if (typeof body.state !== 'string') {
         throw new ApiHttpError(400, 'INVALID_REQUEST', 'state is required.')
@@ -448,18 +447,15 @@ export class PortalApiServer {
       )
     })
     fastify.delete<{ Params: { threadId: string; name: string } }>(
-      '/v1/threads/:threadId/capabilities/:name',
+      '/threads/:threadId/capabilities/:name',
       async (request) =>
         await this.options.handlers.clearCapability(
           request.params.threadId,
           request.params.name
         )
     )
-    fastify.get(
-      '/v1/skills',
-      async () => await this.options.handlers.listSkills()
-    )
-    fastify.post<{ Body: unknown }>('/v1/skills', async (request, reply) => {
+    fastify.get('/skills', async () => await this.options.handlers.listSkills())
+    fastify.post<{ Body: unknown }>('/skills', async (request, reply) => {
       const body = requireRecordBody(request.body)
       if (typeof body.source !== 'string' || body.source.trim() === '') {
         throw new ApiHttpError(400, 'INVALID_REQUEST', 'source is required.')
@@ -479,7 +475,7 @@ export class PortalApiServer {
         .send(await this.options.handlers.addSkill(body))
     })
     fastify.put<{ Params: { name: string }; Body: { enabled?: unknown } }>(
-      '/v1/skills/:name',
+      '/skills/:name',
       async (request) => {
         const body = requireRecordBody(request.body)
         if (typeof body.enabled !== 'boolean') {
@@ -492,32 +488,29 @@ export class PortalApiServer {
       }
     )
     fastify.delete<{ Params: { name: string } }>(
-      '/v1/skills/:name',
+      '/skills/:name',
       async (request) =>
         await this.options.handlers.removeSkill(request.params.name)
     )
     fastify.get(
-      '/v1/mcp/servers',
+      '/mcp/servers',
       async () => await this.options.handlers.listMcpServers()
     )
-    fastify.post<{ Body: unknown }>(
-      '/v1/mcp/servers',
-      async (request, reply) => {
-        const body = requireRecordBody(request.body)
-        const name = body.name
-        if (typeof name !== 'string' || name.trim() === '') {
-          throw new ApiHttpError(400, 'INVALID_REQUEST', 'name is required.')
-        }
-        const { name: _ignored, ...config } = body
-        return await reply
-          .code(201)
-          .send(await this.options.handlers.addMcpServer(name, config))
+    fastify.post<{ Body: unknown }>('/mcp/servers', async (request, reply) => {
+      const body = requireRecordBody(request.body)
+      const name = body.name
+      if (typeof name !== 'string' || name.trim() === '') {
+        throw new ApiHttpError(400, 'INVALID_REQUEST', 'name is required.')
       }
-    )
+      const { name: _ignored, ...config } = body
+      return await reply
+        .code(201)
+        .send(await this.options.handlers.addMcpServer(name, config))
+    })
     fastify.put<{
       Params: { name: string }
       Body: { enabled?: unknown; config?: unknown }
-    }>('/v1/mcp/servers/:name', async (request) => {
+    }>('/mcp/servers/:name', async (request) => {
       const body = requireRecordBody(request.body)
       if (typeof body.enabled === 'boolean') {
         return await this.options.handlers.setMcpServerEnabled(
@@ -538,7 +531,7 @@ export class PortalApiServer {
       )
     })
     fastify.delete<{ Params: { name: string } }>(
-      '/v1/mcp/servers/:name',
+      '/mcp/servers/:name',
       async (request) =>
         await this.options.handlers.removeMcpServer(request.params.name)
     )
@@ -546,7 +539,7 @@ export class PortalApiServer {
       Params: { threadId: string }
       Querystring: { server?: string }
     }>(
-      '/v1/threads/:threadId/mcp/resources',
+      '/threads/:threadId/mcp/resources',
       async (request) =>
         await this.options.handlers.listMcpResources(
           request.params.threadId,
@@ -557,7 +550,7 @@ export class PortalApiServer {
       Params: { threadId: string }
       Querystring: { server?: string }
     }>(
-      '/v1/threads/:threadId/mcp/prompts',
+      '/threads/:threadId/mcp/prompts',
       async (request) =>
         await this.options.handlers.listMcpPrompts(
           request.params.threadId,
