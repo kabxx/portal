@@ -7,23 +7,17 @@ import {
 
 export { PROVIDER_DEFINITIONS }
 export type {
-  LocatorCandidates,
   ProviderCapabilityDefinition,
   ProviderCapabilityDefinitionFor,
   ProviderDefinition,
   ProviderDefinitionInput,
   ProviderDefinitionPack,
-  ProviderLocatorDefinitions,
   ProviderModelDefinition,
   ProviderModelOptionDefinition,
 } from './definitions/index.ts'
 export {
   defineProvider,
   defineProviderPack,
-  joinCssLocatorCandidates,
-  mapCssLocatorCandidates,
-  PROVIDER_DEFINITION_VERSION,
-  PROVIDER_LOCATOR_SLOTS,
   ProviderDefinitionError,
 } from './definitions/index.ts'
 

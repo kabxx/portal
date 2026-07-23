@@ -10,14 +10,21 @@ import {
   type CapturedFetchEntry,
 } from '../../../src/providers/adapters/adapter-base.ts'
 import { QwenAdapter } from '../../../src/providers/adapters/adapter-qwen.ts'
-import {
-  getProviderDefinition,
-  joinCssLocatorCandidates,
-} from '../../../src/providers/provider-definition-pack.ts'
+import { joinCssLocatorCandidates } from '../../../src/providers/ui/provider-ui.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 const QWEN_COMPLETION_URL = 'https://chat.qwen.ai/api/v2/chat/completions'
-const QWEN_LOCATORS = getProviderDefinition('qwen').locators
+const QWEN_LOCATORS = {
+  modelTrigger: [
+    '#qwen-chat-header-left [role="button"][aria-haspopup="listbox"]',
+  ],
+  modelListbox: ['[role="listbox"]'],
+  modelItem: ['[role="option"]'],
+  capabilityTrigger: ['.mode-select-open[role="button"]'],
+  capabilityMenu: ['.mode-select-dropdown [role="menu"]'],
+  capabilityItem: [':scope > [role="menuitem"][data-menu-id]'],
+  selectedCapability: ['.mode-select-current-mode'],
+} as const
 
 type QwenAdapterHarness = Pick<QwenAdapter, keyof QwenAdapter> & {
   page: unknown
@@ -624,19 +631,19 @@ test('QwenAdapter bounds direct history fallback and reports HTTP errors', async
   assert.match((await adapter.loadHistory()).warning ?? '', /timed out/)
 })
 
-test('QwenAdapter changes models by one-based option index', async () => {
+test('QwenAdapter changes declared models by their UI order', async () => {
   const adapter = createTestQwenAdapter()
   const selected: number[] = []
   adapter.page = createControlPage({ selected })
 
-  await adapter.changeModel('2')
+  await adapter.changeModel({ key: 'qwen3.8-max-preview', option: null })
   assert.deepEqual(selected, [1])
   await assert.rejects(
-    adapter.changeModel('0'),
+    adapter.changeModel({ key: 'unknown', option: null }),
     ProviderAdapterUnsupportedError
   )
   await assert.rejects(
-    adapter.changeModel('3'),
+    adapter.changeModel({ key: 'qwen3.7-max', option: null }),
     ProviderAdapterUnsupportedError
   )
 })
@@ -646,7 +653,7 @@ test('QwenAdapter changes models through visible options without a listbox', asy
   const selected: number[] = []
   adapter.page = createControlPage({ selected, globalModelOptions: true })
 
-  await adapter.changeModel('2')
+  await adapter.changeModel({ key: 'qwen3.8-max-preview', option: null })
 
   assert.deepEqual(selected, [1])
 })
@@ -659,7 +666,10 @@ test('QwenAdapter rejects unscoped model options from multiple groups', async ()
     globalModelParentCount: 2,
   })
 
-  await assert.rejects(adapter.changeModel('1'), /options were ambiguous/)
+  await assert.rejects(
+    adapter.changeModel({ key: 'qwen3.7-plus', option: null }),
+    /options were ambiguous/
+  )
 })
 
 test('QwenAdapter uploads through the unique file input and stops generation', async () => {
@@ -998,6 +1008,7 @@ function createSubmitPage(options: SubmitPageOptions = {}) {
   const composer = {
     count: async () => 1,
     first: () => composer,
+    nth: () => composer,
     isVisible: async () => true,
     isEnabled: async () => true,
     click: async () => {},
@@ -1006,6 +1017,7 @@ function createSubmitPage(options: SubmitPageOptions = {}) {
   const sendButton = {
     count: async () => 1,
     first: () => sendButton,
+    nth: () => sendButton,
     isVisible: async () => true,
     isEnabled: async () => true,
     click: async () => {
@@ -1155,12 +1167,15 @@ function createControlPage({
   const listbox = {
     count: async () => visibleListboxCount ?? (globalModelOptions ? 0 : 1),
     first: () => listbox,
+    nth: () => listbox,
     isVisible: async () => listboxVisible,
     locator: () => (globalModelOptions ? { count: async () => 0 } : options),
   }
   const trigger = {
     count: async () => 1,
     first: () => trigger,
+    nth: () => trigger,
+    isVisible: async () => true,
     click: async () => {
       listboxVisible = true
     },
@@ -1168,6 +1183,7 @@ function createControlPage({
   const uploadTrigger = {
     count: async () => 1,
     first: () => uploadTrigger,
+    nth: () => uploadTrigger,
     isVisible: async () => true,
     isEnabled: async () => true,
     click: async () => {
@@ -1177,6 +1193,7 @@ function createControlPage({
   const uploadItem = {
     count: async () => 1,
     first: () => uploadItem,
+    nth: () => uploadItem,
     isVisible: async () => uploadMenuVisible,
     click: async () => {},
   }
@@ -1186,6 +1203,7 @@ function createControlPage({
   const stop = {
     count: async () => 1,
     first: () => stop,
+    nth: () => stop,
     isVisible: async () => true,
     click: async () => onStop(),
   }

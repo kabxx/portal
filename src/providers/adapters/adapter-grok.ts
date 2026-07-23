@@ -15,42 +15,14 @@ import {
   emptyHistoryResult,
   parseGrokHistory,
 } from '../conversation-history.ts'
-import {
-  getProviderDefinition,
-  joinCssLocatorCandidates,
-} from '../provider-definition-pack.ts'
+import type { ResolvedProviderModel } from '../provider-model-catalog.ts'
+import { GrokUi } from '../ui/grok/grok-ui.ts'
 
 const GROK_CHAT_URL = 'https://grok.com'
-const GROK_SUBSCRIBE_URL = 'https://grok.com/#subscribe'
-const GROK_LOCATORS = getProviderDefinition('grok').locators
-const GROK_SIGNED_OUT_ACTIONS_SELECTOR =
-  '[data-testid="drop-ui"] main > div:first-child button[aria-haspopup="menu"] + button[data-slot="button"] + button[data-slot="button"]'
-const GROK_INPUT_SELECTOR =
-  '[data-testid="chat-input"] [role="textbox"][contenteditable="true"]'
-const GROK_VOICE_MODE_READY_SELECTOR =
-  'form:has([data-testid="chat-input"]) div:has(> [data-query-bar-mode-select]) button[type="button"]:has(> div > div:nth-child(6):last-child)'
-const GROK_SUBMIT_BUTTON_SELECTOR = '[data-testid="chat-submit"]'
-const GROK_FILE_INPUT_SELECTOR = 'input[type="file"][name="files"]'
-const GROK_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
-  GROK_LOCATORS.modelTrigger
-)
-const GROK_MODEL_MENU_SELECTOR = joinCssLocatorCandidates(
-  GROK_LOCATORS.modelMenu
-)
-const GROK_MODEL_ITEM_SELECTOR =
-  'xpath=./div[@role="menuitem" and contains(@class, "ps-2.5") and contains(@class, "flex-row")]'
 const GROK_WEBSOCKET_URL = 'wss://grok.com/ws/mgw/'
-const GROK_STOP_ICON_PATH_PREFIX = 'M4 9.2v5.6c0 1.116 0 1.673.11 2.134'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-function normalizeToPathArray(path: string | readonly string[]): string[] {
-  if (typeof path === 'string') {
-    return [path]
-  }
-  return [...path]
 }
 
 function readGrokConversationIdFromUrl(
@@ -78,80 +50,8 @@ export class GrokAdapter extends ProviderAdapter {
 
   private conversationIdVal!: string | null
   private websocketFrames: string[] = []
-
-  private getInput() {
-    return this.page.locator(GROK_INPUT_SELECTOR).first()
-  }
-
-  private getSubmitButton() {
-    return this.page.locator(GROK_SUBMIT_BUTTON_SELECTOR).first()
-  }
-
-  private async waitForVoiceModeReady(
-    action: 'restore' | 'submit',
-    timeoutMs: number | null,
-    signal?: AbortSignal
-  ): Promise<void> {
-    const voiceModeButton = this.page.locator(GROK_VOICE_MODE_READY_SELECTOR)
-    await waitAsync(
-      async () => {
-        if ((await voiceModeButton.count().catch(() => 0)) !== 1) {
-          return false
-        }
-        return await voiceModeButton
-          .first()
-          .isVisible()
-          .catch(() => false)
-      },
-      {
-        timeoutMs,
-        signal,
-        onTimeout: async () => {
-          throw new ProviderAdapterError(
-            action,
-            action === 'restore'
-              ? 'Grok voice mode control did not become ready after loading.'
-              : 'Grok finished responding, but its voice mode control did not become ready for the next message.',
-            {
-              kind: 'ui',
-              recovery: 'none',
-              retryable: false,
-              maxAttempts: 1,
-              detailCode: 'grok_voice_mode_ready_missing',
-            }
-          )
-        },
-      }
-    )
-  }
-
-  private async isSubmitButtonReady(): Promise<boolean> {
-    const submitButton = this.getSubmitButton()
-    return (
-      (await submitButton.isVisible().catch(() => false)) &&
-      (await submitButton.isEnabled().catch(() => false))
-    )
-  }
-
-  private async isComposerIdle(): Promise<boolean> {
-    const input = this.getInput()
-    if (
-      !(await input.isVisible().catch(() => false)) ||
-      (await input.getAttribute('aria-disabled').catch(() => null)) === 'true'
-    ) {
-      return false
-    }
-
-    const submitButtonLocator = this.page.locator(GROK_SUBMIT_BUTTON_SELECTOR)
-    if ((await submitButtonLocator.count().catch(() => 0)) === 0) {
-      return true
-    }
-
-    const submitButton = submitButtonLocator.first()
-    return (
-      !(await submitButton.isVisible().catch(() => false)) ||
-      !(await submitButton.isEnabled().catch(() => true))
-    )
+  private get providerUi(): GrokUi {
+    return new GrokUi(this.page)
   }
 
   private isRetryableError(error: unknown): boolean {
@@ -229,7 +129,7 @@ export class GrokAdapter extends ProviderAdapter {
           }
         )
       }
-      await this.waitForVoiceModeReady(
+      await this.providerUi.waitForVoiceModeReady(
         'restore',
         this.getRestoreTimeoutMs(),
         signal
@@ -284,53 +184,16 @@ export class GrokAdapter extends ProviderAdapter {
       return false
     }
 
-    const signedOutActionsVisible = await this.page
-      .locator(GROK_SIGNED_OUT_ACTIONS_SELECTOR)
-      .isVisible()
-      .catch(() => false)
-
-    return !signedOutActionsVisible
+    return !(await this.providerUi.isSignedOutVisible())
   }
 
-  public async changeModel(model: string): Promise<void> {
-    const modelNumber = Number(model.trim())
-    if (!Number.isSafeInteger(modelNumber) || modelNumber < 1) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `Grok does not support model "${model}".`
-      )
-    }
-    const modelIndex = modelNumber - 1
-
-    await this.page.locator(GROK_MODEL_TRIGGER_SELECTOR).first().click()
-    const modelMenu = this.page.locator(GROK_MODEL_MENU_SELECTOR).last()
-    await waitAsync(
-      async () => await modelMenu.isVisible().catch(() => false),
-      {
-        timeoutMs: 5000,
-      }
-    )
-    const modelItems = modelMenu.locator(GROK_MODEL_ITEM_SELECTOR)
-    if ((await modelItems.count()) <= modelIndex) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `Grok does not have model ${modelNumber}.`
-      )
-    }
-    await modelItems.nth(modelIndex).click()
-    if (this.page.url() === GROK_SUBSCRIBE_URL) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `Grok model ${modelNumber} requires a subscription.`
-      )
-    }
+  public async changeModel(model: ResolvedProviderModel): Promise<void> {
+    await this.providerUi.selectModel(model)
   }
 
   public async attachText(text: string): Promise<void> {
     await this.wrapAdapterActionErrorAsync('attachText', async () => {
-      const input = this.getInput()
-      await input.click()
-      await this.page.keyboard.insertText(text)
+      await this.providerUi.attachText(text)
     })
   }
 
@@ -338,37 +201,26 @@ export class GrokAdapter extends ProviderAdapter {
     text: string,
     options: AbortOptions
   ): Promise<() => Promise<void>> {
-    const composer = () => this.page.locator(GROK_INPUT_SELECTOR)
-    const stopButton = () =>
-      this.page.locator(
-        `button:has(svg[viewBox^="0 0 24"] path[d^="${GROK_STOP_ICON_PATH_PREFIX}"])`
-      )
+    const getLocators = () => this.providerUi.getRetryLocators()
     return await this.prepareRetrySubmitText(text, options, {
       provider: 'Grok',
-      isComposerReady: async () => await this.isRetryComposerReady(composer()),
+      isComposerReady: async () =>
+        await this.isRetryComposerReady(getLocators().composer),
       readComposerText: async () =>
-        await this.readRetryComposerText(composer()),
+        await this.readRetryComposerText(getLocators().composer),
       writeText: async () => await this.attachText(text),
       clearComposer: async () =>
-        await this.clearRetryComposerElements(composer()),
-      isStopActive: async () => await this.isRetryControlActive(stopButton()),
+        await this.clearRetryComposerElements(getLocators().composer),
+      isStopActive: async () =>
+        await this.isRetryControlActive(getLocators().stop),
       isSendReady: async () =>
-        await this.isRetryControlReady(
-          this.page.locator(GROK_SUBMIT_BUTTON_SELECTOR)
-        ),
+        await this.isRetryControlReady(getLocators().send),
     })
   }
 
   public async attachFile(_path: string | readonly string[]): Promise<void> {
     await this.wrapAdapterActionErrorAsync('attachFile', async () => {
-      const fileInput = this.page.locator(GROK_FILE_INPUT_SELECTOR).first()
-      if ((await fileInput.count().catch(() => 0)) === 0) {
-        throw new ProviderAdapterUnsupportedError(
-          'attachFile',
-          'Grok file upload is not available in the current conversation.'
-        )
-      }
-      await fileInput.setInputFiles(normalizeToPathArray(_path))
+      await this.providerUi.attachFile(_path)
     })
   }
 
@@ -377,10 +229,7 @@ export class GrokAdapter extends ProviderAdapter {
   }
 
   public override async stopGeneration(): Promise<void> {
-    const stopButton = this.page.locator(
-      `button:has(svg[viewBox^="0 0 24"] path[d^="${GROK_STOP_ICON_PATH_PREFIX}"])`
-    )
-    await this.clickLocatorIfReady(stopButton)
+    await this.providerUi.stopGeneration()
   }
 
   private bindWebSocketListener(): void {
@@ -461,7 +310,7 @@ export class GrokAdapter extends ProviderAdapter {
       return await this.wrapAdapterActionErrorAsync('submit', async () => {
         const { signal } = options
         throwIfAborted(signal)
-        await waitAsync(async () => await this.isSubmitButtonReady(), {
+        await waitAsync(async () => await this.providerUi.isSubmitReady(), {
           timeoutMs: this.getSubmitResponseTimeoutMs(),
           signal,
         })
@@ -481,7 +330,7 @@ export class GrokAdapter extends ProviderAdapter {
         })
         try {
           this.emitSubmitDispatching(signal)
-          await this.getSubmitButton().click()
+          await this.providerUi.clickSubmit()
           this.emitSubmitSent()
           throwIfAborted(signal)
           await waitAsync(
@@ -553,11 +402,11 @@ export class GrokAdapter extends ProviderAdapter {
               }
             )
           }
-          await waitAsync(async () => await this.isComposerIdle(), {
+          await waitAsync(async () => await this.providerUi.isComposerIdle(), {
             timeoutMs: this.getSubmitResponseTimeoutMs(),
             signal,
           })
-          await this.waitForVoiceModeReady(
+          await this.providerUi.waitForVoiceModeReady(
             'submit',
             this.getSubmitResponseTimeoutMs(),
             signal

@@ -717,7 +717,7 @@ async function runSpawnTask({
       settings.providerTimings
     )
     runtime = await createRuntimeFromAdapter(adapter, {
-      model: model?.adapterValue ?? null,
+      model,
       setupMode: 'full',
       providerPrompt: getProviderPrompt(provider),
       skillLibrary,
@@ -1507,7 +1507,7 @@ export async function run(argv = process.argv): Promise<void> {
         signal,
       }) =>
         await createRuntimeFromAdapter(adapter, {
-          model: model?.adapterValue ?? null,
+          model,
           setupMode:
             mode === 'resume'
               ? 'skip'

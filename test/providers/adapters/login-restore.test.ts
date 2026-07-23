@@ -18,6 +18,7 @@ import { createBrowserContextStub } from '../../helpers/fakes.ts'
 interface RestoreTestLocator {
   count?(): Promise<number>
   first?(): RestoreTestLocator
+  nth?(index: number): RestoreTestLocator
   isVisible?(): Promise<boolean>
   isEnabled?(): Promise<boolean>
   getAttribute?(name: string): Promise<string | null>
@@ -76,6 +77,9 @@ function createMockPage({
       first() {
         return this
       },
+      nth() {
+        return this
+      },
     }),
   }
 }
@@ -85,7 +89,7 @@ test('ChatGPTAdapter.restore reports auth when login button is visible', async (
     ChatGPTAdapter,
     createMockPage({
       afterGotoUrl: 'https://chatgpt.com',
-      visibleByTestId: { 'login-button': true },
+      visibleByLocator: { '[data-testid="login-button"]': true },
     })
   )
 
@@ -146,6 +150,9 @@ test('GeminiAdapter.restore waits for the microphone ready signal before succeed
           first() {
             return this
           },
+          nth() {
+            return this
+          },
           isVisible: async () => {
             checks += 1
             return checks >= 3
@@ -160,7 +167,7 @@ test('GeminiAdapter.restore waits for the microphone ready signal before succeed
   await adapter.restore()
 
   assert.ok(checks >= 3)
-  assert.ok(countChecks >= 3)
+  assert.ok(countChecks >= 2)
 })
 
 test('DeepSeekAdapter.restore reports auth when redirected to /sign_in', async () => {
@@ -305,6 +312,10 @@ test('GrokAdapter.restore ignores an editable Composer and waits for one visible
         '[data-testid="drop-ui"] main > div:first-child button[aria-haspopup="menu"] + button[data-slot="button"] + button[data-slot="button"]'
       ) {
         return {
+          count: async () => 0,
+          nth() {
+            return this
+          },
           isVisible: async () => false,
         }
       }
@@ -313,7 +324,11 @@ test('GrokAdapter.restore ignores an editable Composer and waits for one visible
         '[data-testid="chat-input"] [role="textbox"][contenteditable="true"]'
       ) {
         return {
+          count: async () => 1,
           first() {
+            return this
+          },
+          nth() {
             return this
           },
           isVisible: async () => true,
@@ -332,6 +347,9 @@ test('GrokAdapter.restore ignores an editable Composer and waits for one visible
           first() {
             return this
           },
+          nth() {
+            return this
+          },
           isVisible: async () => {
             visibilityChecks += 1
             return visibilityChecks >= 2
@@ -344,7 +362,7 @@ test('GrokAdapter.restore ignores an editable Composer and waits for one visible
 
   await adapter.restore()
 
-  assert.ok(countChecks >= 4)
+  assert.ok(countChecks >= 2)
   assert.ok(visibilityChecks >= 2)
 })
 
@@ -429,12 +447,18 @@ test('GlmAdapter.restore keeps waiting while the signed-out indicator is ambiguo
           first() {
             return this
           },
+          nth() {
+            return this
+          },
           isVisible: async () => true,
         }
       }
       if (selector === '[data-dialog-overlay][data-state="open"]') {
         return {
           first() {
+            return this
+          },
+          nth() {
             return this
           },
           isVisible: async () => false,
@@ -448,6 +472,23 @@ test('GlmAdapter.restore keeps waiting while the signed-out indicator is ambiguo
 
   assert.ok(signedOutCountChecks >= 4)
   assert.ok(readyCountChecks >= 2)
+})
+
+test('GlmAdapter.isLoggedIn fails closed for an ambiguous signed-out indicator', async () => {
+  const adapter = createRestorableAdapter(GlmAdapter, {
+    goto: async () => undefined,
+    url: () => 'https://chat.z.ai/',
+    locator: () => ({
+      count: async () => 2,
+      first: () => ({
+        isVisible: async () => {
+          throw new Error('Ambiguous auth target must not be selected.')
+        },
+      }),
+    }),
+  })
+
+  assert.equal(await adapter.isLoggedIn(), false)
 })
 
 test('GlmAdapter.restore only requires the send button to be visible', async () => {
@@ -464,6 +505,9 @@ test('GlmAdapter.restore only requires the send button to be visible', async () 
             return countChecks >= 3 ? 1 : 2
           },
           first() {
+            return this
+          },
+          nth() {
             return this
           },
           isVisible: async () => {
@@ -516,6 +560,11 @@ test('ChatGPTAdapter.restore waits for the speech button ready signal before suc
       },
     }),
     locator: (selector: string) => {
+      if (selector === '[data-testid="login-button"]') {
+        return {
+          isVisible: async () => false,
+        }
+      }
       if (
         selector === '#modal-no-auth-login' ||
         selector === '#modal-expired-session'
@@ -533,6 +582,9 @@ test('ChatGPTAdapter.restore waits for the speech button ready signal before suc
           first() {
             return this
           },
+          nth() {
+            return this
+          },
           isVisible: async () => {
             checks += 1
             return checks >= 3
@@ -544,6 +596,9 @@ test('ChatGPTAdapter.restore waits for the speech button ready signal before suc
         return {
           count: async () => 0,
           first() {
+            return this
+          },
+          nth() {
             return this
           },
           isVisible: async () => false,

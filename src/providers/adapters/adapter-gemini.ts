@@ -15,54 +15,14 @@ import {
 } from '../../runtime/runtime-cancellation.ts'
 import { retryAsync } from '../../shared/retry.ts'
 import { waitAsync } from '../../shared/wait.ts'
-import type { Locator } from 'playwright'
 import {
   emptyHistoryResult,
   parseGeminiHistory,
 } from '../conversation-history.ts'
-import {
-  getProviderDefinition,
-  joinCssLocatorCandidates,
-} from '../provider-definition-pack.ts'
+import type { ResolvedProviderModel } from '../provider-model-catalog.ts'
+import { GeminiUi } from '../ui/gemini/gemini-ui.ts'
 
 const GEMINI_CHAT_URL = 'https://gemini.google.com/app'
-const GEMINI_SIGNED_OUT_TEST_ID = 'conversations-list-signed-out'
-const GEMINI_LOCATORS = getProviderDefinition('gemini').locators
-const GEMINI_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
-  GEMINI_LOCATORS.modelTrigger
-)
-const GEMINI_MODEL_MENU_SELECTOR = joinCssLocatorCandidates(
-  GEMINI_LOCATORS.modelMenu
-)
-const GEMINI_MODEL_ITEM_SELECTOR = joinCssLocatorCandidates(
-  GEMINI_LOCATORS.modelItem
-)
-const GEMINI_CAPABILITY_ITEM_SELECTOR = joinCssLocatorCandidates(
-  GEMINI_LOCATORS.capabilityItem
-)
-const GEMINI_CAPABILITY_ICON_SELECTOR = joinCssLocatorCandidates(
-  GEMINI_LOCATORS.capabilityIcon
-)
-const GEMINI_MORE_TOOLS_TRIGGER_SELECTOR = joinCssLocatorCandidates(
-  GEMINI_LOCATORS.moreToolsTrigger
-)
-const GEMINI_SELECTED_CAPABILITY_SELECTOR = joinCssLocatorCandidates(
-  GEMINI_LOCATORS.selectedCapability
-)
-const GEMINI_TOOLS_MENU_TRIGGER_SELECTOR = joinCssLocatorCandidates(
-  GEMINI_LOCATORS.toolsMenuTrigger
-)
-const GEMINI_MODEL_EXTENSION_SUFFIX = '+extended'
-const GEMINI_TEXTAREA_WRAPPER_TEST_ID = 'textarea-wrapper'
-const GEMINI_TEXTAREA_INNER_TEST_ID = 'textarea-inner'
-const GEMINI_SEND_BUTTON_CONTAINER_TEST_ID = 'send-button-container'
-const GEMINI_UPLOAD_TRIGGER_SELECTOR = GEMINI_TOOLS_MENU_TRIGGER_SELECTOR
-const GEMINI_UPLOAD_ACTION_SELECTOR = 'images-files-uploader button'
-const GEMINI_MICROPHONE_BUTTON_SELECTOR = [
-  'button.speech_dictation_mic_button',
-  '[data-node-type="speech_dictation_mic_button"] .speech_dictation_mic_button',
-  'speech-dictation-mic-button .speech_dictation_mic_button',
-].join(', ')
 const GEMINI_STREAM_GENERATE_PATH =
   '/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate'
 const GEMINI_HISTORY_POLL_MS = 100
@@ -131,37 +91,16 @@ function readGeminiConversationIdFromUrl(
   }
 }
 
-function normalizeToPathArray(path: string | readonly string[]): string[] {
-  if (typeof path === 'string') {
-    return [path]
-  }
-  return [...path]
-}
-
-function parseGeminiModel(
-  model: string
-): { index: number; extended: boolean | null } | null {
-  const normalized = model.trim().toLowerCase()
-  const hasExtendedSuffix = normalized.endsWith(GEMINI_MODEL_EXTENSION_SUFFIX)
-  const modelName = hasExtendedSuffix
-    ? normalized.slice(0, -GEMINI_MODEL_EXTENSION_SUFFIX.length)
-    : normalized
-  const modelNumber = Number(modelName)
-  if (!Number.isSafeInteger(modelNumber) || modelNumber < 1) {
-    return null
-  }
-  return {
-    index: modelNumber - 1,
-    extended: hasExtendedSuffix ? true : null,
-  }
-}
-
 export class GeminiAdapter extends ProviderAdapter {
   protected override get composerLimitProvider() {
     return 'gemini' as const
   }
 
   private lastParsedResponse!: GeminiParsedResponse | null
+
+  private get ui(): GeminiUi {
+    return new GeminiUi(this.page)
+  }
 
   private isRetryableError(error: unknown): boolean {
     if (error instanceof ProviderAdapterUnsupportedError) {
@@ -245,7 +184,7 @@ export class GeminiAdapter extends ProviderAdapter {
           }
         )
       }
-      await this.waitForMicrophoneReady(
+      await this.ui.waitForComposerReady(
         'restore',
         this.getRestoreTimeoutMs(),
         signal
@@ -299,25 +238,7 @@ export class GeminiAdapter extends ProviderAdapter {
     const deadline = Date.now() + this.getHistoryLoadTimeoutMs()
     while (!state.result.complete && Date.now() < deadline) {
       throwIfAborted(signal)
-      const scrolled = await this.page
-        .evaluate(() => {
-          const candidates = [
-            document.querySelector('infinite-scroller.chat-history'),
-            document.scrollingElement,
-          ]
-          let foundScrollable = false
-          for (const candidate of candidates) {
-            if (!(candidate instanceof HTMLElement)) continue
-            if (candidate.scrollHeight <= candidate.clientHeight + 40) {
-              continue
-            }
-            foundScrollable = true
-            candidate.scrollTo({ top: 0, behavior: 'auto' })
-            candidate.dispatchEvent(new Event('scroll', { bubbles: true }))
-          }
-          return foundScrollable
-        })
-        .catch(() => false)
+      const scrolled = await this.ui.scrollHistoryToTop()
       if (!scrolled) break
 
       const previousBodyCount = state.bodyCount
@@ -349,82 +270,16 @@ export class GeminiAdapter extends ProviderAdapter {
   }
 
   public async isLoggedIn(): Promise<boolean> {
-    if (!this.page.url().startsWith(GEMINI_CHAT_URL)) {
-      return false
-    }
-
-    const signedOutVisible = await this.page
-      .locator(`[data-test-id="${GEMINI_SIGNED_OUT_TEST_ID}"]`)
-      .isVisible()
-      .catch(() => false)
-
-    return !signedOutVisible
+    return await this.ui.isLoggedIn()
   }
 
-  public async changeModel(model: string): Promise<void> {
-    const parsed = parseGeminiModel(model)
-    if (parsed === null) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `Gemini does not support model "${model}".`
-      )
-    }
-    const modelMenu = await this.openModelMenu()
-    const menuItems = modelMenu.locator(GEMINI_MODEL_ITEM_SELECTOR)
-    const itemCount = await menuItems.count()
-    if (itemCount - 1 <= parsed.index) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `Gemini does not have model ${parsed.index + 1}.`
-      )
-    }
-    await menuItems.nth(parsed.index).click()
-    await this.waitForModelMenuClosed()
-
-    if (parsed.extended === null) {
-      return
-    }
-
-    const extensionMenu = await this.openModelMenu()
-    const extensionItem = await this.getModelExtensionItem(
-      extensionMenu,
-      parsed.index
-    )
-    if (
-      (await this.isModelExtensionItemSelected(extensionItem)) !==
-      parsed.extended
-    ) {
-      await extensionItem.click()
-    } else {
-      await this.closeModelMenu()
-    }
+  public async changeModel(model: ResolvedProviderModel): Promise<void> {
+    await this.ui.changeModel(model)
   }
 
   public async attachText(text: string) {
     await this.wrapAdapterActionErrorAsync('attachText', async () => {
-      const editor = this.page
-        .locator(
-          `[data-test-id="${GEMINI_TEXTAREA_WRAPPER_TEST_ID}"] rich-textarea [contenteditable="true"]`
-        )
-        .first()
-      const textarea = this.page.locator('rich-textarea').first()
-      if (await editor.isVisible().catch(() => false)) {
-        await editor.click()
-      } else if (
-        await this.page
-          .locator(`[data-test-id="${GEMINI_TEXTAREA_INNER_TEST_ID}"]`)
-          .first()
-          .isVisible()
-          .catch(() => false)
-      ) {
-        await this.page
-          .locator(`[data-test-id="${GEMINI_TEXTAREA_INNER_TEST_ID}"]`)
-          .first()
-          .click()
-      } else {
-        await textarea.click()
-      }
-      await this.page.keyboard.insertText(text)
+      await this.ui.attachText(text)
     })
   }
 
@@ -432,22 +287,8 @@ export class GeminiAdapter extends ProviderAdapter {
     text: string,
     options: AbortOptions
   ): Promise<() => Promise<void>> {
-    const composer = () =>
-      this.page.locator(
-        [
-          `[data-test-id="${GEMINI_TEXTAREA_WRAPPER_TEST_ID}"] rich-textarea [contenteditable="true"]`,
-          `[data-test-id="${GEMINI_TEXTAREA_INNER_TEST_ID}"][contenteditable="true"]`,
-          `[data-test-id="${GEMINI_TEXTAREA_INNER_TEST_ID}"] [contenteditable="true"]`,
-          'rich-textarea [contenteditable="true"]',
-        ].join(', ')
-      )
-    const stopButton = () =>
-      this.page
-        .locator(`[data-test-id="${GEMINI_SEND_BUTTON_CONTAINER_TEST_ID}"]`)
-        .locator(
-          'xpath=./gem-icon-button[contains(concat(" ", normalize-space(@class), " "), " send-button ") and contains(concat(" ", normalize-space(@class), " "), " stop ")]'
-        )
-        .locator('xpath=./button')
+    const ui = this.ui
+    const composer = () => ui.getRetryComposer()
     return await this.prepareRetrySubmitText(text, options, {
       provider: 'Gemini',
       isComposerReady: async () => await this.isRetryComposerReady(composer()),
@@ -456,218 +297,25 @@ export class GeminiAdapter extends ProviderAdapter {
       writeText: async () => await this.attachText(text),
       clearComposer: async () =>
         await this.clearRetryComposerElements(composer()),
-      isStopActive: async () => await this.isRetryControlActive(stopButton()),
+      isStopActive: async () =>
+        await this.isRetryControlActive(ui.getRetryStopButton()),
       isSendReady: async () =>
-        await this.isRetryControlReady(
-          this.page.locator(
-            `[data-test-id="${GEMINI_SEND_BUTTON_CONTAINER_TEST_ID}"] button`
-          )
-        ),
+        await this.isRetryControlReady(ui.getRetrySendButton()),
     })
-  }
-
-  private getUploadTrigger(): Locator {
-    return this.page.locator(GEMINI_UPLOAD_TRIGGER_SELECTOR).first()
-  }
-
-  private async openModelMenu(): Promise<Locator> {
-    const modelMenu = this.page.locator(GEMINI_MODEL_MENU_SELECTOR).last()
-    if (!(await modelMenu.isVisible().catch(() => false))) {
-      await this.page.locator(GEMINI_MODEL_TRIGGER_SELECTOR).click()
-      await waitAsync(
-        async () => await modelMenu.isVisible().catch(() => false),
-        { timeoutMs: 5000 }
-      )
-    }
-    return modelMenu
-  }
-
-  private async closeModelMenu(): Promise<void> {
-    const modelMenu = this.page.locator(GEMINI_MODEL_MENU_SELECTOR).last()
-    if (await modelMenu.isVisible().catch(() => false)) {
-      await this.page.locator(GEMINI_MODEL_TRIGGER_SELECTOR).click()
-      await this.waitForModelMenuClosed()
-    }
-  }
-
-  private async waitForModelMenuClosed(): Promise<void> {
-    const modelMenu = this.page.locator(GEMINI_MODEL_MENU_SELECTOR).last()
-    await waitAsync(
-      async () => !(await modelMenu.isVisible().catch(() => false)),
-      { timeoutMs: 5000 }
-    )
-  }
-
-  private async getModelExtensionItem(
-    modelMenu: Locator,
-    modelIndex: number
-  ): Promise<Locator> {
-    const extensionItems = modelMenu.locator(GEMINI_MODEL_ITEM_SELECTOR)
-    const extensionIndex = (await extensionItems.count()) - 1
-    if (extensionIndex <= modelIndex) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        'Gemini model extension toggle is unavailable.'
-      )
-    }
-    return extensionItems.nth(extensionIndex)
-  }
-
-  private async isModelExtensionItemSelected(item: Locator): Promise<boolean> {
-    const ariaChecked = await item
-      .getAttribute('aria-checked')
-      .catch(() => null)
-    if (ariaChecked !== null) {
-      return ariaChecked === 'true'
-    }
-    const ariaSelected = await item
-      .getAttribute('aria-selected')
-      .catch(() => null)
-    if (ariaSelected !== null) {
-      return ariaSelected === 'true'
-    }
-    const className = await item.getAttribute('class').catch(() => null)
-    return className === null ? false : /\b(selected|checked)\b/.test(className)
-  }
-
-  private getActionCapabilityButtons(): Locator {
-    return this.page.locator(GEMINI_CAPABILITY_ITEM_SELECTOR)
-  }
-
-  private getMoreToolsButton(): Locator {
-    return this.page.locator(GEMINI_MORE_TOOLS_TRIGGER_SELECTOR).first()
-  }
-
-  private getSelectedActionCapabilityButton(): Locator {
-    return this.page.locator(GEMINI_SELECTED_CAPABILITY_SELECTOR).first()
-  }
-
-  private async openActionCapabilityMenu(action: string): Promise<void> {
-    const buttons = this.getActionCapabilityButtons()
-    if ((await buttons.count().catch(() => 0)) > 0) {
-      return
-    }
-
-    const trigger = this.getUploadTrigger()
-    if ((await trigger.count().catch(() => 0)) === 0) {
-      throw new ProviderAdapterError(
-        action,
-        `Gemini capability trigger not found: ${GEMINI_UPLOAD_TRIGGER_SELECTOR}`,
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'gemini_capability_trigger_missing',
-        }
-      )
-    }
-
-    await trigger.click()
-    await waitAsync(async () => (await buttons.count().catch(() => 0)) > 0, {
-      timeoutMs: 5000,
-    })
-  }
-
-  private async expandMoreActionCapabilities(): Promise<void> {
-    const moreToolsButton = this.getMoreToolsButton()
-    if ((await moreToolsButton.count().catch(() => 0)) === 0) {
-      return
-    }
-    if (!(await moreToolsButton.isVisible().catch(() => false))) {
-      return
-    }
-    if (
-      (await moreToolsButton
-        .getAttribute('aria-disabled')
-        .catch(() => null)) === 'true'
-    ) {
-      return
-    }
-
-    const previousCount = await this.getActionCapabilityButtons()
-      .count()
-      .catch(() => 0)
-    await moreToolsButton.click()
-    await waitAsync(
-      async () =>
-        (await this.getActionCapabilityButtons()
-          .count()
-          .catch(() => 0)) > previousCount,
-      {
-        timeoutMs: 5000,
-      }
-    ).catch(() => {})
-  }
-
-  private async closeActionCapabilityMenu(): Promise<void> {
-    if (
-      (await this.getActionCapabilityButtons()
-        .count()
-        .catch(() => 0)) === 0
-    ) {
-      return
-    }
-
-    await this.getUploadTrigger().click()
-  }
-
-  private async readActionCapabilityName(
-    button: Locator
-  ): Promise<GeminiActionCapability | null> {
-    const icon = button.locator(GEMINI_CAPABILITY_ICON_SELECTOR).first()
-    const name = await icon.getAttribute('data-mat-icon-name').catch(() => null)
-    if (typeof name !== 'string' || !name.trim()) {
-      return null
-    }
-    return name.trim()
   }
 
   public async listActionCapabilities(): Promise<GeminiActionCapabilityInfo[]> {
     return await this.wrapAdapterActionErrorAsync(
       'listCapabilities',
-      async () => {
-        await this.openActionCapabilityMenu('listCapabilities')
-        await this.expandMoreActionCapabilities()
-        try {
-          const buttons = this.getActionCapabilityButtons()
-          const count = await buttons.count().catch(() => 0)
-          const capabilities: GeminiActionCapabilityInfo[] = []
-          const seen = new Set<string>()
-          for (let index = 0; index < count; index += 1) {
-            const button = buttons.nth(index)
-            const name = await this.readActionCapabilityName(button)
-            if (name === null || seen.has(name)) {
-              continue
-            }
-            seen.add(name)
-            const isDisabled =
-              (await button.getAttribute('aria-disabled').catch(() => null)) ===
-              'true'
-            capabilities.push({
-              name,
-              state: isDisabled ? 'disabled' : 'available',
-            })
-          }
-          return capabilities
-        } finally {
-          await this.closeActionCapabilityMenu()
-        }
-      }
+      async () => await this.ui.listActionCapabilities()
     )
   }
 
   public async clearActionCapability(): Promise<void> {
-    await this.wrapAdapterActionErrorAsync('clearCapability', async () => {
-      const selectedButton = this.getSelectedActionCapabilityButton()
-      if ((await selectedButton.count().catch(() => 0)) === 0) {
-        return
-      }
-      if (!(await selectedButton.isVisible().catch(() => false))) {
-        return
-      }
-      await selectedButton.click()
-    })
+    await this.wrapAdapterActionErrorAsync(
+      'clearCapability',
+      async () => await this.ui.clearActionCapability()
+    )
   }
 
   public async selectActionCapability(
@@ -675,81 +323,18 @@ export class GeminiAdapter extends ProviderAdapter {
   ): Promise<GeminiActionCapabilityState> {
     return await this.wrapAdapterActionErrorAsync(
       'selectCapability',
-      async () => {
-        await this.clearActionCapability()
-        await this.openActionCapabilityMenu('selectCapability')
-        await this.expandMoreActionCapabilities()
-
-        const buttons = this.getActionCapabilityButtons()
-        const count = await buttons.count().catch(() => 0)
-        for (let index = 0; index < count; index += 1) {
-          const button = buttons.nth(index)
-          if ((await this.readActionCapabilityName(button)) !== capability) {
-            continue
-          }
-
-          const isDisabled =
-            (await button.getAttribute('aria-disabled').catch(() => null)) ===
-            'true'
-          if (isDisabled) {
-            return 'disabled'
-          }
-
-          await button.click()
-          return 'selected'
-        }
-        return 'unavailable'
-      }
+      async () => await this.ui.selectActionCapability(capability)
     )
   }
 
-  public async attachFile(path: string | readonly string[]) {
-    await this.wrapAdapterActionErrorAsync('attachFile', async () => {
-      const paths = normalizeToPathArray(path)
-      const uploadTrigger = this.getUploadTrigger()
-      const uploadAction = this.page
-        .locator(GEMINI_UPLOAD_ACTION_SELECTOR)
-        .first()
-
-      if ((await uploadTrigger.count()) === 0) {
-        throw new ProviderAdapterError(
-          'attachFile',
-          `Gemini upload trigger not found: ${GEMINI_UPLOAD_TRIGGER_SELECTOR}`,
-          {
-            kind: 'ui',
-            recovery: 'none',
-            retryable: false,
-            maxAttempts: 1,
-            detailCode: 'gemini_upload_trigger_missing',
-          }
-        )
-      }
-
-      await uploadTrigger.click()
-
-      if ((await uploadAction.count()) === 0) {
-        throw new ProviderAdapterError(
-          'attachFile',
-          `Gemini upload action not found: ${GEMINI_UPLOAD_ACTION_SELECTOR}`,
-          {
-            kind: 'ui',
-            recovery: 'none',
-            retryable: false,
-            maxAttempts: 1,
-            detailCode: 'gemini_upload_action_missing',
-          }
-        )
-      }
-
-      const [fileChooser] = await Promise.all([
-        this.page.waitForEvent('filechooser', { timeout: 5000 }),
-        uploadAction.click(),
-      ])
-      await fileChooser.setFiles(paths)
-    })
+  public async attachFile(path: string | readonly string[]): Promise<void> {
+    await this.wrapAdapterActionErrorAsync(
+      'attachFile',
+      async () => await this.ui.attachFile(path)
+    )
   }
 
-  public async attachImage(path: string | readonly string[]) {
+  public async attachImage(path: string | readonly string[]): Promise<void> {
     await this.attachFile(path)
   }
 
@@ -801,56 +386,8 @@ export class GeminiAdapter extends ProviderAdapter {
     return [...results].reverse().find((item) => item.text.trim()) ?? null
   }
 
-  private getMicrophoneButton() {
-    return this.page.locator(GEMINI_MICROPHONE_BUTTON_SELECTOR)
-  }
-
   public override async stopGeneration(): Promise<void> {
-    const stopButton = this.page
-      .locator(`[data-test-id="${GEMINI_SEND_BUTTON_CONTAINER_TEST_ID}"]`)
-      .locator(
-        'xpath=./gem-icon-button[contains(concat(" ", normalize-space(@class), " "), " send-button ") and contains(concat(" ", normalize-space(@class), " "), " stop ")]'
-      )
-      .locator('xpath=./button')
-
-    await this.clickLocatorIfReady(stopButton)
-  }
-
-  private async waitForMicrophoneReady(
-    action: 'restore' | 'submit',
-    timeoutMs: number | null,
-    signal?: AbortSignal
-  ): Promise<void> {
-    await waitAsync(
-      async () => {
-        const microphoneButtons = this.getMicrophoneButton()
-        if ((await microphoneButtons.count().catch(() => 0)) !== 1) return false
-        const microphoneButton = microphoneButtons.first()
-        return (
-          (await microphoneButton.isVisible().catch(() => false)) &&
-          (await microphoneButton.isEnabled().catch(() => false))
-        )
-      },
-      {
-        timeoutMs,
-        signal,
-        onTimeout: async () => {
-          throw new ProviderAdapterError(
-            action,
-            action === 'restore'
-              ? 'Gemini did not become ready after loading.'
-              : 'Gemini finished responding, but the page did not become ready for the next message.',
-            {
-              kind: 'ui',
-              recovery: 'none',
-              retryable: false,
-              maxAttempts: 1,
-              detailCode: 'gemini_microphone_button_missing',
-            }
-          )
-        },
-      }
-    )
+    await this.ui.stopGeneration()
   }
 
   public async submit(options: AbortOptions = {}): Promise<string> {
@@ -858,11 +395,7 @@ export class GeminiAdapter extends ProviderAdapter {
       return await this.wrapAdapterActionErrorAsync('submit', async () => {
         const { signal } = options
         throwIfAborted(signal)
-        const sendButton = this.page
-          .locator(
-            `[data-test-id="${GEMINI_SEND_BUTTON_CONTAINER_TEST_ID}"] button`
-          )
-          .first()
+        const sendButton = this.ui.getSendButton()
         // wait sendable
         await waitAsync(
           async () =>
@@ -1055,7 +588,7 @@ export class GeminiAdapter extends ProviderAdapter {
           )
         }
         await this.emitSubmitText(this.lastParsedResponse.text)
-        await this.waitForMicrophoneReady(
+        await this.ui.waitForComposerReady(
           'submit',
           this.getSubmitResponseTimeoutMs(),
           signal

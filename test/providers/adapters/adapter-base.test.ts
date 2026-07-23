@@ -116,7 +116,9 @@ class ThrowingInitAdapter extends ProviderAdapter<
     return 'https://example.com/thread'
   }
 
-  public async changeModel(_model: string) {
+  public async changeModel(
+    _model: Parameters<ProviderAdapter['changeModel']>[0]
+  ) {
     return undefined
   }
 
@@ -167,7 +169,9 @@ class ThrowingAuthInitAdapter extends ProviderAdapter<
     return 'https://example.com/thread'
   }
 
-  public async changeModel(_model: string) {
+  public async changeModel(
+    _model: Parameters<ProviderAdapter['changeModel']>[0]
+  ) {
     return undefined
   }
 
@@ -265,7 +269,9 @@ class PollingAdapter extends ProviderAdapter<ProviderPage, ProviderCdpSession> {
     return 'https://example.com/thread'
   }
 
-  public async changeModel(_model: string) {
+  public async changeModel(
+    _model: Parameters<ProviderAdapter['changeModel']>[0]
+  ) {
     return undefined
   }
 
@@ -341,7 +347,9 @@ class PageLifecycleAdapter extends ProviderAdapter<CloseAwarePage> {
     return 'https://example.com/thread'
   }
 
-  public async changeModel(_model: string): Promise<void> {}
+  public async changeModel(
+    _model: Parameters<ProviderAdapter['changeModel']>[0]
+  ): Promise<void> {}
 
   public async attachText(_text: string): Promise<void> {}
 
@@ -398,7 +406,9 @@ class ResponseTimingAdapter extends ProviderAdapter {
     return 'https://example.com/thread'
   }
 
-  public async changeModel(_model: string) {
+  public async changeModel(
+    _model: Parameters<ProviderAdapter['changeModel']>[0]
+  ) {
     return undefined
   }
 
@@ -487,7 +497,9 @@ class RetryTransactionAdapter extends ProviderAdapter {
     return 'https://example.com/thread'
   }
 
-  public async changeModel(_model: string): Promise<void> {}
+  public async changeModel(
+    _model: Parameters<ProviderAdapter['changeModel']>[0]
+  ): Promise<void> {}
 
   public async attachText(_text: string): Promise<void> {}
 

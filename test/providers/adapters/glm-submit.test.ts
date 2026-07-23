@@ -7,14 +7,20 @@ import {
   ProviderAdapterUnsupportedError,
 } from '../../../src/providers/adapters/adapter-base.ts'
 import { GlmAdapter } from '../../../src/providers/adapters/adapter-glm.ts'
-import {
-  getProviderDefinition,
-  joinCssLocatorCandidates,
-} from '../../../src/providers/provider-definition-pack.ts'
+import { joinCssLocatorCandidates } from '../../../src/providers/ui/provider-ui.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 const GLM_COMPLETION_URL = 'https://chat.z.ai/api/v2/chat/completions'
-const GLM_LOCATORS = getProviderDefinition('glm').locators
+const GLM_LOCATORS = {
+  modelTrigger: ['button[id^="model-selector-"]'],
+  modelMenu: ['[data-dropdown-menu-content]'],
+  modelItem: ['button[data-value]'],
+  advancedSearchSwitch: [
+    '[data-tooltip-content] button[role="switch"][data-switch-root]',
+  ],
+  thinkingToggle: ['button[data-autothink]'],
+  searchToggle: ['button[data-active]:has(svg[viewBox^="0 0 15"])'],
+} as const
 
 type GlmAdapterHarness = Pick<GlmAdapter, keyof GlmAdapter> & {
   page: unknown
@@ -286,7 +292,7 @@ test('GlmAdapter changes model through data-value menu items', async () => {
   const page = createGlmPage({ modelItems })
   adapter.page = page
 
-  await adapter.changeModel('2')
+  await adapter.changeModel({ key: 'glm-5.1', option: null })
 
   assert.equal(page.modelTrigger.clicks, 1)
   assert.deepEqual(
@@ -294,10 +300,13 @@ test('GlmAdapter changes model through data-value menu items', async () => {
     [0, 1, 0]
   )
   await assert.rejects(
-    adapter.changeModel('unknown'),
+    adapter.changeModel({ key: 'unknown', option: null }),
     /GLM does not support model "unknown"\./
   )
-  await assert.rejects(adapter.changeModel('4'), /GLM does not have model 4\./)
+  await assert.rejects(
+    adapter.changeModel({ key: 'glm-5v-turbo', option: null }),
+    /GLM does not have model "glm-5v-turbo"\./
+  )
 })
 
 test('GlmAdapter rejects unscoped model options from multiple groups', async () => {
@@ -307,7 +316,10 @@ test('GlmAdapter rejects unscoped model options from multiple groups', async () 
     globalModelParentCount: 2,
   })
 
-  await assert.rejects(adapter.changeModel('1'), /options were ambiguous/)
+  await assert.rejects(
+    adapter.changeModel({ key: 'glm-5.2', option: null }),
+    /options were ambiguous/
+  )
 })
 
 test('GlmAdapter reads and sets thinking/search toggle states', async () => {
@@ -473,6 +485,7 @@ function createGlmPage({
         return {
           count: async () => (uploadButton === undefined ? 0 : 1),
           first: () => uploadButton ?? missingButton,
+          nth: () => uploadButton ?? missingButton,
         }
       }
       if (selector === joinCssLocatorCandidates(GLM_LOCATORS.modelTrigger)) {
@@ -506,26 +519,27 @@ function createGlmPage({
         return {
           count: async () => (stopButton === undefined ? 0 : 1),
           first: () => stopButton ?? missingButton,
+          nth: () => stopButton ?? missingButton,
         }
       }
       if (selector === joinCssLocatorCandidates(GLM_LOCATORS.thinkingToggle)) {
         return {
           count: async () => (thinkingButton === undefined ? 0 : 1),
           first: () => thinkingButton ?? missingButton,
+          nth: () => thinkingButton ?? missingButton,
         }
       }
       if (selector === joinCssLocatorCandidates(GLM_LOCATORS.searchToggle)) {
         return {
           count: async () => (searchButton === undefined ? 0 : 1),
           first: () => searchButton ?? missingButton,
+          nth: () => searchButton ?? missingButton,
         }
       }
       if (
         selector === joinCssLocatorCandidates(GLM_LOCATORS.advancedSearchSwitch)
       ) {
-        return {
-          first: () => advancedSearchSwitch ?? missingButton,
-        }
+        return createSingleLocator(advancedSearchSwitch ?? missingButton)
       }
       throw new Error(`Unexpected selector: ${selector}`)
     },
@@ -563,6 +577,7 @@ function createSingleLocator<T>(target: T) {
     ...target,
     count: async () => 1,
     first: () => target,
+    nth: () => target,
   }
 }
 

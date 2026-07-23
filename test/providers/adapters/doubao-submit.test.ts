@@ -3,13 +3,33 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { DoubaoAdapter } from '../../../src/providers/adapters/adapter-doubao.ts'
-import {
-  getProviderDefinition,
-  joinCssLocatorCandidates,
-} from '../../../src/providers/provider-definition-pack.ts'
+import { joinCssLocatorCandidates } from '../../../src/providers/ui/provider-ui.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
-const DOUBAO_LOCATORS = getProviderDefinition('doubao').locators
+const DOUBAO_LOCATORS = {
+  modelTrigger: [
+    'button[data-dbx-name="button"]:has(img[src*="mode_"])',
+    'button[data-dbx-name="button"][aria-haspopup="menu"]',
+    'button[data-dbx-name="button"]:has(svg path[d^="M3.70898 9.23633"])',
+  ],
+  modelMenu: [
+    'div[data-slot="dropdown-menu-content"]',
+    '[role="menu"]',
+    'div[data-radix-menu-content][data-state="open"]',
+  ],
+  capabilityToolbar: [
+    '[style*="--chat-input-tool-button-overflow-list-gap"]',
+    'div[data-testid="chat-input-action-bar"]',
+  ],
+  selectedCapability: [
+    '[class*="text-g-exit-skill-btn-text"][data-value]',
+    'div[data-testid="chat-input-selected-skill"]',
+  ],
+  capabilityOverflowPopover: [
+    '[data-radix-popper-content-wrapper] [role="dialog"][data-state="open"]',
+    'div[data-radix-popper-content-wrapper]',
+  ],
+} as const
 const DOUBAO_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
   DOUBAO_LOCATORS.modelTrigger,
   ':visible'
@@ -693,7 +713,7 @@ test('DoubaoAdapter changes model through the dropdown menu content', async () =
     modelMenu,
   })
 
-  await adapter.changeModel('2')
+  await adapter.changeModel({ key: 'expert', option: null })
 
   assert.equal(modelMenu.triggerClicks, 1)
   assert.deepEqual(
@@ -713,7 +733,7 @@ test('DoubaoAdapter changes model through role menu items', async () => {
     modelMenu,
   })
 
-  await adapter.changeModel('3')
+  await adapter.changeModel({ key: 'office-turbo', option: null })
 
   assert.equal(modelMenu.triggerClicks, 1)
   assert.deepEqual(
@@ -729,7 +749,10 @@ test('DoubaoAdapter rejects ambiguous visible model selectors', async () => {
     modelTriggerCount: 2,
   })
 
-  await assert.rejects(adapter.changeModel('1'), /missing or ambiguous/)
+  await assert.rejects(
+    adapter.changeModel({ key: 'quick', option: null }),
+    /missing or ambiguous/
+  )
 })
 
 test('DoubaoAdapter rejects unsupported model names', async () => {
@@ -737,16 +760,12 @@ test('DoubaoAdapter rejects unsupported model names', async () => {
   adapter.page = createDoubaoPage(createSendButton())
 
   await assert.rejects(
-    adapter.changeModel('unknown'),
+    adapter.changeModel({ key: 'unknown', option: null }),
     /Doubao does not support model "unknown"\./
   )
   await assert.rejects(
-    adapter.changeModel('turbo'),
-    /Doubao does not support model "turbo"\./
-  )
-  await assert.rejects(
-    adapter.changeModel('expert'),
-    /Doubao does not support model "expert"\./
+    adapter.changeModel({ key: 'quick', option: 'extended' }),
+    /Doubao model "quick" does not support option "extended"\./
   )
 
   const modelMenu = createModelMenu(2)
@@ -754,7 +773,7 @@ test('DoubaoAdapter rejects unsupported model names', async () => {
     modelMenu,
   })
   await assert.rejects(
-    adapter.changeModel('3'),
+    adapter.changeModel({ key: 'office-turbo', option: null }),
     /Doubao does not have model 3\./
   )
 })

@@ -16,67 +16,21 @@ import {
 } from '../../runtime/runtime-cancellation.ts'
 import { retryAsync } from '../../shared/retry.ts'
 import { waitAsync } from '../../shared/wait.ts'
-import type { Locator } from 'playwright'
 import {
   emptyHistoryResult,
   parseDoubaoHistory,
 } from '../conversation-history.ts'
+import type { ResolvedProviderModel } from '../provider-model-catalog.ts'
 import {
-  getProviderDefinition,
-  joinCssLocatorCandidates,
-} from '../provider-definition-pack.ts'
+  DoubaoUi,
+  type DoubaoActionCapability,
+  type DoubaoActionCapabilityInfo,
+  type DoubaoActionCapabilityState,
+} from '../ui/doubao/doubao-ui.ts'
 
 const DOUBAO_CHAT_URL = 'https://www.doubao.com/chat'
 const DOUBAO_CHAT_COMPLETION_URL = 'https://www.doubao.com/chat/completion'
-const DOUBAO_LOCATORS = getProviderDefinition('doubao').locators
-const DOUBAO_UPLOAD_TRIGGER_SELECTOR = [
-  'button[data-dbx-name="button"]:has(svg path[d^="M12.0005 2.25"])',
-  'button[data-dbx-name="button"]:has(svg path[d^="M12.0005 2.44971"])',
-].join(', ')
-const DOUBAO_FILE_INPUT_SELECTOR = 'input[type="file"]'
-const DOUBAO_READY_CONTAINER_SELECTOR = 'div[class*="container-YCWnMI"]'
-const DOUBAO_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
-  DOUBAO_LOCATORS.modelTrigger,
-  ':visible'
-)
-const DOUBAO_MODEL_MENU_SELECTOR = joinCssLocatorCandidates(
-  DOUBAO_LOCATORS.modelMenu,
-  ':visible'
-)
-const DOUBAO_TOOLBAR_SELECTOR = joinCssLocatorCandidates(
-  DOUBAO_LOCATORS.capabilityToolbar
-)
-const DOUBAO_SELECTED_SKILL_SELECTOR = joinCssLocatorCandidates(
-  DOUBAO_LOCATORS.selectedCapability
-)
-const DOUBAO_OVERFLOW_POPOVER_SELECTOR = joinCssLocatorCandidates(
-  DOUBAO_LOCATORS.capabilityOverflowPopover
-)
-const DOUBAO_DESKTOP_PROMOTION_CLOSE_SELECTOR =
-  'xpath=//img[contains(@src, "/obj/flow-doubao/samantha/jianti.png")]/preceding-sibling::button[@type="button"][1]'
-const DOUBAO_DESKTOP_PROMOTION_DISMISS_TIMEOUT_MS = 5000
 const DOUBAO_HISTORY_POLL_MS = 100
-const DOUBAO_STOP_ICON_PATH_PREFIX = 'M12 0.5C18.3513 0.5 23.5 5.64873 23.5 12'
-const DOUBAO_STOP_BUTTON_SELECTORS = [
-  `div.break-btn-fISNgC:has(svg[viewBox^="0 0 24"] path[d^="${DOUBAO_STOP_ICON_PATH_PREFIX}"])`,
-]
-
-export type DoubaoActionCapability = string
-
-export type DoubaoActionCapabilityState =
-  | 'available'
-  | 'selected'
-  | 'disabled'
-  | 'unavailable'
-
-export interface DoubaoActionCapabilityInfo {
-  name: string
-  state: DoubaoActionCapabilityState
-}
-
-const DOUBAO_DISABLED_ACTION_CAPABILITIES = new Set<DoubaoActionCapability>([
-  'meeting_record',
-])
 
 type DoubaoParsedResponse = {
   conversationId?: string
@@ -91,59 +45,9 @@ type DoubaoStreamError = {
   message: string
 }
 
-interface PageWithEvaluate {
-  evaluate(fn: (() => unknown) | string): Promise<unknown>
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
-
-function isUnknownArray(value: unknown): value is unknown[] {
-  return Array.isArray(value)
-}
-
-function hasPageEvaluate(value: unknown): value is PageWithEvaluate {
-  return isRecord(value) && typeof value.evaluate === 'function'
-}
-
-const DOUBAO_ACTION_BAR_INPUT_ITEMS_SOURCE = String.raw`(() => {
-  let requireModule = null
-  ;(self.__LOADABLE_LOADED_CHUNKS__ = self.__LOADABLE_LOADED_CHUNKS__ || []).push([
-    ['portal_action_bar_state_' + Date.now()],
-    {},
-    (runtimeRequire) => {
-      requireModule = runtimeRequire
-    },
-  ])
-
-  const storeMod = requireModule?.(908913)
-  const state =
-    storeMod?.GX?.('chatInputStore') ||
-    storeMod?.Wp?.('chatInputStore')?.getState?.()
-  if (!state || !Array.isArray(state.inputSkills)) {
-    return []
-  }
-
-  const inputItems = []
-  for (const item of state.inputSkills) {
-    const skillType = item?.skill_type
-    const skill = state.skillMap?.[skillType]
-    const configKey = skill?.config_key
-    if (typeof configKey !== 'string' || !configKey.trim()) {
-      continue
-    }
-
-    const name = skill?.show_name || skill?.name_v2 || skill?.name || configKey
-    inputItems.push({
-      configKey: configKey.trim(),
-      name,
-      skillKey: skill?.skill_key,
-    })
-  }
-
-  return inputItems
-})()`
 
 function readDoubaoConversationIdFromUrl(
   value: string | null | undefined
@@ -163,13 +67,6 @@ function readDoubaoConversationIdFromUrl(
   }
 }
 
-function normalizeToPathArray(path: string | readonly string[]): string[] {
-  if (typeof path === 'string') {
-    return [path]
-  }
-  return [...path]
-}
-
 export class DoubaoAdapter extends ProviderAdapter {
   protected override get composerLimitProvider() {
     return 'doubao' as const
@@ -177,343 +74,25 @@ export class DoubaoAdapter extends ProviderAdapter {
 
   private lastParsedResponse!: DoubaoParsedResponse | null
 
-  private getSendButton() {
-    return this.page.locator('button[class*="bg-g-send-msg-btn-bg"]').last()
-  }
-
-  private getReadyContainer() {
-    return this.page.locator(DOUBAO_READY_CONTAINER_SELECTOR)
-  }
-
-  private getToolbar() {
-    return this.page.locator(DOUBAO_TOOLBAR_SELECTOR).first()
-  }
-
-  private getSelectedSkillChip() {
-    return this.page.locator(DOUBAO_SELECTED_SKILL_SELECTOR).first()
-  }
-
-  private getOverflowTrigger() {
-    return this.getToolbar()
-      .locator(
-        'div[aria-haspopup="dialog"][aria-controls][data-state] > button[data-dbx-name="button"]'
-      )
-      .first()
-  }
-
-  private getOverflowPopover() {
-    return this.page.locator(DOUBAO_OVERFLOW_POPOVER_SELECTOR).first()
-  }
-
-  private async dismissDesktopPromotion(
-    action: 'attachText' | 'submit',
-    signal?: AbortSignal
-  ): Promise<void> {
-    const closeButton = this.page
-      .locator(DOUBAO_DESKTOP_PROMOTION_CLOSE_SELECTOR)
-      .first()
-    if (!(await closeButton.isVisible().catch(() => false))) {
-      return
-    }
-
-    throwIfAborted(signal)
-    try {
-      await closeButton.click({
-        timeout: DOUBAO_DESKTOP_PROMOTION_DISMISS_TIMEOUT_MS,
-      })
-    } catch (error) {
-      throw new ProviderAdapterError(
-        action,
-        'Doubao desktop promotion is visible but could not be dismissed.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'doubao_desktop_promotion_dismiss_failed',
-          cause: error,
-        }
-      )
-    }
-
-    await waitAsync(
-      async () => !(await closeButton.isVisible().catch(() => false)),
-      {
-        timeoutMs: DOUBAO_DESKTOP_PROMOTION_DISMISS_TIMEOUT_MS,
-        signal,
-        onTimeout: async () => {
-          throw new ProviderAdapterError(
-            action,
-            'Doubao desktop promotion is visible but could not be dismissed.',
-            {
-              kind: 'ui',
-              recovery: 'none',
-              retryable: false,
-              maxAttempts: 1,
-              detailCode: 'doubao_desktop_promotion_dismiss_failed',
-            }
-          )
-        },
-      }
-    )
-  }
-
-  private getVisibleActionButtons() {
-    return this.getToolbar().locator(
-      'button[data-component-type="skill-item"][data-input-engine-action-source="actionbar"]'
-    )
-  }
-
-  private getOverflowActionButtons() {
-    return this.getOverflowPopover().locator(
-      'button[data-input-engine-action-source="actionbar"]'
-    )
-  }
-
-  private readActionCapabilityNameFromInputItem(
-    value: unknown
-  ): DoubaoActionCapability | null {
-    if (!isRecord(value)) {
-      return null
-    }
-
-    return typeof value.configKey === 'string' && value.configKey.trim()
-      ? value.configKey.trim()
-      : null
-  }
-
-  private normalizeActionCapabilityOrder(
-    values: readonly unknown[]
-  ): DoubaoActionCapability[] {
-    const order: DoubaoActionCapability[] = []
-    for (const value of values) {
-      const capability = this.readActionCapabilityNameFromInputItem(value)
-      if (capability && !order.includes(capability)) {
-        order.push(capability)
-      }
-    }
-    return order
-  }
-
-  private async readActionBarInputItems(): Promise<readonly unknown[]> {
-    const page: unknown = this.page
-    if (!hasPageEvaluate(page)) {
-      throw new ProviderAdapterError(
-        'selectCapability',
-        'Doubao action bar data is not available on this page.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'doubao_action_bar_data_unavailable',
-        }
-      )
-    }
-
-    let inputItems: unknown
-    try {
-      inputItems = await page.evaluate(DOUBAO_ACTION_BAR_INPUT_ITEMS_SOURCE)
-    } catch (error) {
-      throw new ProviderAdapterError(
-        'selectCapability',
-        'Doubao action bar state could not be read.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'doubao_action_bar_store_read_failed',
-          cause: error,
-        }
-      )
-    }
-
-    if (!isUnknownArray(inputItems) || inputItems.length === 0) {
-      throw new ProviderAdapterError(
-        'selectCapability',
-        'Doubao action bar state is unavailable.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'doubao_action_bar_store_missing',
-        }
-      )
-    }
-
-    return inputItems
-  }
-
-  private async readActionCapabilityOrder(): Promise<DoubaoActionCapability[]> {
-    const inputItems = await this.readActionBarInputItems()
-    const order = this.normalizeActionCapabilityOrder(inputItems)
-    if (order.length === 0) {
-      throw new ProviderAdapterError(
-        'selectCapability',
-        'Doubao action bar state does not contain usable configKey values.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'doubao_action_bar_store_config_keys_missing',
-        }
-      )
-    }
-    return order
+  private get ui(): DoubaoUi {
+    return new DoubaoUi(this.page)
   }
 
   public async listActionCapabilities(): Promise<DoubaoActionCapabilityInfo[]> {
-    const order = await this.readActionCapabilityOrder()
-    return order.map((capability) => ({
-      name: capability,
-      state: DOUBAO_DISABLED_ACTION_CAPABILITIES.has(capability)
-        ? 'disabled'
-        : 'available',
-    }))
-  }
-
-  private async getVisibleActionButton(
-    capability: DoubaoActionCapability,
-    order: readonly DoubaoActionCapability[]
-  ): Promise<Locator | null> {
-    const capabilityIndex = order.indexOf(capability)
-    if (capabilityIndex < 0) {
-      return null
-    }
-
-    const buttons = this.getVisibleActionButtons()
-    const count = await buttons.count().catch(() => 0)
-    if (capabilityIndex >= count) {
-      return null
-    }
-
-    return buttons.nth(capabilityIndex)
-  }
-
-  private async getOverflowActionButton(
-    capability: DoubaoActionCapability,
-    order: readonly DoubaoActionCapability[]
-  ): Promise<Locator | null> {
-    const capabilityIndex = order.indexOf(capability)
-    if (capabilityIndex < 0 || !(await this.ensureOverflowPopoverOpen())) {
-      return null
-    }
-
-    const visibleCount = await this.getVisibleActionButtons()
-      .count()
-      .catch(() => 0)
-    const overflowIndex = capabilityIndex - visibleCount
-    if (overflowIndex < 0) {
-      return null
-    }
-
-    const buttons = this.getOverflowActionButtons()
-    const overflowCount = await buttons.count().catch(() => 0)
-    if (overflowIndex >= overflowCount) {
-      return null
-    }
-
-    return buttons.nth(overflowIndex)
-  }
-
-  private async ensureOverflowPopoverOpen(): Promise<boolean> {
-    const popover = this.getOverflowPopover()
-    if (await popover.isVisible().catch(() => false)) {
-      return true
-    }
-
-    const trigger = this.getOverflowTrigger()
-    if ((await trigger.count().catch(() => 0)) === 0) {
-      return false
-    }
-
-    await trigger.click()
-    await waitAsync(async () => await popover.isVisible().catch(() => false), {
-      timeoutMs: 5000,
-    })
-    return true
-  }
-
-  private async openOverflowPopoverIfPresent(): Promise<void> {
-    if (
-      await this.getOverflowPopover()
-        .isVisible()
-        .catch(() => false)
-    ) {
-      return
-    }
-
-    const trigger = this.getOverflowTrigger()
-    if ((await trigger.count().catch(() => 0)) === 0) {
-      return
-    }
-
-    await trigger.click()
-    await waitAsync(
-      async () =>
-        await this.getOverflowPopover()
-          .isVisible()
-          .catch(() => false),
-      {
-        timeoutMs: 5000,
-      }
-    )
-  }
-
-  private async cancelSelectedActionCapability(): Promise<void> {
-    const selectedSkill = this.getSelectedSkillChip()
-    if ((await selectedSkill.count().catch(() => 0)) === 0) {
-      return
-    }
-
-    await selectedSkill.locator('svg').locator('..').click()
-  }
-
-  private async clickActionCapabilityButton(
-    capability: DoubaoActionCapability,
-    order: readonly DoubaoActionCapability[]
-  ): Promise<boolean> {
-    const visibleButton = await this.getVisibleActionButton(capability, order)
-    if (visibleButton !== null) {
-      await visibleButton.click()
-      return true
-    }
-
-    const overflowButton = await this.getOverflowActionButton(capability, order)
-    if (overflowButton !== null) {
-      await overflowButton.click()
-      return true
-    }
-
-    return false
+    return await this.ui.listActionCapabilities()
   }
 
   public async getActionCapabilityState(
     capability: DoubaoActionCapability
   ): Promise<DoubaoActionCapabilityState> {
-    const order = await this.readActionCapabilityOrder()
-    if (DOUBAO_DISABLED_ACTION_CAPABILITIES.has(capability)) {
-      return 'disabled'
-    }
-
-    if ((await this.getVisibleActionButton(capability, order)) !== null) {
-      return 'available'
-    }
-
-    if ((await this.getOverflowActionButton(capability, order)) !== null) {
-      return 'available'
-    }
-
-    return 'unavailable'
+    return await this.ui.getActionCapabilityState(capability)
   }
 
   public async clearActionCapability(): Promise<void> {
-    await this.wrapAdapterActionErrorAsync('clearCapability', async () => {
-      await this.cancelSelectedActionCapability()
-    })
+    await this.wrapAdapterActionErrorAsync(
+      'clearCapability',
+      async () => await this.ui.clearActionCapability()
+    )
   }
 
   public async selectActionCapability(
@@ -521,58 +100,7 @@ export class DoubaoAdapter extends ProviderAdapter {
   ): Promise<DoubaoActionCapabilityState> {
     return await this.wrapAdapterActionErrorAsync(
       'selectCapability',
-      async () => {
-        const order = await this.readActionCapabilityOrder()
-        if (DOUBAO_DISABLED_ACTION_CAPABILITIES.has(capability)) {
-          return 'disabled'
-        }
-
-        await this.cancelSelectedActionCapability()
-
-        await this.openOverflowPopoverIfPresent()
-
-        if (await this.clickActionCapabilityButton(capability, order)) {
-          return 'selected'
-        }
-
-        return 'unavailable'
-      }
-    )
-  }
-
-  private async waitForReadyContainer(
-    action: 'restore' | 'submit',
-    timeoutMs: number | null,
-    signal?: AbortSignal
-  ): Promise<void> {
-    await waitAsync(
-      async () => {
-        const readyContainers = this.getReadyContainer()
-        if ((await readyContainers.count().catch(() => 0)) !== 1) return false
-        return await readyContainers
-          .first()
-          .isVisible()
-          .catch(() => false)
-      },
-      {
-        timeoutMs,
-        signal,
-        onTimeout: async () => {
-          throw new ProviderAdapterError(
-            action,
-            action === 'restore'
-              ? 'Doubao did not become ready after loading.'
-              : 'Doubao finished responding, but the page did not become ready for the next message.',
-            {
-              kind: 'ui',
-              recovery: 'none',
-              retryable: false,
-              maxAttempts: 1,
-              detailCode: 'doubao_ready_container_missing',
-            }
-          )
-        },
-      }
+      async () => await this.ui.selectActionCapability(capability)
     )
   }
 
@@ -727,11 +255,7 @@ export class DoubaoAdapter extends ProviderAdapter {
           }
         )
       }
-      await this.waitForReadyContainer(
-        'restore',
-        this.getRestoreTimeoutMs(),
-        signal
-      )
+      await this.ui.waitForReady('restore', this.getRestoreTimeoutMs(), signal)
     } catch (error) {
       if (this.isRetryableError(error)) {
         throw new ProviderAdapterError(
@@ -779,22 +303,7 @@ export class DoubaoAdapter extends ProviderAdapter {
     const deadline = Date.now() + this.getHistoryLoadTimeoutMs()
     while (!state.result.complete && Date.now() < deadline) {
       throwIfAborted(signal)
-      const scrolled = await this.page
-        .evaluate(() => {
-          const elements = [
-            document.scrollingElement,
-            ...document.querySelectorAll('*'),
-          ]
-          let foundScrollable = false
-          for (const element of elements) {
-            if (!(element instanceof HTMLElement)) continue
-            if (element.scrollHeight <= element.clientHeight + 40) continue
-            foundScrollable = true
-            element.scrollTop = 0
-          }
-          return foundScrollable
-        })
-        .catch(() => false)
+      const scrolled = await this.ui.scrollHistoryToTop()
       if (!scrolled) break
 
       const previousBodyCount = state.bodyCount
@@ -830,158 +339,52 @@ export class DoubaoAdapter extends ProviderAdapter {
       return false
     }
 
-    const loginButtonVisible = await this.page
-      .locator('button.login-btn-header-CTKsn1')
-      .isVisible()
-      .catch(() => false)
-
-    return !loginButtonVisible
+    return await this.ui.isLoggedIn()
   }
 
-  public async changeModel(model: string): Promise<void> {
-    const modelNumber = Number(model.trim())
-    if (!Number.isSafeInteger(modelNumber) || modelNumber < 1) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `Doubao does not support model "${model}".`
-      )
-    }
-    const index = modelNumber - 1
-    const triggers = this.page.locator(DOUBAO_MODEL_TRIGGER_SELECTOR)
-    if ((await triggers.count()) !== 1) {
-      throw new ProviderAdapterError(
-        'changeModel',
-        'Doubao model selector was missing or ambiguous.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'doubao_model_trigger_invalid',
-        }
-      )
-    }
-    await triggers.first().click()
-
-    const modelMenus = this.page.locator(DOUBAO_MODEL_MENU_SELECTOR)
-    await waitAsync(async () => (await modelMenus.count().catch(() => 0)) > 0, {
-      timeoutMs: 5000,
-    })
-    if ((await modelMenus.count()) !== 1) {
-      throw new ProviderAdapterError(
-        'changeModel',
-        'Doubao model menu was ambiguous.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'doubao_model_menu_ambiguous',
-        }
-      )
-    }
-    const modelMenu = modelMenus.first()
-    const roleItems = modelMenu.locator('[role="menuitem"]')
-    const modelItems =
-      (await roleItems.count()) > 0
-        ? roleItems
-        : modelMenu.locator('xpath=./div')
-    if ((await modelItems.count()) <= index) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `Doubao does not have model ${modelNumber}.`
-      )
-    }
-    const target = modelItems.nth(index)
-    if ((await roleItems.count()) > 0) {
-      await target.click()
-    } else {
-      await target.locator('xpath=./div').click()
-    }
+  public async changeModel(model: ResolvedProviderModel): Promise<void> {
+    await this.ui.selectModel(model)
   }
 
-  public async attachText(text: string) {
-    await this.wrapAdapterActionErrorAsync('attachText', async () => {
-      await this.dismissDesktopPromotion('attachText')
-      const textarea = this.page.locator('textarea.semi-input-textarea').first()
-      if (await textarea.isVisible().catch(() => false)) {
-        await textarea.click()
-      } else {
-        await this.page.locator('div[role="textbox"]').first().click()
-      }
-      await this.page.keyboard.insertText(text)
-    })
+  public async attachText(text: string): Promise<void> {
+    await this.wrapAdapterActionErrorAsync(
+      'attachText',
+      async () => await this.ui.attachText(text)
+    )
   }
 
   protected override async prepareRetrySubmit(
     text: string,
     options: AbortOptions
   ): Promise<() => Promise<void>> {
-    const composer = () =>
-      this.page.locator('textarea.semi-input-textarea, div[role="textbox"]')
+    const controls = this.ui.getRetryLocators()
     return await this.prepareRetrySubmitText(text, options, {
       provider: 'Doubao',
-      isComposerReady: async () => await this.isRetryComposerReady(composer()),
+      isComposerReady: async () =>
+        await this.isRetryComposerReady(controls.composer),
       readComposerText: async () =>
-        await this.readRetryComposerText(composer()),
+        await this.readRetryComposerText(controls.composer),
       writeText: async () => await this.attachText(text),
       clearComposer: async () =>
-        await this.clearRetryComposerElements(composer()),
-      isStopActive: async () =>
-        await this.isRetryControlActive(
-          this.page.locator(DOUBAO_STOP_BUTTON_SELECTORS.join(', '))
-        ),
-      isSendReady: async () =>
-        await this.isRetryControlReady(
-          this.page.locator('button[class*="bg-g-send-msg-btn-bg"]')
-        ),
+        await this.clearRetryComposerElements(controls.composer),
+      isStopActive: async () => await this.isRetryControlActive(controls.stop),
+      isSendReady: async () => await this.isRetryControlReady(controls.send),
     })
   }
 
-  public async attachFile(path: string | readonly string[]) {
-    await this.wrapAdapterActionErrorAsync('attachFile', async () => {
-      const paths = normalizeToPathArray(path)
-      const uploadTrigger = this.page
-        .locator(DOUBAO_UPLOAD_TRIGGER_SELECTOR)
-        .first()
-
-      if ((await uploadTrigger.count()) === 0) {
-        throw new ProviderAdapterError(
-          'attachFile',
-          `Doubao upload trigger not found: ${DOUBAO_UPLOAD_TRIGGER_SELECTOR}`,
-          {
-            kind: 'ui',
-            recovery: 'none',
-            retryable: false,
-            maxAttempts: 1,
-            detailCode: 'doubao_upload_trigger_missing',
-          }
-        )
-      }
-
-      await uploadTrigger.click()
-
-      const fileInput = this.page.locator(DOUBAO_FILE_INPUT_SELECTOR).last()
-      await waitAsync(async () => (await fileInput.count()) > 0, {
-        timeoutMs: 5000,
-      })
-      await fileInput.setInputFiles(paths)
-    })
+  public async attachFile(path: string | readonly string[]): Promise<void> {
+    await this.wrapAdapterActionErrorAsync(
+      'attachFile',
+      async () => await this.ui.attachFile(path)
+    )
   }
 
-  public async attachImage(path: string | readonly string[]) {
+  public async attachImage(path: string | readonly string[]): Promise<void> {
     await this.attachFile(path)
   }
 
   public override async stopGeneration(): Promise<void> {
-    for (const selector of DOUBAO_STOP_BUTTON_SELECTORS) {
-      const clicked = await this.clickLocatorIfReady(
-        this.page.locator(selector)
-      )
-      if (clicked) {
-        return
-      }
-    }
+    await this.ui.stopGeneration()
   }
 
   private isTargetCompletionRequest(
@@ -1130,8 +533,8 @@ export class DoubaoAdapter extends ProviderAdapter {
       return await this.wrapAdapterActionErrorAsync('submit', async () => {
         const { signal } = options
         throwIfAborted(signal)
-        await this.dismissDesktopPromotion('submit', signal)
-        const sendButton = this.getSendButton()
+        await this.ui.dismissDesktopPromotion('submit', signal)
+        const sendButton = this.ui.getSendButton()
         await waitAsync(
           async () =>
             (await sendButton.isEnabled()) && (await sendButton.isVisible()),
@@ -1308,12 +711,12 @@ export class DoubaoAdapter extends ProviderAdapter {
             fetchCaptureStartIndex,
             signal
           )
-          await this.waitForReadyContainer(
+          await this.ui.waitForReady(
             'submit',
             this.getSubmitResponseTimeoutMs(),
             signal
           )
-          await this.dismissDesktopPromotion('submit', signal)
+          await this.ui.dismissDesktopPromotion('submit', signal)
           await this.emitSubmitText(this.lastParsedResponse.text)
           throwIfAborted(signal)
           return this.lastParsedResponse.text

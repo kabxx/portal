@@ -75,7 +75,9 @@ class FakeAdapter extends ProviderAdapter {
     return 'https://example.com/thread'
   }
 
-  public async changeModel(_model: string): Promise<void> {
+  public async changeModel(
+    _model: Parameters<ProviderAdapter['changeModel']>[0]
+  ): Promise<void> {
     return undefined
   }
 

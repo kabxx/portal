@@ -4,13 +4,21 @@ import assert from 'node:assert/strict'
 
 import { ProviderAdapterError } from '../../../src/providers/adapters/adapter-base.ts'
 import { GeminiAdapter } from '../../../src/providers/adapters/adapter-gemini.ts'
-import {
-  getProviderDefinition,
-  joinCssLocatorCandidates,
-} from '../../../src/providers/provider-definition-pack.ts'
+import { joinCssLocatorCandidates } from '../../../src/providers/ui/provider-ui.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
-const GEMINI_LOCATORS = getProviderDefinition('gemini').locators
+const GEMINI_LOCATORS = {
+  modelTrigger: ['[data-test-id="bard-mode-menu-button"]'],
+  modelMenu: ['gem-menu[data-test-id="gem-mode-menu"]'],
+  modelItem: ['gem-menu-item'],
+  toolsMenuTrigger: ['div.has-model-picker button'],
+  capabilityItem: ['button[role="menuitemcheckbox"]'],
+  capabilityIcon: ['[data-mat-icon-name]'],
+  moreToolsTrigger: ['button[data-test-id="more-tools-button"]'],
+  selectedCapability: [
+    'gem-button[data-test-id="deselect-drawer-item-gem-button"] > button',
+  ],
+} as const
 
 type GeminiAdapterHarness = Pick<GeminiAdapter, keyof GeminiAdapter> & {
   page: unknown
@@ -348,7 +356,7 @@ test('GeminiAdapter changes model through the mode menu', async () => {
   const page = createGeminiModelPage()
   adapter.page = page
 
-  await adapter.changeModel('3')
+  await adapter.changeModel({ key: '3.1-pro', option: null })
 
   assert.deepEqual(page.events, ['click:model-trigger', 'click:model-item:2'])
 })
@@ -358,7 +366,7 @@ test('GeminiAdapter enables model extension only when requested', async () => {
   const page = createGeminiModelPage()
   adapter.page = page
 
-  await adapter.changeModel('2+extended')
+  await adapter.changeModel({ key: '3.6-flash', option: 'extended' })
 
   assert.deepEqual(page.events, [
     'click:model-trigger',
@@ -374,7 +382,7 @@ test('GeminiAdapter keeps selected model extension when requested', async () => 
   const page = createGeminiModelPage({ extended: true })
   adapter.page = page
 
-  await adapter.changeModel('2+extended')
+  await adapter.changeModel({ key: '3.6-flash', option: 'extended' })
 
   assert.deepEqual(page.events, [
     'click:model-trigger',
@@ -390,24 +398,25 @@ test('GeminiAdapter leaves model extension unchanged when it is not requested', 
   const page = createGeminiModelPage({ extended: true })
   adapter.page = page
 
-  await adapter.changeModel('1')
+  await adapter.changeModel({ key: '3.5-flash-lite', option: null })
 
   assert.deepEqual(page.events, ['click:model-trigger', 'click:model-item:0'])
   assert.equal(page.isExtended(), true)
 })
 
-test('GeminiAdapter rejects unsupported model names', async () => {
+test('GeminiAdapter rejects unsupported and unavailable models', async () => {
   const adapter = createTestGeminiAdapter()
   adapter.page = createGeminiModelPage()
 
   await assert.rejects(
-    adapter.changeModel('3.1-pro'),
-    /Gemini does not support model "3\.1-pro"\./
+    adapter.changeModel({ key: 'unknown', option: null }),
+    /Gemini does not support model "unknown"\./
   )
 
+  adapter.page = createGeminiModelPage({ itemCount: 3 })
   await assert.rejects(
-    adapter.changeModel('5'),
-    /Gemini does not have model 5\./
+    adapter.changeModel({ key: '3.1-pro', option: null }),
+    /Gemini does not have model 3\./
   )
 })
 

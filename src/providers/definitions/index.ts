@@ -25,20 +25,14 @@ export const PROVIDER_DEFINITIONS = defineProviderPack({
 export {
   defineProvider,
   defineProviderPack,
-  joinCssLocatorCandidates,
-  mapCssLocatorCandidates,
-  PROVIDER_DEFINITION_VERSION,
-  PROVIDER_LOCATOR_SLOTS,
   ProviderDefinitionError,
 } from './provider-definition.ts'
 export type {
-  LocatorCandidates,
   ProviderCapabilityDefinition,
   ProviderCapabilityDefinitionFor,
   ProviderDefinition,
   ProviderDefinitionInput,
   ProviderDefinitionPack,
-  ProviderLocatorDefinitions,
   ProviderModelDefinition,
   ProviderModelOptionDefinition,
 } from './provider-definition.ts'

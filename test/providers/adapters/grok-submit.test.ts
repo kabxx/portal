@@ -3,13 +3,20 @@ import assert from 'node:assert/strict'
 
 import { ProviderAdapterUnsupportedError } from '../../../src/providers/adapters/adapter-base.ts'
 import { GrokAdapter } from '../../../src/providers/adapters/adapter-grok.ts'
-import {
-  getProviderDefinition,
-  joinCssLocatorCandidates,
-} from '../../../src/providers/provider-definition-pack.ts'
+import { joinCssLocatorCandidates } from '../../../src/providers/ui/provider-ui.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
-const GROK_LOCATORS = getProviderDefinition('grok').locators
+const GROK_LOCATORS = {
+  modelTrigger: [
+    '#model-select-trigger',
+    'button[data-testid="model-select-button"]',
+  ],
+  modelMenu: [
+    '[data-radix-popper-content-wrapper] [role="menu"][data-state="open"]',
+    'div[role="menu"]',
+  ],
+  modelItem: ['div[role="menuitem"][class~="ps-2.5"][class~="flex-row"]'],
+} as const
 const GROK_VOICE_MODE_READY_SELECTOR =
   'form:has([data-testid="chat-input"]) div:has(> [data-query-bar-mode-select]) button[type="button"]:has(> div > div:nth-child(6):last-child)'
 
@@ -115,7 +122,7 @@ test('GrokAdapter changes model through the model menu', async () => {
   })
   installGrokTestPage(adapter, page)
 
-  await adapter.changeModel('2')
+  await adapter.changeModel({ key: 'auto', option: null })
 
   assert.deepEqual(page.events, ['click:model-trigger', 'click:model:1'])
 })
@@ -130,16 +137,16 @@ test('GrokAdapter rejects unsupported model names', async () => {
   )
 
   await assert.rejects(
-    adapter.changeModel('auto'),
+    adapter.changeModel({ key: 'unknown', option: null }),
     (error) =>
       error instanceof ProviderAdapterUnsupportedError &&
-      error.message === 'Grok does not support model "auto".'
+      error.message === 'Grok does not support model "unknown".'
   )
   await assert.rejects(
-    adapter.changeModel('3'),
+    adapter.changeModel({ key: 'expert', option: null }),
     (error) =>
       error instanceof ProviderAdapterUnsupportedError &&
-      error.message === 'Grok does not have model 3.'
+      error.message === 'Grok does not have model "expert".'
   )
 })
 
@@ -154,10 +161,10 @@ test('GrokAdapter rejects model selection that redirects to subscribe', async ()
   )
 
   await assert.rejects(
-    adapter.changeModel('3'),
+    adapter.changeModel({ key: 'expert', option: null }),
     (error) =>
       error instanceof ProviderAdapterUnsupportedError &&
-      error.message === 'Grok model 3 requires a subscription.'
+      error.message === 'Grok model "expert" requires a subscription.'
   )
 })
 
@@ -226,12 +233,18 @@ function createGrokPage({
   let submitVisible = true
 
   const input = {
+    count: async () => 1,
+    nth: () => input,
+    first: () => input,
     click: async () => undefined,
     isVisible: async () => true,
     getAttribute: async (name: string) =>
       name === 'aria-disabled' ? 'false' : null,
   }
   const submitButton = {
+    count: async () => (submitVisible ? 1 : 0),
+    nth: () => submitButton,
+    first: () => submitButton,
     isVisible: async () => true,
     isEnabled: async () => submitEnabled,
     click: async () => {
@@ -265,7 +278,10 @@ function createGrokPage({
     },
   }
   const modelTrigger = {
+    count: async () => 1,
+    nth: () => modelTrigger,
     first: () => modelTrigger,
+    isVisible: async () => true,
     click: async () => {
       events.push('click:model-trigger')
     },
@@ -282,10 +298,7 @@ function createGrokPage({
     last: () => modelMenu,
     isVisible: async () => true,
     locator: (selector: string) => {
-      if (
-        selector ===
-        'xpath=./div[@role="menuitem" and contains(@class, "ps-2.5") and contains(@class, "flex-row")]'
-      ) {
+      if (selector === joinCssLocatorCandidates(GROK_LOCATORS.modelItem)) {
         return {
           count: async () => modelItems.length,
           nth: (index: number) => modelItems[index] ?? missingModelItem,
@@ -315,19 +328,17 @@ function createGrokPage({
         selector ===
         '[data-testid="chat-input"] [role="textbox"][contenteditable="true"]'
       ) {
-        return {
-          first: () => input,
-        }
+        return input
       }
       if (selector === '[data-testid="chat-submit"]') {
-        return {
-          count: async () => (submitVisible ? 1 : 0),
-          first: () => submitButton,
-        }
+        return submitButton
       }
       if (selector === GROK_VOICE_MODE_READY_SELECTOR) {
         return {
           count: async () => 1,
+          nth: () => ({
+            isVisible: async () => true,
+          }),
           first: () => ({
             isVisible: async () => true,
           }),
@@ -348,6 +359,7 @@ function createGrokPage({
       ) {
         return {
           count: async () => (stopButtonAvailable ? 1 : 0),
+          nth: () => (stopButtonAvailable ? stopButton : missingStopButton),
           first: () => (stopButtonAvailable ? stopButton : missingStopButton),
         }
       }
