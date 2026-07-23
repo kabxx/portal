@@ -21,25 +21,37 @@ import {
   emptyHistoryResult,
   parseDoubaoHistory,
 } from '../conversation-history.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+} from '../provider-definition-pack.ts'
 
 const DOUBAO_CHAT_URL = 'https://www.doubao.com/chat'
 const DOUBAO_CHAT_COMPLETION_URL = 'https://www.doubao.com/chat/completion'
+const DOUBAO_LOCATORS = getProviderDefinition('doubao').locators
 const DOUBAO_UPLOAD_TRIGGER_SELECTOR = [
   'button[data-dbx-name="button"]:has(svg path[d^="M12.0005 2.25"])',
   'button[data-dbx-name="button"]:has(svg path[d^="M12.0005 2.44971"])',
 ].join(', ')
 const DOUBAO_FILE_INPUT_SELECTOR = 'input[type="file"]'
 const DOUBAO_READY_CONTAINER_SELECTOR = 'div[class*="container-YCWnMI"]'
-const DOUBAO_MODEL_TRIGGER_SELECTOR =
-  'button[data-dbx-name="button"]:has(img[src*="mode_"]):visible, button[data-dbx-name="button"][aria-haspopup="menu"]:visible'
-const DOUBAO_MODEL_MENU_SELECTOR =
-  'div[data-slot="dropdown-menu-content"]:visible, [role="menu"]:visible'
-const DOUBAO_TOOLBAR_SELECTOR =
-  '[style*="--chat-input-tool-button-overflow-list-gap"]'
-const DOUBAO_SELECTED_SKILL_SELECTOR =
-  '[class*="text-g-exit-skill-btn-text"][data-value]'
-const DOUBAO_OVERFLOW_POPOVER_SELECTOR =
-  '[data-radix-popper-content-wrapper] [role="dialog"][data-state="open"]'
+const DOUBAO_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
+  DOUBAO_LOCATORS.modelTrigger,
+  ':visible'
+)
+const DOUBAO_MODEL_MENU_SELECTOR = joinCssLocatorCandidates(
+  DOUBAO_LOCATORS.modelMenu,
+  ':visible'
+)
+const DOUBAO_TOOLBAR_SELECTOR = joinCssLocatorCandidates(
+  DOUBAO_LOCATORS.capabilityToolbar
+)
+const DOUBAO_SELECTED_SKILL_SELECTOR = joinCssLocatorCandidates(
+  DOUBAO_LOCATORS.selectedCapability
+)
+const DOUBAO_OVERFLOW_POPOVER_SELECTOR = joinCssLocatorCandidates(
+  DOUBAO_LOCATORS.capabilityOverflowPopover
+)
 const DOUBAO_DESKTOP_PROMOTION_CLOSE_SELECTOR =
   'xpath=//img[contains(@src, "/obj/flow-doubao/samantha/jianti.png")]/preceding-sibling::button[@type="button"][1]'
 const DOUBAO_DESKTOP_PROMOTION_DISMISS_TIMEOUT_MS = 5000

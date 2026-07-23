@@ -7,9 +7,14 @@ import {
   ProviderAdapterUnsupportedError,
 } from '../../../src/providers/adapters/adapter-base.ts'
 import { GlmAdapter } from '../../../src/providers/adapters/adapter-glm.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+} from '../../../src/providers/provider-definition-pack.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 const GLM_COMPLETION_URL = 'https://chat.z.ai/api/v2/chat/completions'
+const GLM_LOCATORS = getProviderDefinition('glm').locators
 
 type GlmAdapterHarness = Pick<GlmAdapter, keyof GlmAdapter> & {
   page: unknown
@@ -438,7 +443,7 @@ function createGlmPage({
   const modelMenu = {
     isVisible: async () => true,
     locator: (selector: string) => {
-      assert.equal(selector, 'button[data-value]')
+      assert.equal(selector, joinCssLocatorCandidates(GLM_LOCATORS.modelItem))
       return {
         count: async () => modelItems.length,
         nth: (index: number) => modelItems[index] ?? missingButton,
@@ -470,23 +475,29 @@ function createGlmPage({
           first: () => uploadButton ?? missingButton,
         }
       }
-      if (selector === 'button[id^="model-selector-"]') {
+      if (selector === joinCssLocatorCandidates(GLM_LOCATORS.modelTrigger)) {
         return createSingleLocator(modelTrigger)
       }
-      if (selector === '[data-dropdown-menu-content]:visible') {
+      if (
+        selector ===
+        joinCssLocatorCandidates(GLM_LOCATORS.modelMenu, ':visible')
+      ) {
         return {
           count: async () => visibleModelMenuCount,
           locator: () => ({ count: async () => 0 }),
         }
       }
-      if (selector === 'button[data-value]:visible') {
+      if (
+        selector ===
+        joinCssLocatorCandidates(GLM_LOCATORS.modelItem, ':visible')
+      ) {
         return {
           count: async () => modelItems.length,
           nth: (index: number) => modelItems[index] ?? missingButton,
           evaluateAll: async () => globalModelParentCount === 1,
         }
       }
-      if (selector === '[data-dropdown-menu-content]') {
+      if (selector === joinCssLocatorCandidates(GLM_LOCATORS.modelMenu)) {
         return {
           last: () => modelMenu,
         }
@@ -497,21 +508,20 @@ function createGlmPage({
           first: () => stopButton ?? missingButton,
         }
       }
-      if (selector === 'button[data-autothink]') {
+      if (selector === joinCssLocatorCandidates(GLM_LOCATORS.thinkingToggle)) {
         return {
           count: async () => (thinkingButton === undefined ? 0 : 1),
           first: () => thinkingButton ?? missingButton,
         }
       }
-      if (selector === 'button[data-active]:has(svg[viewBox^="0 0 15"])') {
+      if (selector === joinCssLocatorCandidates(GLM_LOCATORS.searchToggle)) {
         return {
           count: async () => (searchButton === undefined ? 0 : 1),
           first: () => searchButton ?? missingButton,
         }
       }
       if (
-        selector ===
-        '[data-tooltip-content] button[role="switch"][data-switch-root]'
+        selector === joinCssLocatorCandidates(GLM_LOCATORS.advancedSearchSwitch)
       ) {
         return {
           first: () => advancedSearchSwitch ?? missingButton,

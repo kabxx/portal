@@ -20,25 +20,44 @@ import {
   emptyHistoryResult,
   parseGeminiHistory,
 } from '../conversation-history.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+} from '../provider-definition-pack.ts'
 
 const GEMINI_CHAT_URL = 'https://gemini.google.com/app'
 const GEMINI_SIGNED_OUT_TEST_ID = 'conversations-list-signed-out'
-const GEMINI_MODE_MENU_BUTTON_TEST_ID = 'bard-mode-menu-button'
-const GEMINI_MODE_MENU_SELECTOR = 'gem-menu[data-test-id="gem-mode-menu"]'
-const GEMINI_MODE_MENU_ITEM_SELECTOR = 'gem-menu-item'
+const GEMINI_LOCATORS = getProviderDefinition('gemini').locators
+const GEMINI_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
+  GEMINI_LOCATORS.modelTrigger
+)
+const GEMINI_MODEL_MENU_SELECTOR = joinCssLocatorCandidates(
+  GEMINI_LOCATORS.modelMenu
+)
+const GEMINI_MODEL_ITEM_SELECTOR = joinCssLocatorCandidates(
+  GEMINI_LOCATORS.modelItem
+)
+const GEMINI_CAPABILITY_ITEM_SELECTOR = joinCssLocatorCandidates(
+  GEMINI_LOCATORS.capabilityItem
+)
+const GEMINI_CAPABILITY_ICON_SELECTOR = joinCssLocatorCandidates(
+  GEMINI_LOCATORS.capabilityIcon
+)
+const GEMINI_MORE_TOOLS_TRIGGER_SELECTOR = joinCssLocatorCandidates(
+  GEMINI_LOCATORS.moreToolsTrigger
+)
+const GEMINI_SELECTED_CAPABILITY_SELECTOR = joinCssLocatorCandidates(
+  GEMINI_LOCATORS.selectedCapability
+)
+const GEMINI_TOOLS_MENU_TRIGGER_SELECTOR = joinCssLocatorCandidates(
+  GEMINI_LOCATORS.toolsMenuTrigger
+)
 const GEMINI_MODEL_EXTENSION_SUFFIX = '+extended'
 const GEMINI_TEXTAREA_WRAPPER_TEST_ID = 'textarea-wrapper'
 const GEMINI_TEXTAREA_INNER_TEST_ID = 'textarea-inner'
 const GEMINI_SEND_BUTTON_CONTAINER_TEST_ID = 'send-button-container'
-const GEMINI_UPLOAD_TRIGGER_SELECTOR = 'div.has-model-picker button'
+const GEMINI_UPLOAD_TRIGGER_SELECTOR = GEMINI_TOOLS_MENU_TRIGGER_SELECTOR
 const GEMINI_UPLOAD_ACTION_SELECTOR = 'images-files-uploader button'
-const GEMINI_ACTION_CAPABILITY_BUTTON_SELECTOR =
-  'button[role="menuitemcheckbox"]'
-const GEMINI_ACTION_CAPABILITY_ICON_SELECTOR = '[data-mat-icon-name]'
-const GEMINI_MORE_TOOLS_BUTTON_SELECTOR =
-  'button[data-test-id="more-tools-button"]'
-const GEMINI_SELECTED_CAPABILITY_BUTTON_SELECTOR =
-  'gem-button[data-test-id="deselect-drawer-item-gem-button"] > button'
 const GEMINI_MICROPHONE_BUTTON_SELECTOR = [
   'button.speech_dictation_mic_button',
   '[data-node-type="speech_dictation_mic_button"] .speech_dictation_mic_button',
@@ -351,7 +370,7 @@ export class GeminiAdapter extends ProviderAdapter {
       )
     }
     const modelMenu = await this.openModelMenu()
-    const menuItems = modelMenu.locator(GEMINI_MODE_MENU_ITEM_SELECTOR)
+    const menuItems = modelMenu.locator(GEMINI_MODEL_ITEM_SELECTOR)
     const itemCount = await menuItems.count()
     if (itemCount - 1 <= parsed.index) {
       throw new ProviderAdapterUnsupportedError(
@@ -452,11 +471,9 @@ export class GeminiAdapter extends ProviderAdapter {
   }
 
   private async openModelMenu(): Promise<Locator> {
-    const modelMenu = this.page.locator(GEMINI_MODE_MENU_SELECTOR).last()
+    const modelMenu = this.page.locator(GEMINI_MODEL_MENU_SELECTOR).last()
     if (!(await modelMenu.isVisible().catch(() => false))) {
-      await this.page
-        .locator(`[data-test-id="${GEMINI_MODE_MENU_BUTTON_TEST_ID}"]`)
-        .click()
+      await this.page.locator(GEMINI_MODEL_TRIGGER_SELECTOR).click()
       await waitAsync(
         async () => await modelMenu.isVisible().catch(() => false),
         { timeoutMs: 5000 }
@@ -466,17 +483,15 @@ export class GeminiAdapter extends ProviderAdapter {
   }
 
   private async closeModelMenu(): Promise<void> {
-    const modelMenu = this.page.locator(GEMINI_MODE_MENU_SELECTOR).last()
+    const modelMenu = this.page.locator(GEMINI_MODEL_MENU_SELECTOR).last()
     if (await modelMenu.isVisible().catch(() => false)) {
-      await this.page
-        .locator(`[data-test-id="${GEMINI_MODE_MENU_BUTTON_TEST_ID}"]`)
-        .click()
+      await this.page.locator(GEMINI_MODEL_TRIGGER_SELECTOR).click()
       await this.waitForModelMenuClosed()
     }
   }
 
   private async waitForModelMenuClosed(): Promise<void> {
-    const modelMenu = this.page.locator(GEMINI_MODE_MENU_SELECTOR).last()
+    const modelMenu = this.page.locator(GEMINI_MODEL_MENU_SELECTOR).last()
     await waitAsync(
       async () => !(await modelMenu.isVisible().catch(() => false)),
       { timeoutMs: 5000 }
@@ -487,7 +502,7 @@ export class GeminiAdapter extends ProviderAdapter {
     modelMenu: Locator,
     modelIndex: number
   ): Promise<Locator> {
-    const extensionItems = modelMenu.locator(GEMINI_MODE_MENU_ITEM_SELECTOR)
+    const extensionItems = modelMenu.locator(GEMINI_MODEL_ITEM_SELECTOR)
     const extensionIndex = (await extensionItems.count()) - 1
     if (extensionIndex <= modelIndex) {
       throw new ProviderAdapterUnsupportedError(
@@ -516,15 +531,15 @@ export class GeminiAdapter extends ProviderAdapter {
   }
 
   private getActionCapabilityButtons(): Locator {
-    return this.page.locator(GEMINI_ACTION_CAPABILITY_BUTTON_SELECTOR)
+    return this.page.locator(GEMINI_CAPABILITY_ITEM_SELECTOR)
   }
 
   private getMoreToolsButton(): Locator {
-    return this.page.locator(GEMINI_MORE_TOOLS_BUTTON_SELECTOR).first()
+    return this.page.locator(GEMINI_MORE_TOOLS_TRIGGER_SELECTOR).first()
   }
 
   private getSelectedActionCapabilityButton(): Locator {
-    return this.page.locator(GEMINI_SELECTED_CAPABILITY_BUTTON_SELECTOR).first()
+    return this.page.locator(GEMINI_SELECTED_CAPABILITY_SELECTOR).first()
   }
 
   private async openActionCapabilityMenu(action: string): Promise<void> {
@@ -600,7 +615,7 @@ export class GeminiAdapter extends ProviderAdapter {
   private async readActionCapabilityName(
     button: Locator
   ): Promise<GeminiActionCapability | null> {
-    const icon = button.locator(GEMINI_ACTION_CAPABILITY_ICON_SELECTOR).first()
+    const icon = button.locator(GEMINI_CAPABILITY_ICON_SELECTOR).first()
     const name = await icon.getAttribute('data-mat-icon-name').catch(() => null)
     if (typeof name !== 'string' || !name.trim()) {
       return null

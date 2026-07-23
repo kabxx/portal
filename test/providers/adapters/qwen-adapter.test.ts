@@ -10,9 +10,14 @@ import {
   type CapturedFetchEntry,
 } from '../../../src/providers/adapters/adapter-base.ts'
 import { QwenAdapter } from '../../../src/providers/adapters/adapter-qwen.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+} from '../../../src/providers/provider-definition-pack.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 const QWEN_COMPLETION_URL = 'https://chat.qwen.ai/api/v2/chat/completions'
+const QWEN_LOCATORS = getProviderDefinition('qwen').locators
 
 type QwenAdapterHarness = Pick<QwenAdapter, keyof QwenAdapter> & {
   page: unknown
@@ -874,7 +879,14 @@ function createCapabilityPage(
           return makeLocator('directAction', readCapability(selector))
         }
         if (kind === 'nestedMenu') {
-          if (selector.endsWith('[role="menuitem"][data-menu-id]')) {
+          if (
+            selector.endsWith(
+              joinCssLocatorCandidates(QWEN_LOCATORS.capabilityItem).replace(
+                ':scope > ',
+                ''
+              )
+            )
+          ) {
             return makeLocator('nestedItems')
           }
           return makeLocator('nestedAction', readCapability(selector))
@@ -935,16 +947,20 @@ function createCapabilityPage(
 
   const page = Object.assign(emitter, {
     locator: (selector: string) => {
-      if (selector === '.mode-select-dropdown [role="menu"]') {
+      if (selector === joinCssLocatorCandidates(QWEN_LOCATORS.capabilityMenu)) {
         return makeLocator('rootMenu')
       }
       if (selector === '[id="qwen-capability-popup"]') {
         return makeLocator('nestedMenu')
       }
-      if (selector.includes('.mode-select-open')) {
+      if (
+        selector === joinCssLocatorCandidates(QWEN_LOCATORS.capabilityTrigger)
+      ) {
         return makeLocator('trigger')
       }
-      if (selector.includes('.mode-select-current-mode')) {
+      if (
+        selector === joinCssLocatorCandidates(QWEN_LOCATORS.selectedCapability)
+      ) {
         return makeLocator('selected')
       }
       return makeLocator('missing')
@@ -1175,11 +1191,29 @@ function createControlPage({
   }
   return Object.assign(emitter, {
     locator: (selector: string) => {
-      if (selector.includes('qwen-chat-header-left')) return trigger
-      if (selector === '[role="listbox"]') return listbox
-      if (selector === '[role="listbox"]:visible') return listbox
-      if (selector === '[role="option"]:visible') return options
-      if (selector.includes('mode-select-open')) return uploadTrigger
+      if (selector === joinCssLocatorCandidates(QWEN_LOCATORS.modelTrigger)) {
+        return trigger
+      }
+      if (selector === joinCssLocatorCandidates(QWEN_LOCATORS.modelListbox)) {
+        return listbox
+      }
+      if (
+        selector ===
+        joinCssLocatorCandidates(QWEN_LOCATORS.modelListbox, ':visible')
+      ) {
+        return listbox
+      }
+      if (
+        selector ===
+        joinCssLocatorCandidates(QWEN_LOCATORS.modelItem, ':visible')
+      ) {
+        return options
+      }
+      if (
+        selector === joinCssLocatorCandidates(QWEN_LOCATORS.capabilityTrigger)
+      ) {
+        return uploadTrigger
+      }
       if (selector.includes('data-menu-id')) return uploadItem
       if (selector.includes('file-card-list')) return fileCards
       return stop

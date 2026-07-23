@@ -6,10 +6,15 @@ import {
   KimiAdapter,
   parseKimiConnectResponse,
 } from '../../../src/providers/adapters/adapter-kimi.ts'
+import {
+  getProviderDefinition,
+  joinCssLocatorCandidates,
+} from '../../../src/providers/provider-definition-pack.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 const KIMI_CHAT_URL =
   'https://www.kimi.com/apiv2/kimi.gateway.chat.v1.ChatService/Chat'
+const KIMI_LOCATORS = getProviderDefinition('kimi').locators
 
 type KimiAdapterHarness = Pick<KimiAdapter, keyof KimiAdapter> & {
   page: unknown
@@ -171,7 +176,11 @@ function createKimiCapabilityPage({
       },
       locator: (selector: string) => ({
         count: async () =>
-          selector === 'svg[name="Check"]' && isSelected() ? 1 : 0,
+          selector ===
+            joinCssLocatorCandidates(KIMI_LOCATORS.selectedOptionIcon) &&
+          isSelected()
+            ? 1
+            : 0,
         first() {
           return this
         },
@@ -206,10 +215,27 @@ function createKimiCapabilityPage({
   return {
     page: {
       locator: (selector: string) => {
-        if (selector === '.chat-editor .toolkit-trigger-btn') return trigger
-        if (selector === '.toolkit-popover') return popover
-        if (selector === '.connect-popover') return searchPopover
-        if (selector === '.connect-popover .connect-item') return options
+        if (
+          selector === joinCssLocatorCandidates(KIMI_LOCATORS.capabilityTrigger)
+        ) {
+          return trigger
+        }
+        if (
+          selector === joinCssLocatorCandidates(KIMI_LOCATORS.capabilityPopover)
+        ) {
+          return popover
+        }
+        if (
+          selector === joinCssLocatorCandidates(KIMI_LOCATORS.searchPopover)
+        ) {
+          return searchPopover
+        }
+        if (
+          selector ===
+          `${joinCssLocatorCandidates(KIMI_LOCATORS.searchPopover)} ${joinCssLocatorCandidates(KIMI_LOCATORS.searchOption)}`
+        ) {
+          return options
+        }
         if (
           selector === '.chat-editor .chat-input-editor[contenteditable="true"]'
         ) {
@@ -217,7 +243,7 @@ function createKimiCapabilityPage({
         }
         if (
           selector ===
-          '.toolkit-popover .toolkit-item:has(svg[name="InternetOn"])'
+          `${joinCssLocatorCandidates(KIMI_LOCATORS.capabilityPopover)} ${joinCssLocatorCandidates(KIMI_LOCATORS.searchItem)}`
         ) {
           return search
         }

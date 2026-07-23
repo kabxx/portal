@@ -20,6 +20,7 @@ Provider-specific website behavior stays behind adapters. The runtime understand
 | MCP Server        | `src/mcp-server/`                       | Expose selected thread operations through an independent Streamable HTTP MCP listener               |
 | Browser platform  | `src/platform/`                         | Launch Chromium, connect over CDP, and manage platform-specific process lifetime                    |
 | Provider adapters | `src/providers/adapters/`               | Navigate pages, detect login/readiness, submit, stream, upload, select models, and stop output      |
+| Provider data     | `src/providers/definitions/`            | Typed immutable manifests for models, options, static capabilities, and semantic locator leaves     |
 | History parsing   | `src/providers/conversation-history.ts` | Convert eight provider history formats into visible user/assistant messages                         |
 | Runtime           | `src/runtime/`                          | Build setup prompts, initialize runtimes, execute tool loops, retry, recover, and cancel            |
 | Threads           | `src/threads/`                          | Track active threads and local turns in memory; persist URL history metadata in SQLite              |
