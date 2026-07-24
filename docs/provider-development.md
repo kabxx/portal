@@ -22,6 +22,12 @@ A first-class Provider is complete only when all applicable paths below work:
 
 An adapter can be merged with an intentionally unsupported feature, but it cannot silently omit an abstract method or claim support that was not verified.
 
+Application-level Provider registration belongs in
+`src/app/provider-catalog.ts`: the Provider list, aliases, Provider-specific
+runtime prompts, and adapter factory dispatch stay together there. Provider DOM
+selectors and interactions still belong exclusively in `src/providers/ui/`,
+and semantic browser/protocol behavior stays in `src/providers/adapters/`.
+
 ## 2. Adapter lifecycle
 
 The diagrams below show the lifecycle from an adapter author's perspective. See [Architecture](architecture.md) for the wider process, Tool, thread, and MCP design.

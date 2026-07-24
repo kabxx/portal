@@ -40,6 +40,15 @@ Pure provider transport decoding lives outside the page adapters. For example, C
 
 `run()` in `src/app.ts` performs top-level orchestration:
 
+The focused modules under `src/app/` support that composition root without
+owning its mutable process state. `runtime-settings.ts` converts configuration,
+`provider-catalog.ts` owns Provider registration, prompts, aliases, and adapter
+construction, `spawn-tool-services.ts` builds recursive Tool services,
+`app-lifecycle.ts` owns reusable shutdown helpers, and
+`terminal-lifecycle.ts` owns terminal boundary helpers. Startup order, server
+wiring, thread observers, input dispatch, and shared mutable lifecycle state
+remain in `run()`.
+
 1. Parse the browser engine, executable path, and remote debugging port.
 2. Resolve `data/` from the current working directory.
 3. Initialize missing `config.yaml` without overwriting existing user files.

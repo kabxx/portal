@@ -5,43 +5,18 @@ import { stdin, stdout } from 'process'
 import { Command } from 'commander'
 import { render } from 'ink'
 import { createElement } from 'react'
-import {
-  launchBrowser,
-  type BrowserLaunchOptions,
-} from './platform/browser-cdp-launcher.ts'
+import { launchBrowser } from './platform/browser-cdp-launcher.ts'
 import type { RuntimeCore } from './runtime/runtime-core.ts'
 import { createRuntimeFromAdapter } from './runtime/runtime-factory.ts'
-import {
-  type ProviderAdapter,
-  type ProviderTimingOptions,
-} from './providers/adapters/adapter-base.ts'
-import { ChatGPTAdapter } from './providers/adapters/adapter-chatgpt.ts'
-import { GeminiAdapter } from './providers/adapters/adapter-gemini.ts'
-import { DeepSeekAdapter } from './providers/adapters/adapter-deepseek.ts'
-import { DoubaoAdapter } from './providers/adapters/adapter-doubao.ts'
-import { GrokAdapter } from './providers/adapters/adapter-grok.ts'
-import { GlmAdapter } from './providers/adapters/adapter-glm.ts'
-import { QwenAdapter } from './providers/adapters/adapter-qwen.ts'
-import { KimiAdapter } from './providers/adapters/adapter-kimi.ts'
 import {
   buildRuntimeRecoveryPlan,
   tryRestoreRuntimeForRecovery,
 } from './runtime/runtime-recovery.ts'
-import type {
-  SpawnTaskResult,
-  ToolServices,
-} from './tools/core/tool-definition.ts'
-import {
-  RunCommandJobManager,
-  type RunCommandJobManagerOptions,
-} from './processes/run-command-job-manager.ts'
+import { RunCommandJobManager } from './processes/run-command-job-manager.ts'
 import { isAbortError, throwIfAborted } from './runtime/runtime-cancellation.ts'
 import { sleepWithAbortAsync } from './shared/sleep.ts'
 import { ThreadManager } from './threads/thread-manager.ts'
-import {
-  isThreadCreationMode,
-  type ThreadCreationMode,
-} from './threads/thread-creation-mode.ts'
+import type { ThreadCreationMode } from './threads/thread-creation-mode.ts'
 import {
   ThreadCloseTimeoutError,
   ThreadOperationCoordinator,
@@ -59,10 +34,7 @@ import {
   createThreadStore,
 } from './threads/thread-store.ts'
 import { DEFAULT_COMMANDS } from './cli-commands/command-set.ts'
-import {
-  CommandRegistry,
-  tokenizeCommandInput,
-} from './cli-commands/core/command-registry.ts'
+import { CommandRegistry } from './cli-commands/core/command-registry.ts'
 import type { CliCommandContext } from './cli-commands/core/command-types.ts'
 import {
   executeProviderCapability,
@@ -84,7 +56,6 @@ import {
   createDefaultPortalConfig,
   ensurePortalConfig,
   readPortalConfig,
-  type PortalAdvancedConfig,
   type PortalAgentInstructionsConfig,
 } from './config/portal-config.ts'
 import {
@@ -103,23 +74,75 @@ import { HookCatalog } from './hooks/hook-catalog.ts'
 import { HookDispatcher } from './hooks/hook-dispatcher.ts'
 import { HookEventBus } from './hooks/hook-event-sink.ts'
 import { ChildRuntimeFactory } from './runtime/child-runtime-factory.ts'
-import type { SkillPolicy } from './skills/skill-policy.ts'
 import { PortalMcpServer } from './mcp-server/mcp-server.ts'
 import { McpMessageOperationStore } from './mcp-server/mcp-message-operations.ts'
 import type {
   PortalMcpHandlers,
   PortalMcpThreadSummary,
 } from './mcp-server/mcp-server-types.ts'
-import type { RuntimeSetupMode } from './runtime/setup-handshake.ts'
 import {
   ThreadLifecycleService,
   type ThreadLifecycleEvent,
   type ProvisionResult,
 } from './threads/thread-lifecycle-service.ts'
 import { ThreadRuntimeRegistry } from './threads/thread-runtime-registry.ts'
+import {
+  PortalExitError,
+  closeLateBrowserLaunchAfterShutdown,
+  closeWithTimeout,
+  createIdempotentAsyncTask,
+  stopMcpForegroundOperation,
+  type McpForegroundOperation,
+  type StopTarget,
+} from './app/app-lifecycle.ts'
+import {
+  PROVIDERS,
+  createAdapterForProvider,
+  getProviderPrompt,
+  normalizeProviderId,
+} from './app/provider-catalog.ts'
+import {
+  createPortalRuntimeSettings,
+  parseApiThreadCreationMode,
+  runtimeSetupModeForThreadCreation,
+} from './app/runtime-settings.ts'
+import { createToolServices } from './app/spawn-tool-services.ts'
+import {
+  canRunCommandWhileThreadBusy,
+  clearInteractiveTerminal,
+  clearTerminalBeforeRender,
+  shouldRenderFallbackThreadError,
+  showPendingThreadTimeline,
+} from './app/terminal-lifecycle.ts'
+
+export {
+  closeLateBrowserLaunchAfterShutdown,
+  closeWithTimeout,
+  createIdempotentAsyncTask,
+  stopMcpForegroundOperation,
+  transitionLoginWaitWarning,
+  type McpForegroundOperation,
+} from './app/app-lifecycle.ts'
+export {
+  CHATGPT_PROVIDER_PROMPT,
+  GROK_PROVIDER_PROMPT,
+  PROVIDERS,
+} from './app/provider-catalog.ts'
+export {
+  createPortalRuntimeSettings,
+  parseApiThreadCreationMode,
+  runtimeSetupModeForThreadCreation,
+} from './app/runtime-settings.ts'
+export { inheritSpawnModelSelection } from './app/spawn-tool-services.ts'
+export {
+  canRunCommandWhileThreadBusy,
+  clearInteractiveTerminal,
+  clearTerminalBeforeRender,
+  shouldRenderFallbackThreadError,
+  showPendingThreadTimeline,
+} from './app/terminal-lifecycle.ts'
 
 const LOGIN_CHECK_INTERVAL_MS = 1000
-const CLEAR_TERMINAL_ESCAPE = '\u001B[2J\u001B[3J\u001B[H'
 const PORTAL_VERSION = readPortalVersion()
 
 function readPortalVersion(): string {
@@ -188,309 +211,10 @@ export async function clearApiProviderCapability(
   return { name, cleared: true }
 }
 
-interface PortalRuntimeSettings {
-  browserLaunch: BrowserLaunchOptions
-  providerTimings: ProviderTimingOptions
-  initializationAttemptLimit: number
-  requestAttemptLimit: number
-  cancelWaitTimeoutMs: number
-  shutdownCloseTimeoutMs: number
-  childRuntimeCloseTimeoutMs: number
-  runCommand: RunCommandJobManagerOptions
-  skillPolicy: SkillPolicy
-  api: {
-    bodyLimitBytes: number
-    requestTimeoutMs: number
-    sseHeartbeatMs: number
-  }
-  instructionLimits: ProjectInstructionLimits
-  hookCommandOutputLimitBytes: number
-}
-
-export function createPortalRuntimeSettings(
-  advanced: PortalAdvancedConfig
-): PortalRuntimeSettings {
-  const kb = (value: number) => value * 1024
-  const mb = (value: number) => value * 1024 * 1024
-  const seconds = (value: number) => value * 1000
-  return {
-    browserLaunch: {
-      startupTimeoutMs: seconds(advanced.browser.startupTimeoutSeconds),
-      closeTimeoutMs: seconds(advanced.browser.closeTimeoutSeconds),
-    },
-    providerTimings: {
-      requestStartWarningAfterMs: seconds(
-        advanced.provider.requestStartWarningAfterSeconds
-      ),
-      blockedWarningIntervalMs: seconds(
-        advanced.provider.blockedWarningEverySeconds
-      ),
-      responseStartTimeoutMs: seconds(
-        advanced.provider.responseStartTimeoutSeconds
-      ),
-      responseStallTimeoutMs: seconds(
-        advanced.provider.responseStallTimeoutSeconds
-      ),
-      restoreTimeoutMs: seconds(advanced.provider.restoreTimeoutSeconds),
-      historyLoadTimeoutMs: seconds(
-        advanced.provider.historyLoadTimeoutSeconds
-      ),
-      historyPageTimeoutMs: seconds(
-        advanced.provider.historyPageTimeoutSeconds
-      ),
-    },
-    initializationAttemptLimit: advanced.runtime.initializationAttemptLimit,
-    requestAttemptLimit: advanced.runtime.requestAttemptLimit,
-    cancelWaitTimeoutMs: seconds(advanced.runtime.cancelWaitTimeoutSeconds),
-    shutdownCloseTimeoutMs: seconds(
-      advanced.runtime.shutdownCloseTimeoutSeconds
-    ),
-    childRuntimeCloseTimeoutMs: seconds(
-      advanced.runtime.childRuntimeCloseTimeoutSeconds
-    ),
-    runCommand: {
-      maxOutputBufferBytes: mb(advanced.command.resultOutputLimitMB),
-      terminationGraceMs: seconds(advanced.command.stopGraceSeconds),
-      terminationSettleTimeoutMs: seconds(advanced.command.stopTimeoutSeconds),
-    },
-    skillPolicy: {
-      downloadTimeoutMs: seconds(advanced.skillInstall.downloadTimeoutSeconds),
-      maxDownloadBytes: mb(advanced.skillInstall.downloadLimitMB),
-      maxExtractedBytes: mb(advanced.skillInstall.extractedSizeLimitMB),
-      maxFiles: advanced.skillInstall.fileCountLimit,
-      maxResourceFiles: advanced.skillInstall.resourceFileCountLimit,
-      maxManifestBytes: kb(advanced.skillInstall.manifestSizeLimitKB),
-      maxRedirects: advanced.skillInstall.redirectLimit,
-    },
-    api: {
-      bodyLimitBytes: kb(advanced.api.requestBodyLimitKB),
-      requestTimeoutMs: seconds(advanced.api.requestTimeoutSeconds),
-      sseHeartbeatMs: seconds(advanced.api.sseHeartbeatSeconds),
-    },
-    instructionLimits: {
-      codexMaxBytes: kb(advanced.instructions.codexSizeLimitKB),
-      claudeMaxBytes: kb(advanced.instructions.claudeSizeLimitKB),
-      maxFiles: advanced.instructions.fileCountLimit,
-      maxImportDepth: advanced.instructions.importDepthLimit,
-    },
-    hookCommandOutputLimitBytes: mb(advanced.hooks.commandOutputLimitMB),
-  }
-}
-
-export function runtimeSetupModeForThreadCreation(
-  mode: ThreadCreationMode
-): Exclude<RuntimeSetupMode, 'skip'> {
-  return mode === 'chat' ? 'handshake' : 'full'
-}
-
-export function parseApiThreadCreationMode(value: unknown): ThreadCreationMode {
-  if (value === undefined) {
-    return 'agent'
-  }
-  if (isThreadCreationMode(value)) {
-    return value
-  }
-  throw new ApiHttpError(
-    400,
-    'INVALID_REQUEST',
-    'mode must be "agent" or "chat".'
-  )
-}
-
-export function clearTerminalBeforeRender(output: {
-  isTTY?: boolean
-  write: (data: string) => unknown
-}): void {
-  if (output.isTTY === true) {
-    output.write(CLEAR_TERMINAL_ESCAPE)
-  }
-}
-
-export function clearInteractiveTerminal(
-  inkApp: { clear: () => void },
-  output: { isTTY?: boolean; write: (data: string) => unknown }
-): void {
-  if (output.isTTY !== true) {
-    return
-  }
-  inkApp.clear()
-  output.write(CLEAR_TERMINAL_ESCAPE)
-}
-
-export function canRunCommandWhileThreadBusy(input: string): boolean {
-  const [command, subcommand, action] = tokenizeCommandInput(input)
-  if (
-    command === '/help' ||
-    command === '/providers' ||
-    command === '/job' ||
-    command === '/keybinding' ||
-    command === '/serve' ||
-    command === '/exit'
-  ) {
-    return true
-  }
-  if (command === '/thread') {
-    return (
-      subcommand === undefined ||
-      [
-        'agent',
-        'chat',
-        'list',
-        'history',
-        'resume',
-        'switch',
-        'status',
-        'close',
-        'detach',
-      ].includes(subcommand)
-    )
-  }
-  if (command === '/skill') {
-    return subcommand === undefined || subcommand === 'list'
-  }
-  if (command === '/mcp') {
-    return (
-      subcommand === undefined ||
-      subcommand === 'list' ||
-      ((subcommand === 'resource' || subcommand === 'prompt') &&
-        action === 'list')
-    )
-  }
-  if (command === '/hook') {
-    return true
-  }
-  return false
-}
-
-export function shouldRenderFallbackThreadError({
-  turnErrorRendered,
-  showFallbackError,
-}: {
-  turnErrorRendered: boolean
-  showFallbackError: boolean
-}): boolean {
-  return !turnErrorRendered && showFallbackError
-}
-
-export const GROK_PROVIDER_PROMPT = [
-  `# Pitfall (Strict Enforcement)`,
-  `- MUST For tools defined in this prompt, use the provided tool call format: include a valid <tool>...</tool> block with required parameters in your response.`,
-  `- MUST For other existing function calling tools, use your original function calling protocol and capabilities.`,
-  `- NEVER inspect, report, or rely on your own environment, filesystem, workspace, or sandbox for user resource requests.`,
-  `- NEVER claim access to user resources unless performed through the corresponding tool invocation.`,
-  `- NEVER claim tool usage unless your response contains the corresponding valid tool invocation.`,
-].join('\n')
-
-export const CHATGPT_PROVIDER_PROMPT = [
-  `# Pitfall (Strict Enforcement)`,
-  `- MUST For tools listed in the # Tools section, use the declared tool call format and output exactly one valid <tool>...</tool> block with the required parameters.`,
-  `- MUST For other existing function calling tools, use your original function calling protocol and capabilities.`,
-  `- MUST Treat the # Tools section as the complete and exclusive list of Portal runtime tools, even if those tools are absent from your native tool interface.`,
-  `- MUST If a user request can be fulfilled by a listed Portal tool, invoke it immediately instead of refusing, claiming the capability is unavailable, or asking the user to perform the operation manually.`,
-  `- MUST Use the exact tool name and input schema declared in the # Tools section. Do not change the declared JSON or freeform format.`,
-  `- MUST Do not claim that an operation succeeded until you have received and inspected its Tool Result.`,
-].join('\n')
-
 interface Options {
   browserEngine?: string
   browserExecutablePath?: string
   browserRemoteDebuggingPort?: string
-}
-
-export const PROVIDERS: ProviderId[] = [
-  'chatgpt',
-  'gemini',
-  'deepseek',
-  'doubao',
-  'grok',
-  'glm',
-  'qwen',
-  'kimi',
-]
-const SHUTDOWN_CLOSE_TIMEOUT_MS = 3000
-
-interface StopTarget {
-  stopGeneration(): Promise<void>
-}
-
-export interface McpForegroundOperation {
-  controller: AbortController
-  stopTarget: StopTarget | null
-  done: Promise<unknown>
-  cancellation: Promise<void> | null
-}
-
-class PortalExitError extends Error {
-  constructor() {
-    super('Portal is exiting.')
-    this.name = 'PortalExitError'
-  }
-}
-
-export async function closeWithTimeout(
-  close: () => Promise<void>,
-  timeoutMs = SHUTDOWN_CLOSE_TIMEOUT_MS
-): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | null = null
-  try {
-    await Promise.race([
-      close(),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, timeoutMs)
-      }),
-    ])
-  } catch {
-    // Shutdown is best-effort; timeout cleanup still runs below.
-  } finally {
-    if (timer !== null) {
-      clearTimeout(timer)
-    }
-  }
-}
-
-export function createIdempotentAsyncTask(
-  task: () => Promise<void>
-): () => Promise<void> {
-  let taskPromise: Promise<void> | null = null
-  return async () => {
-    taskPromise ??= task()
-    await taskPromise
-  }
-}
-
-export async function closeLateBrowserLaunchAfterShutdown(
-  browserLaunch: { close(): Promise<void> } | null,
-  shutdown: () => Promise<void>,
-  timeoutMs: number
-): Promise<void> {
-  await shutdown()
-  if (browserLaunch !== null) {
-    await closeWithTimeout(async () => await browserLaunch.close(), timeoutMs)
-  }
-}
-
-export async function stopMcpForegroundOperation(
-  operation: McpForegroundOperation,
-  timeoutMs: number
-): Promise<void> {
-  operation.controller.abort()
-  operation.cancellation ??= Promise.allSettled([
-    Promise.resolve().then(
-      async () => await operation.stopTarget?.stopGeneration()
-    ),
-    operation.done,
-  ]).then(() => {})
-  await closeWithTimeout(async () => await operation.cancellation!, timeoutMs)
-}
-
-export function transitionLoginWaitWarning(
-  waitingForLogin: boolean,
-  requiresLogin: boolean
-): { waitingForLogin: boolean; shouldRender: boolean } {
-  return {
-    waitingForLogin: requiresLogin,
-    shouldRender: !requiresLogin || !waitingForLogin,
-  }
 }
 
 function buildProgram() {
@@ -514,27 +238,6 @@ function buildProgram() {
     )
 }
 
-function normalizeProviderId(value: string): ProviderId | null {
-  const normalized = value.trim().toLowerCase()
-  if (!normalized) {
-    return null
-  }
-
-  const aliases: Record<string, ProviderId> = {
-    chatgpt: 'chatgpt',
-    gpt: 'chatgpt',
-    gemini: 'gemini',
-    deepseek: 'deepseek',
-    doubao: 'doubao',
-    grok: 'grok',
-    glm: 'glm',
-    qwen: 'qwen',
-    kimi: 'kimi',
-  }
-
-  return aliases[normalized] ?? null
-}
-
 function redactMcpConfig(config: McpServerConfig): Record<string, unknown> {
   const record = config as McpServerConfig & {
     headers?: Record<string, string>
@@ -545,17 +248,6 @@ function redactMcpConfig(config: McpServerConfig): Record<string, unknown> {
     ...safe,
     ...(headers === undefined ? {} : { hasHeaders: true }),
     ...(env === undefined ? {} : { hasEnv: true }),
-  }
-}
-
-function getProviderPrompt(provider: ProviderId): string | null {
-  switch (provider) {
-    case 'chatgpt':
-      return CHATGPT_PROVIDER_PROMPT
-    case 'grok':
-      return GROK_PROVIDER_PROMPT
-    default:
-      return null
   }
 }
 
@@ -590,266 +282,6 @@ function formatInstructionWarning(
     warning.message,
     ...(warning.path === undefined ? [] : [`source: ${warning.path}`]),
   ]
-}
-
-export function inheritSpawnModelSelection(
-  parentProvider: ProviderId,
-  spawnProvider: ProviderId,
-  model: ResolvedProviderModel | null
-): ResolvedProviderModel | null {
-  return spawnProvider === parentProvider ? model : null
-}
-
-function createToolServices({
-  context,
-  provider,
-  model,
-  skillLibrary,
-  mcpLibrary,
-  projectInstructions,
-  runCommandJobs,
-  hookDispatcher,
-  settings,
-}: {
-  context: import('playwright').BrowserContext
-  provider: ProviderId
-  model: ResolvedProviderModel | null
-  skillLibrary: SkillLibrary
-  mcpLibrary: McpLibrary
-  projectInstructions: ProjectInstructions
-  runCommandJobs: RunCommandJobManager
-  hookDispatcher: HookDispatcher
-  settings: PortalRuntimeSettings
-}): ToolServices {
-  return {
-    runCommandJobs,
-    spawnTask: async (
-      { prompt, provider: requestedProvider },
-      options = {}
-    ) => {
-      const spawnProvider =
-        requestedProvider === undefined
-          ? provider
-          : normalizeProviderId(requestedProvider)
-      if (spawnProvider === null) {
-        return {
-          kind: 'error',
-          message: `Unsupported spawn provider: ${requestedProvider}`,
-        }
-      }
-      const spawnOptions = {
-        context,
-        provider: spawnProvider,
-        model: inheritSpawnModelSelection(provider, spawnProvider, model),
-        prompt,
-        skillLibrary,
-        mcpLibrary,
-        projectInstructions: projectInstructions.fork(),
-        runCommandJobs,
-        hookDispatcher,
-        settings,
-        ...(options.executionScope !== undefined
-          ? {
-              executionScope: {
-                ...options.executionScope,
-                source: 'spawn' as const,
-                spawnDepth: options.executionScope.spawnDepth + 1,
-                ...(options.executionScope.threadId === undefined
-                  ? {}
-                  : { parentThreadId: options.executionScope.threadId }),
-                ...(options.executionScope.turnId === undefined
-                  ? {}
-                  : { parentTurnId: options.executionScope.turnId }),
-                ...(options.toolCallId === undefined
-                  ? {}
-                  : { parentToolCallId: options.toolCallId }),
-              },
-            }
-          : {}),
-        ...(options.signal !== undefined ? { signal: options.signal } : {}),
-      }
-      return await runSpawnTask(spawnOptions)
-    },
-  }
-}
-
-async function runSpawnTask({
-  context,
-  provider,
-  model,
-  prompt,
-  skillLibrary,
-  mcpLibrary,
-  projectInstructions,
-  runCommandJobs,
-  hookDispatcher,
-  settings,
-  executionScope,
-  signal,
-}: {
-  context: import('playwright').BrowserContext
-  provider: ProviderId
-  model: ResolvedProviderModel | null
-  prompt: string
-  skillLibrary: SkillLibrary
-  mcpLibrary: McpLibrary
-  projectInstructions: ProjectInstructions
-  runCommandJobs: RunCommandJobManager
-  hookDispatcher: HookDispatcher
-  settings: PortalRuntimeSettings
-  executionScope?: import('./hooks/hook-types.ts').HookExecutionScope
-  signal?: AbortSignal
-}): Promise<SpawnTaskResult> {
-  let adapter: ProviderAdapter | null = null
-  let runtime: RuntimeCore | null = null
-  const spawnId = randomUUID()
-  try {
-    throwIfAborted(signal)
-    if (executionScope !== undefined) {
-      await hookDispatcher.dispatch(
-        hookDispatcher.createEvent(
-          'spawn.started',
-          executionScope,
-          { prompt },
-          { spawnId }
-        ),
-        executionScope,
-        signal
-      )
-    }
-    adapter = await createAdapterForProvider(
-      context,
-      provider,
-      null,
-      signal,
-      settings.providerTimings
-    )
-    runtime = await createRuntimeFromAdapter(adapter, {
-      model,
-      setupMode: 'full',
-      providerPrompt: getProviderPrompt(provider),
-      skillLibrary,
-      mcpLibrary,
-      projectInstructions,
-      hookDispatcher,
-      requestAttemptLimit: settings.requestAttemptLimit,
-      toolServices: createToolServices({
-        context,
-        provider,
-        model,
-        skillLibrary,
-        mcpLibrary,
-        projectInstructions,
-        runCommandJobs,
-        hookDispatcher,
-        settings,
-      }),
-      signal,
-    })
-    throwIfAborted(signal)
-    const output = await runtime.submitUserInput(prompt, {
-      ...(signal !== undefined ? { signal } : {}),
-      ...(executionScope === undefined ? {} : { executionScope }),
-    })
-    if (executionScope !== undefined) {
-      await hookDispatcher.dispatch(
-        hookDispatcher.createEvent(
-          'spawn.completed',
-          executionScope,
-          { output },
-          { spawnId }
-        ),
-        executionScope
-      )
-    }
-    return {
-      provider,
-      conversationUrl: runtime.conversationUrl,
-      output,
-    }
-  } catch (error) {
-    if (executionScope !== undefined) {
-      await hookDispatcher.dispatch(
-        hookDispatcher.createEvent(
-          isAbortError(error) ? 'spawn.cancelled' : 'spawn.failed',
-          executionScope,
-          { message: error instanceof Error ? error.message : String(error) },
-          { spawnId }
-        ),
-        executionScope
-      )
-    }
-    throw error
-  } finally {
-    if (runtime !== null) {
-      await runtime.close().catch(() => {})
-    } else {
-      await adapter?.close().catch(() => {})
-    }
-  }
-}
-
-async function createAdapterForProvider(
-  context: import('playwright').BrowserContext,
-  provider: ProviderId,
-  conversationUrl: string | null = null,
-  signal?: AbortSignal,
-  timings?: ProviderTimingOptions
-): Promise<ProviderAdapter> {
-  const options = {
-    conversationUrl,
-    signal,
-    ...(timings === undefined ? {} : { timings }),
-  }
-  switch (provider) {
-    case 'chatgpt':
-      return await ChatGPTAdapter.create(context, options)
-    case 'gemini':
-      return await GeminiAdapter.create(context, options)
-    case 'deepseek':
-      return await DeepSeekAdapter.create(context, options)
-    case 'doubao':
-      return await DoubaoAdapter.create(context, options)
-    case 'grok':
-      return await GrokAdapter.create(context, options)
-    case 'glm':
-      return await GlmAdapter.create(context, options)
-    case 'qwen':
-      return await QwenAdapter.create(context, options)
-    case 'kimi':
-      return await KimiAdapter.create(context, options)
-  }
-}
-
-export function showPendingThreadTimeline(
-  ui: TerminalController,
-  threadManager: ThreadManager,
-  threadId: string
-): { keep(): void; discard(): void } {
-  const previousThreadId = threadManager.getActiveThread()?.id ?? null
-  let settled = false
-  ui.showThreadTimeline(threadId)
-
-  return {
-    keep() {
-      settled = true
-    },
-    discard() {
-      if (settled) {
-        return
-      }
-      settled = true
-      ui.removeThreadTimeline(threadId)
-      if (
-        previousThreadId !== null &&
-        threadManager.getThread(previousThreadId) !== null
-      ) {
-        ui.showThreadTimeline(previousThreadId)
-      } else {
-        ui.showHomeTimeline()
-      }
-    },
-  }
 }
 
 export async function run(argv = process.argv): Promise<void> {
