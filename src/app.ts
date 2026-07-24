@@ -370,24 +370,11 @@ export function shouldRenderFallbackThreadError({
 
 export const GROK_PROVIDER_PROMPT = [
   `# Grok Tool Boundary (Strict Enforcement)`,
-  `- These rules remain active after the READY handshake and apply to every later assistant response in this conversation.`,
-  `- For Grok, this section overrides any more permissive wording in the Tools section, including permission to add text before a tool call.`,
-  `- The "Tools" section is the complete and exclusive list of operations available outside this chat. A tool exists only when that section explicitly lists it and defines its invocation protocol.`,
-  `- Mandatory local-path decision order: whenever a user message contains a local path or refers to a user-local resource, inspect every listed tool's description and input schema before composing any natural-language answer. Grok's inability to open that path directly is irrelevant to this decision.`,
-  `- If a listed tool's description covers the requested action and its schema accepts the required input, that tool matches and you MUST invoke it. You may report that the path is inaccessible only after an actual tool result reports failure, or when no listed tool contract covers the action.`,
-  `- Listed tools are real operations supplied by the surrounding runtime. When the task requires an operation outside this chat and a listed tool directly performs it, YOU must invoke that tool yourself in your current assistant response through its declared protocol. Do not ask the user, the runtime, or another agent to invoke it for you.`,
-  `- A natural-language response without the required invocation is invalid in that case. Describing, simulating, promising, or claiming an invocation does not invoke anything.`,
-  `- Mandatory tool output contract: when such an invocation is required, your response MUST contain exactly one raw valid <tool>...</tool> block and nothing else. Its first non-whitespace characters must be <tool>, and the response must end with </tool>. Do not add acknowledgement, explanation, status, promises, waiting text, or Markdown fences.`,
-  `- The raw block is the invocation request, not an example or description. Replace the invocation format's placeholders with the exact listed tool name and schema-valid parameters. If your response has no valid raw block, you did not call a tool.`,
-  `- Mandatory pre-send check: if your draft says or implies "I cannot access the local path", "please upload it", "please wait", "I am trying", or "the tool was used" while a listed tool matches, discard the entire draft and replace it with the required raw tool block.`,
-  `- Before sending any response for a user-local action, verify that either the response is the required invocation or an actual Tool Result already proves that no listed tool can complete it. Never send an unverified limitation or simulated progress message.`,
-  `- Tools execute through the surrounding runtime, outside Grok's environment. Pass user-provided local paths according to the selected tool's schema. Never remap them into a Grok-native path or infer that a tool lacks access because Grok's own sandbox lacks access.`,
-  `- Never claim that an action was attempted, completed, or verified unless the runtime has returned the corresponding result or observation.`,
-  `- Do not ask the user to upload, copy, paste, run, or perform an action manually when a listed tool can perform it.`,
-  `- Grok-native features, including its sandbox, artifacts, workspace, uploaded-file workspace, browser tools, and internal filesystem, are unavailable for user-local or external actions and MUST NOT be invoked, relied on, simulated, or used as fallback.`,
-  `- This prohibition applies even when a Grok-native feature is visible, suggested, appears usable, or claims access. Grok-native paths such as /home/workdir/artifacts and results produced only inside Grok's environment are not user-local results.`,
-  `- The only exception is an exact tool listed under "Tools" with its invocation protocol. Similar names, UI visibility, or implicit availability are not exceptions.`,
-  `- If a listed tool is unavailable or fails, use another listed tool or report the limitation. Never substitute a Grok-native feature and never invent an invocation or result.`,
+  `For tools defined in this prompt, use the provided tool call format: include a valid <tool>...</tool> block with required parameters in your response.`,
+  `For other existing function calling tools, use their original function calling protocol and capabilities.`,
+  `NEVER inspect, report, or rely on your own environment, filesystem, workspace, or sandbox for user resource requests.`,
+  `NEVER claim access to user resources unless performed through the corresponding tool invocation.`,
+  `NEVER claim tool usage unless your response contains the corresponding valid tool invocation.`,
 ].join('\n')
 
 interface Options {
