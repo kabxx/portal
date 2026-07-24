@@ -153,10 +153,7 @@ abstract class Tool<TInput = unknown, TOutput extends ToolOutput = ToolOutput> {
     const { name, description, inputSchema, examples } = this.metadata
     const inputPrompt =
       this.inputFormat === 'freeform'
-        ? [
-            `Input format:`,
-            `Freeform text (do not wrap the payload in JSON).`,
-          ].join('\n')
+        ? ''
         : [
             `Input schema:`,
             `\`\`\`json`,
@@ -189,9 +186,8 @@ abstract class Tool<TInput = unknown, TOutput extends ToolOutput = ToolOutput> {
           }),
         ].join('\n\n')
       : null
-
     return joinPromptSections([
-      `### ${name}`,
+      `### ${name} (${this.inputFormat.toUpperCase()} Format)`,
       description,
       inputPrompt,
       examplesPrompt,

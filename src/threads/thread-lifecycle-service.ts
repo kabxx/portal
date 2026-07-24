@@ -556,15 +556,8 @@ export class ThreadLifecycleService {
         })
       throwIfAborted(signal)
 
-      let waitingForLogin = false
+      let loginWarningSent = false
       stage = 'building_runtime'
-      await this.notify({
-        type: 'provision.warning',
-        threadId,
-        source: request.source,
-        title: 'thread',
-        lines: ['Preparing provider session.'],
-      })
       runtime = await initializeRuntimeWithLoginWait({
         provider,
         browserProfileDir: this.dependencies.browserProfileDir,
@@ -586,6 +579,12 @@ export class ThreadLifecycleService {
             signal: signal ?? NEVER_ABORTED_SIGNAL,
           }),
         onWarning: async (plan) => {
+          if (plan.requiresLogin && loginWarningSent) {
+            return
+          }
+          if (plan.requiresLogin) {
+            loginWarningSent = true
+          }
           await this.notify({
             type: 'provision.warning',
             threadId,
@@ -595,8 +594,8 @@ export class ThreadLifecycleService {
           })
         },
         onLoginWait: async () => {
-          if (!waitingForLogin) {
-            waitingForLogin = true
+          if (!loginWarningSent) {
+            loginWarningSent = true
             await this.notify({
               type: 'provision.login_wait',
               threadId,

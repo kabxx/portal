@@ -1126,7 +1126,6 @@ export async function run(argv = process.argv): Promise<void> {
                     return
                   }
                   if (item.kind === 'status') {
-                    ui.renderThreadWarning(activeThread, 'thread', item.text)
                     return
                   }
                   if (item.kind === 'error') {
@@ -1518,9 +1517,6 @@ export async function run(argv = process.argv): Promise<void> {
           projectInstructions,
           hookDispatcher,
           requestAttemptLimit: settings.requestAttemptLimit,
-          onMcpWarning: async (warning) => {
-            ui.renderWarning('MCP', warning.markdown, 'markdown')
-          },
           toolServices: createToolServices({
             context,
             provider,
@@ -1842,7 +1838,6 @@ export async function run(argv = process.argv): Promise<void> {
                     )
                   } else if (item.kind === 'status') {
                     publishApiEvent(threadId, 'status', { message: item.text })
-                    ui.renderThreadWarning(thread, 'thread', item.text)
                   } else if (item.kind === 'error') {
                     ui.renderThreadError(thread, 'thread', item.text)
                   }
@@ -2373,8 +2368,6 @@ export async function run(argv = process.argv): Promise<void> {
                         item.displayText,
                         item.toolCallId
                       )
-                    } else if (item.kind === 'status') {
-                      ui.renderThreadWarning(thread, 'thread', item.text)
                     } else if (item.kind === 'error') {
                       ui.renderThreadError(thread, 'thread', item.text)
                     }

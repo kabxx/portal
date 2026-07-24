@@ -16,13 +16,7 @@ interface SpawnInput {
 @defineToolMetadata({
   name: 'spawn',
   description: [
-    'Delegate a self-contained subtask to a child browser worker and wait synchronously for the final result.',
-    '',
-    'Use spawn only when a focused side task should be completed independently and its result is needed for the current user task.',
-    'Do not use spawn for work you can complete directly, and do not delegate the entire user task.',
-    'Pass the task instructions in prompt. Optionally pass provider to choose chatgpt, gemini, deepseek, doubao, grok, glm, qwen, or kimi; when omitted, the current provider is used.',
-    'Do not include cwd, shell commands, process arguments, model names, or lifecycle controls.',
-    'The portal runtime creates a child browser conversation, sends the normal setup prompt, waits for READY, submits prompt, and returns the worker output as an observation.',
+    'Spawn child worker for self-contained subtask, wait for result.',
   ].join('\n'),
   inputSchema: {
     type: 'object',
@@ -50,15 +44,6 @@ interface SpawnInput {
     },
     required: ['prompt'],
   },
-  examples: [
-    {
-      params: {
-        provider: 'gemini',
-        prompt:
-          'Inspect the provider adapter tests and summarize the selectors that look brittle.',
-      },
-    },
-  ],
 })
 class SpawnTool extends Tool<SpawnInput, ToolOutput> {
   public async call(

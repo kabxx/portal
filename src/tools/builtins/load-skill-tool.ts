@@ -12,10 +12,7 @@ interface LoadSkillInput {
 
 @defineToolMetadata({
   name: 'load_skill',
-  description: [
-    'Load the complete instructions for one available skill into the current conversation.',
-    'Use an exact skill name from the available skill catalog.',
-  ].join('\n'),
+  description: ['Load a skill by its exact name from the catalog.'].join('\n'),
   inputSchema: {
     type: 'object',
     properties: {

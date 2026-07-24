@@ -39,61 +39,11 @@ const defaultShell = getDefaultShell()
 const supportedShells = getSupportedShells()
 const isWindows = defaultShell === 'powershell'
 
-const runCommandDescription = [
-  'Execute a local shell command and return structured stdout, stderr, exit code, and timeout information.',
-  '',
-  'Prefer run_command for local file, directory, and project inspection.',
-  'Use run_command for shell inspection, verification, builds, tests, and other command-line tasks.',
-  `The default shell is ${defaultShell}; available shells are ${supportedShells.join(', ')}.`,
-  'Command stdout and stderr must be valid UTF-8 text; non-UTF-8 output is rejected.',
-  ...(isWindows
-    ? [
-        'Windows PowerShell uses UTF-8 settings scoped only to the spawned process.',
-      ]
-    : []),
-  'If the current turn is cancelled, the command keeps running as a portal job until it exits, times out, is stopped with /job stop, or portal shuts down.',
-  '',
-  ...(isWindows
-    ? [
-        'Common Windows PowerShell templates:',
-        '- Read a file: Get-Content -LiteralPath "C:\\path\\file.txt" -Encoding UTF8 -TotalCount 200',
-        '- Read a line range: $lines = Get-Content -LiteralPath "C:\\path\\file.txt" -Encoding UTF8; $lines[99..149]',
-        '- List a directory: Get-ChildItem -LiteralPath "C:\\path" | Select-Object Mode,Length,LastWriteTime,Name',
-        '- List recursively: Get-ChildItem -LiteralPath "C:\\path" -Recurse -Depth 2 | Select-Object FullName',
-        '- Find files: Get-ChildItem -LiteralPath "C:\\path" -Recurse -Filter "*.ts" | Select-Object -ExpandProperty FullName',
-        '- Check for ripgrep: Get-Command rg -ErrorAction SilentlyContinue',
-        '- Search text with ripgrep when available: rg -n --hidden --glob "!node_modules" "pattern" "C:\\path" | Select-Object -First 200',
-        '- Search text without ripgrep: Get-ChildItem -LiteralPath "C:\\path" -Recurse -File | Select-String -Pattern "pattern" | Select-Object -First 200',
-        '',
-        'Keep command output bounded. Use Select-Object -First, -TotalCount, or targeted paths when possible.',
-      ]
-    : [
-        'Common POSIX shell templates:',
-        '- Show the current directory: pwd',
-        '- List a directory: ls -la',
-        '- Find files: find . -maxdepth 2 -type f',
-        '- Check for ripgrep: command -v rg >/dev/null 2>&1',
-        '- Search text with ripgrep when available: rg -n --hidden --glob "!node_modules" "pattern" . | head -n 200',
-        '- Search text without ripgrep: grep -R -n --exclude-dir=node_modules --exclude-dir=.git -- "pattern" . | head -n 200',
-        '',
-        'Keep command output bounded. Use head or targeted paths when possible.',
-      ]),
-].join('\n')
-
-const runCommandExample = isWindows
-  ? {
-      command:
-        'Get-Content -LiteralPath "C:\\Users\\XXX\\portal\\package.json" -Encoding UTF8 -TotalCount 120',
-      shell: 'powershell',
-    }
-  : {
-      command: "sed -n '1,120p' package.json",
-      shell: defaultShell,
-    }
-
 @defineToolMetadata({
   name: 'run_command',
-  description: runCommandDescription,
+  description: [
+    `Execute shell command. Returns stdout, stderr, exit code, timeout info.`,
+  ].join('\n'),
   inputSchema: {
     type: 'object',
     properties: {
@@ -115,11 +65,6 @@ const runCommandExample = isWindows
     },
     required: ['command'],
   },
-  examples: [
-    {
-      params: runCommandExample,
-    },
-  ],
 })
 class RunCommandTool extends Tool<RunCommandInput, ToolOutput> {
   public async call(

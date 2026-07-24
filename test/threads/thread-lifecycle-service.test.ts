@@ -5,6 +5,7 @@ import { loadProjectInstructions } from '../../src/instructions/project-instruct
 import type { PortalAgentInstructionsConfig } from '../../src/config/portal-config.ts'
 import type { ConversationHistoryResult } from '../../src/providers/conversation-history.ts'
 import type { RuntimeCore } from '../../src/runtime/runtime-core.ts'
+import { ProviderAdapterError } from '../../src/providers/adapters/adapter-base.ts'
 import {
   ThreadCloseCleanupError,
   ThreadManager,
@@ -159,6 +160,77 @@ function getProvisionFinished(
   assert.ok(event)
   return event
 }
+
+test('clean thread creation emits no warning before ready', async () => {
+  const harness = createHarness()
+
+  const result = await harness.service.create({
+    provider: 'chatgpt',
+    model: null,
+    mode: 'agent',
+    source: 'tui',
+    activate: true,
+  })
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(
+    harness.events.map((event) => event.type),
+    ['provision.started', 'thread.ready']
+  )
+})
+
+test('clean thread resume emits no warning before ready and history', async () => {
+  const harness = createHarness()
+
+  const result = await harness.service.resume({
+    conversationUrl: 'https://chatgpt.com/c/resume-clean',
+    source: 'tui',
+    activate: true,
+  })
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(
+    harness.events.map((event) => event.type),
+    ['provision.started', 'thread.ready', 'thread.history']
+  )
+})
+
+test('login-required provisioning emits only one warning', async () => {
+  let attempts = 0
+  const harness = createHarness({
+    runtimeFactory: async () => {
+      attempts += 1
+      if (attempts === 1) {
+        throw new ProviderAdapterError('restore', 'Login required.', {
+          kind: 'auth',
+          recovery: 'none',
+          retryable: false,
+        })
+      }
+      return createFakeRuntime()
+    },
+  })
+
+  const result = await harness.service.create({
+    provider: 'chatgpt',
+    model: null,
+    mode: 'agent',
+    source: 'tui',
+    activate: true,
+  })
+
+  assert.equal(result.ok, true)
+  const loginEvents = harness.events.filter(
+    (event) =>
+      event.type === 'provision.warning' ||
+      event.type === 'provision.login_wait'
+  )
+  assert.equal(loginEvents.length, 1)
+  assert.equal(loginEvents[0]?.type, 'provision.warning')
+  if (loginEvents[0]?.type === 'provision.warning') {
+    assert.equal(loginEvents[0].title, 'login required')
+  }
+})
 
 test('provision failure preserves TUI source and releases runtime and reservation', async () => {
   const conversationUrl = 'https://chatgpt.com/c/provision-failure'

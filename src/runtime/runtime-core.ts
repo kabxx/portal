@@ -175,7 +175,7 @@ export class RuntimeCore {
         this.providerPrompt,
         SETUP_HANDSHAKE_PROMPT,
       ],
-      '\n\n\n'
+      '\n\n'
     )
   }
 

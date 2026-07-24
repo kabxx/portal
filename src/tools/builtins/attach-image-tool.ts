@@ -4,9 +4,7 @@ import type { ToolOutput } from '../core/tool-definition.ts'
 @defineToolMetadata({
   name: 'attach_image',
   description: [
-    'Attach a local image file to the current browser conversation so the browser model can inspect it if the upload succeeds.',
-    'Use this tool when the user asks you to inspect an image and provides its local path.',
-    'Do not ask the user to upload the image manually when this tool can attach the provided path.',
+    'Attach local images for inspection. No manual upload required.',
   ].join('\n'),
   inputSchema: {
     type: 'object',
@@ -18,13 +16,6 @@ import type { ToolOutput } from '../core/tool-definition.ts'
     },
     required: ['path'],
   },
-  examples: [
-    {
-      params: {
-        path: 'C:\\Users\\XXX\\Pictures\\image.webp',
-      },
-    },
-  ],
 })
 class AttachImageTool extends Tool<{ path: string }, ToolOutput> {
   public async call(input: { path: string }): Promise<ToolOutput> {

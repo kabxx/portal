@@ -15,7 +15,6 @@ interface McpSearchToolInput {
   name: 'mcp_search_tool',
   description: [
     'Load the definition of one MCP tool using its exact server and tool names.',
-    'Use names from the MCP Servers catalog. This operation does not call the MCP tool.',
   ].join('\n'),
   inputSchema: {
     type: 'object',

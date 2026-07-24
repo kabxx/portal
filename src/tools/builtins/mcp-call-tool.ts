@@ -14,11 +14,9 @@ interface McpCallToolInput {
 
 @defineToolMetadata({
   name: 'mcp_call_tool',
-  description: [
-    'Call one MCP tool using exact server and tool names.',
-    'Load an unfamiliar tool definition with mcp_search_tool before constructing arguments.',
-    'Never retry an MCP call automatically when its outcome is reported as unknown.',
-  ].join('\n'),
+  description: ['Call one MCP tool using exact server and tool names.'].join(
+    '\n'
+  ),
   inputSchema: {
     type: 'object',
     properties: {
