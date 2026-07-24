@@ -167,7 +167,9 @@ class ToolRegistry {
     return joinPromptSections([
       [
         `# Tools`,
-        `CRITICAL: Use ONLY the exact format shown for the specific tool you are calling.`,
+        `- Use only the format declared for the selected tool.`,
+        `- Tools labeled JSON Format must use the JSON tool call format.`,
+        `- Tools labeled Freeform Format must use the Freeform tool call format.`,
         ``,
       ].join('\n'),
       [
