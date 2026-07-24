@@ -274,7 +274,10 @@ test('createRuntimeFromAdapter catalogs enabled skills into setup and load_skill
     assert.match(enabledPrompt, /# Skills/)
     assert.match(enabledPrompt, /runtime-skill:/)
     assert.match(enabledPrompt, /### load_skill/)
-    assert.match(enabledPrompt, /result\.instructions/)
+    assert.match(
+      enabledPrompt,
+      /Load a skill by its exact name from the catalog\./
+    )
     assert.doesNotMatch(enabledPrompt, /<skill_content>/)
     assert.doesNotMatch(enabledPrompt, /SECRET INSTRUCTIONS/)
     assert.ok(

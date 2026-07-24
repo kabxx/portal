@@ -1020,7 +1020,7 @@ test('RuntimeCore normalizes optional prompt section boundaries', () => {
   assert.doesNotMatch(runtime.prompt, /\n{4,}/)
   assert.match(
     runtime.prompt,
-    /# Skills\n- Skill catalog\.\n\n\n# MCP Servers\n- Server catalog\.\n\n\n# Runtime Context/
+    /# Skills\n- Skill catalog\.\n\n# MCP Servers\n- Server catalog\.\n\n# Runtime Context/
   )
 })
 
@@ -1037,7 +1037,7 @@ test('RuntimeCore exposes Tools directly and ends with the READY handshake', () 
   )
   assert.match(
     runtime.prompt,
-    /# Setup Handshake\n- This message initializes the runtime only\.\n- Reply with READY when initialization is complete\.$/
+    /# Setup Handshake\n- Reply with exactly: READY$/
   )
 })
 

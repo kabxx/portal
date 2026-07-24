@@ -41,18 +41,17 @@ async function exists(filePath: string): Promise<boolean> {
 test('ApplyPatchTool prompt teaches distinct Add and Update V4A syntax', () => {
   const prompt = new ApplyPatchTool(createProviderAdapterStub()).prompt
 
-  assert.match(prompt, /Invoke it only as <tool name="apply_patch">/)
-  assert.match(prompt, /Add File rules: do not use @@/)
-  assert.match(prompt, /prefix every content line with \+/)
-  assert.match(prompt, /empty content line as a single \+/)
+  assert.match(prompt, /### apply_patch \(FREEFORM Format\)/)
+  assert.match(
+    prompt,
+    /Add File: no @@; every content line starts with \+ \(blank line = \+\)\./
+  )
   assert.match(
     prompt,
     /\*\*\* Add File: src\/new\.ts\n\+export const value = 1\n\+\n\+export default value/
   )
-  assert.match(prompt, /Update File rules: use @@/)
-  assert.match(prompt, /same top-to-bottom order/)
-  assert.match(prompt, /matching only moves forward/)
-  assert.match(prompt, /Do not put unprefixed blank separator lines/)
+  assert.match(prompt, /Update File: use @@; \+ add, - remove, space context\./)
+  assert.match(prompt, /Multiple @@ sections must follow source order\./)
   assert.match(
     prompt,
     /export function first\(\)[\s\S]*@@\n export function second\(\)/

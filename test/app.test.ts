@@ -317,10 +317,10 @@ test('clearTerminalBeforeRender writes only to an interactive terminal', () => {
   assert.deepEqual(events, ['\u001B[2J\u001B[3J\u001B[H'])
 })
 
-test('Grok provider prompt defines a strict Tool boundary', () => {
-  assert.match(GROK_PROVIDER_PROMPT, /^# Grok Tool Boundary/)
-  assert.match(GROK_PROVIDER_PROMPT, /The "Tools" section/)
-  assert.match(GROK_PROVIDER_PROMPT, /exactly one raw valid <tool>/)
+test('Grok provider prompt defines strict tool-use pitfalls', () => {
+  assert.match(GROK_PROVIDER_PROMPT, /^# Pitfall \(Strict Enforcement\)/)
+  assert.match(GROK_PROVIDER_PROMPT, /use the provided tool call format/)
+  assert.match(GROK_PROVIDER_PROMPT, /NEVER claim tool usage/)
 })
 
 test('busy threads allow navigation and queries but reject runtime mutations', () => {

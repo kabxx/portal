@@ -6,7 +6,6 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { RunCommandTool } from '../../../src/tools/builtins/run-command-tool.ts'
-import { getDefaultShell } from '../../../src/platform/platform-defaults.ts'
 import { RunCommandJobManager } from '../../../src/processes/run-command-job-manager.ts'
 import { PortalAbortError } from '../../../src/runtime/runtime-cancellation.ts'
 import type { ToolProgressEvent } from '../../../src/tools/core/tool-definition.ts'
@@ -121,20 +120,7 @@ test('RunCommandTool does not advertise a default timeout', () => {
   const timeout = requireRecord(properties.timeoutMs, 'timeout schema')
 
   assert.equal(timeout.default, undefined)
-  assert.match(tool.prompt, /valid UTF-8 text/i)
-  if (getDefaultShell() === 'powershell') {
-    assert.match(tool.prompt, /-Encoding UTF8/)
-    assert.match(tool.prompt, /Get-Command rg -ErrorAction SilentlyContinue/)
-    assert.match(tool.prompt, /ripgrep when available/)
-    assert.match(tool.prompt, /without ripgrep: Get-ChildItem.*Select-String/)
-    assert.match(tool.prompt, /Select-Object -First 200/)
-  } else {
-    assert.doesNotMatch(tool.prompt, /Get-Content|C:\\/)
-    assert.match(tool.prompt, /command -v rg >\/dev\/null 2>&1/)
-    assert.match(tool.prompt, /ripgrep when available/)
-    assert.match(tool.prompt, /without ripgrep: grep -R/)
-    assert.match(tool.prompt, /head -n 200/)
-  }
+  assert.match(tool.prompt, /When omitted, the command has no timeout\./)
 })
 
 test('RunCommandTool requires the portal shared job manager', async () => {
