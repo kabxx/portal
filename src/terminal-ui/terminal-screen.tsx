@@ -6,6 +6,7 @@ import {
   stripAnsiSequences,
   Text,
   tokenizeAnsi,
+  useApp,
   useInput,
   usePaste,
   useStdout,
@@ -93,6 +94,27 @@ export interface InputHintLine {
 export interface InputHintGroup {
   title: 'commands' | 'skills'
   hints: readonly InputHint[]
+}
+
+interface TranscriptSyncAfterRenderOptions {
+  waitUntilRenderFlush: () => Promise<void>
+  isCancelled: () => boolean
+  sync: () => void
+  commitLayout: () => void
+}
+
+export async function syncTranscriptAfterRenderFlush({
+  waitUntilRenderFlush,
+  isCancelled,
+  sync,
+  commitLayout,
+}: TranscriptSyncAfterRenderOptions): Promise<'synced' | 'cancelled'> {
+  await waitUntilRenderFlush()
+  if (isCancelled()) return 'cancelled'
+
+  sync()
+  commitLayout()
+  return 'synced'
 }
 
 const INPUT_SYNTAX_COLOR: Record<InputSyntaxKind, string> = {
@@ -830,6 +852,7 @@ export function TerminalScreen({
     setInputState(next)
   }
   const { columns, rows } = useWindowSize()
+  const { waitUntilRenderFlush } = useApp()
   const { write: writeToStdout } = useStdout()
   const screenColumns = Math.max(1, columns)
   const screenRows = Math.max(1, rows)
@@ -1283,23 +1306,38 @@ export function TerminalScreen({
       previousLayout === null ||
       previousLayout.columns !== screenColumns ||
       previousLayout.rows !== screenRows
-    transcriptLayoutRef.current = {
+    const nextLayout = {
       columns: screenColumns,
       rows: screenRows,
     }
+    let cancelled = false
 
-    const sync = () => {
-      const result = transcriptWriter.sync(
-        completedTimeline,
-        bubbleWidth,
-        forceReflow,
-        writeToStdout
-      )
-      return result
+    const sync = async () => {
+      await syncTranscriptAfterRenderFlush({
+        waitUntilRenderFlush,
+        isCancelled: () => cancelled,
+        sync: () => {
+          transcriptWriter.sync(
+            completedTimeline,
+            bubbleWidth,
+            forceReflow,
+            writeToStdout
+          )
+        },
+        commitLayout: () => {
+          transcriptLayoutRef.current = nextLayout
+        },
+      })
     }
 
-    const timer = setTimeout(sync, forceReflow ? 75 : 0)
+    const timer = setTimeout(
+      () => {
+        void sync()
+      },
+      forceReflow ? 75 : 0
+    )
     return () => {
+      cancelled = true
       clearTimeout(timer)
     }
   }, [
@@ -1309,6 +1347,7 @@ export function TerminalScreen({
     screenRows,
     state.timelineVersion,
     transcriptWriter,
+    waitUntilRenderFlush,
     writeToStdout,
   ])
 
