@@ -167,7 +167,7 @@ class ToolRegistry {
     return joinPromptSections([
       [
         `# Tools`,
-        `Use the available tools below when needed. Invoke them using the specified text protocol.`,
+        `CRITICAL: Use ONLY the exact format shown for the specific tool you are calling.`,
         ``,
       ].join('\n'),
       [

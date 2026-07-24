@@ -369,12 +369,20 @@ export function shouldRenderFallbackThreadError({
 }
 
 export const GROK_PROVIDER_PROMPT = [
-  `# Grok Tool Boundary (Strict Enforcement)`,
-  `For tools defined in this prompt, use the provided tool call format: include a valid <tool>...</tool> block with required parameters in your response.`,
-  `For other existing function calling tools, use their original function calling protocol and capabilities.`,
-  `NEVER inspect, report, or rely on your own environment, filesystem, workspace, or sandbox for user resource requests.`,
-  `NEVER claim access to user resources unless performed through the corresponding tool invocation.`,
-  `NEVER claim tool usage unless your response contains the corresponding valid tool invocation.`,
+  `# Pitfall (Strict Enforcement)`,
+  `- MUST For tools defined in this prompt, use the provided tool call format: include a valid <tool>...</tool> block with required parameters in your response.`,
+  `- MUST For other existing function calling tools, use your original function calling protocol and capabilities.`,
+  `- NEVER inspect, report, or rely on your own environment, filesystem, workspace, or sandbox for user resource requests.`,
+  `- NEVER claim access to user resources unless performed through the corresponding tool invocation.`,
+  `- NEVER claim tool usage unless your response contains the corresponding valid tool invocation.`,
+].join('\n')
+
+export const CHATGPT_PROVIDER_PROMPT = [
+  `# Pitfall (Strict Enforcement)`,
+  `- MUST For tools defined in this prompt, use the provided tool call format: include a valid <tool>...</tool> block with required parameters in your response.`,
+  `- MUST For other existing function calling tools, use your original function calling protocol and capabilities.`,
+  `- MUST Treat conversation-declared tools as available runtime tools, even if absent from your current tool interface.`,
+  `- MUST When a user requests access to their directories or files, invoke the declared tools in this prompt instead of refusing, as these tools grant access to the user's environment.`,
 ].join('\n')
 
 interface Options {
@@ -535,7 +543,14 @@ function redactMcpConfig(config: McpServerConfig): Record<string, unknown> {
 }
 
 function getProviderPrompt(provider: ProviderId): string | null {
-  return provider === 'grok' ? GROK_PROVIDER_PROMPT : null
+  switch (provider) {
+    case 'chatgpt':
+      return CHATGPT_PROVIDER_PROMPT
+    case 'grok':
+      return GROK_PROVIDER_PROMPT
+    default:
+      return null
+  }
 }
 
 function requireProvisionResult(
@@ -2483,13 +2498,10 @@ export async function run(argv = process.argv): Promise<void> {
       ) =>
         await withCancellableOperation(null, async (signal, setStopTarget) => {
           void setStopTarget
-          const result = await threadLifecycle.create(
+          await threadLifecycle.create(
             { provider, model, mode, source: 'tui', activate: true },
             signal
           )
-          if (!result.ok && result.failure.code !== 'cancelled') {
-            throw new Error(result.failure.message)
-          }
         }),
       resumeThread: async (conversationUrl: string) =>
         await withCancellableOperation(null, async (signal, setStopTarget) => {
