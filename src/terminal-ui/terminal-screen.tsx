@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import {
   Box,
   sanitizeTerminalText,
-  Static,
+  renderToString,
   stripAnsiSequences,
   Text,
   tokenizeAnsi,
   useInput,
   usePaste,
+  useStdout,
   useWindowSize,
 } from 'ink'
 import type { CliCommand } from '../cli-commands/core/command-types.ts'
@@ -29,6 +30,7 @@ import {
   type BubbleFormat,
   TerminalController,
 } from './terminal-controller.ts'
+import type { TerminalTranscriptWriter } from './terminal-transcript-writer.ts'
 import { render as renderMarkdown } from 'markdansi'
 
 interface TerminalScreenProps {
@@ -37,6 +39,7 @@ interface TerminalScreenProps {
   providers: readonly ProviderId[]
   keybindings: KeybindingCatalog
   onInterrupt: () => void
+  transcriptWriter?: TerminalTranscriptWriter
 }
 
 const CHAT_PADDING_X = 0
@@ -44,7 +47,8 @@ const INPUT_PADDING_X = 1
 const INPUT_GAP = 1
 const INPUT_MARGIN_TOP = 0
 const INPUT_TAB_WIDTH = 4
-const MIN_MESSAGE_WIDTH = 24
+const MIN_INLINE_INPUT_WIDTH = 12
+const MIN_INPUT_HINT_VIEWPORT_ROWS = 13
 const WELCOME_BORDER_COLOR = 'white'
 const WELCOME_LOGO_GLYPHS = [
   { lines: ['█▀█', '█▀▀'], color: '#ff5f57' },
@@ -120,7 +124,7 @@ const TONE_LABEL: Record<TimelineEntry['tone'], string> = {
 }
 
 export function calculateBubbleWidth(columns: number): number {
-  return Math.max(MIN_MESSAGE_WIDTH, columns - CHAT_PADDING_X * 2)
+  return Math.max(1, columns - CHAT_PADDING_X * 2)
 }
 
 export function shouldShowWaitingIndicator(_state: TerminalState): boolean {
@@ -796,6 +800,7 @@ export function TerminalScreen({
   providers,
   keybindings,
   onInterrupt,
+  transcriptWriter: transcriptWriterProp,
 }: TerminalScreenProps) {
   const [state, setState] = useState<TerminalState>(ui.getState())
   const [inputState, setInputState] = useState<InputEditorState>({
@@ -809,6 +814,10 @@ export function TerminalScreen({
   const inputStateRef = useRef(inputState)
   const inputRevisionRef = useRef(0)
   const inputSubmissionRef = useRef(0)
+  const transcriptLayoutRef = useRef<{
+    columns: number
+    rows: number
+  } | null>(null)
   const updateInputState = (
     update: InputEditorState | ((current: InputEditorState) => InputEditorState)
   ) => {
@@ -820,7 +829,11 @@ export function TerminalScreen({
     inputStateRef.current = next
     setInputState(next)
   }
-  const { columns } = useWindowSize()
+  const { columns, rows } = useWindowSize()
+  const { write: writeToStdout } = useStdout()
+  const screenColumns = Math.max(1, columns)
+  const screenRows = Math.max(1, rows)
+  const transcriptWriter = transcriptWriterProp ?? null
   const inputValue = inputState.value
 
   useEffect(() => {
@@ -1239,30 +1252,73 @@ export function TerminalScreen({
     inputValue,
     inputState.selectedHintCompletion
   )
-  const inputLabelWidth = Math.min(
-    Math.max(2, estimateDisplayWidth(inputDisplay.labelText)),
-    Math.max(2, columns - INPUT_PADDING_X * 2 - 2)
-  )
-  const bubbleWidth = calculateBubbleWidth(columns)
+  const compactInput = screenColumns < MIN_INLINE_INPUT_WIDTH
+  const inputLabelWidth = compactInput
+    ? screenColumns
+    : Math.min(
+        Math.max(1, estimateDisplayWidth(inputDisplay.labelText)),
+        Math.max(1, screenColumns - INPUT_PADDING_X * 2 - INPUT_GAP - 1)
+      )
+  const bubbleWidth = calculateBubbleWidth(screenColumns)
   const connectingWelcome =
     state.timeline.find(
       (entry) => entry.welcome?.browserStatus === 'connecting'
     ) ?? null
-  const staticTimeline =
+  const completedTimeline =
     connectingWelcome === null
       ? state.timeline
       : state.timeline.filter((entry) => entry.id !== connectingWelcome.id)
 
+  const completedTimelineSignature = completedTimeline
+    .map((entry) => timelineEntrySignature(entry))
+    .join('\u001F')
+
+  useEffect(() => {
+    if (transcriptWriter === null) {
+      return
+    }
+
+    const previousLayout = transcriptLayoutRef.current
+    const forceReflow =
+      previousLayout === null ||
+      previousLayout.columns !== screenColumns ||
+      previousLayout.rows !== screenRows
+    transcriptLayoutRef.current = {
+      columns: screenColumns,
+      rows: screenRows,
+    }
+
+    const sync = () => {
+      const result = transcriptWriter.sync(
+        completedTimeline,
+        bubbleWidth,
+        forceReflow,
+        writeToStdout
+      )
+      return result
+    }
+
+    const timer = setTimeout(sync, forceReflow ? 75 : 0)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [
+    bubbleWidth,
+    completedTimelineSignature,
+    screenColumns,
+    screenRows,
+    state.timelineVersion,
+    transcriptWriter,
+    writeToStdout,
+  ])
+
   return (
     <>
-      <Static
-        key={`${state.timelineVersion}:${bubbleWidth}`}
-        items={staticTimeline}
-      >
-        {(entry) => (
-          <TimelineBubble entry={entry} key={entry.id} width={bubbleWidth} />
-        )}
-      </Static>
+      {transcriptWriter === null
+        ? completedTimeline.map((entry) => (
+            <TimelineBubble entry={entry} key={entry.id} width={bubbleWidth} />
+          ))
+        : null}
 
       <Box flexDirection="column" paddingBottom={0}>
         <ChatPanel
@@ -1276,9 +1332,11 @@ export function TerminalScreen({
           display={inputDisplay}
           cursorDisplay={inputCursorDisplay}
           inputLabelWidth={inputLabelWidth}
-          columns={columns}
+          columns={screenColumns}
+          rows={screenRows}
         />
-        {inputHintGroup !== null ? (
+        {inputHintGroup !== null &&
+        screenRows >= MIN_INPUT_HINT_VIEWPORT_ROWS ? (
           <InputHintPanel
             hints={inputHintGroup.hints}
             selectedCompletion={selectedHintCompletion}
@@ -1347,6 +1405,22 @@ export function InputHintPanel({
   const visibleHints = sliceInputHintWindow(hints, selectedCompletion)
   const lines = formatInputHintLines(visibleHints, width, selectedCompletion)
   const contentWidth = Math.max(1, width - 4)
+
+  if (width < 5) {
+    return (
+      <Box flexDirection="column" overflow="hidden" width={width}>
+        <Text color="gray">{truncateAnsiLine(title, width)}</Text>
+        {lines.map((line, index) => (
+          <Text
+            color={line.selected ? 'cyan' : 'gray'}
+            key={`${line.kind}-${index}`}
+          >
+            {truncateAnsiLine(line.usage, width)}
+          </Text>
+        ))}
+      </Box>
+    )
+  }
 
   return (
     <Box flexDirection="column" width={width}>
@@ -1451,32 +1525,54 @@ function InputPanel({
   cursorDisplay,
   inputLabelWidth,
   columns,
+  rows,
 }: {
   display: ReturnType<typeof describeInputPanel>
   cursorDisplay: ReturnType<typeof formatInputAroundCursorWithSyntax>
   inputLabelWidth: number
   columns: number
+  rows: number
 }) {
   const separatorLine = '─'.repeat(Math.max(0, columns))
+  const compact = columns < MIN_INLINE_INPUT_WIDTH
+  const minimumPanelRows = compact ? 4 : 3
   const cursorColor = cursorDisplay.cursor.inverse
     ? inputRunColor(cursorDisplay.cursor.syntax, display.bodyColor)
     : 'gray'
+
+  if (rows < minimumPanelRows) {
+    const before = cursorDisplay.before.map(({ text }) => text).join('')
+    const after = cursorDisplay.after.map(({ text }) => text).join('')
+    const currentLineBefore = before.slice(before.lastIndexOf('\n') + 1)
+    const currentLineAfter = after.split('\n', 1)[0] ?? ''
+    const currentLine = `${currentLineBefore}${cursorDisplay.cursor.text}${currentLineAfter}`
+
+    return (
+      <Box overflow="hidden" width="100%">
+        <Text wrap="truncate-end">
+          {truncateAnsiLine(currentLine || INPUT_CURSOR, columns)}
+        </Text>
+      </Box>
+    )
+  }
 
   return (
     <Box flexDirection="column" marginTop={INPUT_MARGIN_TOP} width="100%">
       <Text color={display.labelColor}>{separatorLine}</Text>
 
       <Box
-        flexDirection="row"
-        gap={INPUT_GAP}
-        paddingX={INPUT_PADDING_X}
+        flexDirection={compact ? 'column' : 'row'}
+        gap={compact ? 0 : INPUT_GAP}
+        paddingX={compact ? 0 : INPUT_PADDING_X}
         width="100%"
       >
-        <Box flexShrink={0} width={inputLabelWidth}>
-          <Text color={display.labelColor}>{display.labelText}</Text>
+        <Box flexShrink={0} width={compact ? '100%' : inputLabelWidth}>
+          <Text color={display.labelColor} wrap="truncate-end">
+            {display.labelText}
+          </Text>
         </Box>
 
-        <Box flexGrow={1}>
+        <Box flexGrow={1} {...(compact ? { width: '100%' } : {})}>
           <Text wrap="wrap">
             {display.showCursor ? (
               <>
@@ -1574,7 +1670,7 @@ function TimelineBubble({
     (useEntryLabel
       ? entry.label || TONE_LABEL[entry.tone]
       : TONE_LABEL[entry.tone])
-  const contentWidth = Math.max(1, width - 4)
+  const contentWidth = timelineBubbleContentWidth(width)
 
   const rendered = renderBubbleBody(entry.body, entry.format, contentWidth)
   const renderedLines = rendered.length > 0 ? rendered.split('\n') : ['']
@@ -1584,6 +1680,18 @@ function TimelineBubble({
       : fixedLines(renderedLines, fixedLineCount).map((line) =>
           truncateAnsiLine(line, contentWidth)
         )
+
+  if (width < 5) {
+    return (
+      <Box flexDirection="column" overflow="hidden" width={width}>
+        <Text color={toneColor}>{truncateAnsiLine(label, width)}</Text>
+        {wrappedLines.map((line, index) => (
+          <Text key={index}>{padToWidthAnsi(line, width)}</Text>
+        ))}
+        <Text color={toneColor}>{'─'.repeat(width)}</Text>
+      </Box>
+    )
+  }
 
   return (
     <Box flexDirection="column" width={width}>
@@ -1598,6 +1706,32 @@ function TimelineBubble({
       <Text color={toneColor}>{`└${'─'.repeat(Math.max(0, width - 2))}┘`}</Text>
     </Box>
   )
+}
+
+function timelineBubbleContentWidth(width: number): number {
+  return Math.max(1, width < 5 ? width : width - 4)
+}
+
+export function renderTimelineEntryToAnsi(
+  entry: TimelineEntry,
+  width: number
+): string {
+  const rendered = renderToString(
+    <TimelineBubble entry={entry} width={Math.max(1, width)} />,
+    { columns: Math.max(1, width) }
+  )
+  return rendered.endsWith('\n') ? rendered : `${rendered}\n`
+}
+
+function timelineEntrySignature(entry: TimelineEntry): string {
+  return JSON.stringify([
+    entry.id,
+    entry.tone,
+    entry.label,
+    entry.body,
+    entry.format,
+    entry.welcome ?? null,
+  ])
 }
 
 export interface WelcomeRow {
@@ -1666,8 +1800,24 @@ function WelcomeBubble({
   label: string
   width: number
 }) {
-  const contentWidth = Math.max(1, width - 4)
+  const contentWidth = timelineBubbleContentWidth(width)
   const rows = buildWelcomeRows(details, contentWidth)
+
+  if (width < 5) {
+    return (
+      <Box flexDirection="column" overflow="hidden" width={width}>
+        <Text color={WELCOME_BORDER_COLOR}>
+          {truncateAnsiLine(label, width)}
+        </Text>
+        {rows.map((row, index) => (
+          <Text color={WELCOME_BORDER_COLOR} key={index}>
+            {padToWidthAnsi(truncateAnsiLine(row.text, width), width)}
+          </Text>
+        ))}
+        <Text color={WELCOME_BORDER_COLOR}>{'─'.repeat(width)}</Text>
+      </Box>
+    )
+  }
 
   return (
     <Box flexDirection="column" width={width}>

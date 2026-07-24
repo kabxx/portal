@@ -70,7 +70,11 @@ import {
   listProviderCapabilityStates,
 } from './cli-commands/commands/command-thread-capability.ts'
 import { resolveConversationUrl } from './providers/provider-conversation-url.ts'
-import { TerminalScreen } from './terminal-ui/terminal-screen.tsx'
+import {
+  renderTimelineEntryToAnsi,
+  TerminalScreen,
+} from './terminal-ui/terminal-screen.tsx'
+import { TerminalTranscriptWriter } from './terminal-ui/terminal-transcript-writer.ts'
 import { KeybindingCatalog } from './keybindings/keybinding-catalog.ts'
 import { TerminalController } from './terminal-ui/terminal-controller.ts'
 import { SkillLibrary } from './skills/skill-library.ts'
@@ -1270,12 +1274,17 @@ export async function run(argv = process.argv): Promise<void> {
   })
   clearTerminalBeforeRender(stdout)
 
+  const transcriptWriter = new TerminalTranscriptWriter(
+    renderTimelineEntryToAnsi
+  )
+
   const inkApp = render(
     createElement(TerminalScreen, {
       ui,
       commands: commandRegistry.list(),
       providers: PROVIDERS,
       keybindings: keybindingCatalog,
+      transcriptWriter,
       onInterrupt: () => {
         const state = ui.getState()
         const mcpForegroundOperation = mcpForegroundOperations
@@ -1318,13 +1327,17 @@ export async function run(argv = process.argv): Promise<void> {
     {
       stdin,
       stdout,
+      incrementalRendering: true,
       exitOnCtrlC: false,
       reserveTrailingLine: false,
       windowsConsoleInput: { mode: 'enabled' },
     }
   )
 
-  ui.setScreenResetter(() => clearInteractiveTerminal(inkApp, stdout))
+  ui.setScreenResetter(() => {
+    transcriptWriter.reset()
+    clearInteractiveTerminal(inkApp, stdout)
+  })
 
   void inkApp.waitUntilExit().then(async () => {
     ui.setScreenResetter(null)
