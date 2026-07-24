@@ -27,6 +27,7 @@ import {
   moveCursorVertical,
   normalizePastedInput,
   renderBubbleBody,
+  renderTimelineEntryToAnsi,
   wrapAnsiLine,
   resolveInputSyntaxHighlight,
   shouldClearInputForCtrlC,
@@ -73,8 +74,29 @@ test('normalizePastedInput preserves multiline layout with Unix newlines', () =>
 })
 
 test('calculateBubbleWidth uses the full terminal width without right margin', () => {
+  assert.equal(calculateBubbleWidth(0), 1)
+  assert.equal(calculateBubbleWidth(1), 1)
+  assert.equal(calculateBubbleWidth(2), 2)
+  assert.equal(calculateBubbleWidth(23), 23)
   assert.equal(calculateBubbleWidth(80), 80)
   assert.equal(calculateBubbleWidth(120), 120)
+})
+
+test('renderTimelineEntryToAnsi never exceeds the requested width', () => {
+  const entry = {
+    id: 1,
+    tone: 'assistant' as const,
+    label: 'assistant',
+    body: 'abcdefghij',
+    format: 'plain' as const,
+  }
+
+  for (const width of [1, 2, 3, 4, 5, 24, 80]) {
+    const output = stripAnsiSequences(renderTimelineEntryToAnsi(entry, width))
+    for (const line of output.trimEnd().split('\n')) {
+      assert.ok(estimateDisplayWidth(line) <= width, `${width}: ${line}`)
+    }
+  }
 })
 
 test('formatInputForDisplay expands tabs without changing line breaks', () => {

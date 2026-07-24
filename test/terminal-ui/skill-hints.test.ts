@@ -128,4 +128,20 @@ test('skill hint bubble renders one aligned frame with five rows', () => {
       assert.equal(estimateDisplayWidth(line), width, line)
     }
   }
+
+  for (const width of [1, 2, 3, 4, 5]) {
+    const output = renderToString(
+      createElement(InputHintPanel, {
+        hints,
+        selectedCompletion: selected,
+        title: 'skills',
+        width,
+      }),
+      { columns: width }
+    )
+
+    for (const line of output.split('\n')) {
+      assert.ok(estimateDisplayWidth(line) <= width, line)
+    }
+  }
 })

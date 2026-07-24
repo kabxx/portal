@@ -4,6 +4,8 @@
 
 portal opens on the command help screen. Run `/help` at any time to list the available top-level commands. Top-level commands and first-level subcommands support unique-prefix completion with `Tab`. Typing `/` opens a contextual command hint bubble below the input; an active thread also supports `$` and `$prefix` Skill hints with descriptions. Each hint list shows at most five rows, `Up` / `Down` browse with wraparound, `Tab` completes the selected item, and `Enter` submits normally.
 
+The interactive TUI stays on the primary terminal screen, so native mouse-wheel scrolling and zoom shortcuts remain available. Completed bubbles are written to terminal scrollback while the active bubble and input remain live. After a width or height resize settles, portal clears its old layout and replays the complete active timeline at the new size; portal does not impose an additional history-row limit, although the terminal's own scrollback capacity still applies.
+
 ## Starting portal
 
 Start portal from a local clone:
