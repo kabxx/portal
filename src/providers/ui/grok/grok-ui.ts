@@ -41,7 +41,9 @@ const GROK_UI_SELECTORS = defineProviderUiSelectors({
     ],
   },
   upload: {
-    input: ['input[type="file"][name="files"]'],
+    input: [
+      'form:has([data-testid="chat-input"]) input[type="file"][name="files"]',
+    ],
   },
   model: {
     trigger: [
@@ -218,16 +220,32 @@ export class GrokUi {
   }
 
   public async attachFile(path: string | readonly string[]): Promise<void> {
-    const input = this.page
-      .locator(joinCssLocatorCandidates(GROK_UI_SELECTORS.upload.input))
-      .first()
-    if ((await input.count().catch(() => 0)) === 0) {
+    const inputs = this.page.locator(
+      joinCssLocatorCandidates(GROK_UI_SELECTORS.upload.input)
+    )
+    const inputCount = await inputs.count().catch(() => 0)
+    if (inputCount === 0) {
       throw new ProviderAdapterUnsupportedError(
         'attachFile',
         'Grok file upload is not available in the current conversation.'
       )
     }
-    await input.setInputFiles(typeof path === 'string' ? [path] : [...path])
+    if (inputCount > 1) {
+      throw new ProviderAdapterError(
+        'attachFile',
+        'Grok file upload input was ambiguous.',
+        {
+          kind: 'ui',
+          recovery: 'none',
+          retryable: false,
+          maxAttempts: 1,
+          detailCode: 'grok_upload_input_ambiguous',
+        }
+      )
+    }
+    await inputs
+      .first()
+      .setInputFiles(typeof path === 'string' ? [path] : [...path])
   }
 
   public async stopGeneration(): Promise<void> {

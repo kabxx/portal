@@ -1,7 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { ProviderAdapterUnsupportedError } from '../../../src/providers/adapters/adapter-base.ts'
+import {
+  ProviderAdapterError,
+  ProviderAdapterUnsupportedError,
+} from '../../../src/providers/adapters/adapter-base.ts'
 import { GrokAdapter } from '../../../src/providers/adapters/adapter-grok.ts'
 import { joinCssLocatorCandidates } from '../../../src/providers/ui/provider-ui.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
@@ -19,6 +22,8 @@ const GROK_LOCATORS = {
 } as const
 const GROK_VOICE_MODE_READY_SELECTOR =
   'form:has([data-testid="chat-input"]) div:has(> [data-query-bar-mode-select]) button[type="button"]:has(> div > div:nth-child(6):last-child)'
+const GROK_UPLOAD_INPUT_SELECTOR =
+  'form:has([data-testid="chat-input"]) input[type="file"][name="files"]'
 
 interface GrokParsedWebSocketResponse {
   conversationId: string | null
@@ -171,7 +176,7 @@ test('GrokAdapter rejects model selection that redirects to subscribe', async ()
 test('GrokAdapter.attachFile writes files into the hidden Grok file input', async () => {
   const adapter = createTestGrokAdapter()
   const page = createGrokPage({
-    fileInputAvailable: true,
+    fileInputCount: 1,
   })
   installGrokTestPage(adapter, page)
 
@@ -180,9 +185,23 @@ test('GrokAdapter.attachFile writes files into the hidden Grok file input', asyn
   assert.deepEqual(page.files, ['C:/tmp/a.png', 'C:/tmp/b.txt'])
 })
 
+test('GrokAdapter.attachFile ignores unrelated global file inputs', async () => {
+  const adapter = createTestGrokAdapter()
+  const page = createGrokPage({
+    fileInputCount: 1,
+    unrelatedFileInputCount: 2,
+  })
+  installGrokTestPage(adapter, page)
+
+  await adapter.attachFile('C:/tmp/a.png')
+
+  assert.deepEqual(page.files, ['C:/tmp/a.png'])
+  assert.deepEqual(page.unrelatedFiles, [])
+})
+
 test('GrokAdapter.attachFile reports unsupported when the file input is missing', async () => {
   const adapter = createTestGrokAdapter()
-  installGrokTestPage(adapter, createGrokPage())
+  installGrokTestPage(adapter, createGrokPage({ unrelatedFileInputCount: 1 }))
 
   await assert.rejects(
     adapter.attachFile('C:/tmp/a.png'),
@@ -191,6 +210,22 @@ test('GrokAdapter.attachFile reports unsupported when the file input is missing'
       error.message ===
         'Grok file upload is not available in the current conversation.'
   )
+})
+
+test('GrokAdapter.attachFile rejects ambiguous Composer file inputs', async () => {
+  const adapter = createTestGrokAdapter()
+  const page = createGrokPage({ fileInputCount: 2 })
+  installGrokTestPage(adapter, page)
+
+  await assert.rejects(
+    adapter.attachFile('C:/tmp/a.png'),
+    (error) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'ui' &&
+      error.retryable === false &&
+      error.detailCode === 'grok_upload_input_ambiguous'
+  )
+  assert.deepEqual(page.files, [])
 })
 
 test('GrokAdapter.stopGeneration clicks the visible stop icon button when present', async () => {
@@ -216,18 +251,21 @@ test('GrokAdapter.stopGeneration is a no-op when the stop icon is missing', asyn
 })
 
 function createGrokPage({
-  fileInputAvailable = false,
+  fileInputCount = 0,
   modelItemCount = 0,
   subscribeModelIndex = null,
   stopButtonAvailable = false,
+  unrelatedFileInputCount = 0,
 }: {
-  fileInputAvailable?: boolean
+  fileInputCount?: number
   modelItemCount?: number
   subscribeModelIndex?: number | null
   stopButtonAvailable?: boolean
+  unrelatedFileInputCount?: number
 } = {}) {
   const events: string[] = []
   const files: string[] = []
+  const unrelatedFiles: string[] = []
   let currentUrl = 'https://grok.com/chat/conv-1'
   let submitEnabled = true
   let submitVisible = true
@@ -267,12 +305,25 @@ function createGrokPage({
     },
   }
   const fileInput = {
-    count: async () => (fileInputAvailable ? 1 : 0),
+    count: async () => fileInputCount,
     first: () => fileInput,
     setInputFiles: async (path: string | readonly string[]) => {
       files.splice(
         0,
         files.length,
+        ...(typeof path === 'string' ? [path] : [...path])
+      )
+    },
+  }
+  const globalFileInputs = {
+    count: async () => unrelatedFileInputCount + fileInputCount,
+    first: () => (unrelatedFileInputCount > 0 ? unrelatedFileInput : fileInput),
+  }
+  const unrelatedFileInput = {
+    setInputFiles: async (path: string | readonly string[]) => {
+      unrelatedFiles.splice(
+        0,
+        unrelatedFiles.length,
         ...(typeof path === 'string' ? [path] : [...path])
       )
     },
@@ -318,6 +369,7 @@ function createGrokPage({
   const page = {
     events,
     files,
+    unrelatedFiles,
     websocketFrames,
     url: () => currentUrl,
     keyboard: {
@@ -344,8 +396,11 @@ function createGrokPage({
           }),
         }
       }
-      if (selector === 'input[type="file"][name="files"]') {
+      if (selector === GROK_UPLOAD_INPUT_SELECTOR) {
         return fileInput
+      }
+      if (selector === 'input[type="file"][name="files"]') {
+        return globalFileInputs
       }
       if (selector === joinCssLocatorCandidates(GROK_LOCATORS.modelTrigger)) {
         return modelTrigger
