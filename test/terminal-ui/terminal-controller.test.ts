@@ -518,7 +518,7 @@ test('TerminalController hides resume internals and restores tool calls', () => 
       id: 'tool-call',
       parentId: 'question',
       role: 'assistant',
-      text: 'I will inspect it.\n<tool>{"tool":"run_command","params":{"command":"dir"}}</tool>\nThe results are in.',
+      text: 'I will inspect it.\n<tool name="run_command">{"command":"dir"}</tool>',
       format: 'markdown',
       createdAt: 4,
     },
@@ -543,14 +543,62 @@ test('TerminalController hides resume internals and restores tool calls', () => 
   const timeline = ui.getState().timeline
   assert.deepEqual(
     timeline.map(({ tone }) => tone),
-    ['user', 'assistant', 'tool_call', 'assistant', 'assistant']
+    ['user', 'assistant', 'tool_call', 'assistant']
   )
   assert.equal(timeline[0]?.body, 'Inspect the project.')
   assert.equal(timeline[1]?.body, 'I will inspect it.')
   assert.match(timeline[2]?.body ?? '', /command: dir/)
   assert.equal(timeline[2]?.label, 'run_command · call')
-  assert.equal(timeline[3]?.body, 'The results are in.')
-  assert.equal(timeline[4]?.body, 'Inspection complete.')
+  assert.equal(timeline[3]?.body, 'Inspection complete.')
+})
+
+test('TerminalController restores non-terminal history tool blocks as assistant text', () => {
+  const manager = new ThreadManager()
+  const thread = manager.addThread({
+    id: manager.createThreadId(),
+    provider: 'chatgpt',
+    runtime: createFakeRuntime(),
+    createdAt: 1,
+  })
+  const ui = new TerminalController()
+  const response = [
+    'I will inspect it.',
+    '<tool name="run_command">',
+    '{"command":"dir"}',
+    '</tool>',
+    'The results are in.',
+  ].join('\n')
+
+  ui.renderConversationHistory(thread, [
+    {
+      id: 'question',
+      parentId: null,
+      role: 'user',
+      text: 'Inspect the project.',
+      format: 'plain',
+      createdAt: 1,
+    },
+    {
+      id: 'answer',
+      parentId: 'question',
+      role: 'assistant',
+      text: response,
+      format: 'markdown',
+      createdAt: 2,
+    },
+  ])
+
+  const timeline = ui.getState().timeline
+  assert.deepEqual(
+    timeline.map(({ tone }) => tone),
+    ['user', 'assistant']
+  )
+  assert.equal(timeline[1]?.body, response)
+  const rendered = renderBubbleBody(timeline[1].body, 'markdown', 100)
+  assert.match(rendered, /<tool name="run_command">/)
+  assert.match(rendered, /{"command":"dir"}/)
+  assert.match(rendered, /<\/tool>/)
+  assert.match(rendered, /The results are in\./)
 })
 
 test('TerminalController keeps READY when no setup prompt is present', () => {
@@ -730,11 +778,7 @@ test('TerminalController keeps a dynamic ten-line live run_command tail and reus
   })
   const ui = new TerminalController()
 
-  ui.renderToolCall(
-    thread,
-    'run_command',
-    JSON.stringify({ tool: 'run_command', params: { command: 'watch' } })
-  )
+  ui.renderToolCall(thread, 'run_command', JSON.stringify({ command: 'watch' }))
   ui.renderToolProgress(thread, 'run_command', {
     type: 'start',
     startedAt: 1000,
@@ -1119,7 +1163,7 @@ test('TerminalController prefers explicit tool display text', () => {
   assert.equal(latest?.body.includes('FULL SKILL CONTENT'), false)
 })
 
-test('TerminalController summarizes every remaining tool call without raw envelopes', () => {
+test('TerminalController summarizes named JSON tool calls', () => {
   const manager = new ThreadManager()
   const thread = manager.addThread({
     id: manager.createThreadId(),
@@ -1165,15 +1209,11 @@ test('TerminalController summarizes every remaining tool call without raw envelo
   ] as const
 
   for (const item of cases) {
-    ui.renderToolCall(
-      thread,
-      item.tool,
-      JSON.stringify({ tool: item.tool, params: item.params })
-    )
+    const payload = JSON.stringify(item.params)
+    ui.renderToolCall(thread, item.tool, payload)
     const entry = ui.getState().timeline.at(-1)
     assert.equal(entry?.label, `${item.tool} · call`)
     assert.equal(entry?.body, item.expected)
-    assert.doesNotMatch(entry?.body ?? '', /"params"|"tool":/)
   }
 })
 
@@ -1186,7 +1226,7 @@ test('TerminalController falls back to the raw payload for invalid tool params',
     createdAt: 1,
   })
   const ui = new TerminalController()
-  const payload = JSON.stringify({ tool: 'run_command', params: null })
+  const payload = JSON.stringify(['invalid'])
 
   ui.renderToolCall(thread, 'run_command', payload)
 
@@ -1306,7 +1346,10 @@ test('TerminalController does not render a tool-only stream as assistant text', 
   })
   const ui = new TerminalController()
 
-  ui.renderAssistantStream(thread, '<tool>\n{"tool":"run_command"}\n</tool>')
+  ui.renderAssistantStream(
+    thread,
+    '<tool name="run_command">\n{"command":"dir"}\n</tool>'
+  )
 
   assert.equal(ui.getState().liveAssistant, null)
 })
@@ -1327,6 +1370,44 @@ test('TerminalController keeps only assistant text before a streaming tool call'
   )
 
   assert.equal(ui.getState().liveAssistant?.body, 'I will update the file.')
+})
+
+test('TerminalController restores a non-terminal tool block to the assistant stream', () => {
+  const manager = new ThreadManager()
+  const thread = manager.addThread({
+    id: manager.createThreadId(),
+    provider: 'grok',
+    runtime: createFakeRuntime(),
+    createdAt: 1,
+  })
+  const ui = new TerminalController()
+  const response = [
+    'I will update the file.',
+    '<tool name="apply_patch">',
+    '*** Begin Patch',
+    '</tool>',
+    'The patch is ready.',
+  ].join('\n')
+
+  ui.renderAssistantStream(thread, response)
+
+  assert.equal(ui.getState().liveAssistant?.body, response)
+  const streamed = renderBubbleBody(
+    ui.getState().liveAssistant?.body ?? '',
+    'markdown',
+    100
+  )
+  assert.match(streamed, /<tool name="apply_patch">/)
+  assert.match(streamed, /\*\*\* Begin Patch/)
+  assert.match(streamed, /<\/tool>/)
+  assert.match(streamed, /The patch is ready\./)
+
+  ui.renderAssistantMessage(thread, response)
+
+  const final = ui.getState().timeline.at(-1)
+  assert.equal(final?.body, response)
+  assert.equal(final?.body.includes('\\<tool'), false)
+  assert.equal(renderBubbleBody(final?.body ?? '', 'markdown', 100), streamed)
 })
 
 test('TerminalController leaves ordinary streaming Markdown unchanged', () => {
@@ -1354,17 +1435,13 @@ test('TerminalController keeps an incomplete final tool tag visible after a tool
   })
   const ui = new TerminalController()
 
-  ui.renderToolCall(
-    thread,
-    'run_command',
-    '{"tool":"run_command","params":{"command":"pwd"}}'
-  )
+  ui.renderToolCall(thread, 'run_command', '{"command":"pwd"}')
   ui.renderAssistantMessage(thread, '<tool>\n')
 
   const entries = ui.getState().timeline
   assert.equal(entries[0]?.tone, 'tool_call')
   assert.equal(entries[1]?.tone, 'assistant')
-  assert.equal(entries[1]?.body, '\\<tool>\n')
+  assert.equal(entries[1]?.body, '<tool>\n')
   assert.match(renderBubbleBody(entries[1].body, 'markdown', 100), /<tool>/)
 })
 
@@ -1668,7 +1745,7 @@ test('live assistant with 40-line markdown response pushes input beyond typical 
     '',
     '- `src/runtime/` — runtime 主循环、Turn/Item 事件和恢复策略',
     '- `src/providers/` — 封装不同网页 AI provider 的浏览器交互细节',
-    '- `src/tools/` — 定义本地 Tool，解析 `<tool>` 并执行',
+    '- `src/tools/` — 定义本地 Tool，解析命名 `<tool>` 调用并执行',
     '- `src/threads/` — thread-first runtime facade',
     '- `src/cli-commands/` — 交互式 CLI 命令系统',
     '- `src/threads/` — ThreadHandle / ThreadRecord / TurnRecord 状态模型',
@@ -1684,10 +1761,12 @@ test('live assistant with 40-line markdown response pushes input beyond typical 
     '',
     '## 4. 工具协议',
     '',
-    '工具调用使用 `<tool>` XML 标签包裹 JSON，Patch 工具使用命名标签承载原始 V4A 文本：',
+    '所有工具使用命名 `<tool>` 标签；JSON 工具承载参数对象，Freeform 工具承载原始文本：',
     '',
-    '```json',
-    '{"tool": "run_command", "params": {"command": "dir", "cwd": "C:\\\\project"}}',
+    '```xml',
+    '&lt;tool name="run_command"&gt;',
+    '{"command": "dir", "cwd": "C:\\\\project"}',
+    '&lt;/tool&gt;',
     '```',
     '',
     '当前支持三个核心工具：`attach_image`、`run_command`、`apply_patch`。',

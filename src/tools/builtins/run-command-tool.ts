@@ -37,7 +37,6 @@ function formatDisplayResult(result: RunCommandResult): string {
 
 const defaultShell = getDefaultShell()
 const supportedShells = getSupportedShells()
-const isWindows = defaultShell === 'powershell'
 
 @defineToolMetadata({
   name: 'run_command',

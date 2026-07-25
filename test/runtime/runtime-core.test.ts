@@ -480,7 +480,7 @@ function createHookScope(handler: Record<string, unknown>): HookExecutionScope {
 
 test('RuntimeCore blocks a tool through tool.before and feeds HOOK_BLOCKED back', async () => {
   const adapter = new FakeAdapter([
-    '<tool>{"tool":"hook_target","params":{"value":"original"}}</tool>',
+    '<tool name="hook_target">{"value":"original"}</tool>',
     'Handled the blocked result.',
   ])
   const dispatcher = new HookDispatcher({
@@ -526,7 +526,7 @@ test('RuntimeCore blocks a tool through tool.before and feeds HOOK_BLOCKED back'
 
 test('RuntimeCore executes revalidated rewritten params and records both inputs', async () => {
   const adapter = new FakeAdapter([
-    '<tool>{"tool":"hook_target","params":{"value":"original"}}</tool>',
+    '<tool name="hook_target">{"value":"original"}</tool>',
     'Rewrite complete.',
   ])
   const dispatcher = new HookDispatcher({
@@ -570,12 +570,11 @@ test('RuntimeCore executes revalidated rewritten params and records both inputs'
   assert.equal(typeof details?.toolCallId, 'string')
 })
 
-test('RuntimeCore keeps assistant text around an inline tool call', async () => {
+test('RuntimeCore executes a terminal tool call after leading assistant text', async () => {
   const adapter = new FakeAdapter([
     [
       'I will inspect the workspace first.',
-      '<tool>{"tool":"run_command","params":{"command":"pwd"}}</tool>',
-      'Then I will summarize the result.',
+      '<tool name="run_command">{"command":"pwd"}</tool>',
     ].join('\n\n'),
     'Inspection complete.',
   ])
@@ -597,13 +596,38 @@ test('RuntimeCore keeps assistant text around an inline tool call', async () => 
   assert.equal(assistant, 'Inspection complete.')
   assert.deepEqual(events, [
     'assistant:I will inspect the workspace first.',
-    'tool_call:{"tool":"run_command","params":{"command":"pwd"}}',
-    'assistant:Then I will summarize the result.',
+    'tool_call:{"command":"pwd"}',
     'tool_result:{"outcome":"error","result":{"message":"Tool not found: run_command"},"displayText":"Tool not found: run_command"}',
     'assistant:Inspection complete.',
   ])
   assert.equal(adapter.attachedTexts[0], 'Inspect the repo.')
   assert.match(adapter.attachedTexts[1] ?? '', /^### Tool Result ###\n/)
+})
+
+test('RuntimeCore treats a non-terminal tool block as ordinary assistant text', async () => {
+  const response = [
+    'I will inspect the workspace first.',
+    '<tool name="run_command">{"command":"pwd"}</tool>',
+    'Then I will summarize the result.',
+  ].join('\n\n')
+  const adapter = new FakeAdapter([response])
+  const runtime = new RuntimeCore(adapter, new ToolRegistry(adapter, []))
+  const assistantMessages: string[] = []
+  let toolCalls = 0
+
+  const assistant = await runtime.submitUserInput('Inspect the repo.', {
+    onAssistantText: async (message) => {
+      assistantMessages.push(message)
+    },
+    onToolCall: async () => {
+      toolCalls += 1
+    },
+  })
+
+  assert.equal(assistant, response)
+  assert.deepEqual(assistantMessages, [response])
+  assert.equal(toolCalls, 0)
+  assert.deepEqual(adapter.attachedTexts, ['Inspect the repo.'])
 })
 
 test('RuntimeCore executes named freeform tool payloads without JSON parsing', async () => {
@@ -619,6 +643,31 @@ test('RuntimeCore executes named freeform tool payloads without JSON parsing', a
   const assistant = await runtime.submitUserInput('Use the freeform tool.')
 
   assert.match(adapter.attachedTexts[1] ?? '', /received:\\nraw payload\\n/)
+  assert.equal(assistant, 'Done.')
+})
+
+test('RuntimeCore executes named JSON tool payloads as direct params', async () => {
+  const adapter = new FakeAdapter([
+    '<tool name="structured_tool">{"value":"direct"}</tool>',
+    'Done.',
+  ])
+  const runtime = new RuntimeCore(
+    adapter,
+    new ToolRegistry(adapter, [StructuredTool])
+  )
+  let observedToolCall: unknown = null
+
+  const assistant = await runtime.submitUserInput('Use the JSON tool.', {
+    onToolCall: async (toolCall) => {
+      observedToolCall = toolCall
+    },
+  })
+
+  assert.deepEqual(observedToolCall, {
+    tool: 'structured_tool',
+    params: { value: 'direct' },
+  })
+  assert.match(adapter.attachedTexts[1] ?? '', /FULL MODEL CONTENT/)
   assert.equal(assistant, 'Done.')
 })
 
@@ -708,7 +757,7 @@ test('RuntimeCore leaves unknown manual skill prefixes as ordinary user input', 
 
 test('RuntimeCore forwards transient tool progress without changing tool results', async () => {
   const adapter = new FakeAdapter([
-    '<tool>{"tool":"progress_tool","params":{}}</tool>',
+    '<tool name="progress_tool">{}</tool>',
     'Done.',
   ])
   const runtime = new RuntimeCore(
@@ -831,7 +880,7 @@ test('RuntimeCore resets API stream state after a partial failed attempt', async
 test('RuntimeCore re-sends a completed tool result without executing the tool twice', async () => {
   retryCountingToolCalls = 0
   const adapter = new RateLimitOnSecondSubmitAdapter([
-    '<tool>{"tool":"retry_counting_tool","params":{}}</tool>',
+    '<tool name="retry_counting_tool">{}</tool>',
     'Finished after retry.',
   ])
   const runtime = createRuntimeForRetryTests(adapter, [RetryCountingTool])
@@ -968,9 +1017,9 @@ test('RuntimeCore activates scoped instructions before executing a tool', async 
         codex: { global: false, local: true },
       },
     })
-    const toolCall = `<tool>${JSON.stringify({
-      tool: 'run_command',
-      params: { command: 'test', cwd: sourceDirectory },
+    const toolCall = `<tool name="run_command">${JSON.stringify({
+      command: 'test',
+      cwd: sourceDirectory,
     })}</tool>`
     const adapter = new FakeAdapter([toolCall, toolCall, 'Done.'])
     instructionRunCommandCalls = 0
@@ -1065,9 +1114,7 @@ test('RuntimeCore rejects a setup handshake without a READY token', async () => 
 })
 
 test('RuntimeCore cancels while waiting for a tool result without feeding it back', async () => {
-  const adapter = new FakeAdapter([
-    '<tool>{"tool":"slow_tool","params":{}}</tool>',
-  ])
+  const adapter = new FakeAdapter(['<tool name="slow_tool">{}</tool>'])
   const runtime = new RuntimeCore(
     adapter,
     new ToolRegistry(adapter, [SlowTool])
@@ -1090,9 +1137,9 @@ test('RuntimeCore cancels while waiting for a tool result without feeding it bac
   assert.equal(adapter.attachedTexts.length, 1)
 })
 
-test('RuntimeCore rejects tool calls without params before invoking the tool', async () => {
+test('RuntimeCore rejects named JSON tool calls with a non-object payload', async () => {
   const adapter = new FakeAdapter([
-    '<tool>{"tool":"slow_tool"}</tool>',
+    '<tool name="slow_tool">[]</tool>',
     'Recovered after invalid tool call.',
   ])
   const runtime = new RuntimeCore(
@@ -1113,10 +1160,10 @@ test('RuntimeCore rejects tool calls without params before invoking the tool', a
       outcome: 'error',
       result: {
         message:
-          'Invalid tool call JSON: Tool call payload must include an object "params"',
+          'Invalid tool call JSON: Tool slow_tool payload must be a JSON object',
       },
       displayText:
-        'Invalid tool call JSON: Tool call payload must include an object "params"',
+        'Invalid tool call JSON: Tool slow_tool payload must be a JSON object',
     },
   ])
   const resultMessage = adapter.attachedTexts[1] ?? ''
@@ -1128,7 +1175,7 @@ test('RuntimeCore rejects tool calls without params before invoking the tool', a
       outcome: 'error',
       result: {
         message:
-          'Invalid tool call JSON: Tool call payload must include an object "params"',
+          'Invalid tool call JSON: Tool slow_tool payload must be a JSON object',
       },
     }
   )
@@ -1136,7 +1183,7 @@ test('RuntimeCore rejects tool calls without params before invoking the tool', a
 
 test('RuntimeCore sends full structured tool content to the model and forwards display text', async () => {
   const adapter = new FakeAdapter([
-    '<tool>{"tool":"structured_tool","params":{}}</tool>',
+    '<tool name="structured_tool">{}</tool>',
     'Done.',
   ])
   const runtime = new RuntimeCore(
@@ -1196,7 +1243,7 @@ test('RuntimeCore preserves every original tool outcome when a large result is n
   for (const outcome of ['success', 'error', 'unknown'] as const) {
     const adapter = new LimitedFakeAdapter(
       [
-        `<tool>{"tool":"oversized_outcome_tool","params":{"outcome":"${outcome}"}}</tool>`,
+        `<tool name="oversized_outcome_tool">{"outcome":"${outcome}"}</tool>`,
         'Handled the missing result.',
       ],
       limit
@@ -1241,9 +1288,7 @@ test('RuntimeCore preserves every original tool outcome when a large result is n
 
 test('RuntimeCore does not attach an over-limit delivery replacement', async () => {
   const adapter = new LimitedFakeAdapter(
-    [
-      '<tool>{"tool":"oversized_outcome_tool","params":{"outcome":"success"}}</tool>',
-    ],
+    ['<tool name="oversized_outcome_tool">{"outcome":"success"}</tool>'],
     {
       kind: 'known',
       provider: 'deepseek',
@@ -1266,7 +1311,7 @@ test('RuntimeCore does not attach an over-limit delivery replacement', async () 
 test('RuntimeCore keeps an over-limit delivery stable across submit recovery without rerunning the tool', async () => {
   const adapter = new RetryToolResultAdapter(
     [
-      '<tool>{"tool":"oversized_outcome_tool","params":{"outcome":"unknown"}}</tool>',
+      '<tool name="oversized_outcome_tool">{"outcome":"unknown"}</tool>',
       'Handled after recovery.',
     ],
     {
@@ -1310,7 +1355,7 @@ test('RuntimeCore keeps an over-limit delivery stable across submit recovery wit
 test('RuntimeCore reuses one over-limit delivery across a bounded retry without repeating local effects', async () => {
   const adapter = new RetryableToolResultAdapter(
     [
-      '<tool>{"tool":"oversized_outcome_tool","params":{"outcome":"success"}}</tool>',
+      '<tool name="oversized_outcome_tool">{"outcome":"success"}</tool>',
       'Handled after bounded retry.',
     ],
     {

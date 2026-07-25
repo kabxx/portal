@@ -388,13 +388,11 @@ test('ChatGPTAdapter.submit waits for websocket text to stabilize after the HTTP
         status: () => 200,
       })
       adapter.websocketFrames.push(
-        createChatGptWebSocketFrame(
-          '<tool>{"tool":"run_command","params":{"command":"'
-        )
+        createChatGptWebSocketFrame('<tool name="run_command">{"command":"')
       )
       setTimeout(() => {
         adapter.websocketFrames.push(
-          createChatGptWebSocketAppendFrame('dir"}}</tool>')
+          createChatGptWebSocketAppendFrame('dir"}</tool>')
         )
         adapter.websocketFrames.push(createChatGptWebSocketFinishFrame())
       }, 20)
@@ -408,10 +406,7 @@ test('ChatGPTAdapter.submit waits for websocket text to stabilize after the HTTP
 
   const result = await adapter.submit()
 
-  assert.equal(
-    result,
-    '<tool>{"tool":"run_command","params":{"command":"dir"}}</tool>'
-  )
+  assert.equal(result, '<tool name="run_command">{"command":"dir"}</tool>')
 })
 
 test('ChatGPTAdapter.submit emits assistant stream snapshots while websocket text is growing', async () => {
@@ -528,15 +523,12 @@ test('ChatGPTAdapter.submit waits for finished websocket text to stabilize befor
         status: () => 200,
       })
       adapter.websocketFrames.push(
-        createChatGptWebSocketFrame(
-          '<tool>\n{\n  "tool": "attach_image",\n  "',
-          true
-        )
+        createChatGptWebSocketFrame('<tool name="attach_image">\n{\n  "', true)
       )
       setTimeout(() => {
         adapter.websocketFrames.push(
           createChatGptWebSocketAppendFrame(
-            'params": {\n    "path": "C:/images/cat.png"\n  }\n}\n</tool>'
+            'path": "C:/images/cat.png"\n}\n</tool>'
           )
         )
       }, 20)
@@ -552,7 +544,7 @@ test('ChatGPTAdapter.submit waits for finished websocket text to stabilize befor
 
   assert.equal(
     result,
-    '<tool>\n{\n  "tool": "attach_image",\n  "params": {\n    "path": "C:/images/cat.png"\n  }\n}\n</tool>'
+    '<tool name="attach_image">\n{\n  "path": "C:/images/cat.png"\n}\n</tool>'
   )
 })
 
@@ -624,13 +616,11 @@ test('ChatGPTAdapter.submit does not accept a stable unfinished tool call before
         status: () => 200,
       })
       adapter.websocketFrames.push(
-        createChatGptWebSocketFrame(
-          '<tool>{"tool":"run_command","params":{"command":"d'
-        )
+        createChatGptWebSocketFrame('<tool name="run_command">{"command":"d')
       )
       setTimeout(() => {
         adapter.websocketFrames.push(
-          createChatGptWebSocketAppendFrame('ir"}}</tool>')
+          createChatGptWebSocketAppendFrame('ir"}</tool>')
         )
         adapter.websocketFrames.push(createChatGptWebSocketFinishFrame())
       }, 20)
@@ -644,10 +634,7 @@ test('ChatGPTAdapter.submit does not accept a stable unfinished tool call before
   adapter.getSubmitResponseIdleTimeoutMs = () => 400
   const result = await adapter.submit()
 
-  assert.equal(
-    result,
-    '<tool>{"tool":"run_command","params":{"command":"dir"}}</tool>'
-  )
+  assert.equal(result, '<tool name="run_command">{"command":"dir"}</tool>')
 })
 
 test('ChatGPTAdapter.submit fails instead of returning an unfinished response without finish', async () => {

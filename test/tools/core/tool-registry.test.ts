@@ -13,6 +13,7 @@ import {
 import {
   extractToolCall,
   formatToolResultMessage,
+  isToolCallAtResponseEnd,
   parseToolCallPayload,
   projectStreamingAssistantText,
   ToolRegistry,
@@ -31,6 +32,41 @@ class BaseMetadataTool extends Tool<Record<string, unknown>, ToolOutput> {
 }
 
 class InheritedMetadataTool extends BaseMetadataTool {}
+
+@defineToolMetadata({
+  name: 'json_echo',
+  description: 'Returns its JSON input.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      value: { type: 'string' },
+    },
+    required: ['value'],
+  },
+  examples: [{ params: { value: 'example' } }],
+})
+class JsonEchoTool extends Tool<Record<string, unknown>, ToolOutput> {
+  public async call(input: Record<string, unknown>): Promise<ToolOutput> {
+    return {
+      result: { input },
+      displayText: JSON.stringify(input),
+    }
+  }
+}
+
+@defineToolMetadata({
+  name: 'freeform_echo',
+  description: 'Returns its freeform input.',
+  inputFormat: 'freeform',
+})
+class FreeformEchoTool extends Tool<string, ToolOutput> {
+  public async call(input: string): Promise<ToolOutput> {
+    return {
+      result: { input },
+      displayText: input,
+    }
+  }
+}
 
 test('Tool metadata remains inherited through the constructor prototype chain', () => {
   const tool = new InheritedMetadataTool(createProviderAdapterStub())
@@ -56,6 +92,22 @@ test('tool extraction preserves named freeform payloads', () => {
   )
 })
 
+test('named payload parsing follows the declared tool input format', () => {
+  assert.deepEqual(
+    parseToolCallPayload('{"value":"json"}', 'json_echo', 'json'),
+    { tool: 'json_echo', params: { value: 'json' } }
+  )
+  assert.equal(parseToolCallPayload('[]', 'json_echo', 'json'), null)
+  assert.deepEqual(
+    parseToolCallPayload('{"value":"raw"}', 'freeform_echo', 'freeform'),
+    { tool: 'freeform_echo', params: '{"value":"raw"}' }
+  )
+  assert.equal(
+    parseToolCallPayload('{"tool":"json_echo","params":{"value":"legacy"}}'),
+    null
+  )
+})
+
 test('streaming assistant projection hides tool candidates and payloads', () => {
   assert.equal(
     projectStreamingAssistantText('Ordinary response'),
@@ -72,6 +124,19 @@ test('streaming assistant projection hides tool candidates and payloads', () => 
     projectStreamingAssistantText(`<tool>\n${'x'.repeat(100_000)}\n</tool>`),
     ''
   )
+})
+
+test('streaming assistant projection restores non-terminal tool blocks', () => {
+  const response = [
+    'Before',
+    '<tool name="json_echo">{"value":"example"}</tool>',
+    'After',
+  ].join('\n')
+  const extracted = extractToolCall(response)
+
+  assert.ok(extracted)
+  assert.equal(isToolCallAtResponseEnd(extracted), false)
+  assert.equal(projectStreamingAssistantText(response), response)
 })
 
 test('streaming assistant projection buffers partial tool prefixes without hiding ordinary tags', () => {
@@ -181,8 +246,52 @@ test('ToolRegistry keeps JSON tools and executes named freeform tools', async ()
       JSON.stringify({ tool: 'apply_patch', params: payload })
     )
     assert.equal(jsonAttempt.outcome, 'error')
-    assert.match(jsonAttempt.displayText ?? '', /freeform payload/i)
+    assert.match(jsonAttempt.displayText ?? '', /tool calls require/i)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test('ToolRegistry advertises and accepts only the named tool format', async () => {
+  const registry = new ToolRegistry(createProviderAdapterStub(), [
+    JsonEchoTool,
+    FreeformEchoTool,
+  ])
+
+  assert.match(registry.prompt, /## Tool Call Format\n<tool name="tool_name">/)
+  assert.match(registry.prompt, /must end the response/)
+  assert.doesNotMatch(registry.prompt, /Tool Call Format \(JSON\)/)
+  assert.match(
+    registry.prompt,
+    /<tool name="json_echo">\n\{\n {2}"value": "example"\n\}\n<\/tool>/
+  )
+
+  const namedJson = await registry.executeToolCall(
+    '{"value":"named"}',
+    {},
+    'json_echo'
+  )
+  assert.equal(namedJson.outcome, 'success')
+  assert.deepEqual(namedJson.result, { input: { value: 'named' } })
+
+  const legacyJson = await registry.executeToolCall(
+    '{"tool":"json_echo","params":{"value":"legacy"}}'
+  )
+  assert.equal(legacyJson.outcome, 'error')
+  assert.match(legacyJson.displayText ?? '', /tool calls require/i)
+
+  const jsonLookingFreeform = await registry.executeToolCall(
+    '{"value":"raw"}',
+    {},
+    'freeform_echo'
+  )
+  assert.equal(jsonLookingFreeform.outcome, 'success')
+  assert.deepEqual(jsonLookingFreeform.result, { input: '{"value":"raw"}' })
+
+  const invalidJson = await registry.executeToolCall('[]', {}, 'json_echo')
+  assert.equal(invalidJson.outcome, 'error')
+  assert.match(
+    invalidJson.displayText ?? '',
+    /Tool json_echo payload must be a JSON object/
+  )
 })
