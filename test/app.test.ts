@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import * as app from '../src/app.ts'
+import * as apiHandlers from '../src/app/api-handlers.ts'
 import * as appLifecycle from '../src/app/app-lifecycle.ts'
 import * as providerCatalog from '../src/app/provider-catalog.ts'
 import * as runtimeSettings from '../src/app/runtime-settings.ts'
@@ -30,6 +31,14 @@ test('app facade preserves extracted public exports', () => {
   assert.equal(
     app.showPendingThreadTimeline,
     terminalLifecycle.showPendingThreadTimeline
+  )
+  assert.equal(
+    app.setApiProviderCapability,
+    apiHandlers.setApiProviderCapability
+  )
+  assert.equal(
+    app.clearApiProviderCapability,
+    apiHandlers.clearApiProviderCapability
   )
 })
 

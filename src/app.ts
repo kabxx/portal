@@ -1,6 +1,5 @@
 import path from 'path'
 import { createRequire } from 'node:module'
-import { randomUUID } from 'node:crypto'
 import { stdin, stdout } from 'process'
 import { Command } from 'commander'
 import { render } from 'ink'
@@ -8,39 +7,19 @@ import { createElement } from 'react'
 import { launchBrowser } from './platform/browser-cdp-launcher.ts'
 import type { RuntimeCore } from './runtime/runtime-core.ts'
 import { createRuntimeFromAdapter } from './runtime/runtime-factory.ts'
-import {
-  buildRuntimeRecoveryPlan,
-  tryRestoreRuntimeForRecovery,
-} from './runtime/runtime-recovery.ts'
 import { RunCommandJobManager } from './processes/run-command-job-manager.ts'
-import { isAbortError, throwIfAborted } from './runtime/runtime-cancellation.ts'
+import { isAbortError } from './runtime/runtime-cancellation.ts'
 import { sleepWithAbortAsync } from './shared/sleep.ts'
 import { ThreadManager } from './threads/thread-manager.ts'
 import type { ThreadCreationMode } from './threads/thread-creation-mode.ts'
-import {
-  ThreadCloseTimeoutError,
-  ThreadOperationCoordinator,
-  type ThreadOperationHandle,
-} from './threads/thread-operation-coordinator.ts'
+import { ThreadOperationCoordinator } from './threads/thread-operation-coordinator.ts'
 import type { ProviderId } from './providers/provider-id.ts'
-import {
-  ProviderModelSelectionError,
-  resolveProviderModel,
-  type ResolvedProviderModel,
-} from './providers/provider-model-catalog.ts'
+import type { ResolvedProviderModel } from './providers/provider-model-catalog.ts'
 import { ComposerLimitExceededError } from './providers/composer-limit.ts'
-import {
-  buildThreadHistoryTitle,
-  createThreadStore,
-} from './threads/thread-store.ts'
+import { createThreadStore } from './threads/thread-store.ts'
 import { DEFAULT_COMMANDS } from './cli-commands/command-set.ts'
 import { CommandRegistry } from './cli-commands/core/command-registry.ts'
 import type { CliCommandContext } from './cli-commands/core/command-types.ts'
-import {
-  executeProviderCapability,
-  isToggleCapabilityProvider,
-  listProviderCapabilityStates,
-} from './cli-commands/commands/command-thread-capability.ts'
 import { resolveConversationUrl } from './providers/provider-conversation-url.ts'
 import {
   renderTimelineEntryToAnsi,
@@ -51,7 +30,6 @@ import { KeybindingCatalog } from './keybindings/keybinding-catalog.ts'
 import { TerminalController } from './terminal-ui/terminal-controller.ts'
 import { SkillLibrary } from './skills/skill-library.ts'
 import { McpLibrary } from './mcp/mcp-library.ts'
-import type { McpServerConfig } from './mcp/mcp-config.ts'
 import {
   createDefaultPortalConfig,
   ensurePortalConfig,
@@ -64,11 +42,7 @@ import {
   type ProjectInstructions,
   type ProjectInstructionLimits,
 } from './instructions/project-instructions.ts'
-import {
-  ApiHttpError,
-  PortalApiServer,
-  type ApiHandlers,
-} from './api/api-server.ts'
+import { PortalApiServer } from './api/api-server.ts'
 import { createHookSnapshot } from './hooks/hook-config.ts'
 import { HookCatalog } from './hooks/hook-catalog.ts'
 import { HookDispatcher } from './hooks/hook-dispatcher.ts'
@@ -76,14 +50,9 @@ import { HookEventBus } from './hooks/hook-event-sink.ts'
 import { ChildRuntimeFactory } from './runtime/child-runtime-factory.ts'
 import { PortalMcpServer } from './mcp-server/mcp-server.ts'
 import { McpMessageOperationStore } from './mcp-server/mcp-message-operations.ts'
-import type {
-  PortalMcpHandlers,
-  PortalMcpThreadSummary,
-} from './mcp-server/mcp-server-types.ts'
 import {
   ThreadLifecycleService,
   type ThreadLifecycleEvent,
-  type ProvisionResult,
 } from './threads/thread-lifecycle-service.ts'
 import { ThreadRuntimeRegistry } from './threads/thread-runtime-registry.ts'
 import {
@@ -103,15 +72,16 @@ import {
 } from './app/provider-catalog.ts'
 import {
   createPortalRuntimeSettings,
-  parseApiThreadCreationMode,
   runtimeSetupModeForThreadCreation,
 } from './app/runtime-settings.ts'
+import { createApiHandlers } from './app/api-handlers.ts'
+import { createMcpHandlers } from './app/mcp-handlers.ts'
 import { createToolServices } from './app/spawn-tool-services.ts'
+import { createTuiThreadInputHandler } from './app/tui-thread-input.ts'
 import {
   canRunCommandWhileThreadBusy,
   clearInteractiveTerminal,
   clearTerminalBeforeRender,
-  shouldRenderFallbackThreadError,
   showPendingThreadTimeline,
 } from './app/terminal-lifecycle.ts'
 
@@ -133,6 +103,10 @@ export {
   parseApiThreadCreationMode,
   runtimeSetupModeForThreadCreation,
 } from './app/runtime-settings.ts'
+export {
+  clearApiProviderCapability,
+  setApiProviderCapability,
+} from './app/api-handlers.ts'
 export { inheritSpawnModelSelection } from './app/spawn-tool-services.ts'
 export {
   canRunCommandWhileThreadBusy,
@@ -160,57 +134,6 @@ function readPortalVersion(): string {
   return packageMetadata.version
 }
 
-export async function setApiProviderCapability(
-  provider: ProviderId,
-  runtime: RuntimeCore,
-  name: string,
-  state: string
-): Promise<{ name: string; state: string }> {
-  const isToggleProvider = isToggleCapabilityProvider(provider)
-  if (isToggleProvider && state !== 'on' && state !== 'off') {
-    throw new ApiHttpError(
-      400,
-      'INVALID_REQUEST',
-      'Toggle capability state must be on or off.'
-    )
-  }
-  if (!isToggleProvider && state !== 'selected' && state !== 'on') {
-    throw new ApiHttpError(
-      400,
-      'INVALID_REQUEST',
-      'Action capability state must be selected or on.'
-    )
-  }
-  const execution = await executeProviderCapability(
-    provider,
-    runtime,
-    name,
-    isToggleProvider ? [state] : []
-  )
-  if (execution.status !== 'ok') {
-    throw new ApiHttpError(400, 'CAPABILITY_ERROR', execution.result.body)
-  }
-  return { name, state: execution.result.body }
-}
-
-export async function clearApiProviderCapability(
-  provider: ProviderId,
-  runtime: RuntimeCore,
-  name: string
-): Promise<{ name: string; cleared: true }> {
-  const isToggleProvider = isToggleCapabilityProvider(provider)
-  const execution = await executeProviderCapability(
-    provider,
-    runtime,
-    isToggleProvider ? name : 'none',
-    isToggleProvider ? ['off'] : []
-  )
-  if (execution.status !== 'ok') {
-    throw new ApiHttpError(400, 'CAPABILITY_ERROR', execution.result.body)
-  }
-  return { name, cleared: true }
-}
-
 interface Options {
   browserEngine?: string
   browserExecutablePath?: string
@@ -236,27 +159,6 @@ function buildProgram() {
       '--browser-remote-debugging-port <port>',
       'remote debugging port used when launching the browser and connecting over CDP'
     )
-}
-
-function redactMcpConfig(config: McpServerConfig): Record<string, unknown> {
-  const record = config as McpServerConfig & {
-    headers?: Record<string, string>
-    env?: Record<string, string>
-  }
-  const { headers, env, ...safe } = record
-  return {
-    ...safe,
-    ...(headers === undefined ? {} : { hasHeaders: true }),
-    ...(env === undefined ? {} : { hasEnv: true }),
-  }
-}
-
-function requireProvisionResult(
-  result: ProvisionResult,
-  failureCode: string
-): Extract<ProvisionResult, { ok: true }> {
-  if (result.ok) return result
-  throw new ApiHttpError(502, failureCode, result.failure.message)
 }
 
 async function createProjectInstructions(
@@ -476,228 +378,6 @@ export async function run(argv = process.argv): Promise<void> {
       if (currentOperation?.controller === controller) {
         currentOperation = previousOperation
       }
-    }
-  }
-
-  const submitThreadInput = async (
-    input: string,
-    displayInput = input
-  ): Promise<void> => {
-    const activeThread = threadManager.getActiveThread()
-    if (activeThread === null) {
-      ui.renderWarning(
-        'portal',
-        'No active thread. Use /thread agent to create one, or /help to see commands.'
-      )
-      return
-    }
-
-    const startResult = threadLifecycle.startSend(
-      activeThread.id,
-      input,
-      async (signal) => {
-        try {
-          while (true) {
-            let turnErrorRendered = false
-            try {
-              await threadManager.submitThreadInput(activeThread.id, input, {
-                signal,
-                onAssistantStream: async (message) => {
-                  throwIfAborted(signal)
-                  ui.renderAssistantStream(activeThread, message)
-                },
-                onManualSkill: async (name) => {
-                  throwIfAborted(signal)
-                  ui.renderThreadInfo(
-                    activeThread,
-                    'skill',
-                    `Using skill: ${name}`
-                  )
-                },
-                onInstructionWarning: async (warning) => {
-                  throwIfAborted(signal)
-                  ui.renderThreadWarning(
-                    activeThread,
-                    'instructions',
-                    formatInstructionWarning(warning)
-                  )
-                },
-                onToolProgress: (event, toolCall, toolCallId) => {
-                  if (
-                    signal.aborted ||
-                    (toolCall?.tool !== 'run_command' &&
-                      toolCall?.tool !== 'spawn')
-                  ) {
-                    return
-                  }
-                  ui.renderToolProgress(
-                    activeThread,
-                    toolCall.tool,
-                    event,
-                    toolCallId
-                  )
-                },
-                onTurnItem: async (item) => {
-                  throwIfAborted(signal)
-                  if (item.kind === 'assistant_text') {
-                    ui.renderAssistantMessage(activeThread, item.text)
-                    return
-                  }
-                  if (item.kind === 'tool_call') {
-                    ui.setThreadLastToolName(activeThread.id, item.toolName)
-                    ui.renderToolCall(
-                      activeThread,
-                      item.toolName,
-                      item.rawPayload,
-                      item.toolCallId
-                    )
-                    return
-                  }
-                  if (item.kind === 'tool_result') {
-                    ui.setThreadLastToolName(activeThread.id, item.toolName)
-                    ui.renderToolResult(
-                      activeThread,
-                      item.toolName,
-                      item.outcome,
-                      item.result,
-                      item.displayText,
-                      item.toolCallId
-                    )
-                    return
-                  }
-                  if (item.kind === 'status') {
-                    return
-                  }
-                  if (item.kind === 'error') {
-                    ui.renderThreadError(activeThread, 'thread', item.text)
-                    turnErrorRendered = true
-                  }
-                },
-              })
-              await lifecycleForShutdown?.recordActivity({
-                threadId: activeThread.id,
-                provider: activeThread.provider,
-                conversationUrl: activeThread.runtime.conversationUrl,
-                title: buildThreadHistoryTitle(displayInput),
-              })
-              break
-            } catch (error) {
-              if (isAbortError(error)) {
-                ui.commitLiveAssistant(activeThread)
-                const runningJobCount = runCommandJobs.list().length
-                ui.renderThreadWarning(
-                  activeThread,
-                  'thread',
-                  runningJobCount === 0
-                    ? 'Cancelled current message.'
-                    : [
-                        'Cancelled current message.',
-                        `${runningJobCount} run_command ${runningJobCount === 1 ? 'job is' : 'jobs are'} still running. Use /job to inspect or stop them.`,
-                      ]
-                )
-                break
-              }
-              const plan = buildRuntimeRecoveryPlan(error, {
-                provider: activeThread.provider,
-                browserProfileDir,
-                threadId: activeThread.id,
-              })
-              ui.renderThreadWarning(activeThread, plan.title, plan.lines)
-              if (
-                shouldRenderFallbackThreadError({
-                  turnErrorRendered,
-                  showFallbackError: plan.showFallbackError,
-                })
-              ) {
-                ui.renderThreadError(activeThread, 'error', String(error))
-              }
-              if (!plan.canRetry) {
-                break
-              }
-              await tryRestoreRuntimeForRecovery(error, async () => {
-                await activeThread.runtime.restore()
-              })
-              break
-            }
-          }
-        } catch (error) {
-          ui.renderThreadError(activeThread, 'runtime', String(error))
-        } finally {
-          ui.clearLiveCommand(activeThread)
-          ui.setThreadBusy(activeThread.id, false)
-        }
-      }
-    )
-
-    if (!startResult.accepted) {
-      ui.renderThreadWarning(
-        activeThread,
-        'thread',
-        startResult.reason === 'closing'
-          ? `Thread ${activeThread.id} is closing.`
-          : `Thread ${activeThread.id} is already running.`
-      )
-      return
-    }
-
-    ui.renderUserMessage(activeThread, displayInput)
-    ui.setThreadBusy(activeThread.id, true)
-    void startResult.operation.done.catch((error) => {
-      if (!isAbortError(error)) {
-        ui.renderThreadError(activeThread, 'runtime', String(error))
-      }
-    })
-  }
-
-  const withMcpForegroundOperation = async <T>(
-    requestSignal: AbortSignal,
-    runOperation: (
-      signal: AbortSignal,
-      setStopTarget: (target: StopTarget | null) => void
-    ) => Promise<T>
-  ): Promise<T> => {
-    if (currentOperation !== null) {
-      throw new Error('Another foreground operation is already running.')
-    }
-    throwIfAborted(requestSignal)
-    const controller = new AbortController()
-    const operation: McpForegroundOperation = {
-      controller,
-      stopTarget: null,
-      done: Promise.resolve(),
-      cancellation: null,
-    }
-    mcpForegroundOperations.add(operation)
-    const stopAfterRequestAbort = () => {
-      void stopMcpForegroundOperation(
-        operation,
-        settings.shutdownCloseTimeoutMs
-      )
-    }
-    requestSignal.addEventListener('abort', stopAfterRequestAbort, {
-      once: true,
-    })
-    try {
-      const done = withCancellableOperation(
-        null,
-        async (operationSignal, setStopTarget) =>
-          await runOperation(
-            AbortSignal.any([
-              requestSignal,
-              controller.signal,
-              operationSignal,
-            ]),
-            (target) => {
-              operation.stopTarget = target
-              setStopTarget(target)
-            }
-          )
-      )
-      operation.done = done
-      return await done
-    } finally {
-      requestSignal.removeEventListener('abort', stopAfterRequestAbort)
-      mcpForegroundOperations.delete(operation)
     }
   }
 
@@ -1071,809 +751,39 @@ export async function run(argv = process.argv): Promise<void> {
 
     ui.setBrowserConnected(true)
 
-    const getApiThread = (threadId: string) => {
-      const thread = threadManager.getThread(threadId)
-      if (thread === null) {
-        throw new ApiHttpError(
-          404,
-          'THREAD_NOT_FOUND',
-          `Unknown thread: ${threadId}`
-        )
-      }
-      return thread
-    }
-
-    const toApiThread = (threadId: string) => {
-      const thread = getApiThread(threadId)
-      return {
-        id: thread.id,
-        provider: thread.provider,
-        title: thread.title,
-        conversationUrl: thread.runtime.conversationUrl,
-        busy: threadOperations.get(thread.id) !== null,
-        active: threadManager.getActiveThread()?.id === thread.id,
-        turnCount: thread.turnCount,
-        createdAt: thread.createdAt,
-        updatedAt: thread.updatedAt,
-      }
-    }
-
-    const getMcpThread = (threadId: string) => {
-      const thread = threadManager.getThread(threadId)
-      if (thread === null) {
-        throw new Error(`Unknown thread: ${threadId}`)
-      }
-      return thread
-    }
-
-    const toMcpThread = (threadId: string): PortalMcpThreadSummary => {
-      const thread = getMcpThread(threadId)
-      return {
-        id: thread.id,
-        provider: thread.provider,
-        title: thread.title,
-        conversationUrl: thread.runtime.conversationUrl,
-        busy: threadOperations.get(thread.id) !== null,
-        turnCount: thread.turnCount,
-        createdAt: thread.createdAt,
-        updatedAt: thread.updatedAt,
-      }
-    }
-
-    const publishApiEvent = (
-      threadId: string,
-      type: Parameters<PortalApiServer['eventHub']['publish']>[1]['type'],
-      data: Record<string, unknown> = {}
-    ) => {
-      apiServer!.eventHub.publish(threadId, { type, data })
-    }
-
-    type ThreadReloadStartResult =
-      | {
-          accepted: true
-          operationId: string
-          operation: ThreadOperationHandle
-        }
-      | {
-          accepted: false
-          reason: 'not_found' | 'busy'
-        }
-
-    const startThreadReload = (threadId: string): ThreadReloadStartResult => {
-      const thread = threadManager.getThread(threadId)
-      if (thread === null) {
-        return { accepted: false, reason: 'not_found' }
-      }
-
-      const operationId = randomUUID()
-      const startResult = threadLifecycle.startOperation(
-        threadId,
-        async ({ signal }) => {
-          try {
-            throwIfAborted(signal)
-            publishApiEvent(threadId, 'thread.action', {
-              operationId,
-              action: 'reload',
-              phase: 'started',
-            })
-            await thread.runtime.restore({ signal })
-            throwIfAborted(signal)
-            ui.renderThreadInfo(
-              thread,
-              'thread reload',
-              'Provider page reloaded.'
-            )
-            publishApiEvent(threadId, 'thread.action', {
-              operationId,
-              action: 'reload',
-              phase: 'completed',
-            })
-          } catch (error) {
-            const cancelled = isAbortError(error)
-            const message =
-              error instanceof Error ? error.message : String(error)
-            publishApiEvent(threadId, 'thread.action', {
-              operationId,
-              action: 'reload',
-              phase: cancelled ? 'cancelled' : 'failed',
-              ...(cancelled ? {} : { message }),
-            })
-            if (!cancelled) {
-              ui.renderThreadWarning(thread, 'thread reload', message)
-            }
-            throw error
-          } finally {
-            ui.setThreadBusy(threadId, false)
-          }
-        },
-        null
-      )
-
-      if (!startResult.accepted) {
-        return { accepted: false, reason: 'busy' }
-      }
-      ui.setThreadBusy(threadId, true)
-      return {
-        accepted: true,
-        operationId,
-        operation: startResult.operation,
-      }
-    }
-
-    const startApiMessage = async (threadId: string, input: string) => {
-      const thread = getApiThread(threadId)
-      let lastAssistantStream = ''
-      const startResult = threadLifecycle.startSend(
-        threadId,
-        input,
-        async (signal) => {
-          try {
-            throwIfAborted(signal)
-            publishApiEvent(threadId, 'message.started', { input })
-            const result = await threadManager.submitThreadInput(
-              threadId,
-              input,
-              {
-                signal,
-                source: 'api',
-                onAssistantStream: async (message) => {
-                  const delta = message.startsWith(lastAssistantStream)
-                    ? message.slice(lastAssistantStream.length)
-                    : message
-                  lastAssistantStream = message
-                  publishApiEvent(threadId, 'assistant.delta', {
-                    text: delta,
-                  })
-                  ui.renderAssistantStream(thread, message)
-                },
-                onAssistantStreamReset: async () => {
-                  lastAssistantStream = ''
-                  publishApiEvent(threadId, 'assistant.reset', {})
-                },
-                onManualSkill: async (name) => {
-                  publishApiEvent(threadId, 'status', {
-                    message: `Using skill: ${name}`,
-                  })
-                  ui.renderThreadInfo(thread, 'skill', `Using skill: ${name}`)
-                },
-                onToolProgress: (event, toolCall, toolCallId, turn) => {
-                  publishApiEvent(threadId, 'tool.output', {
-                    tool: toolCall?.tool ?? 'unknown',
-                    toolCallId,
-                    turnId: turn.id,
-                    event,
-                  })
-                },
-                onTurnItem: async (item) => {
-                  if (item.kind === 'assistant_text') {
-                    lastAssistantStream = ''
-                    publishApiEvent(threadId, 'assistant.message', {
-                      text: item.text,
-                    })
-                    ui.renderAssistantMessage(thread, item.text)
-                  } else if (item.kind === 'tool_call') {
-                    publishApiEvent(threadId, 'tool.started', {
-                      tool: item.toolName,
-                      payload: item.rawPayload,
-                      ...(item.toolCallId === undefined
-                        ? {}
-                        : { toolCallId: item.toolCallId }),
-                    })
-                    ui.renderToolCall(
-                      thread,
-                      item.toolName,
-                      item.rawPayload,
-                      item.toolCallId
-                    )
-                  } else if (item.kind === 'tool_result') {
-                    publishApiEvent(threadId, 'tool.completed', {
-                      tool: item.toolName,
-                      outcome: item.outcome,
-                      result: item.result,
-                      ...(item.toolCallId === undefined
-                        ? {}
-                        : { toolCallId: item.toolCallId }),
-                      ...(item.displayText === undefined
-                        ? {}
-                        : { displayText: item.displayText }),
-                    })
-                    ui.renderToolResult(
-                      thread,
-                      item.toolName,
-                      item.outcome,
-                      item.result,
-                      item.displayText,
-                      item.toolCallId
-                    )
-                  } else if (item.kind === 'status') {
-                    publishApiEvent(threadId, 'status', { message: item.text })
-                  } else if (item.kind === 'error') {
-                    ui.renderThreadError(thread, 'thread', item.text)
-                  }
-                },
-              }
-            )
-            await threadLifecycle.recordActivity({
-              threadId: thread.id,
-              provider: thread.provider,
-              conversationUrl: thread.runtime.conversationUrl,
-              title: buildThreadHistoryTitle(input),
-            })
-            publishApiEvent(threadId, 'message.completed', {
-              assistant: result?.assistant ?? '',
-            })
-          } catch (error) {
-            if (isAbortError(error)) {
-              publishApiEvent(threadId, 'message.cancelled')
-            } else {
-              publishApiEvent(threadId, 'message.failed', {
-                message: error instanceof Error ? error.message : String(error),
-              })
-            }
-            throw error
-          } finally {
-            ui.clearLiveCommand(thread)
-            ui.setThreadBusy(thread.id, false)
-          }
-        }
-      )
-
-      if (!startResult.accepted) {
-        throw new ApiHttpError(
-          409,
-          'THREAD_BUSY',
-          `Thread ${threadId} already has an active operation.`
-        )
-      }
-      ui.renderUserMessage(thread, input)
-      ui.setThreadBusy(thread.id, true)
-      void startResult.operation.done.catch(() => {})
-      return {
-        accepted: true,
-        status: 'busy',
-        threadId,
-      }
-    }
-
-    const apiHandlers: ApiHandlers = {
-      status: () => ({
-        browserConnected: browserLaunch !== null,
-        activeThreadId: threadManager.getActiveThread()?.id ?? null,
-        busy: threadOperations.list().length > 0,
-        server: apiServer!.status(),
-        hooks: hookCatalog.status(),
-      }),
-      providers: () => [...PROVIDERS],
-      listThreads: () =>
-        threadManager.listThreads().map(({ id }) => toApiThread(id)),
-      getThread: (threadId) => toApiThread(threadId),
-      createThread: async (input) => {
-        if (currentOperation !== null) {
-          throw new ApiHttpError(
-            409,
-            'OPERATION_BUSY',
-            'Another foreground operation is already running.'
-          )
-        }
-        const providerValue = input.provider
-        if (typeof providerValue !== 'string') {
-          throw new ApiHttpError(
-            400,
-            'INVALID_REQUEST',
-            'provider is required.'
-          )
-        }
-        const provider = normalizeProviderId(providerValue)
-        if (provider === null) {
-          throw new ApiHttpError(
-            400,
-            'INVALID_REQUEST',
-            `Unsupported provider: ${providerValue}`
-          )
-        }
-        const model = input.model
-        if (
-          model !== undefined &&
-          model !== null &&
-          typeof model !== 'string'
-        ) {
-          throw new ApiHttpError(
-            400,
-            'INVALID_REQUEST',
-            'model must be a string or null.'
-          )
-        }
-        const option = input.option
-        if (
-          option !== undefined &&
-          option !== null &&
-          typeof option !== 'string'
-        ) {
-          throw new ApiHttpError(
-            400,
-            'INVALID_REQUEST',
-            'option must be a string or null.'
-          )
-        }
-        let resolvedModel: ResolvedProviderModel | null
-        try {
-          resolvedModel = resolveProviderModel(
-            provider,
-            model === undefined ? null : model,
-            option === undefined ? null : option
-          )
-        } catch (error) {
-          if (!(error instanceof ProviderModelSelectionError)) throw error
-          throw new ApiHttpError(400, 'INVALID_REQUEST', error.message)
-        }
-        const mode = parseApiThreadCreationMode(input.mode)
-        const created = await withCancellableOperation(
-          null,
-          async (signal, setStopTarget) => {
-            void setStopTarget
-            return requireProvisionResult(
-              await threadLifecycle.create(
-                {
-                  provider,
-                  model: resolvedModel,
-                  mode,
-                  source: 'api',
-                  activate: false,
-                },
-                signal
-              ),
-              'THREAD_CREATE_FAILED'
-            )
-          }
-        )
-        return toApiThread(created.threadId)
-      },
-      resumeThread: async (input) => {
-        if (currentOperation !== null) {
-          throw new ApiHttpError(
-            409,
-            'OPERATION_BUSY',
-            'Another foreground operation is already running.'
-          )
-        }
-        const conversationUrl = input.conversationUrl
-        if (
-          typeof conversationUrl !== 'string' ||
-          conversationUrl.trim() === ''
-        ) {
-          throw new ApiHttpError(
-            400,
-            'INVALID_REQUEST',
-            'conversationUrl is required.'
-          )
-        }
-        const resolvedConversation = resolveConversationUrl(conversationUrl)
-        if (resolvedConversation === null) {
-          throw new ApiHttpError(
-            400,
-            'INVALID_REQUEST',
-            'conversationUrl is invalid or unsupported.'
-          )
-        }
-        const resumed = await withCancellableOperation(
-          null,
-          async (signal, setStopTarget) => {
-            void setStopTarget
-            return requireProvisionResult(
-              await threadLifecycle.resume(
-                {
-                  conversationUrl: resolvedConversation.conversationUrl,
-                  source: 'api',
-                  activate: false,
-                },
-                signal
-              ),
-              'THREAD_RESUME_FAILED'
-            )
-          }
-        )
-        return toApiThread(resumed.threadId)
-      },
-      closeThread: async (threadId) => {
-        getApiThread(threadId)
-        ui.setThreadBusy(threadId, true)
-        try {
-          const closed = (await threadLifecycle.close(threadId, 'user')).closed
-          if (!closed) {
-            throw new ApiHttpError(
-              404,
-              'THREAD_NOT_FOUND',
-              `Unknown thread: ${threadId}`
-            )
-          }
-          return { closed: true, threadId }
-        } catch (error) {
-          if (error instanceof ThreadCloseTimeoutError) {
-            throw new ApiHttpError(409, 'THREAD_CLOSE_TIMEOUT', error.message)
-          }
-          throw error
-        } finally {
-          if (threadOperations.get(threadId) === null) {
-            ui.setThreadBusy(threadId, false)
-          }
-          if (threadManager.getThread(threadId) === null) {
-            ui.removeThreadTimeline(threadId)
-          }
-        }
-      },
-      submitMessage: startApiMessage,
-      reloadThread: async (threadId) => {
-        const result = startThreadReload(threadId)
-        if (!result.accepted) {
-          if (result.reason === 'not_found') {
-            throw new ApiHttpError(
-              404,
-              'THREAD_NOT_FOUND',
-              `Unknown thread: ${threadId}`
-            )
-          }
-          throw new ApiHttpError(
-            409,
-            'THREAD_BUSY',
-            `Thread ${threadId} already has an active operation.`
-          )
-        }
-        void result.operation.done.catch(() => {})
-        return {
-          accepted: true,
-          status: 'busy',
-          operationId: result.operationId,
-          action: 'reload',
-          threadId,
-        }
-      },
-      cancelMessage: async (threadId) => {
-        getApiThread(threadId)
-        const running = threadOperations.get(threadId) !== null
-        await threadLifecycle.cancel(threadId)
-        return { cancelled: running, threadId }
-      },
-      activateSkill: async (threadId, name) => {
-        const skills = await skillLibrary.list()
-        const skill = skills.skills.find((item) => item.name === name)
-        if (skill === undefined || !skill.enabled) {
-          throw new ApiHttpError(
-            404,
-            'SKILL_NOT_AVAILABLE',
-            `Skill is not enabled: ${name}`
-          )
-        }
-        return await startApiMessage(threadId, `$${name}`)
-      },
-      listCapabilities: async (threadId) => {
-        const thread = getApiThread(threadId)
-        return {
-          provider: thread.provider,
-          capabilities: await listProviderCapabilityStates(
-            thread.provider,
-            thread.runtime
-          ),
-        }
-      },
-      setCapability: async (threadId, name, state) => {
-        const thread = getApiThread(threadId)
-        return await setApiProviderCapability(
-          thread.provider,
-          thread.runtime,
-          name,
-          state
-        )
-      },
-      clearCapability: async (threadId, name) => {
-        const thread = getApiThread(threadId)
-        return await clearApiProviderCapability(
-          thread.provider,
-          thread.runtime,
-          name
-        )
-      },
-      listSkills: async () => await skillLibrary.list(),
-      addSkill: async (input) => {
-        if (typeof input.source !== 'string' || input.source.trim() === '') {
-          throw new ApiHttpError(400, 'INVALID_REQUEST', 'source is required.')
-        }
-        const registryUrl = input.registryUrl
-        if (registryUrl !== undefined && typeof registryUrl !== 'string') {
-          throw new ApiHttpError(
-            400,
-            'INVALID_REQUEST',
-            'registryUrl must be a string.'
-          )
-        }
-        return await skillLibrary.add(
-          input.source,
-          registryUrl === undefined ? {} : { registryUrl }
-        )
-      },
-      setSkillEnabled: async (name, enabled) => {
-        const changed = enabled
-          ? await skillLibrary.enable(name)
-          : await skillLibrary.disable(name)
-        if (!changed) {
-          throw new ApiHttpError(
-            404,
-            'SKILL_NOT_FOUND',
-            `Unknown skill: ${name}`
-          )
-        }
-        return { name, enabled }
-      },
-      removeSkill: async (name) => {
-        const result = await skillLibrary.remove(name)
-        if (!result.removed) {
-          throw new ApiHttpError(
-            404,
-            'SKILL_NOT_FOUND',
-            `Unknown skill: ${name}`
-          )
-        }
-        return { removed: true, name, warnings: result.warnings }
-      },
-      listMcpServers: async () => {
-        const result = await mcpLibrary.list()
-        return {
-          issues: result.issues,
-          servers: result.servers.map(({ name, enabled, config }) => ({
-            name,
-            enabled,
-            config: redactMcpConfig(config),
-          })),
-        }
-      },
-      addMcpServer: async (name, config) => {
-        await mcpLibrary.add(name, config)
-        return { name, added: true }
-      },
-      setMcpServer: async (name, config) => {
-        await mcpLibrary.set(name, config)
-        return { name, updated: true }
-      },
-      removeMcpServer: async (name) => {
-        if (!(await mcpLibrary.remove(name))) {
-          throw new ApiHttpError(
-            404,
-            'MCP_NOT_FOUND',
-            `Unknown MCP server: ${name}`
-          )
-        }
-        return { removed: true, name }
-      },
-      setMcpServerEnabled: async (name, enabled) => {
-        const changed = enabled
-          ? await mcpLibrary.enable(name)
-          : await mcpLibrary.disable(name)
-        if (!changed) {
-          throw new ApiHttpError(
-            404,
-            'MCP_NOT_FOUND',
-            `Unknown MCP server: ${name}`
-          )
-        }
-        return { name, enabled }
-      },
-      listMcpResources: async (threadId, server) => {
-        const session = getApiThread(threadId).runtime.getMcpSession()
-        if (session === null) {
-          return { items: [], issues: [] }
-        }
-        return await session.listResources(server)
-      },
-      listMcpPrompts: async (threadId, server) => {
-        const session = getApiThread(threadId).runtime.getMcpSession()
-        if (session === null) {
-          return { items: [], issues: [] }
-        }
-        return await session.listPrompts(server)
-      },
-    }
-
-    const mcpHandlers: PortalMcpHandlers = {
-      listProviders: () => ({ providers: [...PROVIDERS] }),
-      listThreads: () => ({
-        threads: threadManager.listThreads().map(({ id }) => toMcpThread(id)),
-      }),
-      getThread: async (threadId) => toMcpThread(threadId),
-      createThread: async (
-        { provider: providerValue, model, option, mode },
-        signal
-      ) => {
-        const provider = normalizeProviderId(providerValue)
-        if (provider === null) {
-          throw new Error(`Unsupported provider: ${providerValue}`)
-        }
-        const resolvedModel = resolveProviderModel(provider, model, option)
-        const created = await withMcpForegroundOperation(
-          signal,
-          async (operationSignal, setStopTarget) => {
-            void setStopTarget
-            return requireProvisionResult(
-              await threadLifecycle.create(
-                {
-                  provider,
-                  model: resolvedModel,
-                  mode,
-                  source: 'mcp',
-                  activate: false,
-                },
-                operationSignal
-              ),
-              'THREAD_CREATE_FAILED'
-            )
-          }
-        )
-        return toMcpThread(created.threadId)
-      },
-      resumeThread: async (conversationUrl, signal) => {
-        const resolved = resolveConversationUrl(conversationUrl)
-        if (resolved === null) {
-          throw new Error('Conversation URL is invalid or unsupported.')
-        }
-        const resumed = await withMcpForegroundOperation(
-          signal,
-          async (operationSignal, setStopTarget) => {
-            void setStopTarget
-            return requireProvisionResult(
-              await threadLifecycle.resume(
-                {
-                  conversationUrl: resolved.conversationUrl,
-                  source: 'mcp',
-                  activate: false,
-                },
-                operationSignal
-              ),
-              'THREAD_RESUME_FAILED'
-            )
-          }
-        )
-        return toMcpThread(resumed.threadId)
-      },
-      closeThread: async (threadId) => {
-        getMcpThread(threadId)
-        ui.setThreadBusy(threadId, true)
-        try {
-          const closed = (await threadLifecycle.close(threadId, 'user')).closed
-          if (!closed) {
-            throw new Error(`Unknown thread: ${threadId}`)
-          }
-          return { closed: true, threadId }
-        } finally {
-          if (threadOperations.get(threadId) === null) {
-            ui.setThreadBusy(threadId, false)
-          }
-          if (threadManager.getThread(threadId) === null) {
-            ui.removeThreadTimeline(threadId)
-          }
-        }
-      },
-      sendMessage: async (threadId, input) => {
-        const thread = getMcpThread(threadId)
-        const operation = mcpMessageOperations.begin(threadId)
-        const startResult = threadLifecycle.startSend(
-          threadId,
-          input,
-          async (signal) => {
-            try {
-              const result = await threadManager.submitThreadInput(
-                threadId,
-                input,
-                {
-                  signal,
-                  source: 'mcp',
-                  onAssistantStream: async (message) => {
-                    throwIfAborted(signal)
-                    ui.renderAssistantStream(thread, message)
-                  },
-                  onManualSkill: async (name) => {
-                    throwIfAborted(signal)
-                    ui.renderThreadInfo(thread, 'skill', `Using skill: ${name}`)
-                  },
-                  onInstructionWarning: async (warning) => {
-                    throwIfAborted(signal)
-                    ui.renderThreadWarning(
-                      thread,
-                      'instructions',
-                      formatInstructionWarning(warning)
-                    )
-                  },
-                  onToolProgress: (event, toolCall, toolCallId) => {
-                    if (
-                      signal.aborted ||
-                      (toolCall?.tool !== 'run_command' &&
-                        toolCall?.tool !== 'spawn')
-                    ) {
-                      return
-                    }
-                    ui.renderToolProgress(
-                      thread,
-                      toolCall.tool,
-                      event,
-                      toolCallId
-                    )
-                  },
-                  onTurnItem: async (item) => {
-                    throwIfAborted(signal)
-                    if (item.kind === 'assistant_text') {
-                      ui.renderAssistantMessage(thread, item.text)
-                    } else if (item.kind === 'tool_call') {
-                      ui.setThreadLastToolName(thread.id, item.toolName)
-                      ui.renderToolCall(
-                        thread,
-                        item.toolName,
-                        item.rawPayload,
-                        item.toolCallId
-                      )
-                    } else if (item.kind === 'tool_result') {
-                      ui.setThreadLastToolName(thread.id, item.toolName)
-                      ui.renderToolResult(
-                        thread,
-                        item.toolName,
-                        item.outcome,
-                        item.result,
-                        item.displayText,
-                        item.toolCallId
-                      )
-                    } else if (item.kind === 'error') {
-                      ui.renderThreadError(thread, 'thread', item.text)
-                    }
-                  },
-                }
-              )
-              if (result === null) {
-                throw new Error(`Unknown thread: ${threadId}`)
-              }
-              await threadLifecycle.recordActivity({
-                threadId: thread.id,
-                provider: thread.provider,
-                conversationUrl: thread.runtime.conversationUrl,
-                title: buildThreadHistoryTitle(input),
-              })
-              mcpMessageOperations.complete(
-                operation.operationId,
-                result.assistant
-              )
-            } catch (error) {
-              if (isAbortError(error)) {
-                mcpMessageOperations.cancelled(operation.operationId)
-              } else {
-                mcpMessageOperations.fail(
-                  operation.operationId,
-                  error instanceof Error ? error.message : String(error)
-                )
-              }
-              throw error
-            } finally {
-              ui.clearLiveCommand(thread)
-              ui.setThreadBusy(thread.id, false)
-            }
-          }
-        )
-
-        if (!startResult.accepted) {
-          mcpMessageOperations.remove(operation.operationId)
-          throw new Error(
-            startResult.reason === 'closing'
-              ? `Thread ${threadId} is closing.`
-              : `Thread ${threadId} already has an active operation.`
-          )
-        }
-        mcpMessageOperations.attachHandle(
-          operation.operationId,
-          startResult.operation
-        )
-        ui.renderUserMessage(thread, input)
-        ui.setThreadBusy(thread.id, true)
-        return mcpMessageOperations.get(operation.operationId)
-      },
-      waitMessage: async (operationId, timeoutMs, signal) =>
-        await mcpMessageOperations.wait(operationId, timeoutMs, signal),
-      cancelMessage: async (operationId) =>
-        await mcpMessageOperations.cancel(operationId),
-    }
+    const submitThreadInput = createTuiThreadInputHandler({
+      threadManager,
+      threadLifecycle,
+      ui,
+      runCommandJobs,
+      browserProfileDir,
+    })
+    const { handlers: apiHandlers, startThreadReload } = createApiHandlers({
+      threadManager,
+      threadOperations,
+      threadLifecycle,
+      ui,
+      skillLibrary,
+      mcpLibrary,
+      isBrowserConnected: () => browserLaunch !== null,
+      isForegroundOperationActive: () => currentOperation !== null,
+      getServerStatus: () => apiServer!.status(),
+      getHookStatus: () => hookCatalog.status(),
+      publishEvent: (threadId, event) =>
+        apiServer!.eventHub.publish(threadId, event),
+      withCancellableOperation,
+    })
+    const mcpHandlers = createMcpHandlers({
+      threadManager,
+      threadOperations,
+      threadLifecycle,
+      ui,
+      messageOperations: mcpMessageOperations,
+      foregroundOperations: mcpForegroundOperations,
+      shutdownCloseTimeoutMs: settings.shutdownCloseTimeoutMs,
+      isForegroundOperationActive: () => currentOperation !== null,
+      withCancellableOperation,
+    })
 
     apiServer = new PortalApiServer({
       host: portalConfig.listeners.api.host,

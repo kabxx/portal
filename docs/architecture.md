@@ -12,27 +12,27 @@ Provider-specific website behavior stays behind Provider UI components and adapt
 
 ## Component map
 
-| Area              | Main files                              | Responsibility                                                                                                                                                        |
-| ----------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Process entry     | `src/index.ts`, `src/app.ts`            | Parse options, build services, run input dispatch, coordinate cancellation, and shut down                                                                             |
-| Configuration     | `src/config/`                           | Create, validate, comment, lock, and atomically update `data/config.yaml`                                                                                             |
-| HTTP API          | `src/api/`                              | Serve authenticated routes, thread operations, and per-thread SSE event streams                                                                                       |
-| MCP Server        | `src/mcp-server/`                       | Expose selected thread operations through an independent Streamable HTTP MCP listener                                                                                 |
-| Browser platform  | `src/platform/`                         | Launch Chromium, connect over CDP, and manage platform-specific process lifetime                                                                                      |
-| Provider adapters | `src/providers/adapters/`               | Implement the semantic Provider contract and coordinate navigation, protocol capture/parsing, history, and Provider UI components                                     |
-| Provider UI       | `src/providers/ui/`                     | Own Provider-local selector candidates, DOM scoping, uniqueness, readiness, interaction, upload, model, capability, and stop behavior                                 |
-| Provider data     | `src/providers/definitions/`            | Typed immutable domain definitions for model keys, model options, and static capability metadata; contains no DOM selectors or UI targets                             |
-| History parsing   | `src/providers/conversation-history.ts` | Convert eight provider history formats into visible user/assistant messages                                                                                           |
-| Runtime           | `src/runtime/`                          | Build setup prompts, initialize runtimes, execute tool loops, retry, recover, and cancel                                                                              |
-| Threads           | `src/threads/`                          | `ThreadLifecycleService` owns create/resume/send/close admission; registries track runtime identity, selection, and local turns; SQLite persists URL history metadata |
-| Commands          | `src/cli-commands/`                     | Tokenize and dispatch slash commands                                                                                                                                  |
-| Tools             | `src/tools/`                            | Define schemas, render the tool protocol, validate calls, execute tools, and report progress                                                                          |
-| Command processes | `src/processes/`                        | Track command jobs, bound output, and terminate process trees                                                                                                         |
-| Terminal UI       | `src/terminal-ui/`                      | Manage home/thread timelines, live assistant/command bubbles, input history, wrapping, and keys                                                                       |
-| Instructions      | `src/instructions/`                     | Discover optional Codex/Claude files, enforce read limits, and activate path-scoped rules                                                                             |
-| Skills            | `src/skills/`                           | Validate manifests, install sources, maintain the registry, snapshot catalogs, and load content                                                                       |
-| MCP               | `src/mcp/`                              | Parse config, connect per-thread clients, cache tools, call tools, and render attachments                                                                             |
-| Hooks             | `src/hooks/`                            | Load immutable snapshots, run command/model handlers, gate Tool calls, and publish execution events                                                                   |
+| Area              | Main files                               | Responsibility                                                                                                                                                        |
+| ----------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Process entry     | `src/index.ts`, `src/app.ts`, `src/app/` | Parse options, compose services and surface handlers, coordinate cancellation, and shut down                                                                          |
+| Configuration     | `src/config/`                            | Create, validate, comment, lock, and atomically update `data/config.yaml`                                                                                             |
+| HTTP API          | `src/api/`                               | Serve authenticated routes, thread operations, and per-thread SSE event streams                                                                                       |
+| MCP Server        | `src/mcp-server/`                        | Expose selected thread operations through an independent Streamable HTTP MCP listener                                                                                 |
+| Browser platform  | `src/platform/`                          | Launch Chromium, connect over CDP, and manage platform-specific process lifetime                                                                                      |
+| Provider adapters | `src/providers/adapters/`                | Implement the semantic Provider contract and coordinate navigation, protocol capture/parsing, history, and Provider UI components                                     |
+| Provider UI       | `src/providers/ui/`                      | Own Provider-local selector candidates, DOM scoping, uniqueness, readiness, interaction, upload, model, capability, and stop behavior                                 |
+| Provider data     | `src/providers/definitions/`             | Typed immutable domain definitions for model keys, model options, and static capability metadata; contains no DOM selectors or UI targets                             |
+| History parsing   | `src/providers/conversation-history.ts`  | Convert eight provider history formats into visible user/assistant messages                                                                                           |
+| Runtime           | `src/runtime/`                           | Build setup prompts, initialize runtimes, execute tool loops, retry, recover, and cancel                                                                              |
+| Threads           | `src/threads/`                           | `ThreadLifecycleService` owns create/resume/send/close admission; registries track runtime identity, selection, and local turns; SQLite persists URL history metadata |
+| Commands          | `src/cli-commands/`                      | Tokenize and dispatch slash commands                                                                                                                                  |
+| Tools             | `src/tools/`                             | Define schemas, render the tool protocol, validate calls, execute tools, and report progress                                                                          |
+| Command processes | `src/processes/`                         | Track command jobs, bound output, and terminate process trees                                                                                                         |
+| Terminal UI       | `src/terminal-ui/`                       | Manage home/thread timelines, live assistant/command bubbles, input history, wrapping, and keys                                                                       |
+| Instructions      | `src/instructions/`                      | Discover optional Codex/Claude files, enforce read limits, and activate path-scoped rules                                                                             |
+| Skills            | `src/skills/`                            | Validate manifests, install sources, maintain the registry, snapshot catalogs, and load content                                                                       |
+| MCP               | `src/mcp/`                               | Parse config, connect per-thread clients, cache tools, call tools, and render attachments                                                                             |
+| Hooks             | `src/hooks/`                             | Load immutable snapshots, run command/model handlers, gate Tool calls, and publish execution events                                                                   |
 
 Pure provider transport decoding lives outside the page adapters. For example, ChatGPT responses are decoded in `src/providers/chatgpt-response-parser.ts`.
 
@@ -45,9 +45,11 @@ owning its mutable process state. `runtime-settings.ts` converts configuration,
 `provider-catalog.ts` owns Provider registration, prompts, aliases, and adapter
 construction, `spawn-tool-services.ts` builds recursive Tool services,
 `app-lifecycle.ts` owns reusable shutdown helpers, and
-`terminal-lifecycle.ts` owns terminal boundary helpers. Startup order, server
-wiring, thread observers, input dispatch, and shared mutable lifecycle state
-remain in `run()`.
+`terminal-lifecycle.ts` owns terminal boundary helpers. `api-handlers.ts`,
+`mcp-handlers.ts`, and `tui-thread-input.ts` adapt the shared thread services to
+their three independent surfaces without merging their send semantics. Startup
+order, browser and server wiring, thread observers, the CLI command context and
+loop, and shared mutable lifecycle state remain in `run()`.
 
 1. Parse the browser engine, executable path, and remote debugging port.
 2. Resolve `data/` from the current working directory.
