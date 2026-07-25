@@ -23,8 +23,8 @@ import {
   createAdapterForProvider,
   getProviderPrompt,
   normalizeProviderId,
-} from './provider-catalog.ts'
-import type { PortalRuntimeSettings } from './runtime-settings.ts'
+} from './app-provider-catalog.ts'
+import type { PortalRuntimeSettings } from './app-runtime-settings.ts'
 
 export function inheritSpawnModelSelection(
   parentProvider: ProviderId,

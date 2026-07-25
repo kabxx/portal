@@ -2,12 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import * as app from '../src/app.ts'
-import * as apiHandlers from '../src/app/api-handlers.ts'
+import * as apiHandlers from '../src/app/app-api-handlers.ts'
 import * as appLifecycle from '../src/app/app-lifecycle.ts'
-import * as providerCatalog from '../src/app/provider-catalog.ts'
-import * as runtimeSettings from '../src/app/runtime-settings.ts'
-import * as spawnToolServices from '../src/app/spawn-tool-services.ts'
-import * as terminalLifecycle from '../src/app/terminal-lifecycle.ts'
+import * as providerCatalog from '../src/app/app-provider-catalog.ts'
+import * as runtimeSettings from '../src/app/app-runtime-settings.ts'
+import * as spawnToolServices from '../src/app/app-spawn-tool-services.ts'
+import * as terminalLifecycle from '../src/app/app-terminal-lifecycle.ts'
 import {
   clearApiProviderCapability,
   setApiProviderCapability,

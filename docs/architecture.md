@@ -41,12 +41,12 @@ Pure provider transport decoding lives outside the page adapters. For example, C
 `run()` in `src/app.ts` performs top-level orchestration:
 
 The focused modules under `src/app/` support that composition root without
-owning its mutable process state. `runtime-settings.ts` converts configuration,
-`provider-catalog.ts` owns Provider registration, prompts, aliases, and adapter
-construction, `spawn-tool-services.ts` builds recursive Tool services,
+owning its mutable process state. `app-runtime-settings.ts` converts configuration,
+`app-provider-catalog.ts` owns Provider registration, prompts, aliases, and adapter
+construction, `app-spawn-tool-services.ts` builds recursive Tool services,
 `app-lifecycle.ts` owns reusable shutdown helpers, and
-`terminal-lifecycle.ts` owns terminal boundary helpers. `api-handlers.ts`,
-`mcp-handlers.ts`, and `tui-thread-input.ts` adapt the shared thread services to
+`app-terminal-lifecycle.ts` owns terminal boundary helpers. `app-api-handlers.ts`,
+`app-mcp-handlers.ts`, and `app-tui-thread-input-handler.ts` adapt the shared thread services to
 their three independent surfaces without merging their send semantics. Startup
 order, browser and server wiring, thread observers, the CLI command context and
 loop, and shared mutable lifecycle state remain in `run()`.

@@ -69,21 +69,21 @@ import {
   createAdapterForProvider,
   getProviderPrompt,
   normalizeProviderId,
-} from './app/provider-catalog.ts'
+} from './app/app-provider-catalog.ts'
 import {
   createPortalRuntimeSettings,
   runtimeSetupModeForThreadCreation,
-} from './app/runtime-settings.ts'
-import { createApiHandlers } from './app/api-handlers.ts'
-import { createMcpHandlers } from './app/mcp-handlers.ts'
-import { createToolServices } from './app/spawn-tool-services.ts'
-import { createTuiThreadInputHandler } from './app/tui-thread-input.ts'
+} from './app/app-runtime-settings.ts'
+import { createApiHandlers } from './app/app-api-handlers.ts'
+import { createMcpHandlers } from './app/app-mcp-handlers.ts'
+import { createToolServices } from './app/app-spawn-tool-services.ts'
+import { createTuiThreadInputHandler } from './app/app-tui-thread-input-handler.ts'
 import {
   canRunCommandWhileThreadBusy,
   clearInteractiveTerminal,
   clearTerminalBeforeRender,
   showPendingThreadTimeline,
-} from './app/terminal-lifecycle.ts'
+} from './app/app-terminal-lifecycle.ts'
 
 export {
   closeLateBrowserLaunchAfterShutdown,
@@ -97,24 +97,24 @@ export {
   CHATGPT_PROVIDER_PROMPT,
   GROK_PROVIDER_PROMPT,
   PROVIDERS,
-} from './app/provider-catalog.ts'
+} from './app/app-provider-catalog.ts'
 export {
   createPortalRuntimeSettings,
   parseApiThreadCreationMode,
   runtimeSetupModeForThreadCreation,
-} from './app/runtime-settings.ts'
+} from './app/app-runtime-settings.ts'
 export {
   clearApiProviderCapability,
   setApiProviderCapability,
-} from './app/api-handlers.ts'
-export { inheritSpawnModelSelection } from './app/spawn-tool-services.ts'
+} from './app/app-api-handlers.ts'
+export { inheritSpawnModelSelection } from './app/app-spawn-tool-services.ts'
 export {
   canRunCommandWhileThreadBusy,
   clearInteractiveTerminal,
   clearTerminalBeforeRender,
   shouldRenderFallbackThreadError,
   showPendingThreadTimeline,
-} from './app/terminal-lifecycle.ts'
+} from './app/app-terminal-lifecycle.ts'
 
 const LOGIN_CHECK_INTERVAL_MS = 1000
 const PORTAL_VERSION = readPortalVersion()

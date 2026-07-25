@@ -12,7 +12,7 @@ import type { TerminalController } from '../terminal-ui/terminal-controller.ts'
 import type { ThreadLifecycleService } from '../threads/thread-lifecycle-service.ts'
 import type { ThreadManager } from '../threads/thread-manager.ts'
 import { buildThreadHistoryTitle } from '../threads/thread-store.ts'
-import { shouldRenderFallbackThreadError } from './terminal-lifecycle.ts'
+import { shouldRenderFallbackThreadError } from './app-terminal-lifecycle.ts'
 
 export interface TuiThreadInputDependencies {
   threadManager: ThreadManager

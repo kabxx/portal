@@ -7,7 +7,7 @@ import {
   clearTerminalBeforeRender,
   shouldRenderFallbackThreadError,
   showPendingThreadTimeline,
-} from '../../src/app/terminal-lifecycle.ts'
+} from '../../src/app/app-terminal-lifecycle.ts'
 import { TerminalController } from '../../src/terminal-ui/terminal-controller.ts'
 import { ThreadManager } from '../../src/threads/thread-manager.ts'
 import { createFakeRuntime } from '../helpers/fakes.ts'

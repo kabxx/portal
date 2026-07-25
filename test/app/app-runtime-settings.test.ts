@@ -5,7 +5,7 @@ import {
   createPortalRuntimeSettings,
   parseApiThreadCreationMode,
   runtimeSetupModeForThreadCreation,
-} from '../../src/app/runtime-settings.ts'
+} from '../../src/app/app-runtime-settings.ts'
 import { createDefaultAdvancedConfig } from '../../src/config/portal-config.ts'
 
 test('thread creation modes map to setup modes and API defaults safely', () => {

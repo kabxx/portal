@@ -5,7 +5,7 @@ import {
   GROK_PROVIDER_PROMPT,
   PROVIDERS,
   normalizeProviderId,
-} from '../../src/app/provider-catalog.ts'
+} from '../../src/app/app-provider-catalog.ts'
 
 test('provider registry includes every supported provider', () => {
   assert.deepEqual(PROVIDERS, [

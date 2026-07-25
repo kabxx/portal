@@ -37,8 +37,8 @@ import {
 } from '../threads/thread-operation-coordinator.ts'
 import { buildThreadHistoryTitle } from '../threads/thread-store.ts'
 import type { StopTarget } from './app-lifecycle.ts'
-import { PROVIDERS, normalizeProviderId } from './provider-catalog.ts'
-import { parseApiThreadCreationMode } from './runtime-settings.ts'
+import { PROVIDERS, normalizeProviderId } from './app-provider-catalog.ts'
+import { parseApiThreadCreationMode } from './app-runtime-settings.ts'
 
 export interface ApiHandlerDependencies {
   threadManager: ThreadManager

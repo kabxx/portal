@@ -4,7 +4,7 @@ import test from 'node:test'
 import {
   createApiHandlers,
   type ApiHandlerDependencies,
-} from '../../src/app/api-handlers.ts'
+} from '../../src/app/app-api-handlers.ts'
 
 test('API handler status resolves server state lazily', () => {
   let serverStatusCalls = 0

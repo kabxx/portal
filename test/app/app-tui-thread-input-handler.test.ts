@@ -4,7 +4,7 @@ import test from 'node:test'
 import {
   createTuiThreadInputHandler,
   type TuiThreadInputDependencies,
-} from '../../src/app/tui-thread-input.ts'
+} from '../../src/app/app-tui-thread-input-handler.ts'
 
 test('TUI input handler reports the missing active-thread boundary', async () => {
   const warnings: Array<{ title: string; message: unknown }> = []

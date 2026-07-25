@@ -4,7 +4,7 @@ import test from 'node:test'
 import {
   createMcpHandlers,
   type McpHandlerDependencies,
-} from '../../src/app/mcp-handlers.ts'
+} from '../../src/app/app-mcp-handlers.ts'
 
 test('MCP handler factory exposes the provider catalog without eager work', async () => {
   // This focused fake implements only the catalog dependency path.

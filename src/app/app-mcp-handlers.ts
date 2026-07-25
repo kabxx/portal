@@ -24,7 +24,7 @@ import {
   type McpForegroundOperation,
   type StopTarget,
 } from './app-lifecycle.ts'
-import { PROVIDERS, normalizeProviderId } from './provider-catalog.ts'
+import { PROVIDERS, normalizeProviderId } from './app-provider-catalog.ts'
 
 export interface McpHandlerDependencies {
   threadManager: ThreadManager
