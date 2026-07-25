@@ -10,6 +10,7 @@ import type {
 } from '../tools/core/tool-definition.ts'
 import {
   extractToolCall,
+  isToolCallAtResponseEnd,
   parseToolCallPayload,
   projectStreamingAssistantText,
 } from '../tools/core/tool-registry.ts'
@@ -665,7 +666,7 @@ export class TerminalController {
     this.addTimelineEntry(
       'assistant',
       `assistant ${this.formatThreadTarget(thread)}`,
-      escapeToolTagsForMarkdown(message),
+      message,
       'markdown',
       id,
       view
@@ -729,7 +730,7 @@ export class TerminalController {
 
       if (message.role === 'assistant') {
         const extracted = extractToolCall(message.text)
-        if (extracted !== null) {
+        if (extracted !== null && isToolCallAtResponseEnd(extracted)) {
           this.appendHistoryAssistantEntry(
             entries,
             thread,
@@ -1157,13 +1158,13 @@ export class TerminalController {
     }
     try {
       const parsed: unknown = JSON.parse(rawPayload)
-      if (
-        !isRecord(parsed) ||
-        (parsed.params !== undefined && !isRecord(parsed.params))
-      ) {
+      if (!isRecord(parsed)) {
         return [`payload: ${truncatePreview(rawPayload, 600)}`]
       }
-      const params = parsed.params ?? {}
+      const params = parsed
+      if (!isRecord(params)) {
+        return [`payload: ${truncatePreview(rawPayload, 600)}`]
+      }
       switch (toolName) {
         case 'run_command': {
           const shell =
@@ -1449,10 +1450,6 @@ function displayScalar(value: unknown, fallback: string): string {
     return String(value)
   }
   return fallback
-}
-
-function escapeToolTagsForMarkdown(message: string): string {
-  return message.replace(/<\/?tool(?:\s+[^>]*)?>/gi, (tag) => `\\${tag}`)
 }
 
 function summarizeApplyPatch(rawPayload: string): string[] {

@@ -72,7 +72,7 @@ flowchart LR
     R <--> T[Local tools, Skills, MCP]
 ```
 
-For each user turn, portal submits text through the provider website, captures the streamed response, and looks for an optional `<tool>...</tool>` request. It executes requested local tools and returns their results to the same conversation until the model produces a normal response.
+For each user turn, portal submits text through the provider website, captures the streamed response, and looks for an optional `<tool name="tool_name">PAYLOAD</tool>` request. It executes requested local tools and returns their results to the same conversation until the model produces a normal response.
 
 See [Architecture](docs/architecture.md) for the runtime, thread, resume, and shutdown lifecycles.
 

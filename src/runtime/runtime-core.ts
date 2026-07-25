@@ -4,7 +4,10 @@ import {
   ProviderAdapter,
   isProviderAdapterError,
 } from '../providers/adapters/adapter-base.ts'
-import { formatToolResultMessage } from '../tools/core/tool-registry.ts'
+import {
+  formatToolResultMessage,
+  isToolCallAtResponseEnd,
+} from '../tools/core/tool-registry.ts'
 import type {
   ToolCall,
   ToolRegistry,
@@ -271,7 +274,10 @@ export class RuntimeCore {
       const extractedToolCall =
         await this.toolRegistry.extractToolCall(assistant)
       throwIfAborted(handlers.signal)
-      if (extractedToolCall === null) {
+      if (
+        extractedToolCall === null ||
+        !isToolCallAtResponseEnd(extractedToolCall)
+      ) {
         await handlers.onAssistantText?.(assistant)
         return assistant
       }
@@ -319,10 +325,6 @@ export class RuntimeCore {
               rewrittenBy: [],
             }
       await handlers.onToolCall?.(toolCall, toolPayload, metadata)
-      await this.emitAssistantTextSegment(
-        extractedToolCall.trailingText,
-        handlers
-      )
 
       if (!prepared.ok) {
         await handlers.onToolResult?.(prepared.result, toolCall, metadata)

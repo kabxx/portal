@@ -171,7 +171,7 @@ sequenceDiagram
     end
 ```
 
-The textual protocol allows at most one `<tool>...</tool>` block in each assistant response. `ToolRegistry` parses the JSON outer shape, looks up the exact tool name, validates tool-specific input, and converts output into:
+The textual protocol allows at most one `<tool name="tool_name">PAYLOAD</tool>` block in each assistant response. The closing `</tool>` must be the final non-whitespace content; otherwise the complete response remains ordinary assistant text. `ToolRegistry` looks up the exact tool name, parses JSON Format payloads as parameter objects, preserves Freeform Format payloads as raw text, and converts output into:
 
 - `outcome`: `success`, `error`, or `unknown`;
 - `result`: the complete JSON-serializable observation sent back to the web model;

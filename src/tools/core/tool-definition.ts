@@ -172,15 +172,8 @@ abstract class Tool<TInput = unknown, TOutput extends ToolOutput = ToolOutput> {
               ].join('\n')
             }
             return [
-              `<tool>`,
-              JSON.stringify(
-                {
-                  tool: example.tool ?? name,
-                  params: example.params ?? {},
-                },
-                null,
-                2
-              ),
+              `<tool name="${example.tool ?? name}">`,
+              JSON.stringify(example.params ?? {}, null, 2),
               `</tool>`,
             ].join('\n')
           }),
