@@ -169,11 +169,11 @@ export function buildBrowserLaunchArguments(
     '--no-default-browser-check',
     '--disable-default-apps',
     '--disable-popup-blocking',
-    '--enable-automation',
     '--disable-extensions',
     '--disable-sync',
     '--password-store=basic',
     '--use-mock-keychain',
+    '--disable-blink-features=AutomationControlled',
   ]
 }
 
