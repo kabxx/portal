@@ -33,6 +33,7 @@ import {
   shouldClearInputForCtrlC,
   shouldInterruptForKey,
   shouldNavigateInputHistory,
+  syncTranscriptAfterRenderFlush,
   truncateMiddleLine,
 } from '../../src/terminal-ui/terminal-screen.tsx'
 import type { KeyModifiers } from '../../src/terminal-ui/terminal-screen.tsx'
@@ -46,6 +47,54 @@ function key(modifiers: Partial<KeyModifiers> = {}): KeyModifiers {
     ...modifiers,
   }
 }
+
+test('transcript sync waits for Ink to flush before writing and committing layout', async () => {
+  const flush = Promise.withResolvers<void>()
+  const events: string[] = []
+
+  const pending = syncTranscriptAfterRenderFlush({
+    waitUntilRenderFlush: async () => {
+      events.push('wait')
+      await flush.promise
+      events.push('flushed')
+    },
+    isCancelled: () => false,
+    sync: () => events.push('sync'),
+    commitLayout: () => events.push('commit'),
+  })
+
+  await Promise.resolve()
+  assert.deepEqual(events, ['wait'])
+
+  flush.resolve()
+  assert.equal(await pending, 'synced')
+  assert.deepEqual(events, ['wait', 'flushed', 'sync', 'commit'])
+})
+
+test('cancelled transcript sync neither writes nor commits its layout', async () => {
+  const flush = Promise.withResolvers<void>()
+  let cancelled = false
+  let writes = 0
+  let commits = 0
+
+  const pending = syncTranscriptAfterRenderFlush({
+    waitUntilRenderFlush: async () => await flush.promise,
+    isCancelled: () => cancelled,
+    sync: () => {
+      writes += 1
+    },
+    commitLayout: () => {
+      commits += 1
+    },
+  })
+
+  cancelled = true
+  flush.resolve()
+
+  assert.equal(await pending, 'cancelled')
+  assert.equal(writes, 0)
+  assert.equal(commits, 0)
+})
 
 test('isNewlineKey keeps plain Enter as submit', () => {
   assert.equal(isNewlineKey(key({ return: true })), false)

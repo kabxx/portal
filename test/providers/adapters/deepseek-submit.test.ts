@@ -51,8 +51,7 @@ function createTestDeepSeekAdapter(): DeepSeekAdapterHarness {
 test('DeepSeekAdapter.submit returns a captured finished response without waiting for response.text()', async () => {
   const adapter = createTestDeepSeekAdapter()
   adapter.conversationIdVal = null
-  const responseText =
-    '<tool>{"tool":"run_command","params":{"command":"dir"}}</tool>'
+  const responseText = '<tool name="run_command">{"command":"dir"}</tool>'
   const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
 data: {"p":"response/status","o":"SET","v":"FINISHED"}`
 
@@ -215,8 +214,7 @@ test('DeepSeekAdapter.submit aborts after streaming a complete tool payload with
   adapter.conversationIdVal = null
   const controller = new AbortController()
   const streamedTexts: string[] = []
-  const responseText =
-    '<tool>{"tool":"run_command","params":{"command":"dir"}}</tool>'
+  const responseText = '<tool name="run_command">{"command":"dir"}</tool>'
   const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}`
   let capturedRaw: string | null = null
 

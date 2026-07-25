@@ -252,7 +252,7 @@ test('createRuntimeFromAdapter catalogs enabled skills into setup and load_skill
     const enabledAdapter = new FakeAdapter({
       responses: [
         'READY',
-        '<tool>{"tool":"load_skill","params":{"name":"runtime-skill"}}</tool>',
+        '<tool name="load_skill">{"name":"runtime-skill"}</tool>',
         'Skill loaded.',
         'Manual skill loaded.',
       ],
@@ -341,7 +341,7 @@ test('load_skill reports files deleted after runtime creation to the model', asy
   const adapter = new FakeAdapter({
     responses: [
       'READY',
-      '<tool>{"tool":"load_skill","params":{"name":"deleted-skill"}}</tool>',
+      '<tool name="load_skill">{"name":"deleted-skill"}</tool>',
       'The missing skill was reported.',
     ],
   })
@@ -445,7 +445,7 @@ test('createRuntimeFromAdapter snapshots MCP names and loads exact tool definiti
   const adapter = new FakeAdapter({
     responses: [
       'READY',
-      '<tool>{"tool":"mcp_search_tool","params":{"server":"example","tool":"echo"}}</tool>',
+      '<tool name="mcp_search_tool">{"server":"example","tool":"echo"}</tool>',
       'Definition loaded.',
     ],
   })

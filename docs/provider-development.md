@@ -22,6 +22,12 @@ A first-class Provider is complete only when all applicable paths below work:
 
 An adapter can be merged with an intentionally unsupported feature, but it cannot silently omit an abstract method or claim support that was not verified.
 
+Application-level Provider registration belongs in
+`src/app/app-provider-catalog.ts`: the Provider list, aliases, Provider-specific
+runtime prompts, and adapter factory dispatch stay together there. Provider DOM
+selectors and interactions still belong exclusively in `src/providers/ui/`,
+and semantic browser/protocol behavior stays in `src/providers/adapters/`.
+
 ## 2. Adapter lifecycle
 
 The diagrams below show the lifecycle from an adapter author's perspective. See [Architecture](architecture.md) for the wider process, Tool, thread, and MCP design.
@@ -119,19 +125,19 @@ Check the states that are safely available: signed in and signed out, new and ex
 
 Adding the adapter file is only one part of registration. Search for exhaustive `ProviderId` unions, arrays, records, switches, and schema enums before considering registration complete.
 
-| Area               | Required change                                                                                                                                                                          |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Adapter            | Add `src/providers/adapters/adapter-<id>.ts`, delegate page behavior to Provider UI components, and add focused semantic tests under `test/providers/adapters/`.                         |
-| Provider UI        | Add Provider-local components under `src/providers/ui/<id>/`; keep selector candidates, DOM scoping, uniqueness, waits, actions, and page state inside this boundary.                    |
-| Provider type      | Add the id to `src/providers/provider-id.ts`.                                                                                                                                            |
-| App registry       | In `src/app.ts`, add the import, `PROVIDERS` entry, normalized name/aliases, `createAdapterForProvider` case, and a Provider prompt only when the Provider needs an extra boundary.      |
-| Resume URL         | Add strict HTTPS host/path recognition and canonicalization in `src/providers/provider-conversation-url.ts`, with positive, alias, malformed-encoding, wrong-host, and wrong-path tests. |
-| Hooks              | Add the id to Provider normalization in `src/hooks/hook-config.ts` and update Hook tests.                                                                                                |
-| Spawn              | Update the Provider list in the `spawn` description and input-schema enum in `src/tools/builtins/spawn-tool.ts`; update `test/tools/builtins/spawn-tool.test.ts`.                        |
-| Model argument     | Add the Provider's named models and per-model options to `src/providers/definitions/<id>.ts`; cover mapping and rejected forms in manifest, catalog, and command tests.                  |
-| Capabilities       | Put only static capability keys, descriptions, and kinds in the Provider definition; keep live discovery and dispatch behavior in the Provider UI component.                             |
-| User documentation | Update the brief lists in `README.md` and `docs/README.zh-CN.md`, plus the detailed matrix/counts in [Providers](providers.md); other docs only when needed.                             |
-| Integration tests  | Update Provider lists, command completion, API/MCP listing, and any exhaustive records surfaced by TypeScript or repository search.                                                      |
+| Area               | Required change                                                                                                                                                                                          |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Adapter            | Add `src/providers/adapters/adapter-<id>.ts`, delegate page behavior to Provider UI components, and add focused semantic tests under `test/providers/adapters/`.                                         |
+| Provider UI        | Add Provider-local components under `src/providers/ui/<id>/`; keep selector candidates, DOM scoping, uniqueness, waits, actions, and page state inside this boundary.                                    |
+| Provider type      | Add the id to `src/providers/provider-id.ts`.                                                                                                                                                            |
+| App registry       | In `src/app/app-provider-catalog.ts`, add the import, `PROVIDERS` entry, normalized name/aliases, `createAdapterForProvider` case, and a Provider prompt only when the Provider needs an extra boundary. |
+| Resume URL         | Add strict HTTPS host/path recognition and canonicalization in `src/providers/provider-conversation-url.ts`, with positive, alias, malformed-encoding, wrong-host, and wrong-path tests.                 |
+| Hooks              | Add the id to Provider normalization in `src/hooks/hook-config.ts` and update Hook tests.                                                                                                                |
+| Spawn              | Update the Provider list in the `spawn` description and input-schema enum in `src/tools/builtins/spawn-tool.ts`; update `test/tools/builtins/spawn-tool.test.ts`.                                        |
+| Model argument     | Add the Provider's named models and per-model options to `src/providers/definitions/<id>.ts`; cover mapping and rejected forms in manifest, catalog, and command tests.                                  |
+| Capabilities       | Put only static capability keys, descriptions, and kinds in the Provider definition; keep live discovery and dispatch behavior in the Provider UI component.                                             |
+| User documentation | Update the brief lists in `README.md` and `docs/README.zh-CN.md`, plus the detailed matrix/counts in [Providers](providers.md); other docs only when needed.                                             |
+| Integration tests  | Update Provider lists, command completion, API/MCP listing, and any exhaustive records surfaced by TypeScript or repository search.                                                                      |
 
 Do not add an alias unless it is unambiguous and useful. Canonical conversation URLs must discard unrelated query/hash state and encode the conversation id exactly once.
 

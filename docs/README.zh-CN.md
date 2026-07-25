@@ -69,7 +69,7 @@ flowchart LR
     R <--> T[本地工具、Skills、MCP]
 ```
 
-每个用户输入都会通过 Provider 网页提交。portal 捕获流式回复并查找可选的 `<tool>...</tool>` 请求，执行需要的本地工具，再把结果回灌到同一个会话，直到模型返回普通回复。
+每个用户输入都会通过 Provider 网页提交。portal 捕获流式回复并查找可选的 `<tool name="tool_name">PAYLOAD</tool>` 请求，执行需要的本地工具，再把结果回灌到同一个会话，直到模型返回普通回复。
 
 完整的 runtime、thread、resume 和关闭流程请参阅[架构文档](architecture.md)。
 

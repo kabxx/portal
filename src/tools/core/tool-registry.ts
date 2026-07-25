@@ -5,6 +5,7 @@ import { joinPromptSections } from '../../shared/prompt-sections.ts'
 import type {
   ToolConstructor,
   ToolExecutionOptions,
+  ToolInputFormat,
   ToolOutcome,
   ToolServices,
 } from './tool-definition.ts'
@@ -61,10 +62,16 @@ export function extractToolCall(response: string): ExtractedToolCall | null {
   }
 }
 
+export function isToolCallAtResponseEnd(extracted: ExtractedToolCall): boolean {
+  return extracted.trailingText.trim() === ''
+}
+
 export function projectStreamingAssistantText(response: string): string {
   const extracted = extractToolCall(response)
   if (extracted !== null) {
-    return extracted.leadingText.trim()
+    return isToolCallAtResponseEnd(extracted)
+      ? extracted.leadingText.trim()
+      : response
   }
 
   const normalized = maskMarkdownCode(response).toLowerCase()
@@ -133,18 +140,23 @@ function maskMarkdownCode(value: string): string {
 
 export function parseToolCallPayload(
   toolCallPayload: string,
-  declaredToolName: string | null = null
+  declaredToolName: string | null = null,
+  declaredInputFormat?: ToolInputFormat
 ): ToolCall | null {
-  if (declaredToolName !== null) {
-    return {
-      tool: declaredToolName,
-      params: toolCallPayload,
+  if (declaredToolName === null) {
+    return null
+  }
+  if (declaredInputFormat === 'json') {
+    try {
+      const params: unknown = JSON.parse(toolCallPayload)
+      return isRecord(params) ? { tool: declaredToolName, params } : null
+    } catch {
+      return null
     }
   }
-  try {
-    return normalizeToolCall(JSON.parse(toolCallPayload))
-  } catch {
-    return null
+  return {
+    tool: declaredToolName,
+    params: toolCallPayload,
   }
 }
 
@@ -167,28 +179,13 @@ class ToolRegistry {
     return joinPromptSections([
       [
         `# Tools`,
-        `- Use only the format declared for the selected tool.`,
-        `- Tools labeled JSON Format must use the JSON tool call format.`,
-        `- Tools labeled Freeform Format must use the Freeform tool call format.`,
+        `- JSON Format tools use an object matching the input schema as PAYLOAD.`,
+        `- Freeform Format tools use raw text as PAYLOAD.`,
+        `- A tool call may follow user-facing text but must end the response.`,
         ``,
       ].join('\n'),
       [
-        `## Tool Call Format (JSON)`,
-        `Optional user-facing text before the tool call.`,
-        `<tool>`,
-        JSON.stringify(
-          {
-            tool: 'tool_name',
-            params: {},
-          },
-          null,
-          2
-        ),
-        `</tool>`,
-      ].join('\n'),
-      [
-        `## Tool Call Format (Freeform)`,
-        `Optional user-facing text before the tool call.`,
+        `## Tool Call Format`,
         `<tool name="tool_name">`,
         `PAYLOAD`,
         `</tool>`,
@@ -216,7 +213,15 @@ class ToolRegistry {
     toolCallPayload: string,
     declaredToolName: string | null = null
   ): ToolCall | null {
-    return parseToolCallPayload(toolCallPayload, declaredToolName)
+    const declaredInputFormat =
+      declaredToolName === null
+        ? undefined
+        : this.tools.get(declaredToolName)?.inputFormat
+    return parseToolCallPayload(
+      toolCallPayload,
+      declaredToolName,
+      declaredInputFormat
+    )
   }
 
   public async executeToolCall(
@@ -232,6 +237,15 @@ class ToolRegistry {
     toolCallPayload: string,
     declaredToolName: string | null = null
   ): PreparedToolCall {
+    if (declaredToolName === null) {
+      return {
+        ok: false,
+        toolCall: null,
+        result: asErrorResult(
+          'Tool calls require <tool name="tool_name">PAYLOAD</tool>'
+        ),
+      }
+    }
     const toolCall = this.parseToolCallPayload(
       toolCallPayload,
       declaredToolName
@@ -240,13 +254,13 @@ class ToolRegistry {
       let parseError = 'Invalid tool call shape'
       try {
         const parsed: unknown = JSON.parse(toolCallPayload)
-        if (!isRecord(parsed)) {
-          parseError = 'Tool call payload must be a JSON object'
-        } else if (typeof parsed.tool !== 'string' || !parsed.tool.trim()) {
-          parseError =
-            'Tool call payload must include a non-empty string "tool"'
-        } else if (!isRecord(parsed.params)) {
-          parseError = 'Tool call payload must include an object "params"'
+        if (
+          declaredToolName !== null &&
+          this.tools.get(declaredToolName)?.inputFormat === 'json'
+        ) {
+          if (!isRecord(parsed)) {
+            parseError = `Tool ${declaredToolName} payload must be a JSON object`
+          }
         }
       } catch (error) {
         parseError = String(error)
@@ -258,12 +272,12 @@ class ToolRegistry {
       }
     }
 
-    return this.prepareParsedToolCall(toolCall, declaredToolName !== null)
+    return this.prepareParsedToolCall(toolCall, true)
   }
 
   public prepareParsedToolCall(
     toolCall: ToolCall,
-    freeformInvocation: boolean
+    namedInvocation: boolean
   ): PreparedToolCall {
     const tool = this.tools.get(toolCall.tool)
     if (!tool) {
@@ -274,7 +288,7 @@ class ToolRegistry {
       }
     }
     if (tool.inputFormat === 'freeform') {
-      if (!freeformInvocation) {
+      if (!namedInvocation) {
         return {
           ok: false,
           toolCall,
@@ -359,22 +373,6 @@ function normalizeResult(
 
 function isToolOutcome(value: unknown): value is ToolOutcome {
   return value === 'success' || value === 'error' || value === 'unknown'
-}
-
-function normalizeToolCall(value: unknown): ToolCall | null {
-  if (!isRecord(value)) {
-    return null
-  }
-  if (typeof value.tool !== 'string' || !value.tool.trim()) {
-    return null
-  }
-  if (!isRecord(value.params) && typeof value.params !== 'string') {
-    return null
-  }
-  return {
-    tool: value.tool,
-    params: value.params,
-  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
