@@ -23,7 +23,7 @@ const GROK_LOCATORS = {
 const GROK_VOICE_MODE_READY_SELECTOR =
   'form:has([data-testid="chat-input"]) div:has(> [data-query-bar-mode-select]) button[type="button"]:has(> div > div:nth-child(6):last-child)'
 const GROK_UPLOAD_INPUT_SELECTOR =
-  'form:has([data-testid="chat-input"]) input[type="file"][name="files"]'
+  'form:has([data-testid="attach-button"]) input[type="file"][name="files"]'
 
 interface GrokParsedWebSocketResponse {
   conversationId: string | null
@@ -199,6 +199,21 @@ test('GrokAdapter.attachFile ignores unrelated global file inputs', async () => 
   assert.deepEqual(page.unrelatedFiles, [])
 })
 
+test('GrokAdapter.attachFile ignores file inputs outside an attach Composer', async () => {
+  const adapter = createTestGrokAdapter()
+  const page = createGrokPage({
+    attachButtonAvailable: false,
+    fileInputCount: 1,
+  })
+  installGrokTestPage(adapter, page)
+
+  await assert.rejects(
+    adapter.attachFile('C:/tmp/a.png'),
+    (error) => error instanceof ProviderAdapterUnsupportedError
+  )
+  assert.deepEqual(page.files, [])
+})
+
 test('GrokAdapter.attachFile reports unsupported when the file input is missing', async () => {
   const adapter = createTestGrokAdapter()
   installGrokTestPage(adapter, createGrokPage({ unrelatedFileInputCount: 1 }))
@@ -222,7 +237,26 @@ test('GrokAdapter.attachFile rejects ambiguous Composer file inputs', async () =
     (error) =>
       error instanceof ProviderAdapterError &&
       error.kind === 'ui' &&
+      error.recovery === 'none' &&
       error.retryable === false &&
+      error.maxAttempts === 1 &&
+      error.detailCode === 'grok_upload_input_ambiguous'
+  )
+  assert.deepEqual(page.files, [])
+})
+
+test('GrokAdapter.attachFile rejects multiple attach Composers', async () => {
+  const adapter = createTestGrokAdapter()
+  const page = createGrokPage({
+    attachComposerCount: 2,
+    fileInputCount: 1,
+  })
+  installGrokTestPage(adapter, page)
+
+  await assert.rejects(
+    adapter.attachFile('C:/tmp/a.png'),
+    (error) =>
+      error instanceof ProviderAdapterError &&
       error.detailCode === 'grok_upload_input_ambiguous'
   )
   assert.deepEqual(page.files, [])
@@ -251,12 +285,16 @@ test('GrokAdapter.stopGeneration is a no-op when the stop icon is missing', asyn
 })
 
 function createGrokPage({
+  attachButtonAvailable = true,
+  attachComposerCount = 1,
   fileInputCount = 0,
   modelItemCount = 0,
   subscribeModelIndex = null,
   stopButtonAvailable = false,
   unrelatedFileInputCount = 0,
 }: {
+  attachButtonAvailable?: boolean
+  attachComposerCount?: number
   fileInputCount?: number
   modelItemCount?: number
   subscribeModelIndex?: number | null
@@ -305,7 +343,8 @@ function createGrokPage({
     },
   }
   const fileInput = {
-    count: async () => fileInputCount,
+    count: async () =>
+      attachButtonAvailable ? attachComposerCount * fileInputCount : 0,
     first: () => fileInput,
     setInputFiles: async (path: string | readonly string[]) => {
       files.splice(

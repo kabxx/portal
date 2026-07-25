@@ -42,7 +42,7 @@ const GROK_UI_SELECTORS = defineProviderUiSelectors({
   },
   upload: {
     input: [
-      'form:has([data-testid="chat-input"]) input[type="file"][name="files"]',
+      'form:has([data-testid="attach-button"]) input[type="file"][name="files"]',
     ],
   },
   model: {
