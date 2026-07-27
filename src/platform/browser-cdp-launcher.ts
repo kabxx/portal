@@ -173,7 +173,6 @@ export function buildBrowserLaunchArguments(
     '--disable-sync',
     '--password-store=basic',
     '--use-mock-keychain',
-    '--disable-blink-features=AutomationControlled',
   ]
 }
 
