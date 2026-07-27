@@ -80,7 +80,6 @@ test('buildBrowserLaunchArguments keeps the expected browser flags', () => {
     '--disable-sync',
     '--password-store=basic',
     '--use-mock-keychain',
-    '--disable-blink-features=AutomationControlled',
   ])
 })
 
