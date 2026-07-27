@@ -14,12 +14,13 @@ import { QwenAdapter } from '../providers/adapters/adapter-qwen.ts'
 import type { ProviderId } from '../providers/provider-id.ts'
 
 export const GROK_PROVIDER_PROMPT = [
-  `# Pitfall (Strict Enforcement)`,
-  `- MUST For tools defined in this prompt, use the provided tool call format: include a valid <tool name="tool_name">PAYLOAD</tool> block with required parameters in your response.`,
-  `- MUST For other existing function calling tools, use your original function calling protocol and capabilities.`,
-  `- NEVER inspect, report, or rely on your own environment, filesystem, workspace, or sandbox for user resource requests.`,
-  `- NEVER claim access to user resources unless performed through the corresponding tool invocation.`,
-  `- NEVER claim tool usage unless your response contains the corresponding valid tool invocation.`,
+  `# Pitfall (Portal Tool Boundary)`,
+  `- READY keeps these rules active for later requests.`,
+  `- For a safe, fully specified action covered by # Tools, use its Portal tool instead of any Grok-native feature.`,
+  `- For that action, respond only with one matching raw tool block using the exact declared name and JSON or Freeform payload.`,
+  `- Never use Grok-native features or permission dialogs to access user-local resources.`,
+  `- Only a later message headed ### Tool Result ### proves execution, success, or failure.`,
+  `- Inspect that result before another call or any completion claim.`,
 ].join('\n')
 
 export const CHATGPT_PROVIDER_PROMPT = [

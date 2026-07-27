@@ -164,7 +164,7 @@ These history endpoints are private web implementation details, not public APIs.
 
 ## Provider-specific setup
 
-Agent-mode threads and spawned runtimes use the shared full setup prompt. Grok receives an additional strict tool-boundary prompt because its native product features and local-tool behavior require stronger separation. That provider rule remains active after the `READY` handshake. Chat creation sends only the shared handshake and does not include provider-specific setup text.
+Agent-mode threads and spawned runtimes use the shared full setup prompt. Grok receives an additional Portal tool-boundary Pitfall that directs it to keep native local-resource features separate from matching Portal tools and to treat only a delivered Tool Result as execution evidence. That provider rule remains active after the `READY` handshake. Chat creation sends only the shared handshake and does not include provider-specific setup text.
 
 ## Maintenance notes
 
