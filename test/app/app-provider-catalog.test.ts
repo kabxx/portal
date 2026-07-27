@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   GROK_PROVIDER_PROMPT,
   PROVIDERS,
+  getProviderPrompt,
   normalizeProviderId,
 } from '../../src/app/app-provider-catalog.ts'
 
@@ -25,6 +26,24 @@ test('provider aliases normalize at the application boundary', () => {
   assert.equal(normalizeProviderId('GROK'), 'grok')
   assert.equal(normalizeProviderId(''), null)
   assert.equal(normalizeProviderId('unknown'), null)
+})
+
+test('only Grok receives a provider-specific prompt', () => {
+  assert.deepEqual(
+    Object.fromEntries(
+      PROVIDERS.map((provider) => [provider, getProviderPrompt(provider)])
+    ),
+    {
+      chatgpt: null,
+      gemini: null,
+      deepseek: null,
+      doubao: null,
+      grok: GROK_PROVIDER_PROMPT,
+      glm: null,
+      qwen: null,
+      kimi: null,
+    }
+  )
 })
 
 test('Grok provider prompt isolates Portal from native local access', () => {

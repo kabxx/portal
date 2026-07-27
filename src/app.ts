@@ -93,11 +93,7 @@ export {
   transitionLoginWaitWarning,
   type McpForegroundOperation,
 } from './app/app-lifecycle.ts'
-export {
-  CHATGPT_PROVIDER_PROMPT,
-  GROK_PROVIDER_PROMPT,
-  PROVIDERS,
-} from './app/app-provider-catalog.ts'
+export { GROK_PROVIDER_PROMPT, PROVIDERS } from './app/app-provider-catalog.ts'
 export {
   createPortalRuntimeSettings,
   parseApiThreadCreationMode,

@@ -23,16 +23,6 @@ export const GROK_PROVIDER_PROMPT = [
   `- Inspect that result before another call or any completion claim.`,
 ].join('\n')
 
-export const CHATGPT_PROVIDER_PROMPT = [
-  `# Pitfall (Strict Enforcement)`,
-  `- MUST For tools listed in the # Tools section, use the declared tool call format and output exactly one valid <tool name="tool_name">PAYLOAD</tool> block with the required parameters.`,
-  `- MUST For other existing function calling tools, use your original function calling protocol and capabilities.`,
-  `- MUST Treat the # Tools section as the complete and exclusive list of Portal runtime tools, even if those tools are absent from your native tool interface.`,
-  `- MUST If a user request can be fulfilled by a listed Portal tool, invoke it immediately instead of refusing, claiming the capability is unavailable, or asking the user to perform the operation manually.`,
-  `- MUST Use the exact tool name and input schema declared in the # Tools section. Do not change the declared JSON or freeform payload format.`,
-  `- MUST Do not claim that an operation succeeded until you have received and inspected its Tool Result.`,
-].join('\n')
-
 export const PROVIDERS: ProviderId[] = [
   'chatgpt',
   'gemini',
@@ -66,7 +56,6 @@ export function normalizeProviderId(value: string): ProviderId | null {
 }
 
 export function getProviderPrompt(provider: ProviderId): string | null {
-  if (provider === 'chatgpt') return CHATGPT_PROVIDER_PROMPT
   if (provider === 'grok') return GROK_PROVIDER_PROMPT
   return null
 }
