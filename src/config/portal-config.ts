@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import {
+  chmod,
   open,
   readFile,
   realpath,
   rename,
   rm,
+  stat,
   writeFile,
 } from 'node:fs/promises'
 import path from 'node:path'
@@ -996,6 +998,16 @@ async function writePortalConfigContentsUnlocked(
   contents: string
 ): Promise<void> {
   const directory = path.dirname(configPath)
+  let replacementMode = PRIVATE_FILE_MODE
+  if (process.platform !== 'win32') {
+    try {
+      replacementMode = (await stat(configPath)).mode & 0o700
+    } catch (error) {
+      if (!(isNodeError(error) && error.code === 'ENOENT')) {
+        throw error
+      }
+    }
+  }
   const temporaryPath = path.join(
     directory,
     `.${path.basename(configPath)}.${randomUUID()}.tmp`
@@ -1007,7 +1019,9 @@ async function writePortalConfigContentsUnlocked(
       flag: 'wx',
       mode: PRIVATE_FILE_MODE,
     })
-    await ensurePrivateFile(temporaryPath)
+    if (process.platform !== 'win32') {
+      await chmod(temporaryPath, replacementMode)
+    }
     await rename(temporaryPath, configPath)
     await ensurePrivateFile(configPath)
   } finally {

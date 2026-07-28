@@ -15,8 +15,9 @@ The server is disabled by default. Start it from the TUI with:
 `run_command` jobs are process-local and are stopped during controlled Portal
 shutdown. Cancelling a message or closing its thread detaches that operation's
 waiter but does not stop an already running command job. Active jobs can be
-listed and stopped through either the TUI `/job` commands or the authenticated
-HTTP endpoints below.
+listed and stopped through either the TUI `/job` commands or the HTTP endpoints
+below. When a listener token is configured, those endpoints use the same Bearer
+authentication as the rest of the API.
 
 The default listener is `127.0.0.1:8787`. Configure it in `data/config.yaml`:
 

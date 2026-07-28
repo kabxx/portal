@@ -129,6 +129,12 @@ test(
           0o777,
         0o600
       )
+
+      await chmod(configPath, 0o400)
+      await ensurePortalConfig(configPath, defaults, {
+        rewriteWithComments: true,
+      })
+      assert.equal((await stat(configPath)).mode & 0o777, 0o400)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
