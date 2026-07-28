@@ -66,8 +66,10 @@ Focused tests were added for:
 ## External smoke checks
 
 The launcher smoke test in Ubuntu CI covers only browser startup, CDP
-connection, and cleanup with a temporary profile. It does not open a Provider
-website or exercise the full TUI lifecycle.
+connection, and cleanup with a temporary profile. Its CI-only executable
+wrapper adds `--no-sandbox`, matching Playwright's Linux launcher default; this
+does not change Portal's normal browser arguments. The test does not open a
+Provider website or exercise the full TUI lifecycle.
 Real provider checks stay outside `npm test` and ordinary public CI because they
 require private login state, network access, provider-specific accounts, and
 careful handling of captured output. A private runner can perform those checks,

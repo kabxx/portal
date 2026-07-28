@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -147,28 +147,31 @@ test('RunCommandJobManager drains bounded output after a waiter detaches', async
   const manager = new RunCommandJobManager()
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'portal-job-output-'))
   const ready = path.join(tempDir, 'ready.txt')
+  const release = path.join(tempDir, 'release.txt')
   const finished = path.join(tempDir, 'finished.txt')
   const input =
     os.platform() === 'win32'
       ? {
-          command: `Start-Sleep -Milliseconds 100; [Console]::Out.Write('x' * 5242880); Set-Content -LiteralPath '${finished.replaceAll("'", "''")}' -Value finished`,
+          command: [
+            `Set-Content -LiteralPath '${ready.replaceAll("'", "''")}' -Value ready`,
+            `while (-not (Test-Path -LiteralPath '${release.replaceAll("'", "''")}')) { Start-Sleep -Milliseconds 10 }`,
+            `[Console]::Out.Write('x' * 5242880)`,
+            `Set-Content -LiteralPath '${finished.replaceAll("'", "''")}' -Value finished`,
+          ].join('; '),
           shell: 'powershell' as const,
         }
       : nodeCommand(
-          `const fs=require("fs");fs.writeFileSync(${JSON.stringify(ready)},"ready");process.stdout.write("x".repeat(5*1024*1024));fs.writeFileSync(${JSON.stringify(finished)},"finished")`
+          `const fs=require("fs");fs.writeFileSync(${JSON.stringify(ready)},"ready");const timer=setInterval(()=>{if(!fs.existsSync(${JSON.stringify(release)}))return;clearInterval(timer);process.stdout.write("x".repeat(5*1024*1024));fs.writeFileSync(${JSON.stringify(finished)},"finished")},5)`
         )
   const controller = new AbortController()
 
   try {
     const job = manager.start(input)
     const detachedWaiter = job.wait(controller.signal)
-    if (os.platform() === 'win32') {
-      await new Promise((resolve) => setTimeout(resolve, 150))
-    } else {
-      await waitForFile(ready)
-    }
+    await waitForFile(ready)
     controller.abort()
     await assert.rejects(detachedWaiter)
+    writeFileSync(release, 'release')
 
     const result = await job.wait()
     assert.equal(result.truncated, true)

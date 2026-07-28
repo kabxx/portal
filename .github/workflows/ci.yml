@@ -62,7 +62,10 @@ jobs:
         run: |
           browser_path="$(node --input-type=module -e "import { chromium } from 'playwright'; process.stdout.write(chromium.executablePath())")"
           test -x "$browser_path"
-          PORTAL_BROWSER_EXECUTABLE="$browser_path" xvfb-run -a npm run test:browser
+          browser_wrapper="$RUNNER_TEMP/portal-ci-chromium"
+          printf '#!/bin/sh\nexec "%s" --no-sandbox "$@"\n' "$browser_path" > "$browser_wrapper"
+          chmod 700 "$browser_wrapper"
+          PORTAL_BROWSER_EXECUTABLE="$browser_wrapper" xvfb-run -a npm run test:browser
 
   macos-unit:
     name: macOS unit tests
