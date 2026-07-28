@@ -41,9 +41,9 @@ jobs:
         run: npm run test:coverage
 
   linux-unit:
-    name: Linux unit tests
+    name: Linux unit and browser lifecycle tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -56,6 +56,13 @@ jobs:
         run: npm ci
       - name: Run unit tests
         run: npm run test:unit
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run Chromium lifecycle smoke tests
+        run: |
+          browser_path="$(node --input-type=module -e "import { chromium } from 'playwright'; process.stdout.write(chromium.executablePath())")"
+          test -x "$browser_path"
+          PORTAL_BROWSER_EXECUTABLE="$browser_path" xvfb-run -a npm run test:browser
 
   macos-unit:
     name: macOS unit tests
