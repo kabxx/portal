@@ -14,6 +14,7 @@ import type { McpLibrary } from '../mcp/mcp-library.ts'
 import type { McpServerConfig } from '../mcp/mcp-config.ts'
 import { resolveConversationUrl } from '../providers/provider-conversation-url.ts'
 import type { ProviderId } from '../providers/provider-id.ts'
+import type { RunCommandJobService } from '../processes/run-command-job-manager.ts'
 import {
   ProviderModelSelectionError,
   resolveProviderModel,
@@ -47,6 +48,7 @@ export interface ApiHandlerDependencies {
   ui: TerminalController
   skillLibrary: SkillLibrary
   mcpLibrary: McpLibrary
+  runCommandJobs: Pick<RunCommandJobService, 'list' | 'stop'>
   isBrowserConnected: () => boolean
   isForegroundOperationActive: () => boolean
   getServerStatus: () => ReturnType<PortalApiServer['status']>
@@ -84,6 +86,7 @@ export function createApiHandlers({
   ui,
   skillLibrary,
   mcpLibrary,
+  runCommandJobs,
   isBrowserConnected,
   isForegroundOperationActive,
   getServerStatus,
@@ -326,6 +329,32 @@ export function createApiHandlers({
       hooks: getHookStatus(),
     }),
     providers: () => [...PROVIDERS],
+    listJobs: () => ({ jobs: runCommandJobs.list() }),
+    stopJob: async (jobId) => {
+      if (jobId.trim() === '') {
+        throw new ApiHttpError(
+          400,
+          'INVALID_JOB_ID',
+          'jobId must be a non-empty string.'
+        )
+      }
+      const result = await runCommandJobs.stop(jobId)
+      if (result === 'not_found') {
+        throw new ApiHttpError(
+          404,
+          'JOB_NOT_FOUND',
+          `Unknown or finished job: ${jobId}`
+        )
+      }
+      if (result === 'timeout') {
+        throw new ApiHttpError(
+          504,
+          'JOB_STOP_TIMEOUT',
+          `Timed out waiting for ${jobId} to stop.`
+        )
+      }
+      return { stopped: true as const, jobId }
+    },
     listThreads: () =>
       threadManager.listThreads().map(({ id }) => toThreadSummary(id)),
     getThread: (threadId) => toThreadSummary(threadId),

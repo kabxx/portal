@@ -41,6 +41,23 @@ function createHandlers(calls: string[], includeReload = true): ApiHandlers {
   return {
     status: () => ({ ok: true }),
     providers: () => ['deepseek'],
+    listJobs: () => ({
+      jobs: [
+        {
+          id: 'j-1',
+          pid: 123,
+          command: 'long-running-command',
+          cwd: 'C:\\workspace',
+          shell: 'powershell',
+          startedAt: 1,
+          state: 'running',
+        },
+      ],
+    }),
+    stopJob: async (jobId) => {
+      calls.push(`stop:${jobId}`)
+      return { stopped: true, jobId }
+    },
     listThreads: () => [{ id: 't-1' }],
     getThread: (threadId) => {
       if (threadId !== 't-1') {
@@ -159,6 +176,30 @@ test('PortalApiServer authenticates routes and preserves thread-scoped results',
       Authorization: 'Bearer secret',
       'Content-Type': 'application/json',
     }
+    const jobs = await fetch(`${address}/jobs`, { headers })
+    assert.equal(jobs.status, 200)
+    assert.deepEqual(await jobs.json(), {
+      jobs: [
+        {
+          id: 'j-1',
+          pid: 123,
+          command: 'long-running-command',
+          cwd: 'C:\\workspace',
+          shell: 'powershell',
+          startedAt: 1,
+          state: 'running',
+        },
+      ],
+    })
+    const stoppedJob = await fetch(`${address}/jobs/j-1/stop`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer secret' },
+    })
+    assert.equal(stoppedJob.status, 200)
+    assert.deepEqual(await stoppedJob.json(), {
+      stopped: true,
+      jobId: 'j-1',
+    })
     const created = await fetch(`${address}/threads`, {
       method: 'POST',
       headers,
@@ -257,7 +298,7 @@ test('PortalApiServer authenticates routes and preserves thread-scoped results',
       }),
     })
     assert.equal(mcp.status, 200)
-    assert.deepEqual(calls, ['set:local'])
+    assert.deepEqual(calls, ['stop:j-1', 'set:local'])
   } finally {
     await server.stop()
   }

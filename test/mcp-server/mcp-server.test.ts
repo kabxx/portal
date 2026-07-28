@@ -31,6 +31,23 @@ function createHandlers(calls: string[] = []): PortalMcpHandlers {
   }
   return {
     listProviders: () => ({ providers: ['chatgpt', 'gemini'] }),
+    listJobs: () => ({
+      jobs: [
+        {
+          id: 'j-1',
+          pid: 123,
+          command: 'long-running-command',
+          cwd: 'C:\\workspace',
+          shell: 'powershell',
+          startedAt: 1,
+          state: 'running',
+        },
+      ],
+    }),
+    stopJob: async (jobId) => {
+      calls.push(`stop-job:${jobId}`)
+      return { stopped: true, jobId }
+    },
     listThreads: () => ({ threads: [thread] }),
     getThread: async (threadId) => {
       calls.push(`get:${threadId}`)
@@ -81,6 +98,8 @@ test('PortalMcpServer initializes, lists, and calls its fixed tools', async () =
       [
         'portal_list_providers',
         'portal_list_threads',
+        'portal_list_jobs',
+        'portal_stop_job',
         'portal_get_thread',
         'portal_create_thread',
         'portal_resume_thread',
@@ -100,6 +119,32 @@ test('PortalMcpServer initializes, lists, and calls its fixed tools', async () =
     assert.deepEqual(providers.content, [
       { type: 'text', text: '{"providers":["chatgpt","gemini"]}' },
     ])
+
+    const jobs = await client.callTool({
+      name: 'portal_list_jobs',
+      arguments: {},
+    })
+    assert.deepEqual(jobs.structuredContent, {
+      jobs: [
+        {
+          id: 'j-1',
+          pid: 123,
+          command: 'long-running-command',
+          cwd: 'C:\\workspace',
+          shell: 'powershell',
+          startedAt: 1,
+          state: 'running',
+        },
+      ],
+    })
+    const stopped = await client.callTool({
+      name: 'portal_stop_job',
+      arguments: { jobId: 'j-1' },
+    })
+    assert.deepEqual(stopped.structuredContent, {
+      stopped: true,
+      jobId: 'j-1',
+    })
 
     await client.callTool({
       name: 'portal_create_thread',
@@ -136,6 +181,7 @@ test('PortalMcpServer initializes, lists, and calls its fixed tools', async () =
       assistant: 'answer',
     })
     assert.deepEqual(calls, [
+      'stop-job:j-1',
       'create:chatgpt:::agent',
       'create:gemini:3.1-pro:extended:chat',
       'send:t-1:hello',
@@ -199,7 +245,7 @@ test('PortalMcpServer enforces only non-empty configured tokens', async () => {
 
     const client = await connectClient(address, 'secret')
     try {
-      assert.equal((await client.listTools()).tools.length, 9)
+      assert.equal((await client.listTools()).tools.length, 11)
     } finally {
       await client.close()
     }

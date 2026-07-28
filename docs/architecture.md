@@ -263,7 +263,7 @@ The SQLite database is an index for reopening conversations, not a transcript da
 
 Long-running app operations receive an `AbortSignal`.
 
-- Busy `Ctrl+C` aborts the current operation and asks its active adapter/process to stop. A `run_command` process is an exception: the current waiter is cancelled, but the registered job continues until completion, timeout, `/job stop`, or portal shutdown.
+- Busy `Ctrl+C` aborts the current operation and asks its active adapter/process to stop. A `run_command` process is an exception: the current waiter is cancelled, but the registered job continues until completion, timeout, an explicit TUI/API/Portal MCP job stop, or portal shutdown.
 - Idle `Ctrl+C` with non-empty input clears the input; idle empty `Ctrl+C` does nothing.
 - Idle `Ctrl+D` with empty input requests shutdown.
 - `/exit` requests the same shutdown path.
@@ -271,6 +271,10 @@ Long-running app operations receive an `AbortSignal`.
 Provider failures are classified by kind, retryability, and recovery action. Authentication errors retain the adapter page and enter a login-wait loop. Ordinary retryable network/page failures use bounded retries and adapter restore. A response activity timeout is an unknown submit outcome and ends the current operation without replaying the payload, because the original request may already have reached the Provider. Other UI or protocol errors remain visible in the current timeline.
 
 Cancellation is propagated through provider submit, runtime retries, tools, Skill installation, MCP requests, and app operations, except for the detached waiter behavior of `run_command` described above. Shutdown closes job admission and stops all active command jobs before closing providers. It uses bounded close waits so a hanging provider page or transport cannot block process exit indefinitely.
+
+The HTTP API and Portal MCP Server expose the same process-wide active job list
+and stop operation as the TUI. They call the shared `RunCommandJobService`;
+stopping a listener or closing a thread does not implicitly stop detached jobs.
 
 ## Spawned runtimes
 
@@ -323,6 +327,10 @@ send, wait, and cancel without holding one request open for the full provider
 turn. The thread operation coordinator prevents concurrent work on one thread
 and uses operation-owned cancellation handles to avoid cancelling later work.
 See [Portal MCP Server](mcp-server.md).
+
+The fixed MCP tools also expose process-local `run_command` job listing and
+stopping. These controls are independent from MCP message operation ids because
+a cancelled message can leave its command job running.
 
 ## Local data layout
 

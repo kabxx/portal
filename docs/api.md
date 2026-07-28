@@ -12,11 +12,11 @@ The server is disabled by default. Start it from the TUI with:
 /serve api stop
 ```
 
-`run_command` jobs are managed only by the TUI. `/job` lists active jobs and
-`/job stop <job-id>` stops one; there is intentionally no HTTP job-management
-endpoint in this version. Jobs are process-local and are stopped during
-controlled portal shutdown. Cancelling a message or closing its thread detaches
-that operation's waiter but does not stop an already running command job.
+`run_command` jobs are process-local and are stopped during controlled Portal
+shutdown. Cancelling a message or closing its thread detaches that operation's
+waiter but does not stop an already running command job. Active jobs can be
+listed and stopped through either the TUI `/job` commands or the authenticated
+HTTP endpoints below.
 
 The default listener is `127.0.0.1:8787`. Configure it in `data/config.yaml`:
 
@@ -46,6 +46,20 @@ See [Configuration](configuration.md).
 
 The [Portal MCP Server](mcp-server.md) is a separate native MCP service. It does
 not add MCP routes to the HTTP API or call the API internally.
+
+## Command jobs
+
+| Method | Path                | Purpose                                           |
+| ------ | ------------------- | ------------------------------------------------- |
+| `GET`  | `/jobs`             | List active `run_command` jobs                    |
+| `POST` | `/jobs/:jobId/stop` | Stop one active job and wait for its process tree |
+
+The list contains job id, PID, command, working directory, shell, start time,
+and state; it never includes buffered stdout or stderr. Commands and working
+directories can still contain sensitive data, so the API Token grants access
+to them. A job that has already finished or is unknown returns
+`404 JOB_NOT_FOUND`. A process tree that does not settle within the existing
+bounded stop wait returns `504 JOB_STOP_TIMEOUT`.
 
 ## Threads
 

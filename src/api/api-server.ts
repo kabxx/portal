@@ -25,6 +25,8 @@ export interface ApiThreadSummary {
 export interface ApiHandlers {
   status(): unknown
   providers(): unknown
+  listJobs(): unknown
+  stopJob(jobId: string): Promise<unknown>
   listThreads(): unknown
   getThread(threadId: string): unknown
   createThread(input: Record<string, unknown>): Promise<unknown>
@@ -333,6 +335,12 @@ export class PortalApiServer {
     fastify.get(
       '/providers',
       async () => await this.options.handlers.providers()
+    )
+    fastify.get('/jobs', async () => await this.options.handlers.listJobs())
+    fastify.post<{ Params: { jobId: string } }>(
+      '/jobs/:jobId/stop',
+      async (request) =>
+        await this.options.handlers.stopJob(request.params.jobId)
     )
     fastify.get(
       '/threads',

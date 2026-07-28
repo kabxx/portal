@@ -55,3 +55,42 @@ test('MCP handlers map thread state at the surface boundary', async () => {
   })
   await assert.rejects(handlers.getThread('missing'), /Unknown thread: missing/)
 })
+
+test('MCP handlers list and stop run_command jobs', async () => {
+  const jobs = [
+    {
+      id: 'j-1',
+      pid: 123,
+      command: 'work',
+      cwd: 'C:\\workspace',
+      shell: 'powershell' as const,
+      startedAt: 1,
+      state: 'running' as const,
+    },
+  ]
+  let stopResult: 'stopped' | 'not_found' | 'timeout' = 'stopped'
+  // This focused fake implements only the job dependencies exercised here.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  const dependencies = {
+    runCommandJobs: {
+      list: () => jobs,
+      stop: async () => stopResult,
+    },
+    foregroundOperations: new Set(),
+    isForegroundOperationActive: () => false,
+  } as unknown as McpHandlerDependencies
+  const handlers = createMcpHandlers(dependencies)
+
+  assert.deepEqual(await handlers.listJobs(), { jobs })
+  assert.deepEqual(await handlers.stopJob('j-1'), {
+    stopped: true,
+    jobId: 'j-1',
+  })
+  stopResult = 'not_found'
+  await assert.rejects(handlers.stopJob('j-1'), /Unknown or finished job: j-1/)
+  stopResult = 'timeout'
+  await assert.rejects(
+    handlers.stopJob('j-1'),
+    /Timed out waiting for j-1 to stop/
+  )
+})

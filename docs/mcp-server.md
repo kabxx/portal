@@ -66,17 +66,19 @@ The first version targets non-browser MCP clients. Requests containing any
 
 ## Tools
 
-| Tool                    | Purpose                                                |
-| ----------------------- | ------------------------------------------------------ |
-| `portal_list_providers` | List supported provider ids                            |
-| `portal_create_thread`  | Create an agent or chat provider conversation          |
-| `portal_resume_thread`  | Resume a provider conversation URL                     |
-| `portal_list_threads`   | List active threads in the current Portal process      |
-| `portal_get_thread`     | Read one active thread                                 |
-| `portal_close_thread`   | Cancel active work and close one thread                |
-| `portal_send_message`   | Start a message and return an operation id immediately |
-| `portal_wait_message`   | Long-poll a message operation for up to 30 seconds     |
-| `portal_cancel_message` | Cancel the exact MCP-owned message operation           |
+| Tool                    | Purpose                                                  |
+| ----------------------- | -------------------------------------------------------- |
+| `portal_list_providers` | List supported provider ids                              |
+| `portal_list_jobs`      | List active `run_command` jobs                           |
+| `portal_stop_job`       | Stop an active command job and wait for its process tree |
+| `portal_create_thread`  | Create an agent or chat provider conversation            |
+| `portal_resume_thread`  | Resume a provider conversation URL                       |
+| `portal_list_threads`   | List active threads in the current Portal process        |
+| `portal_get_thread`     | Read one active thread                                   |
+| `portal_close_thread`   | Cancel active work and close one thread                  |
+| `portal_send_message`   | Start a message and return an operation id immediately   |
+| `portal_wait_message`   | Long-poll a message operation for up to 30 seconds       |
+| `portal_cancel_message` | Cancel the exact MCP-owned message operation             |
 
 `portal_create_thread` accepts an optional `mode` of `"agent"` or `"chat"` and
 defaults to `"agent"`. Chat creation sends only the shared `READY` handshake,
@@ -99,9 +101,12 @@ a thread is explicitly destructive and can cancel work started through another
 Portal interface.
 
 Cancelling an MCP message detaches its waiter from an already running
-`run_command` job; it does not stop that process. This version does not expose
-job listing or stopping as Portal MCP tools. Use the TUI `/job` commands, or a
-controlled Portal shutdown, to manage detached jobs.
+`run_command` job; it does not stop that process. Use `portal_list_jobs` to
+discover active jobs and `portal_stop_job` to stop one. Job summaries include
+the command and working directory, which may contain sensitive data, but do not
+include buffered stdout or stderr. Unknown or already finished job ids return a
+Tool error. The TUI `/job` commands and controlled Portal shutdown remain
+available for the same process-local jobs.
 
 ## Security
 

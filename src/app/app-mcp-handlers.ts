@@ -5,6 +5,7 @@ import type {
   PortalMcpHandlers,
   PortalMcpThreadSummary,
 } from '../mcp-server/mcp-server-types.ts'
+import type { RunCommandJobService } from '../processes/run-command-job-manager.ts'
 import { resolveConversationUrl } from '../providers/provider-conversation-url.ts'
 import { resolveProviderModel } from '../providers/provider-model-catalog.ts'
 import {
@@ -32,6 +33,7 @@ export interface McpHandlerDependencies {
   threadLifecycle: ThreadLifecycleService
   ui: TerminalController
   messageOperations: McpMessageOperationStore
+  runCommandJobs: Pick<RunCommandJobService, 'list' | 'stop'>
   foregroundOperations: Set<McpForegroundOperation>
   shutdownCloseTimeoutMs: number
   isForegroundOperationActive: () => boolean
@@ -50,6 +52,7 @@ export function createMcpHandlers({
   threadLifecycle,
   ui,
   messageOperations,
+  runCommandJobs,
   foregroundOperations,
   shutdownCloseTimeoutMs,
   isForegroundOperationActive,
@@ -128,6 +131,20 @@ export function createMcpHandlers({
 
   return {
     listProviders: () => ({ providers: [...PROVIDERS] }),
+    listJobs: () => ({ jobs: runCommandJobs.list() }),
+    stopJob: async (jobId) => {
+      if (jobId.trim() === '') {
+        throw new Error('jobId must be a non-empty string.')
+      }
+      const result = await runCommandJobs.stop(jobId)
+      if (result === 'not_found') {
+        throw new Error(`Unknown or finished job: ${jobId}`)
+      }
+      if (result === 'timeout') {
+        throw new Error(`Timed out waiting for ${jobId} to stop.`)
+      }
+      return { stopped: true, jobId }
+    },
     listThreads: () => ({
       threads: threadManager.listThreads().map(({ id }) => toThreadSummary(id)),
     }),

@@ -125,10 +125,12 @@ Token strings may contain `${env:VARIABLE_NAME}` placeholders. They remain
 unexpanded in the configuration file and are resolved for each listener start;
 a missing variable fails before the listener binds.
 
-API access includes thread, Skill, capability, and outbound MCP configuration
-operations. Portal MCP Server access can send instructions to a logged-in
-provider conversation, whose model can invoke local Portal tools. Either
-listener therefore exposes high-privilege local and browser-account
+API access includes thread, Skill, capability, outbound MCP configuration, and
+active command-job operations. Portal MCP Server access can send instructions
+to a logged-in provider conversation, whose model can invoke local Portal
+tools, and can also list or stop active command jobs. Job summaries expose the
+command and working directory, which may themselves contain sensitive values.
+Either listener therefore exposes high-privilege local and browser-account
 capabilities even when authenticated.
 
 Selecting `mode: "chat"` when creating a thread does not reduce those listener

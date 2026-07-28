@@ -23,6 +23,16 @@ const operationSchema = z.object({
   error: z.string().optional(),
 })
 
+const jobSchema = z.object({
+  id: z.string(),
+  pid: z.number().int().nullable(),
+  command: z.string(),
+  cwd: z.string(),
+  shell: z.enum(['powershell', 'cmd', 'bash', 'zsh', 'fish', 'sh']),
+  startedAt: z.number(),
+  state: z.enum(['running', 'stopping']),
+})
+
 const readOnlyAnnotations = {
   readOnlyHint: true,
   destructiveHint: false,
@@ -56,6 +66,40 @@ export function createPortalMcpProtocolServer(
       annotations: readOnlyAnnotations,
     },
     async () => await runTool(async () => await handlers.listThreads())
+  )
+
+  server.registerTool(
+    'portal_list_jobs',
+    {
+      title: 'List Portal Command Jobs',
+      description:
+        'List active run_command jobs in the running Portal process. Command and working-directory values may be sensitive.',
+      outputSchema: z.object({ jobs: z.array(jobSchema) }),
+      annotations: readOnlyAnnotations,
+    },
+    async () => await runTool(async () => await handlers.listJobs())
+  )
+
+  server.registerTool(
+    'portal_stop_job',
+    {
+      title: 'Stop Portal Command Job',
+      description:
+        'Stop one active run_command job and wait for its process tree to settle.',
+      inputSchema: z.object({ jobId: z.string().regex(/\S/) }),
+      outputSchema: z.object({
+        stopped: z.literal(true),
+        jobId: z.string(),
+      }),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ jobId }) =>
+      await runTool(async () => await handlers.stopJob(jobId))
   )
 
   server.registerTool(

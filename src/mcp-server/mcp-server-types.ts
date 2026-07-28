@@ -1,4 +1,7 @@
 import type { ThreadCreationMode } from '../threads/thread-creation-mode.ts'
+import type { RunCommandJobSnapshot } from '../processes/run-command-job-manager.ts'
+
+export type PortalMcpJobSummary = RunCommandJobSnapshot
 
 export type PortalMcpThreadSummary = {
   id: string
@@ -27,6 +30,10 @@ export type PortalMcpMessageOperation = {
 
 export interface PortalMcpHandlers {
   listProviders(): Promise<{ providers: string[] }> | { providers: string[] }
+  listJobs():
+    | Promise<{ jobs: PortalMcpJobSummary[] }>
+    | { jobs: PortalMcpJobSummary[] }
+  stopJob(jobId: string): Promise<{ stopped: true; jobId: string }>
   listThreads():
     | Promise<{ threads: PortalMcpThreadSummary[] }>
     | { threads: PortalMcpThreadSummary[] }
