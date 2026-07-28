@@ -252,6 +252,24 @@ test('ToolRegistry keeps JSON tools and executes named freeform tools', async ()
   }
 })
 
+test('ToolRegistry can hide a registered tool from its prompt', async () => {
+  const registry = new ToolRegistry(
+    createProviderAdapterStub(),
+    [JsonEchoTool],
+    {},
+    ['json_echo']
+  )
+
+  assert.doesNotMatch(registry.prompt, /### json_echo/)
+  const result = await registry.executeToolCall(
+    '{"value":"hidden"}',
+    {},
+    'json_echo'
+  )
+  assert.equal(result.outcome, 'success')
+  assert.deepEqual(result.result, { input: { value: 'hidden' } })
+})
+
 test('ToolRegistry advertises and accepts only the named tool format', async () => {
   const registry = new ToolRegistry(createProviderAdapterStub(), [
     JsonEchoTool,

@@ -89,6 +89,7 @@ export interface PortalAdvancedProviderConfig {
 export interface PortalAdvancedRuntimeConfig {
   initializationAttemptLimit: number
   requestAttemptLimit: number
+  spawnDepthLimit: number
   cancelWaitTimeoutSeconds: number
   shutdownCloseTimeoutSeconds: number
   childRuntimeCloseTimeoutSeconds: number
@@ -210,6 +211,7 @@ const ADVANCED_PROVIDER_FIELDS = new Set([
 const ADVANCED_RUNTIME_FIELDS = new Set([
   'initializationAttemptLimit',
   'requestAttemptLimit',
+  'spawnDepthLimit',
   'cancelWaitTimeoutSeconds',
   'shutdownCloseTimeoutSeconds',
   'childRuntimeCloseTimeoutSeconds',
@@ -290,6 +292,7 @@ export function createDefaultAdvancedConfig(): PortalAdvancedConfig {
     runtime: {
       initializationAttemptLimit: 3,
       requestAttemptLimit: 3,
+      spawnDepthLimit: 5,
       cancelWaitTimeoutSeconds: 3,
       shutdownCloseTimeoutSeconds: 3,
       childRuntimeCloseTimeoutSeconds: 2,
@@ -636,6 +639,10 @@ export function parseAdvancedConfig(value: unknown): PortalAdvancedConfig {
         runtime.requestAttemptLimit,
         defaults.runtime.requestAttemptLimit,
         'advanced.runtime.requestAttemptLimit'
+      ),
+      spawnDepthLimit: parseSpawnDepthLimit(
+        runtime.spawnDepthLimit,
+        defaults.runtime.spawnDepthLimit
       ),
       cancelWaitTimeoutSeconds: parsePositiveInteger(
         runtime.cancelWaitTimeoutSeconds,
@@ -1277,6 +1284,10 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
         'Maximum attempts for one retryable provider request.',
       ],
       [
+        'spawnDepthLimit',
+        'Maximum child spawn depth; 0 disables spawn and the root depth is 0.',
+      ],
+      [
         'cancelWaitTimeoutSeconds',
         'Seconds to wait for a cancelled thread operation to settle.',
       ],
@@ -1480,6 +1491,16 @@ function parseNonNegativeInteger(
   const parsed = value === undefined ? fallback : value
   if (!isSafeInteger(parsed) || parsed < 0) {
     throw new PortalConfigError(`${label} must be a non-negative integer`)
+  }
+  return parsed
+}
+
+function parseSpawnDepthLimit(value: unknown, fallback: number): number {
+  const parsed = value === undefined ? fallback : value
+  if (!isSafeInteger(parsed) || parsed < 0 || parsed > 32) {
+    throw new PortalConfigError(
+      'advanced.runtime.spawnDepthLimit must be an integer from 0 to 32'
+    )
   }
   return parsed
 }

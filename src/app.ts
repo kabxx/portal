@@ -641,6 +641,7 @@ export async function run(argv = process.argv): Promise<void> {
           mcpLibrary,
           projectInstructions,
           hookDispatcher,
+          advertiseSpawnTool: settings.spawnDepthLimit > 0,
           requestAttemptLimit: settings.requestAttemptLimit,
           toolServices: createToolServices({
             context,
@@ -652,6 +653,7 @@ export async function run(argv = process.argv): Promise<void> {
             runCommandJobs,
             hookDispatcher,
             settings,
+            currentSpawnDepth: 0,
           }),
           signal,
         }),
@@ -724,6 +726,7 @@ export async function run(argv = process.argv): Promise<void> {
                 runCommandJobs,
                 hookDispatcher,
                 settings,
+                currentSpawnDepth: request.executionScope.spawnDepth,
               }),
               signal: request.signal,
             })

@@ -62,6 +62,7 @@ test('ensurePortalConfig creates one YAML file with concrete defaults', async ()
     assert.deepEqual(config, defaults)
     assert.deepEqual(rawDocument, defaults)
     assert.deepEqual(document, defaults)
+    assert.equal(defaults.advanced.runtime.spawnDepthLimit, 5)
     assert.equal(defaults.browser.engine, 'chromium')
     assert.equal(path.isAbsolute(defaults.browser.executablePath), true)
     assert.equal(
@@ -183,6 +184,7 @@ test('ensurePortalConfig writes advanced last with field comments and section sp
       'historyPageTimeoutSeconds',
       'initializationAttemptLimit',
       'requestAttemptLimit',
+      'spawnDepthLimit',
       'cancelWaitTimeoutSeconds',
       'shutdownCloseTimeoutSeconds',
       'childRuntimeCloseTimeoutSeconds',
@@ -306,6 +308,69 @@ test('parsePortalConfig completes partial advanced settings from defaults', () =
       requestTimeoutSeconds: 12,
     },
   })
+})
+
+test('ensurePortalConfig adds the managed spawn depth limit to older files', async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), 'portal-config-spawn-depth-migration-')
+  )
+  const configPath = path.join(root, 'config.yaml')
+  const defaults = createDefaultPortalConfig(root)
+  const { spawnDepthLimit: _spawnDepthLimit, ...previousRuntimeConfig } =
+    defaults.advanced.runtime
+
+  try {
+    await writeFile(
+      configPath,
+      stringifyYaml({
+        ...defaults,
+        advanced: {
+          ...defaults.advanced,
+          runtime: previousRuntimeConfig,
+        },
+      }),
+      'utf8'
+    )
+
+    const config = await ensurePortalConfig(configPath, defaults)
+    const document = parseConfigYaml(await readFile(configPath, 'utf8'))
+    const advanced = readConfigSection(document, 'advanced')
+    const runtime = readConfigSection(advanced, 'runtime')
+
+    assert.equal(config.advanced.runtime.spawnDepthLimit, 5)
+    assert.equal(runtime.spawnDepthLimit, 5)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('parsePortalConfig validates the spawn depth limit', () => {
+  const valid = createDefaultPortalConfig()
+
+  for (const spawnDepthLimit of [0, 1, 5, 32]) {
+    const parsed = parsePortalConfig({
+      ...valid,
+      advanced: {
+        ...valid.advanced,
+        runtime: { ...valid.advanced.runtime, spawnDepthLimit },
+      },
+    })
+    assert.equal(parsed.advanced.runtime.spawnDepthLimit, spawnDepthLimit)
+  }
+
+  for (const spawnDepthLimit of [-1, 1.5, 33]) {
+    assert.throws(
+      () =>
+        parsePortalConfig({
+          ...valid,
+          advanced: {
+            ...valid.advanced,
+            runtime: { ...valid.advanced.runtime, spawnDepthLimit },
+          },
+        }),
+      /advanced\.runtime\.spawnDepthLimit must be an integer from 0 to 32/
+    )
+  }
 })
 
 test('parsePortalConfig preserves API and MCP Server tokens exactly', () => {

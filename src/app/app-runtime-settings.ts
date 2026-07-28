@@ -16,6 +16,7 @@ export interface PortalRuntimeSettings {
   providerTimings: ProviderTimingOptions
   initializationAttemptLimit: number
   requestAttemptLimit: number
+  spawnDepthLimit: number
   cancelWaitTimeoutMs: number
   shutdownCloseTimeoutMs: number
   childRuntimeCloseTimeoutMs: number
@@ -64,6 +65,7 @@ export function createPortalRuntimeSettings(
     },
     initializationAttemptLimit: advanced.runtime.initializationAttemptLimit,
     requestAttemptLimit: advanced.runtime.requestAttemptLimit,
+    spawnDepthLimit: advanced.runtime.spawnDepthLimit,
     cancelWaitTimeoutMs: seconds(advanced.runtime.cancelWaitTimeoutSeconds),
     shutdownCloseTimeoutMs: seconds(
       advanced.runtime.shutdownCloseTimeoutSeconds

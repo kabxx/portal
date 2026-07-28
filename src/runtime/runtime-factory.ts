@@ -40,6 +40,7 @@ export interface RuntimeFactoryOptions extends ProviderAdapterOptions {
   projectInstructions?: ProjectInstructions | null
   hookDispatcher?: HookDispatcher | null
   allowedTools?: readonly string[] | null
+  advertiseSpawnTool?: boolean
   requestAttemptLimit?: number
 }
 
@@ -149,7 +150,12 @@ export async function createRuntimeFromAdapter(
           }
         : {}),
     }
-    const toolRegistry = new ToolRegistry(adapter, tools, services)
+    const toolRegistry = new ToolRegistry(
+      adapter,
+      tools,
+      services,
+      options.advertiseSpawnTool === false ? ['spawn'] : []
+    )
     const runtime = new RuntimeCore(
       adapter,
       toolRegistry,

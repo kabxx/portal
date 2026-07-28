@@ -235,6 +235,48 @@ test('createRuntimeFromAdapter includes the spawn tool in setup', async () => {
   assert.match(adapter.attachedTexts[0] ?? '', /"prompt"/)
 })
 
+test('createRuntimeFromAdapter can omit the spawn tool from setup', async () => {
+  const adapter = new FakeAdapter()
+
+  await createRuntimeFromAdapter(adapter, {
+    model: null,
+    advertiseSpawnTool: false,
+  })
+
+  assert.doesNotMatch(adapter.attachedTexts[0] ?? '', /### spawn/)
+  assert.match(adapter.attachedTexts[0] ?? '', /### run_command/)
+})
+
+test('a spawn hidden from setup remains guarded for stale calls', async () => {
+  const adapter = new FakeAdapter({
+    responses: [
+      'READY',
+      '<tool name="spawn">{"prompt":"stale call"}</tool>',
+      'Stopped at the configured depth.',
+    ],
+  })
+  let spawnCalls = 0
+  const runtime = await createRuntimeFromAdapter(adapter, {
+    model: null,
+    advertiseSpawnTool: false,
+    toolServices: {
+      spawnTask: async () => {
+        spawnCalls += 1
+        return {
+          kind: 'error',
+          message: 'SPAWN_DEPTH_LIMIT_REACHED: test limit reached',
+        }
+      },
+    },
+  })
+
+  const output = await runtime.submitUserInput('Continue an older context.')
+
+  assert.equal(output, 'Stopped at the configured depth.')
+  assert.equal(spawnCalls, 1)
+  assert.match(adapter.attachedTexts.at(-1) ?? '', /SPAWN_DEPTH_LIMIT_REACHED/)
+})
+
 test('createRuntimeFromAdapter catalogs enabled skills into setup and load_skill', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-runtime-skill-'))
   const skillsDirectory = path.join(root, 'data', 'skills')

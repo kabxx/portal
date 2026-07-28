@@ -32,6 +32,7 @@ test('runtime settings convert every advanced section to runtime units', () => {
   advanced.runtime = {
     initializationAttemptLimit: 19,
     requestAttemptLimit: 20,
+    spawnDepthLimit: 5,
     cancelWaitTimeoutSeconds: 21,
     shutdownCloseTimeoutSeconds: 22,
     childRuntimeCloseTimeoutSeconds: 23,
@@ -76,6 +77,7 @@ test('runtime settings convert every advanced section to runtime units', () => {
     },
     initializationAttemptLimit: 19,
     requestAttemptLimit: 20,
+    spawnDepthLimit: 5,
     cancelWaitTimeoutMs: 21_000,
     shutdownCloseTimeoutMs: 22_000,
     childRuntimeCloseTimeoutMs: 23_000,

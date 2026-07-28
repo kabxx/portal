@@ -34,6 +34,13 @@ export function inheritSpawnModelSelection(
   return spawnProvider === parentProvider ? model : null
 }
 
+export function nextSpawnDepth(
+  currentSpawnDepth: number,
+  spawnDepthLimit: number
+): number | null {
+  return currentSpawnDepth >= spawnDepthLimit ? null : currentSpawnDepth + 1
+}
+
 export function createToolServices({
   context,
   provider,
@@ -44,6 +51,7 @@ export function createToolServices({
   runCommandJobs,
   hookDispatcher,
   settings,
+  currentSpawnDepth,
 }: {
   context: BrowserContext
   provider: ProviderId
@@ -54,6 +62,7 @@ export function createToolServices({
   runCommandJobs: RunCommandJobManager
   hookDispatcher: HookDispatcher
   settings: PortalRuntimeSettings
+  currentSpawnDepth: number
 }): ToolServices {
   return {
     runCommandJobs,
@@ -61,6 +70,16 @@ export function createToolServices({
       { prompt, provider: requestedProvider },
       options = {}
     ) => {
+      const childSpawnDepth = nextSpawnDepth(
+        currentSpawnDepth,
+        settings.spawnDepthLimit
+      )
+      if (childSpawnDepth === null) {
+        return {
+          kind: 'error',
+          message: `SPAWN_DEPTH_LIMIT_REACHED: spawn depth ${currentSpawnDepth} reached the configured limit ${settings.spawnDepthLimit}`,
+        }
+      }
       const spawnProvider =
         requestedProvider === undefined
           ? provider
@@ -82,12 +101,13 @@ export function createToolServices({
         runCommandJobs,
         hookDispatcher,
         settings,
+        currentSpawnDepth: childSpawnDepth,
         ...(options.executionScope !== undefined
           ? {
               executionScope: {
                 ...options.executionScope,
                 source: 'spawn' as const,
-                spawnDepth: options.executionScope.spawnDepth + 1,
+                spawnDepth: childSpawnDepth,
                 ...(options.executionScope.threadId === undefined
                   ? {}
                   : { parentThreadId: options.executionScope.threadId }),
@@ -118,6 +138,7 @@ async function runSpawnTask({
   runCommandJobs,
   hookDispatcher,
   settings,
+  currentSpawnDepth,
   executionScope,
   signal,
 }: {
@@ -131,6 +152,7 @@ async function runSpawnTask({
   runCommandJobs: RunCommandJobManager
   hookDispatcher: HookDispatcher
   settings: PortalRuntimeSettings
+  currentSpawnDepth: number
   executionScope?: HookExecutionScope
   signal?: AbortSignal
 }): Promise<SpawnTaskResult> {
@@ -166,6 +188,7 @@ async function runSpawnTask({
       mcpLibrary,
       projectInstructions,
       hookDispatcher,
+      advertiseSpawnTool: currentSpawnDepth < settings.spawnDepthLimit,
       requestAttemptLimit: settings.requestAttemptLimit,
       toolServices: createToolServices({
         context,
@@ -177,6 +200,7 @@ async function runSpawnTask({
         runCommandJobs,
         hookDispatcher,
         settings,
+        currentSpawnDepth,
       }),
       signal,
     })

@@ -276,6 +276,12 @@ Cancellation is propagated through provider submit, runtime retries, tools, Skil
 
 `spawn` creates a temporary child provider conversation in the existing browser context. It selects the requested provider or defaults to the parent provider, creates the normal Skill snapshot and independent MCP connections, forks the parent project-instruction snapshot, runs the standard setup handshake, executes one focused prompt synchronously, returns JSON containing provider, conversation URL, and output, then closes the child runtime.
 
+Root runtimes carry an internal spawn depth of `0`; each spawned runtime adds
+one. `advanced.runtime.spawnDepthLimit` defaults to `5`, allowing child depths
+`1` through `5`. At the limit, the child setup catalog omits `spawn`, while the
+Tool service also rejects direct or stale calls before it forks instructions,
+creates a Provider adapter or MCP session, or dispatches `spawn.started`.
+
 Spawned conversations are not added to the normal thread list or SQLite history.
 
 ## Skills

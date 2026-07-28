@@ -30,6 +30,7 @@ Provider output, repository-owned project instructions, loaded Skill instruction
 - portal does not confine tools to the repository or current working directory.
 - `apply_patch` limits operations to regular UTF-8 files and refuses move/delete operations, but those checks are not a filesystem sandbox.
 - `run_command` output is bounded, but command side effects are not. A call without `timeoutMs` has no tool-level timeout.
+- Spawn recursion is bounded by `advanced.runtime.spawnDepthLimit`, which defaults to five child levels. The limit does not bound sequential sibling tasks, concurrent root threads, or other Tool calls.
 - Cancelling a turn with Ctrl+C does not stop its `run_command` process. Inspect active jobs with `/job` and stop a specific job with `/job stop <job-id>`; controlled portal shutdown stops all managed jobs.
 - `/job` displays a sanitized command summary and working directory. Avoid putting credentials directly in command arguments.
 - Job tracking is process-local and is not persisted. A forcibly terminated portal process, or a command that deliberately escapes its process group or Windows Job Object, may leave descendants running.

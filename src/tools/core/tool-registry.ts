@@ -162,17 +162,23 @@ export function parseToolCallPayload(
 
 class ToolRegistry {
   private readonly tools: Map<string, Tool>
+  private readonly promptedTools: readonly Tool[]
 
   constructor(
     providerAdapter: ProviderAdapter,
     tools: ToolConstructor[],
-    services: ToolServices = {}
+    services: ToolServices = {},
+    hiddenToolNames: readonly string[] = []
   ) {
     this.tools = new Map()
     for (const ToolClass of tools) {
       const tool = new ToolClass(providerAdapter, services)
       this.tools.set(tool.name, tool)
     }
+    const hiddenNames = new Set(hiddenToolNames)
+    this.promptedTools = [...this.tools.values()].filter(
+      (tool) => !hiddenNames.has(tool.name)
+    )
   }
 
   public get prompt(): string {
@@ -192,7 +198,7 @@ class ToolRegistry {
       ].join('\n'),
       [
         `## Available Tools`,
-        [...this.tools.values()].map((tool) => tool.prompt).join('\n\n'),
+        this.promptedTools.map((tool) => tool.prompt).join('\n\n'),
       ].join('\n'),
     ])
   }

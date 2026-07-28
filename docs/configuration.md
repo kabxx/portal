@@ -172,7 +172,8 @@ immediately; it is also available while a thread is busy.
 ## Advanced settings
 
 Advanced values are positive integers except `stopGraceSeconds`, which accepts
-a positive number, and `requestTimeoutSeconds`, which accepts zero. They are
+a positive number, `requestTimeoutSeconds`, which accepts zero, and
+`spawnDepthLimit`, which accepts an integer from `0` to `32`. They are
 low-frequency tuning knobs and are applied when portal starts.
 
 ### `advanced.browser`
@@ -200,9 +201,16 @@ low-frequency tuning knobs and are applied when portal starts.
 | --------------------------------- | ------: | ---------------------------------------- |
 | `initializationAttemptLimit`      |       3 | Runtime initialization attempts          |
 | `requestAttemptLimit`             |       3 | Ordinary bounded retry attempts          |
+| `spawnDepthLimit`                 |       5 | Maximum nested child spawn depth         |
 | `cancelWaitTimeoutSeconds`        |       3 | Wait for cancelled thread work to settle |
 | `shutdownCloseTimeoutSeconds`     |       3 | Wait for each resource during shutdown   |
 | `childRuntimeCloseTimeoutSeconds` |       2 | Wait for a Hook child runtime to close   |
+
+Root runtimes start at spawn depth `0`. A limit of `5` permits child depths
+`1` through `5`; a runtime at depth `5` does not advertise `spawn` and rejects
+attempts to create depth `6`. Set the limit to `0` to disable `spawn` for root
+runtimes. The limit applies to recursion depth, not to the number of sequential
+spawn calls or concurrently active threads.
 
 ### `advanced.command`
 
