@@ -54,7 +54,6 @@ test('ServeCommand starts and stops both listener targets', async (t) => {
       calls.push(`${target}:stop`)
     },
     status: () => ({ running: true, address: null, auth: false }),
-    token: () => null,
   })
   const { cleanup, context, ui } = createContext({
     api: controller('api'),
@@ -88,7 +87,6 @@ test('ServeCommand reports listener token policy failures', async (t) => {
       start: () => rejectWith(new Error(message)),
       stop: async () => {},
       status: () => ({ running: false, address: null, auth: false }),
-      token: () => null,
     },
   })
   t.after(cleanup)
@@ -104,7 +102,6 @@ test('ServeCommand reports start and stop failures', async (t) => {
     start: () => rejectWith(new Error('start failed')),
     stop: () => rejectWith('stop failed'),
     status: () => ({ running: false, address: null, auth: false }),
-    token: () => null,
   }
   const { cleanup, context, ui } = createContext({
     api: failingController,
@@ -133,17 +130,16 @@ test('ServeCommand reports start and stop failures', async (t) => {
   assert.equal(latestTimelineEntry(ui)?.body, 'stop failed')
 })
 
-test('ServeCommand renders token, status, and subcommand help', async (t) => {
-  let token: string | null = null
+test('ServeCommand renders authentication state without exposing tokens', async (t) => {
+  let authenticationConfigured = false
   const { cleanup, context, ui } = createContext({
     api: {
       start: async () => {},
       stop: async () => {},
-      token: () => token,
       status: () => ({
         running: true,
         address: 'http://127.0.0.1:3000',
-        auth: true,
+        auth: authenticationConfigured,
       }),
     },
   })
@@ -152,17 +148,9 @@ test('ServeCommand renders token, status, and subcommand help', async (t) => {
   await ServeCommand.execute(context, ['api', 'token'])
   assert.equal(latestTimelineEntry(ui)?.body, 'Authentication disabled.')
 
-  token = ''
+  authenticationConfigured = true
   await ServeCommand.execute(context, ['api', 'token'])
-  assert.equal(latestTimelineEntry(ui)?.body, 'Authentication disabled.')
-
-  token = '   '
-  await ServeCommand.execute(context, ['api', 'token'])
-  assert.equal(latestTimelineEntry(ui)?.body, '   ')
-
-  token = 'secret-token'
-  await ServeCommand.execute(context, ['api', 'token'])
-  assert.equal(latestTimelineEntry(ui)?.body, 'secret-token')
+  assert.equal(latestTimelineEntry(ui)?.body, 'Authentication configured.')
 
   await ServeCommand.execute(context, ['api', 'status'])
   assert.equal(

@@ -3,6 +3,11 @@ import path from 'path'
 import Database from 'better-sqlite3'
 import type { Database as DatabaseType } from 'better-sqlite3'
 import type { ProviderId } from '../providers/provider-id.ts'
+import {
+  ensurePrivateDirectorySync,
+  ensurePrivateFileSync,
+  PRIVATE_FILE_MODE,
+} from '../shared/private-files.ts'
 
 export const DEFAULT_THREAD_HISTORY_LIMIT = 5
 export const MIN_THREAD_HISTORY_LIMIT = 1
@@ -180,17 +185,46 @@ export class ThreadStore {
       return this.db
     }
 
-    fs.mkdirSync(path.dirname(this.storagePath), { recursive: true })
+    const usesMemoryStorage = this.storagePath === ':memory:'
+    if (!usesMemoryStorage) {
+      ensurePrivateDirectorySync(path.dirname(this.storagePath))
+      prepareThreadStoreFiles(this.storagePath)
+    }
     const database = new Database(this.storagePath)
     try {
+      if (!usesMemoryStorage) {
+        ensurePrivateFileSync(this.storagePath)
+      }
       database.pragma('journal_mode = WAL')
       initializeSchema(database)
+      if (!usesMemoryStorage) {
+        hardenThreadStoreFiles(this.storagePath)
+      }
     } catch (error) {
       database.close()
       throw error
     }
     this.db = database
     return database
+  }
+}
+
+function prepareThreadStoreFiles(storagePath: string): void {
+  hardenThreadStoreFiles(storagePath)
+  const descriptor = fs.openSync(storagePath, 'a', PRIVATE_FILE_MODE)
+  try {
+    ensurePrivateFileSync(storagePath)
+  } finally {
+    fs.closeSync(descriptor)
+  }
+}
+
+function hardenThreadStoreFiles(storagePath: string): void {
+  for (const suffix of ['', '-wal', '-shm', '-journal']) {
+    const file = `${storagePath}${suffix}`
+    if (fs.existsSync(file)) {
+      ensurePrivateFileSync(file)
+    }
   }
 }
 

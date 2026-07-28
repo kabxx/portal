@@ -15,6 +15,15 @@ import {
   ThreadStoreSchemaError,
 } from '../../src/threads/thread-store.ts'
 
+function isMissingFile(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'ENOENT'
+  )
+}
+
 async function createStore() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'portal-history-'))
   return new ThreadStore(path.join(dir, 'threads.db'))
@@ -35,6 +44,60 @@ test('createThreadStore initializes the database and schema immediately', async 
     await fs.rm(directory, { recursive: true, force: true })
   }
 })
+
+test('createThreadStore supports in-memory storage without touching the working directory', async () => {
+  const directoryMode = (await fs.stat('.')).mode
+  const store = await createThreadStore(':memory:')
+  try {
+    assert.equal(store.getSchemaVersion(), THREAD_STORE_SCHEMA_VERSION)
+    assert.equal((await fs.stat('.')).mode, directoryMode)
+  } finally {
+    store.close()
+  }
+})
+
+test(
+  'createThreadStore enforces private POSIX database permissions',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'portal-history-mode-')
+    )
+    const storagePath = path.join(directory, 'threads.db')
+    try {
+      await fs.chmod(directory, 0o755)
+
+      const store = await createThreadStore(storagePath)
+      try {
+        assert.equal((await fs.stat(directory)).mode & 0o777, 0o700)
+        for (const suffix of ['', '-wal', '-shm', '-journal']) {
+          const file = `${storagePath}${suffix}`
+          try {
+            assert.equal((await fs.stat(file)).mode & 0o777, 0o600)
+          } catch (error) {
+            if (!isMissingFile(error)) {
+              throw error
+            }
+          }
+        }
+      } finally {
+        store.close()
+      }
+
+      await fs.chmod(directory, 0o755)
+      await fs.chmod(storagePath, 0o644)
+      const reopened = await createThreadStore(storagePath)
+      try {
+        assert.equal((await fs.stat(directory)).mode & 0o777, 0o700)
+        assert.equal((await fs.stat(storagePath)).mode & 0o777, 0o600)
+      } finally {
+        reopened.close()
+      }
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  }
+)
 
 test('createThreadStore preserves a malformed database and fails initialization', async () => {
   const directory = await fs.mkdtemp(

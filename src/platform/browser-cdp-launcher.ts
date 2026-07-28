@@ -8,6 +8,7 @@ import {
   getAbortError,
   throwIfAborted,
 } from '../runtime/runtime-cancellation.ts'
+import { ensurePrivateDirectorySync } from '../shared/private-files.ts'
 import { launchWin32BrowserMinimized } from './win32-minimized-browser-launcher.ts'
 import type { BrowserEngine } from './platform-defaults.ts'
 
@@ -346,9 +347,7 @@ export async function launchBrowser(
     await assertBrowserPortAvailable(browserRemoteDebuggingPort, signal)
   }
 
-  if (!fs.existsSync(browserUserDataDir)) {
-    fs.mkdirSync(browserUserDataDir, { recursive: true })
-  }
+  ensurePrivateDirectorySync(browserUserDataDir)
 
   const browserArguments = buildBrowserLaunchArguments(
     browserUserDataDir,

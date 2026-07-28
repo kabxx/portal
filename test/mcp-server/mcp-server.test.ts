@@ -208,6 +208,71 @@ test('PortalMcpServer enforces only non-empty configured tokens', async () => {
   }
 })
 
+test('PortalMcpServer resolves listener token environment references on every start', async () => {
+  const environment = { PORTAL_MCP_TOKEN: 'first-secret' }
+  const server = new PortalMcpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: '${env:PORTAL_MCP_TOKEN}',
+    environment,
+    handlers: createHandlers(),
+  })
+
+  await server.start()
+  try {
+    const client = await connectClient(server.address()!, 'first-secret')
+    await client.close()
+  } finally {
+    await server.stop()
+  }
+
+  environment.PORTAL_MCP_TOKEN = 'second-secret'
+  await server.start()
+  try {
+    const unauthorized = await fetch(server.address()!, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json, text/event-stream',
+        Authorization: 'Bearer first-secret',
+        'Content-Type': 'application/json',
+      },
+      body: initializeRequest(),
+    })
+    assert.equal(unauthorized.status, 401)
+    const client = await connectClient(server.address()!, 'second-secret')
+    await client.close()
+  } finally {
+    await server.stop()
+  }
+})
+
+test('PortalMcpServer rejects unresolved and empty listener token references before binding', async () => {
+  const missing = new PortalMcpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: '${env:MISSING_MCP_TOKEN}',
+    environment: {},
+    handlers: createHandlers(),
+  })
+  await assert.rejects(missing.start(), {
+    message: 'Environment variable is not set: MISSING_MCP_TOKEN',
+  })
+  assert.equal(missing.address(), null)
+
+  const empty = new PortalMcpServer({
+    host: 'localhost',
+    port: 0,
+    token: '${env:EMPTY_MCP_TOKEN}',
+    environment: { EMPTY_MCP_TOKEN: '' },
+    handlers: createHandlers(),
+  })
+  await assert.rejects(empty.start(), {
+    message:
+      'Portal MCP Server requires a token when listening on a host other than 127.0.0.1.',
+  })
+  assert.equal(empty.address(), null)
+})
+
 test('PortalMcpServer requires authentication for hosts other than 127.0.0.1', async () => {
   const server = new PortalMcpServer({
     host: 'localhost',
@@ -236,7 +301,6 @@ test('PortalMcpServer preserves whitespace as an enabled token', async () => {
   })
   await server.start()
   try {
-    assert.equal(server.token(), '   ')
     assert.equal(server.status().auth, true)
     const response = await fetch(server.address()!, {
       method: 'POST',

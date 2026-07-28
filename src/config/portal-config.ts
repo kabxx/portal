@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import {
-  mkdir,
   open,
   readFile,
   realpath,
@@ -36,6 +35,11 @@ import {
   getDefaultBrowserExecutableCandidates,
   type BrowserEngine,
 } from '../platform/platform-defaults.ts'
+import {
+  ensurePrivateDirectory,
+  ensurePrivateFile,
+  PRIVATE_FILE_MODE,
+} from '../shared/private-files.ts'
 
 export interface PortalBrowserConfig {
   engine: BrowserEngine
@@ -777,6 +781,7 @@ export async function ensurePortalConfig(
       ) {
         await writePortalConfigUnlocked(configPath, existing, true)
       }
+      await ensurePrivateFile(configPath)
       return existing
     }
     await writePortalConfigUnlocked(configPath, defaults, true)
@@ -995,13 +1000,16 @@ async function writePortalConfigContentsUnlocked(
     directory,
     `.${path.basename(configPath)}.${randomUUID()}.tmp`
   )
-  await mkdir(directory, { recursive: true })
+  await ensurePrivateDirectory(directory)
   try {
     await writeFile(temporaryPath, contents, {
       encoding: 'utf8',
       flag: 'wx',
+      mode: PRIVATE_FILE_MODE,
     })
+    await ensurePrivateFile(temporaryPath)
     await rename(temporaryPath, configPath)
+    await ensurePrivateFile(configPath)
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => {})
   }
@@ -1033,11 +1041,13 @@ async function withConfigLock<T>(
 async function resolveConfigLock(
   configPath: string
 ): Promise<{ path: string; key: string }> {
-  const lockDirectory = path.join(
-    path.dirname(path.resolve(configPath)),
-    '.locks'
-  )
-  await mkdir(lockDirectory, { recursive: true })
+  const configDirectory = path.dirname(path.resolve(configPath))
+  await ensurePrivateDirectory(configDirectory)
+  if (existsSync(configPath)) {
+    await ensurePrivateFile(configPath)
+  }
+  const lockDirectory = path.join(configDirectory, '.locks')
+  await ensurePrivateDirectory(lockDirectory)
   const resolvedDirectory = await realpath(lockDirectory)
   const lockPath = path.join(resolvedDirectory, 'config.lock')
   return {
@@ -1051,13 +1061,14 @@ async function withFileLock<T>(
   configPath: string,
   action: () => Promise<T>
 ): Promise<T> {
-  const lockFile = await open(lockPath, 'a+')
+  const lockFile = await open(lockPath, 'a+', PRIVATE_FILE_MODE)
   const deadline = Date.now() + DEFAULT_LOCK_WAIT_MS
   let acquired = false
   let result: T
   const cleanupErrors: unknown[] = []
 
   try {
+    await ensurePrivateFile(lockPath)
     while (!tryLock(lockFile.fd)) {
       if (Date.now() >= deadline) {
         throw new PortalConfigError(

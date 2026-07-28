@@ -92,6 +92,11 @@ The default listener uses the exact host `127.0.0.1`. On that host, `null` and
 the exact empty string `""` disable authentication. Any other host requires an
 enabled Token or the listener refuses to start. Every other Token string is an
 exact Bearer Token, including whitespace-only values; Portal does not trim it.
+Token strings support the same `${env:VARIABLE_NAME}` placeholders and
+`$${env:VARIABLE_NAME}` literal escape as outbound MCP string values. Portal
+keeps the placeholder in `config.yaml` and resolves it whenever the listener
+starts. A missing variable fails that start; an empty resolved value disables
+authentication and is therefore valid only on exact `127.0.0.1`.
 API routes and authentication behavior are documented in [HTTP API](api.md).
 
 ## Portal MCP Server
@@ -108,6 +113,7 @@ This listener is independent from the HTTP API and from the outbound MCP client
 configuration under `mcpServers`. Token values use the same exact semantics as
 the API, including the requirement for an enabled Token on every host other
 than the exact value `127.0.0.1`.
+Environment placeholders use the same start-time behavior as the API listener.
 See [Portal MCP Server](mcp-server.md).
 
 ## MCP, Skills, and Hooks
@@ -121,6 +127,10 @@ These sections have their own configuration formats and lifecycle rules:
 Keep secrets out of the file. Use MCP environment placeholders such as
 `${env:MCP_TOKEN}` and review external Skills and MCP servers before enabling
 them. See [Security](security.md).
+
+On POSIX systems, Portal sets its managed configuration and lock directories to
+mode `0700` and their files to `0600`, repairing broader existing modes when it
+opens or rewrites them. Windows continues to use inherited filesystem ACLs.
 
 ## Keybindings
 

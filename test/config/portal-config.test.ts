@@ -3,10 +3,12 @@ import assert from 'node:assert/strict'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import {
   access,
+  chmod,
   mkdtemp,
   readFile,
   readdir,
   rm,
+  stat,
   writeFile,
 } from 'node:fs/promises'
 import os from 'node:os'
@@ -87,6 +89,51 @@ test('ensurePortalConfig creates one YAML file with concrete defaults', async ()
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test(
+  'ensurePortalConfig enforces private POSIX config and lock permissions',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-mode-'))
+    const dataDirectory = path.join(root, 'data')
+    const configPath = path.join(dataDirectory, 'config.yaml')
+
+    try {
+      const defaults = createDefaultPortalConfig(dataDirectory)
+      await ensurePortalConfig(configPath, defaults)
+      assert.equal((await stat(dataDirectory)).mode & 0o777, 0o700)
+      assert.equal((await stat(configPath)).mode & 0o777, 0o600)
+      assert.equal(
+        (await stat(path.join(dataDirectory, '.locks'))).mode & 0o777,
+        0o700
+      )
+      assert.equal(
+        (await stat(path.join(dataDirectory, '.locks', 'config.lock'))).mode &
+          0o777,
+        0o600
+      )
+
+      await chmod(dataDirectory, 0o755)
+      await chmod(configPath, 0o644)
+      await chmod(path.join(dataDirectory, '.locks'), 0o755)
+      await chmod(path.join(dataDirectory, '.locks', 'config.lock'), 0o644)
+      await ensurePortalConfig(configPath, defaults)
+      assert.equal((await stat(dataDirectory)).mode & 0o777, 0o700)
+      assert.equal((await stat(configPath)).mode & 0o777, 0o600)
+      assert.equal(
+        (await stat(path.join(dataDirectory, '.locks'))).mode & 0o777,
+        0o700
+      )
+      assert.equal(
+        (await stat(path.join(dataDirectory, '.locks', 'config.lock'))).mode &
+          0o777,
+        0o600
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
 
 test('readPortalConfig parses YAML and strips a UTF-8 BOM', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-read-'))
@@ -415,8 +462,14 @@ test('ensurePortalConfig preserves API and MCP Server tokens on disk', async () 
       stringifyYaml({
         ...defaults,
         listeners: {
-          api: { ...defaults.listeners.api, token: '  secret  ' },
-          mcp: { ...defaults.listeners.mcp, token: '   ' },
+          api: {
+            ...defaults.listeners.api,
+            token: '${env:PORTAL_API_TOKEN}',
+          },
+          mcp: {
+            ...defaults.listeners.mcp,
+            token: '$${env:LITERAL_MCP_TOKEN}',
+          },
         },
       }),
       'utf8'
@@ -424,8 +477,14 @@ test('ensurePortalConfig preserves API and MCP Server tokens on disk', async () 
     await ensurePortalConfig(configPath, defaults)
     let document = parseConfigYaml(await readFile(configPath, 'utf8'))
     let listeners = readConfigSection(document, 'listeners')
-    assert.equal(readConfigSection(listeners, 'api').token, '  secret  ')
-    assert.equal(readConfigSection(listeners, 'mcp').token, '   ')
+    assert.equal(
+      readConfigSection(listeners, 'api').token,
+      '${env:PORTAL_API_TOKEN}'
+    )
+    assert.equal(
+      readConfigSection(listeners, 'mcp').token,
+      '$${env:LITERAL_MCP_TOKEN}'
+    )
 
     await writeFile(
       configPath,

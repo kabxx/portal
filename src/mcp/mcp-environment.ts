@@ -1,4 +1,5 @@
 import path from 'path'
+import { resolveEnvironmentPlaceholders } from '../shared/environment-placeholders.ts'
 import type { McpServerConfig } from './mcp-config.ts'
 
 export interface ResolvedMcpServerConfig {
@@ -6,32 +7,17 @@ export interface ResolvedMcpServerConfig {
   redactions: readonly string[]
 }
 
-const ENVIRONMENT_PLACEHOLDER =
-  /\$\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}|\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g
-
 export function resolveMcpServerEnvironment(
   config: McpServerConfig,
   configDirectory: string,
   environment: NodeJS.ProcessEnv = process.env
 ): ResolvedMcpServerConfig {
   const redactions = new Set<string>()
-  const resolve = (value: string): string =>
-    value.replace(
-      ENVIRONMENT_PLACEHOLDER,
-      (_match, escapedName: string | undefined, environmentName: string) => {
-        if (escapedName !== undefined) {
-          return `\${env:${escapedName}}`
-        }
-        const resolved = environment[environmentName]
-        if (resolved === undefined) {
-          throw new Error(`Environment variable is not set: ${environmentName}`)
-        }
-        if (resolved !== '') {
-          redactions.add(resolved)
-        }
-        return resolved
-      }
+  const resolve = (value: string): string => {
+    return resolveEnvironmentPlaceholders(value, environment, (resolved) =>
+      redactions.add(resolved)
     )
+  }
 
   if (config.transport === 'streamable-http') {
     const headers = mapStringRecord(config.headers, (value) => {

@@ -263,6 +263,82 @@ test('PortalApiServer authenticates routes and preserves thread-scoped results',
   }
 })
 
+test('PortalApiServer resolves listener token environment references on every start', async () => {
+  const environment = { PORTAL_API_TOKEN: 'first-secret' }
+  const server = new PortalApiServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: '${env:PORTAL_API_TOKEN}',
+    environment,
+    handlers: createHandlers([]),
+  })
+
+  await server.start()
+  try {
+    assert.equal((await fetch(`${server.address()}/status`)).status, 401)
+    assert.equal(
+      (
+        await fetch(`${server.address()}/status`, {
+          headers: { Authorization: 'Bearer first-secret' },
+        })
+      ).status,
+      200
+    )
+  } finally {
+    await server.stop()
+  }
+
+  environment.PORTAL_API_TOKEN = 'second-secret'
+  await server.start()
+  try {
+    assert.equal(
+      (
+        await fetch(`${server.address()}/status`, {
+          headers: { Authorization: 'Bearer first-secret' },
+        })
+      ).status,
+      401
+    )
+    assert.equal(
+      (
+        await fetch(`${server.address()}/status`, {
+          headers: { Authorization: 'Bearer second-secret' },
+        })
+      ).status,
+      200
+    )
+  } finally {
+    await server.stop()
+  }
+})
+
+test('PortalApiServer rejects unresolved and empty listener token references before binding', async () => {
+  const missing = new PortalApiServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: '${env:MISSING_API_TOKEN}',
+    environment: {},
+    handlers: createHandlers([]),
+  })
+  await assert.rejects(missing.start(), {
+    message: 'Environment variable is not set: MISSING_API_TOKEN',
+  })
+  assert.equal(missing.address(), null)
+
+  const empty = new PortalApiServer({
+    host: 'localhost',
+    port: 0,
+    token: '${env:EMPTY_API_TOKEN}',
+    environment: { EMPTY_API_TOKEN: '' },
+    handlers: createHandlers([]),
+  })
+  await assert.rejects(empty.start(), {
+    message:
+      'HTTP API requires a token when listening on a host other than 127.0.0.1.',
+  })
+  assert.equal(empty.address(), null)
+})
+
 test('PortalApiServer routes capability list, toggle updates, and clears', async () => {
   const calls: string[] = []
   const handlers = createHandlers([])

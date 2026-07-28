@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify'
+import { resolveEnvironmentPlaceholders } from '../shared/environment-placeholders.ts'
 import { isBearerAuthenticationEnabled } from '../shared/http-auth.ts'
 import { normalizeListenerStartError } from '../shared/listener-errors.ts'
 import { assertListenerTokenPolicy } from '../shared/listener-security.ts'
@@ -57,6 +58,7 @@ export interface ApiServerOptions {
   bodyLimitBytes?: number
   requestTimeoutMs?: number
   sseHeartbeatMs?: number
+  environment?: NodeJS.ProcessEnv
 }
 
 export interface ApiEvent {
@@ -199,6 +201,7 @@ export class PortalApiServer {
   private readonly events: ApiEventHub
   private lifecycleTail: Promise<void> = Promise.resolve()
   private started = false
+  private activeToken: string | null = null
 
   public constructor(private readonly options: ApiServerOptions) {
     this.events = new ApiEventHub(options.sseHeartbeatMs)
@@ -212,15 +215,13 @@ export class PortalApiServer {
     return this.started
   }
 
-  public token(): string | null {
-    return this.options.token
-  }
-
   public status(): { running: boolean; address: string | null; auth: boolean } {
     return {
       running: this.started,
       address: this.address(),
-      auth: isBearerAuthenticationEnabled(this.options.token),
+      auth: isBearerAuthenticationEnabled(
+        this.started ? this.activeToken : this.options.token
+      ),
     }
   }
 
@@ -229,12 +230,12 @@ export class PortalApiServer {
       if (this.started) {
         return
       }
-      assertListenerTokenPolicy(
-        'HTTP API',
-        this.options.host,
-        this.options.token
+      const token = resolveListenerToken(
+        this.options.token,
+        this.options.environment
       )
-      const candidate = this.createFastify()
+      assertListenerTokenPolicy('HTTP API', this.options.host, token)
+      const candidate = this.createFastify(token)
       try {
         await candidate.listen({
           host: this.options.host,
@@ -250,6 +251,7 @@ export class PortalApiServer {
         )
       }
       this.fastify = candidate
+      this.activeToken = token
       this.started = true
     })
   }
@@ -265,6 +267,7 @@ export class PortalApiServer {
         await fastify.close()
       } finally {
         this.fastify = null
+        this.activeToken = null
         this.started = false
       }
     })
@@ -285,13 +288,13 @@ export class PortalApiServer {
     return `http://${host}:${address.port}`
   }
 
-  private createFastify(): FastifyInstance {
+  private createFastify(token: string | null): FastifyInstance {
     const fastify = Fastify({
       logger: false,
       bodyLimit: this.options.bodyLimitBytes ?? 256 * 1024,
       requestTimeout: this.options.requestTimeoutMs ?? 0,
     })
-    this.registerRoutes(fastify)
+    this.registerRoutes(fastify, token)
     return fastify
   }
 
@@ -301,16 +304,16 @@ export class PortalApiServer {
     return result
   }
 
-  private registerRoutes(fastify: FastifyInstance): void {
+  private registerRoutes(fastify: FastifyInstance, token: string | null): void {
     fastify.addHook('onRequest', async (request, _reply) => {
       if (
         request.routeOptions.url === '/health' ||
-        !isBearerAuthenticationEnabled(this.options.token)
+        !isBearerAuthenticationEnabled(token)
       ) {
         return
       }
       const provided = parseBearerToken(request.headers.authorization)
-      if (provided !== this.options.token) {
+      if (provided !== token) {
         throw new ApiHttpError(401, 'AUTH_INVALID', 'Invalid API token.')
       }
     })
@@ -564,6 +567,15 @@ export class PortalApiServer {
         )
     )
   }
+}
+
+function resolveListenerToken(
+  token: string | null,
+  environment: NodeJS.ProcessEnv | undefined
+): string | null {
+  return token === null
+    ? null
+    : resolveEnvironmentPlaceholders(token, environment ?? process.env)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

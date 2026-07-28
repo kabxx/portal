@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify'
+import { resolveEnvironmentPlaceholders } from '../shared/environment-placeholders.ts'
 import {
   isBearerAuthenticationEnabled,
   parseBearerToken,
@@ -19,6 +20,7 @@ export interface PortalMcpServerOptions {
   bodyLimitBytes?: number
   closeTimeoutMs?: number
   onStop?: () => Promise<void>
+  environment?: NodeJS.ProcessEnv
 }
 
 interface ActiveRequest {
@@ -33,18 +35,17 @@ export class PortalMcpServer {
   private lifecycleTail: Promise<void> = Promise.resolve()
   private started = false
   private stopping = false
+  private activeToken: string | null = null
 
   public constructor(private readonly options: PortalMcpServerOptions) {}
-
-  public token(): string | null {
-    return this.options.token
-  }
 
   public status(): { running: boolean; address: string | null; auth: boolean } {
     return {
       running: this.started,
       address: this.address(),
-      auth: isBearerAuthenticationEnabled(this.options.token),
+      auth: isBearerAuthenticationEnabled(
+        this.started ? this.activeToken : this.options.token
+      ),
     }
   }
 
@@ -53,12 +54,12 @@ export class PortalMcpServer {
       if (this.started) {
         return
       }
-      assertListenerTokenPolicy(
-        'Portal MCP Server',
-        this.options.host,
-        this.options.token
+      const token = resolveListenerToken(
+        this.options.token,
+        this.options.environment
       )
-      const candidate = this.createFastify()
+      assertListenerTokenPolicy('Portal MCP Server', this.options.host, token)
+      const candidate = this.createFastify(token)
       try {
         await candidate.listen({
           host: this.options.host,
@@ -74,6 +75,7 @@ export class PortalMcpServer {
         )
       }
       this.fastify = candidate
+      this.activeToken = token
       this.started = true
     })
   }
@@ -105,6 +107,7 @@ export class PortalMcpServer {
       } finally {
         this.activeRequests.clear()
         this.fastify = null
+        this.activeToken = null
         this.started = false
         this.stopping = false
       }
@@ -126,7 +129,7 @@ export class PortalMcpServer {
     return `http://${host}:${address.port}/mcp`
   }
 
-  private createFastify(): FastifyInstance {
+  private createFastify(token: string | null): FastifyInstance {
     const fastify = Fastify({
       logger: false,
       bodyLimit: this.options.bodyLimitBytes ?? 256 * 1024,
@@ -146,8 +149,8 @@ export class PortalMcpServer {
         )
       }
       if (
-        isBearerAuthenticationEnabled(this.options.token) &&
-        parseBearerToken(request.headers.authorization) !== this.options.token
+        isBearerAuthenticationEnabled(token) &&
+        parseBearerToken(request.headers.authorization) !== token
       ) {
         return sendJsonRpcError(reply, 401, -32000, 'Invalid MCP token.')
       }
@@ -205,6 +208,15 @@ export class PortalMcpServer {
     this.lifecycleTail = result.catch(() => {})
     return result
   }
+}
+
+function resolveListenerToken(
+  token: string | null,
+  environment: NodeJS.ProcessEnv | undefined
+): string | null {
+  return token === null
+    ? null
+    : resolveEnvironmentPlaceholders(token, environment ?? process.env)
 }
 
 function isTransport(value: unknown): value is Transport {

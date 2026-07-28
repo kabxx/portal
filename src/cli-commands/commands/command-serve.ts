@@ -117,19 +117,24 @@ export const ServeCommand: CliCommand = {
       return { continue: true }
     }
     if (action === 'token') {
-      const token = controller.token()
+      const status = controller.status()
       context.ui.renderInfo(
         `${title} token`,
-        token === null || token === '' ? 'Authentication disabled.' : token
+        status.auth ? 'Authentication configured.' : 'Authentication disabled.'
       )
       return { continue: true }
     }
     if (action === 'status') {
       const status = controller.status()
+      const authentication = status.auth
+        ? status.running
+          ? 'enabled'
+          : 'configured'
+        : 'disabled'
       context.ui.renderInfo(`${title} status`, [
         `Running: ${status.running ? 'yes' : 'no'}`,
         `Address: ${status.address ?? '-'}`,
-        `Authentication: ${status.auth ? 'enabled' : 'disabled'}`,
+        `Authentication: ${authentication}`,
       ])
       return { continue: true }
     }

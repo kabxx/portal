@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { access, mkdtemp, rm } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -132,6 +132,28 @@ test('launchBrowser rejects invalid debugging ports before creating a profile', 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test(
+  'launchBrowser hardens only the configured POSIX profile root',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'portal-browser-mode-'))
+    const profile = path.join(root, 'profile')
+    const child = path.join(profile, 'existing.txt')
+
+    try {
+      await mkdir(profile, { mode: 0o755 })
+      await writeFile(child, 'existing', { mode: 0o644 })
+      await assert.rejects(
+        launchBrowser('chromium', process.execPath, 0, profile)
+      )
+      assert.equal((await stat(profile)).mode & 0o777, 0o700)
+      assert.equal((await stat(child)).mode & 0o777, 0o644)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
 
 test('launchBrowser rejects an occupied fixed port before spawning', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-browser-port-'))

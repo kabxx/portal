@@ -21,7 +21,6 @@ export interface ListenerCommandController {
   start(): Promise<void>
   stop(): Promise<void>
   status(): { running: boolean; address: string | null; auth: boolean }
-  token(): string | null
 }
 
 export interface CommandResult {

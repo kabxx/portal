@@ -53,6 +53,14 @@ be unable to transmit it losslessly as a Bearer credential.
 `null` or `""` is allowed only when `host` is exactly `127.0.0.1`. Every other
 host requires an enabled Token or the listener refuses to start.
 
+Token strings support `${env:VARIABLE_NAME}` placeholders and the
+`$${env:VARIABLE_NAME}` literal escape. Portal keeps the configured placeholder
+on disk and resolves it whenever the listener starts, so stopping and starting
+the listener can pick up a changed process environment without reloading the
+configuration. A missing variable fails before the port is bound. `/serve mcp
+token` reports only whether authentication is configured and never prints the
+Token value.
+
 The first version targets non-browser MCP clients. Requests containing any
 `Origin` header, including `Origin: null`, are rejected. CORS is not enabled.
 

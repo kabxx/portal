@@ -57,7 +57,7 @@ formatting is not an execution boundary.
 - Review `AGENTS.md`, `CLAUDE.md`, and imported/rule files before enabling local project instructions.
 - Review a skill's `SKILL.md` and resources before registering, downloading, or enabling it.
 - Review an MCP server and its configuration before adding or enabling it.
-- Prefer environment placeholders over literal secrets in the `mcp` section of `data/config.yaml`.
+- Prefer environment placeholders over literal secrets in outbound MCP and inbound listener Token configuration.
 - Keep API and Portal MCP Server listeners on loopback unless remote access is intentional; use a tunnel or TLS proxy when crossing an untrusted network.
 
 ## Browser and account data
@@ -65,6 +65,13 @@ formatting is not an execution boundary.
 The dedicated browser profile lives at `browser.profilePath` from `data/config.yaml`. Browser path fields accept absolute or relative values: generated defaults are absolute, while configured relative values resolve from portal's working directory. The profile can contain login cookies, local storage, and other account state. The default directory is ignored by Git, but it is still sensitive local data.
 
 `data/threads.db` stores provider conversation URLs and metadata. Those URLs may expose private conversation identifiers when combined with an authenticated browser session. It does not store transcripts or a persistent local Tool audit trail. The provider website remains the source of conversation content; local turns and rendered timelines live only for the current process and can grow with a long-running session.
+
+On POSIX systems, Portal restricts its managed config and lock directories, the
+configured browser profile root, and the thread database directory to mode
+`0700`. Managed config, lock, database, and existing SQLite sidecar files use
+mode `0600`. Portal repairs broader modes on those paths when it opens them, but
+does not recursively change browser-owned profile contents. On Windows, access
+continues to follow inherited filesystem ACLs.
 
 Resume reads provider history into the terminal's in-memory timeline. The repository's ignored top-level `temp/` directory may also contain response captures, screenshots, or probe output created during provider development.
 
@@ -103,7 +110,7 @@ Treat remote skill installation like downloading code. Inspect the source and pr
 
 Stdio MCP servers run as local child processes with the portal user's permissions. Streamable HTTP servers receive configured URLs and headers. Either kind can read data supplied to it and can expose tools with arbitrary side effects.
 
-Environment placeholders reduce the need to store literal secrets in `config.yaml`, and portal redacts resolved values from known MCP error paths. Redaction is defense in depth, not a guarantee: a server can return secrets as ordinary Tool content, and a command or provider page can expose them through another path.
+Environment placeholders reduce the need to store literal secrets in `config.yaml`, and portal redacts resolved values from known outbound MCP error paths. Inbound listener Token placeholders are resolved only when a listener starts, and `/serve` reports authentication state without printing either configured or resolved values. Redaction is defense in depth, not a guarantee: a server can return secrets as ordinary Tool content, and a command or provider page can expose them through another path.
 
 Review the server implementation, pin the executable or endpoint where practical, grant only the credentials it needs, and treat Resources, Prompts, schemas, and Tool results as untrusted content.
 
@@ -114,6 +121,9 @@ The HTTP API and Portal MCP Server each have independent `host`, `port`, and
 when `host` is exactly `127.0.0.1`; every other host requires an enabled Token
 or the listener refuses to start. Every other Token string is preserved
 exactly, including whitespace-only values.
+Token strings may contain `${env:VARIABLE_NAME}` placeholders. They remain
+unexpanded in the configuration file and are resolved for each listener start;
+a missing variable fails before the listener binds.
 
 API access includes thread, Skill, capability, and outbound MCP configuration
 operations. Portal MCP Server access can send instructions to a logged-in

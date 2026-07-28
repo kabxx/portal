@@ -33,10 +33,16 @@ request must include `Authorization: Bearer <token>`. Portal preserves Token
 strings exactly and does not trim whitespace. `/health` is always
 unauthenticated. `null` or `""` is allowed only when `host` is exactly
 `127.0.0.1`; every other host requires an enabled Token or startup fails. Use
-an SSH tunnel or TLS reverse proxy for remote access. Listener and Token changes
+`${env:VARIABLE_NAME}` to resolve Token content from the process environment at
+listener start while keeping the placeholder in `config.yaml`.
+`$${env:VARIABLE_NAME}` produces literal placeholder text. A missing variable
+fails the start without binding a port. `/serve api token` reports only whether
+authentication is configured and never prints the Token value. Use an SSH
+tunnel or TLS reverse proxy for remote access. Listener configuration changes
 require restarting portal;
 `/serve api stop` followed by `/serve api start` reuses the configuration
-loaded by the current process. See [Configuration](configuration.md).
+loaded by the current process but resolves its environment placeholders again.
+See [Configuration](configuration.md).
 
 The [Portal MCP Server](mcp-server.md) is a separate native MCP service. It does
 not add MCP routes to the HTTP API or call the API internally.
