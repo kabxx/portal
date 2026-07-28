@@ -30,9 +30,10 @@ listeners:
 When `token` is neither `null` nor the exact empty string `""`, every `/*`
 request must include `Authorization: Bearer <token>`. Portal preserves Token
 strings exactly and does not trim whitespace. `/health` is always
-unauthenticated. Host and authentication are independent; an unauthenticated
-non-loopback listener is allowed. Use an SSH tunnel or TLS reverse proxy for
-remote access. Listener and Token changes require restarting portal;
+unauthenticated. `null` or `""` is allowed only when `host` is exactly
+`127.0.0.1`; every other host requires an enabled Token or startup fails. Use
+an SSH tunnel or TLS reverse proxy for remote access. Listener and Token changes
+require restarting portal;
 `/serve api stop` followed by `/serve api start` reuses the configuration
 loaded by the current process. See [Configuration](configuration.md).
 

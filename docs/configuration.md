@@ -88,11 +88,11 @@ listeners:
     token: null
 ```
 
-The default listener is loopback-only. `null` and the exact empty string `""`
-disable authentication. Every other string is an exact Bearer Token, including
-whitespace-only values; Portal does not trim it. Host and authentication are
-independent. API routes and authentication behavior are documented in
-[HTTP API](api.md).
+The default listener uses the exact host `127.0.0.1`. On that host, `null` and
+the exact empty string `""` disable authentication. Any other host requires an
+enabled Token or the listener refuses to start. Every other Token string is an
+exact Bearer Token, including whitespace-only values; Portal does not trim it.
+API routes and authentication behavior are documented in [HTTP API](api.md).
 
 ## Portal MCP Server
 
@@ -106,7 +106,8 @@ listeners:
 
 This listener is independent from the HTTP API and from the outbound MCP client
 configuration under `mcpServers`. Token values use the same exact semantics as
-the API.
+the API, including the requirement for an enabled Token on every host other
+than the exact value `127.0.0.1`.
 See [Portal MCP Server](mcp-server.md).
 
 ## MCP, Skills, and Hooks

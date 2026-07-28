@@ -102,16 +102,16 @@ Review the server implementation, pin the executable or endpoint where practical
 ## Inbound API and MCP listeners
 
 The HTTP API and Portal MCP Server each have independent `host`, `port`, and
-`token` settings. `null` and the exact empty string disable authentication;
-every other Token string is preserved exactly. Portal does not force
-authentication for non-loopback listeners.
+`token` settings. `null` and the exact empty string disable authentication only
+when `host` is exactly `127.0.0.1`; every other host requires an enabled Token
+or the listener refuses to start. Every other Token string is preserved
+exactly, including whitespace-only values.
 
-An unauthenticated listener bound to `0.0.0.0` is available to every reachable
-network client. API access includes thread, Skill, capability, and outbound MCP
-configuration operations. Portal MCP Server access can send instructions to a
-logged-in provider conversation, whose model can invoke local Portal tools.
-Either listener therefore exposes high-privilege local and browser-account
-capabilities.
+API access includes thread, Skill, capability, and outbound MCP configuration
+operations. Portal MCP Server access can send instructions to a logged-in
+provider conversation, whose model can invoke local Portal tools. Either
+listener therefore exposes high-privilege local and browser-account
+capabilities even when authenticated.
 
 Selecting `mode: "chat"` when creating a thread does not reduce those listener
 permissions or disable model-generated tool execution.

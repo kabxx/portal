@@ -80,16 +80,14 @@ test('ServeCommand starts and stops both listener targets', async (t) => {
   assert.deepEqual(calls, ['api:start', 'api:stop', 'mcp:start', 'mcp:stop'])
 })
 
-test('ServeCommand warns but allows an unauthenticated non-loopback listener', async (t) => {
+test('ServeCommand reports listener token policy failures', async (t) => {
+  const message =
+    'HTTP API requires a token when listening on a host other than 127.0.0.1.'
   const { cleanup, context, ui } = createContext({
     api: {
-      start: async () => {},
+      start: () => rejectWith(new Error(message)),
       stop: async () => {},
-      status: () => ({
-        running: true,
-        address: 'http://0.0.0.0:8787',
-        auth: false,
-      }),
+      status: () => ({ running: false, address: null, auth: false }),
       token: () => null,
     },
   })
@@ -97,11 +95,8 @@ test('ServeCommand warns but allows an unauthenticated non-loopback listener', a
 
   await ServeCommand.execute(context, ['api', 'start'])
 
-  assert.equal(latestTimelineEntry(ui)?.tone, 'warning')
-  assert.equal(
-    latestTimelineEntry(ui)?.body,
-    'Authentication is disabled on a non-loopback listener.'
-  )
+  assert.equal(latestTimelineEntry(ui)?.tone, 'error')
+  assert.equal(latestTimelineEntry(ui)?.body, message)
 })
 
 test('ServeCommand reports start and stop failures', async (t) => {

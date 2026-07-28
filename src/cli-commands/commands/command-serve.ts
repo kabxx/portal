@@ -4,7 +4,6 @@ import type {
   ListenerCommandController,
 } from '../core/command-types.ts'
 import { commandGuideSubcommands } from '../core/command-types.ts'
-import { isUnauthenticatedNonLoopbackListener } from '../core/listener-security.ts'
 
 type ListenerTarget = 'api' | 'mcp'
 
@@ -100,12 +99,6 @@ export const ServeCommand: CliCommand = {
           `${title} start`,
           `${definition.label} started.`
         )
-        if (isUnauthenticatedNonLoopbackListener(controller.status())) {
-          context.ui.renderWarning(
-            `${title} start`,
-            'Authentication is disabled on a non-loopback listener.'
-          )
-        }
       } catch (error) {
         context.ui.renderError(`${title} start`, getErrorMessage(error))
       }

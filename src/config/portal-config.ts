@@ -1171,7 +1171,7 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
       ['port', 'TCP port used by the local HTTP API.'],
       [
         'token',
-        'Bearer token required by the API; null or an empty string disables authentication.',
+        'Bearer token used by the API; null or empty is allowed only on 127.0.0.1.',
       ],
     ]
   )
@@ -1183,7 +1183,7 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
       ['port', 'TCP port used by the Portal MCP Server.'],
       [
         'token',
-        'Bearer token required by the MCP Server; null or an empty string disables authentication.',
+        'Bearer token used by the MCP Server; null or empty is allowed only on 127.0.0.1.',
       ],
     ]
   )

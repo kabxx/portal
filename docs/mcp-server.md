@@ -50,9 +50,8 @@ protocol syntax. A Token containing such whitespace still enables
 authentication and is never rewritten by Portal, but a client or HTTP stack may
 be unable to transmit it losslessly as a Bearer credential.
 
-Host and authentication are independent. Portal allows any host without a
-Token. Binding an unauthenticated listener to `0.0.0.0` exposes it to every
-network client that can reach the port.
+`null` or `""` is allowed only when `host` is exactly `127.0.0.1`. Every other
+host requires an enabled Token or the listener refuses to start.
 
 The first version targets non-browser MCP clients. Requests containing any
 `Origin` header, including `Origin: null`, are rejected. CORS is not enabled.
@@ -97,4 +96,6 @@ The MCP Token grants access to logged-in browser conversations and to models
 that can invoke Portal's local tools. Treat it as a high-privilege credential.
 Bearer authentication over plain HTTP does not protect Tokens or conversation
 content from network interception. For non-loopback access, use an SSH tunnel,
-a TLS reverse proxy, or a trusted isolated network. See [Security](security.md).
+a TLS reverse proxy, or a trusted isolated network. Portal requires a Token on
+every configured host other than the exact value `127.0.0.1`. See
+[Security](security.md).

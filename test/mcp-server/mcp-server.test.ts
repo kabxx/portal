@@ -178,7 +178,7 @@ test('PortalMcpServer returns tool errors as MCP error results', async () => {
 
 test('PortalMcpServer enforces only non-empty configured tokens', async () => {
   const server = new PortalMcpServer({
-    host: '127.0.0.1',
+    host: '0.0.0.0',
     port: 0,
     token: 'secret',
     handlers: createHandlers(),
@@ -186,7 +186,8 @@ test('PortalMcpServer enforces only non-empty configured tokens', async () => {
   await server.start()
   try {
     assert.equal(server.status().auth, true)
-    const unauthorized = await fetch(server.address()!, {
+    const address = server.address()!.replace('0.0.0.0', '127.0.0.1')
+    const unauthorized = await fetch(address, {
       method: 'POST',
       headers: {
         Accept: 'application/json, text/event-stream',
@@ -196,7 +197,7 @@ test('PortalMcpServer enforces only non-empty configured tokens', async () => {
     })
     assert.equal(unauthorized.status, 401)
 
-    const client = await connectClient(server.address()!, 'secret')
+    const client = await connectClient(address, 'secret')
     try {
       assert.equal((await client.listTools()).tools.length, 9)
     } finally {
@@ -207,27 +208,23 @@ test('PortalMcpServer enforces only non-empty configured tokens', async () => {
   }
 })
 
-test('PortalMcpServer allows non-loopback listeners with an empty token', async () => {
+test('PortalMcpServer requires authentication for hosts other than 127.0.0.1', async () => {
   const server = new PortalMcpServer({
-    host: '0.0.0.0',
+    host: 'localhost',
     port: 0,
     token: '',
     handlers: createHandlers(),
   })
-  await server.start()
-  try {
-    assert.equal(server.status().auth, false)
-    const client = await connectClient(
-      server.address()!.replace('0.0.0.0', '127.0.0.1')
-    )
-    try {
-      assert.equal((await client.listTools()).tools.length, 9)
-    } finally {
-      await client.close()
-    }
-  } finally {
-    await server.stop()
-  }
+
+  await assert.rejects(server.start(), {
+    message:
+      'Portal MCP Server requires a token when listening on a host other than 127.0.0.1.',
+  })
+  assert.deepEqual(server.status(), {
+    running: false,
+    address: null,
+    auth: false,
+  })
 })
 
 test('PortalMcpServer preserves whitespace as an enabled token', async () => {

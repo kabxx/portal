@@ -7,6 +7,7 @@ import {
   parseBearerToken,
 } from '../shared/http-auth.ts'
 import { normalizeListenerStartError } from '../shared/listener-errors.ts'
+import { assertListenerTokenPolicy } from '../shared/listener-security.ts'
 import type { PortalMcpHandlers } from './mcp-server-types.ts'
 import { createPortalMcpProtocolServer } from './mcp-tools.ts'
 
@@ -52,6 +53,11 @@ export class PortalMcpServer {
       if (this.started) {
         return
       }
+      assertListenerTokenPolicy(
+        'Portal MCP Server',
+        this.options.host,
+        this.options.token
+      )
       const candidate = this.createFastify()
       try {
         await candidate.listen({

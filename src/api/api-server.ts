@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import { isBearerAuthenticationEnabled } from '../shared/http-auth.ts'
 import { normalizeListenerStartError } from '../shared/listener-errors.ts'
+import { assertListenerTokenPolicy } from '../shared/listener-security.ts'
 import {
   ApiHttpError,
   mapApiError,
@@ -228,6 +229,11 @@ export class PortalApiServer {
       if (this.started) {
         return
       }
+      assertListenerTokenPolicy(
+        'HTTP API',
+        this.options.host,
+        this.options.token
+      )
       const candidate = this.createFastify()
       try {
         await candidate.listen({

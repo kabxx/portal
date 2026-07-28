@@ -496,11 +496,34 @@ test('PortalApiServer supports SSE after a stop and restart', async () => {
   }
 })
 
-test('PortalApiServer allows non-loopback listeners without authentication', async () => {
+test('PortalApiServer requires authentication for hosts other than 127.0.0.1', async () => {
+  for (const host of ['0.0.0.0', 'localhost', '::1']) {
+    for (const token of [null, '']) {
+      const server = new PortalApiServer({
+        host,
+        port: 0,
+        token,
+        handlers: createHandlers([]),
+      })
+
+      await assert.rejects(server.start(), {
+        message:
+          'HTTP API requires a token when listening on a host other than 127.0.0.1.',
+      })
+      assert.deepEqual(server.status(), {
+        running: false,
+        address: null,
+        auth: false,
+      })
+    }
+  }
+})
+
+test('PortalApiServer treats whitespace as an enabled token', async () => {
   const server = new PortalApiServer({
     host: '0.0.0.0',
     port: 0,
-    token: '',
+    token: '   ',
     handlers: createHandlers([]),
   })
 
@@ -509,28 +532,10 @@ test('PortalApiServer allows non-loopback listeners without authentication', asy
     assert.deepEqual(server.status(), {
       running: true,
       address: server.address(),
-      auth: false,
+      auth: true,
     })
     const address = server.address()!.replace('0.0.0.0', '127.0.0.1')
     const response = await fetch(`${address}/status`)
-    assert.equal(response.status, 200)
-  } finally {
-    await server.stop()
-  }
-})
-
-test('PortalApiServer treats whitespace as an enabled token', async () => {
-  const server = new PortalApiServer({
-    host: '127.0.0.1',
-    port: 0,
-    token: '   ',
-    handlers: createHandlers([]),
-  })
-
-  await server.start()
-  try {
-    assert.equal(server.status().auth, true)
-    const response = await fetch(`${server.address()}/status`)
     assert.equal(response.status, 401)
   } finally {
     await server.stop()
