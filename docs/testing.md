@@ -12,7 +12,7 @@ npm run test:coverage
 npm run fmt:check
 ```
 
-`lint` uses type information and applies the same zero-warning rule set to `src/`, `test/`, and shared types. `test:coverage` uses Node's built-in test coverage and reports source modules loaded by the suite. Coverage percentages are a diagnostic baseline, not proof that every source file or external browser path ran.
+`lint` uses type information and applies the same zero-warning rule set to `src/`, `test/`, and shared types. `test:coverage` uses Node's built-in test coverage and fails below the global regression floors of 85% lines, 75% branches, or 75% functions. These thresholds protect the loaded-source baseline; they are not proof that every source file or external browser path ran.
 
 The real browser launcher smoke test is opt-in and stays outside `npm test` and CI. Point it at a locally installed Chromium-based browser:
 
