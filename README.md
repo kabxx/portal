@@ -90,7 +90,7 @@ Common thread operations:
 /thread close
 ```
 
-Conversation URLs and metadata are stored in `data/threads.db`; transcripts are not. Active-thread terminal timelines are lost when portal exits. `/thread resume` reloads only the provider's current visible user/assistant history.
+Conversation URLs and metadata are stored in `data/threads.db`; transcripts and Tool audit records are not. The provider website remains the source of conversation content. Active-thread terminal timelines are lost when portal exits and can grow for the lifetime of a long-running process. `/thread resume` reloads only the provider's current visible user/assistant history.
 
 Use `Ctrl+J` for a reliable multiline input and `Ctrl+C` to cancel the current operation. Input submission remains unavailable while portal is busy. Typing `/` or an active-thread `$` prefix opens a five-row contextual hint bubble; `Up` / `Down` browse it, `Tab` completes the selected item, and `Enter` keeps normal submission. The command index and input controls are documented in the [CLI guide](docs/cli.md).
 
@@ -116,10 +116,11 @@ Each mechanism has different trust and lifecycle boundaries. Follow the detailed
 
 - Provider selectors, private web protocols, and menus can change without notice.
 - Resume displays the provider's current visible user/assistant branch; unsupported content and alternate branches are filtered.
-- Home and thread timelines are in memory only.
-- Resume assumes that the existing conversation already contains portal's tool protocol; it skips the setup handshake and does not resend current project instructions.
+- Home and thread timelines are in memory only; portal does not maintain a separate persistent transcript or Tool audit archive.
+- Resume assumes that the existing conversation already contains portal's tool protocol and skips the setup handshake. It attaches a fresh local project-instruction snapshot for later path-aware activation, but does not resend always-on instructions or current Skill/MCP catalogs to the existing conversation.
 - Chat creation still sends a minimal `READY` handshake and can execute a valid model-generated tool call even though it does not advertise portal's tools.
-- portal is not packaged as a stable global CLI, and automated real-browser CI is not yet available.
+- portal currently runs from a source checkout as a TUI; stable global CLI packaging and a standalone headless service are outside the current local-first distribution.
+- The browser launcher smoke test is opt-in. Public CI does not use real provider accounts, so provider UI compatibility still requires private or manual checks.
 
 ## License
 

@@ -113,10 +113,11 @@ flowchart LR
 
 - Provider selector、网页私有协议和菜单可以随时变化。
 - Resume 只展示 Provider 当前可见的 user/assistant 分支，不支持的内容和其它分支会被过滤。
-- Home 和 thread 时间线只保存在内存中。
-- Resume 假定原会话已经包含 portal 工具协议；它会跳过 setup handshake，也不会重新发送当前项目指令。
+- Home 和 thread 时间线只保存在内存中；portal 不维护独立的持久化 transcript 或工具审计档案。
+- Resume 假定原会话已经包含 portal 工具协议并跳过 setup handshake。它会附加一份新的本地项目指令快照，用于之后按路径激活规则，但不会把 always-on 指令或当前 Skill/MCP catalog 重新发送到既有会话。
 - Chat 创建仍会发送最小 `READY` handshake；虽然不会向模型介绍 portal 工具，但合法的模型工具调用仍可能被执行。
-- portal 还没有稳定的全局 CLI 安装包，也没有自动化的真实浏览器 CI。
+- portal 当前以源码 checkout 中的 TUI 方式运行；稳定的全局 CLI 安装包和独立 headless 服务不属于目前的本地优先发布形态。
+- 浏览器 launcher smoke test 目前需要主动运行；公开 CI 不使用真实 Provider 账号，因此 Provider UI 兼容性仍需私有或人工检查。
 
 ## 许可证
 

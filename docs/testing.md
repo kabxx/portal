@@ -52,15 +52,21 @@ Focused tests were added for:
 
 ## Known gaps
 
-| Area                            | Automated coverage                                                                                    | Remaining risk                                                                                                        |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `app.ts` lifecycle              | Focused helpers and pending-thread flows                                                              | Full CLI startup, login waits, and shutdown orchestration remain difficult to isolate without testing private wiring. |
-| Browser launchers               | Launch arguments, platform defaults, Windows job helpers, and an opt-in real CDP lifecycle smoke test | Executable discovery, startup failures, and cleanup behavior across every supported OS still require platform checks. |
-| Provider adapters and history   | Fake-page submit, completion, cancellation, parser, and history fixtures                              | Upstream DOM and protocol changes are only detectable against real provider pages.                                    |
-| Runtime and thread cancellation | Runtime abort paths and operation coordinator behavior                                                | Browser-side stop behavior still depends on each provider page.                                                       |
-| MCP                             | Local stdio/HTTP integration, unknown outcomes, resources, prompts, and session ownership             | Remote MCP implementations and network failures can differ from local fixtures.                                       |
-| Terminal UI                     | Controller state and pure rendering helpers                                                           | Full interactive Ink rendering is not exercised in a real terminal in CI.                                             |
+| Area                            | Automated coverage                                                                                    | Remaining risk                                                                                                                                 |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app.ts` lifecycle              | Focused helpers and pending-thread flows                                                              | Full CLI startup, real TTY input, login waits, and shutdown orchestration remain manual because they cross private process and browser wiring. |
+| Browser launchers               | Launch arguments, platform defaults, Windows job helpers, and an opt-in real CDP lifecycle smoke test | Executable discovery, startup failures, and cleanup behavior across every supported OS still require platform checks.                          |
+| Provider adapters and history   | Fake-page submit, completion, cancellation, parser, and history fixtures                              | Upstream DOM and protocol changes are only detectable against real provider pages.                                                             |
+| Runtime and thread cancellation | Runtime abort paths and operation coordinator behavior                                                | Browser-side stop behavior still depends on each provider page.                                                                                |
+| MCP                             | Local stdio/HTTP integration, unknown outcomes, resources, prompts, and session ownership             | Remote MCP implementations and network failures can differ from local fixtures.                                                                |
+| Terminal UI                     | Controller state and pure rendering helpers                                                           | Full interactive Ink rendering is not exercised in a real terminal in CI.                                                                      |
 
 ## External smoke checks
 
-The opt-in launcher smoke test covers only local browser startup and cleanup. Real provider checks stay outside `npm test` because they require a browser profile, login state, network access, and provider-specific accounts. Run the manual browser checklist in [Contributing](contributing.md) after changing provider selectors, runtime lifecycle, uploads, capabilities, or cancellation.
+The opt-in launcher smoke test covers only local browser startup and cleanup.
+Real provider checks stay outside `npm test` and ordinary public CI because they
+require private login state, network access, provider-specific accounts, and
+careful handling of captured output. A private runner can perform those checks,
+but they are not a deterministic replacement for unit tests. Run the manual
+browser checklist in [Contributing](contributing.md) after changing provider
+selectors, runtime lifecycle, uploads, capabilities, or cancellation.

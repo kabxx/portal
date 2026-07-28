@@ -12,6 +12,13 @@ There is currently no human approval gate between a valid model-generated reques
 
 Provider output, repository-owned project instructions, loaded Skill instructions, MCP content, and resumed conversation history are untrusted input. Any of them can contain prompt injection intended to trigger local tools or disclose data.
 
+The Tool protocol extractor is intentionally text-based rather than
+Markdown-aware. A complete `<tool>...</tool>` block at the textual end of a
+model response is treated as a Tool request even when the surrounding response
+was intended as an unclosed code example. The local, high-trust operating model
+therefore relies on the Provider model following the Tool protocol; Markdown
+formatting is not an execution boundary.
+
 ## Powerful operations
 
 | Tool            | Security impact                                                                                                |
@@ -57,11 +64,11 @@ Provider output, repository-owned project instructions, loaded Skill instruction
 
 The dedicated browser profile lives at `browser.profilePath` from `data/config.yaml`. Browser path fields accept absolute or relative values: generated defaults are absolute, while configured relative values resolve from portal's working directory. The profile can contain login cookies, local storage, and other account state. The default directory is ignored by Git, but it is still sensitive local data.
 
-`data/threads.db` stores provider conversation URLs and metadata. Those URLs may expose private conversation identifiers when combined with an authenticated browser session. It does not store transcripts.
+`data/threads.db` stores provider conversation URLs and metadata. Those URLs may expose private conversation identifiers when combined with an authenticated browser session. It does not store transcripts or a persistent local Tool audit trail. The provider website remains the source of conversation content; local turns and rendered timelines live only for the current process and can grow with a long-running session.
 
 Resume reads provider history into the terminal's in-memory timeline. The repository's ignored top-level `temp/` directory may also contain response captures, screenshots, or probe output created during provider development.
 
-Do not publish or attach `data/`, browser profiles, raw captures, screenshots, or private conversation URLs to bug reports.
+Do not publish or attach `data/`, browser profiles, raw captures, screenshots, or private conversation URLs to bug reports. Removing a capture from the current tree does not remove it from existing Git history, clones, forks, or caches. Earlier repository history may contain a pre-sanitization ChatGPT response fixture; coordinate a separate history rewrite before redistributing that history, and invalidate the originating session when its provenance is uncertain.
 
 ## Project instructions
 
@@ -90,7 +97,7 @@ The current skills system does not provide:
 - dependency isolation;
 - an instruction sandbox.
 
-Treat remote skill installation like downloading code. Inspect the source and prefer pinned, trusted locations.
+Treat remote skill installation like downloading code. Inspect the source and prefer pinned, trusted locations. The current local-first trust model is explicit user review of trusted sources; Portal does not attempt to establish third-party package provenance or isolate untrusted Skill instructions.
 
 ## MCP servers and secrets
 
@@ -122,6 +129,12 @@ an observer may capture Tokens, prompts, assistant output, and conversation
 URLs. Use loopback with an SSH tunnel, a TLS reverse proxy, or a trusted isolated
 network. The MCP Server rejects requests carrying an `Origin` header, but this
 DNS-rebinding control is not authentication.
+
+The listeners are intended for a small number of operator-controlled clients,
+not as public multi-tenant services. They do not provide deployment-scale
+connection quotas, tenant isolation, or a general admission layer. Configure
+finite request timeouts and external proxy limits when using a listener for
+long-running or remote integrations.
 
 ## Provider policies
 

@@ -90,6 +90,11 @@ error instead of being queued. Different threads can run concurrently. Closing
 a thread is explicitly destructive and can cancel work started through another
 Portal interface.
 
+Cancelling an MCP message detaches its waiter from an already running
+`run_command` job; it does not stop that process. This version does not expose
+job listing or stopping as Portal MCP tools. Use the TUI `/job` commands, or a
+controlled Portal shutdown, to manage detached jobs.
+
 ## Security
 
 The MCP Token grants access to logged-in browser conversations and to models

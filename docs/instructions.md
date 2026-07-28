@@ -60,18 +60,20 @@ activate directory-specific rules.
 
 ## Runtime lifecycle
 
-| Runtime                 | Instruction behavior                                                                                                                          |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Agent thread            | Loads the configured snapshot and includes always-on instructions in the full setup prompt                                                    |
-| Chat thread             | Loads the snapshot locally but sends only the shared handshake; a later target-aware tool call can still activate matching instructions       |
-| Spawned runtime         | Forks the parent snapshot and runs its own full setup handshake                                                                               |
-| Hook prompt/agent child | Loads the configured sources for the isolated child runtime                                                                                   |
-| Resumed thread          | Reads a fresh snapshot, but `setupMode: 'skip'` means it does not resend the initial instruction prompt to the existing provider conversation |
+| Runtime                 | Instruction behavior                                                                                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Agent thread            | Loads the configured snapshot and includes always-on instructions in the full setup prompt                                                                         |
+| Chat thread             | Loads the snapshot locally but sends only the shared handshake; a later target-aware tool call can still activate matching instructions                            |
+| Spawned runtime         | Forks the parent snapshot and runs its own full setup handshake                                                                                                    |
+| Hook prompt/agent child | Loads the configured sources for the isolated child runtime                                                                                                        |
+| Resumed thread          | Reads and attaches a fresh snapshot locally, but `setupMode: 'skip'` means it does not resend the initial instruction prompt to the existing provider conversation |
 
-The resumed thread currently does not attach that snapshot to its
-`RuntimeCore`; it therefore does not perform target-aware instruction activation
-for its own later tool calls. A child `spawn` created from the resumed runtime
-can still receive the forked snapshot through the normal child setup path.
+The resumed `RuntimeCore` keeps that fresh snapshot, so supported later tool
+calls can still activate target-aware directory instructions and path rules.
+Always-on instruction text is not resent to the existing provider conversation,
+however, and the conversation continues with whichever setup and catalog it
+previously received. A child `spawn` created from the resumed runtime receives
+the forked snapshot through the normal child setup path.
 
 Instruction files are read from disk when a runtime snapshot is created. A
 later file edit does not rewrite an already submitted provider setup message.

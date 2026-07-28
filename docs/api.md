@@ -15,7 +15,8 @@ The server is disabled by default. Start it from the TUI with:
 `run_command` jobs are managed only by the TUI. `/job` lists active jobs and
 `/job stop <job-id>` stops one; there is intentionally no HTTP job-management
 endpoint in this version. Jobs are process-local and are stopped during
-controlled portal shutdown.
+controlled portal shutdown. Cancelling a message or closing its thread detaches
+that operation's waiter but does not stop an already running command job.
 
 The default listener is `127.0.0.1:8787`. Configure it in `data/config.yaml`:
 

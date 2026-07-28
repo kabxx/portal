@@ -136,7 +136,7 @@ Resume creates one-time page/CDP history capture before navigation. The base ada
 
 Gemini follows its continuation cursor, Doubao follows `has_more`, and GLM accumulates `messages/batch` pages until the selected chain reaches the root, all under bounded progress and timeout loops. Qwen reads `GET /api/v2/chats/<id>` and establishes completeness only for the current active branch. Kimi reads structured `ListMessages` rows and reports a full 100-message page as incomplete because the page exposes no continuation cursor. ChatGPT, GLM, and Grok do not report complete when an indexed cell, parent/root, active leaf, or visible response body is missing.
 
-A resumed conversation skips the setup handshake. It therefore assumes that the original conversation already contains a compatible portal tool protocol. Current Skill and MCP connections exist locally, but newly configured names are not injected as a new catalog turn. The resume path also does not attach the freshly read project-instruction snapshot to the resumed `RuntimeCore`, so it neither resends always-on instructions nor performs target-aware instruction activation for later tool calls in that thread.
+A resumed conversation skips the setup handshake. It therefore assumes that the original conversation already contains a compatible portal tool protocol. Current Skill and MCP connections exist locally, but newly configured names are not injected as a new catalog turn. The resume path attaches a freshly read project-instruction snapshot to the resumed `RuntimeCore` without resending its always-on text, so supported later tool calls can still activate target-aware path rules locally.
 
 ## Turn and tool lifecycle
 
@@ -257,7 +257,7 @@ Four process stores and one persistent index serve different purposes:
 
 Remote resume history is rendered directly into the thread timeline after the runtime has been prepared and before it is admitted. History is not converted into `ThreadRegistry` turns, so local turn counts represent only inputs submitted during the current process. After startup completes, the home timeline receives one in-memory welcome entry; it is cached and restored like other home timeline entries.
 
-The SQLite database is an index for reopening conversations, not a transcript database. The provider website remains the source of conversation content.
+The SQLite database is an index for reopening conversations, not a transcript database. The provider website remains the source of conversation content. Portal does not add a second persistent transcript or Tool audit store, nor does it impose an additional in-process timeline window. Active turns and rendered entries can therefore grow for the lifetime of a long-running process; provider history and terminal scrollback remain the recovery and viewing boundaries.
 
 ## Cancellation and recovery
 

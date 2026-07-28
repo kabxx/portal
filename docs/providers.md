@@ -162,6 +162,11 @@ These history endpoints are private web implementation details, not public APIs.
 
 `attach_image` delegates to the active adapter's upload controls. All eight adapters implement file/image attachment, but the website can hide or disable upload for a particular model, account, conversation, or subscription. Some providers can fail silently after a file chooser interaction; the tool result therefore reports an attempted attachment rather than claiming the model received the file.
 
+This is a best-effort boundary: the supported websites do not expose one
+stable, cross-provider confirmation signal. Workflows that depend on the image
+must verify the visible attachment state or ask the model to confirm that image
+content is available before relying on it.
+
 ## Provider-specific setup
 
 Agent-mode threads and spawned runtimes use the shared full setup prompt. Grok receives an additional Portal tool-boundary Pitfall that directs it to keep native local-resource features separate from matching Portal tools and to treat only a delivered Tool Result as execution evidence. That provider rule remains active after the `READY` handshake. Chat creation sends only the shared handshake and does not include provider-specific setup text.

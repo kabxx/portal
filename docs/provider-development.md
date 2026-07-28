@@ -89,7 +89,7 @@ sequenceDiagram
     App-->>UI: render messages and warning
 ```
 
-Resume reconnects the current MCP configuration and snapshots current Skills, but it does not send a new setup catalog into the existing conversation. Current project instructions are available to child services such as Spawn but are not inserted into the resumed Runtime prompt. Remote history is shown in the terminal only: it is not submitted to the model again, inserted into runtime turns, or persisted as transcript data.
+Resume reconnects the current MCP configuration and snapshots current Skills and project instructions, but it does not send a new setup catalog or always-on instruction text into the existing conversation. The project-instruction snapshot remains attached to the resumed runtime, so supported later tool calls can activate target-aware path rules locally and spawned children can receive a forked snapshot. Remote history is shown in the terminal only: it is not submitted to the model again, inserted into runtime turns, or persisted as transcript data.
 
 ## 3. Reconnaissance and privacy
 
