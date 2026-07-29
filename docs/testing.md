@@ -14,8 +14,8 @@ npm run fmt:check
 
 `lint` uses type information and applies the same zero-warning rule set to `src/`, `test/`, and shared types. `test:coverage` uses Node's built-in test coverage and fails below the global regression floors of 85% lines, 75% branches, or 75% functions. These thresholds protect the loaded-source baseline; they are not proof that every source file or external browser path ran.
 
-The real browser launcher smoke test stays outside `npm test`. The Ubuntu CI
-job installs Playwright's matching Chromium build and runs it under Xvfb. To run
+The real browser launcher smoke test stays outside `npm test`. The Windows CI
+job installs Playwright's matching Chromium build and runs it directly. To run
 the same smoke test locally, point it at an installed Chromium-based browser:
 
 ```powershell
@@ -54,22 +54,21 @@ Focused tests were added for:
 
 ## Known gaps
 
-| Area                            | Automated coverage                                                                                             | Remaining risk                                                                                                                                 |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app.ts` lifecycle              | Focused helpers and pending-thread flows                                                                       | Full CLI startup, real TTY input, login waits, and shutdown orchestration remain manual because they cross private process and browser wiring. |
-| Browser launchers               | Launch arguments, platform defaults, Windows job helpers, and a real Chromium/CDP lifecycle smoke on Ubuntu CI | Executable discovery, startup failures, and cleanup behavior on Windows, macOS, and other browser installations still require platform checks. |
-| Provider adapters and history   | Fake-page submit, completion, cancellation, parser, and history fixtures                                       | Upstream DOM and protocol changes are only detectable against real provider pages.                                                             |
-| Runtime and thread cancellation | Runtime abort paths and operation coordinator behavior                                                         | Browser-side stop behavior still depends on each provider page.                                                                                |
-| MCP                             | Local stdio/HTTP integration, unknown outcomes, resources, prompts, and session ownership                      | Remote MCP implementations and network failures can differ from local fixtures.                                                                |
-| Terminal UI                     | Controller state and pure rendering helpers                                                                    | Full interactive Ink rendering is not exercised in a real terminal in CI.                                                                      |
+| Area                            | Automated coverage                                                                                              | Remaining risk                                                                                                                                 |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app.ts` lifecycle              | Focused helpers and pending-thread flows                                                                        | Full CLI startup, real TTY input, login waits, and shutdown orchestration remain manual because they cross private process and browser wiring. |
+| Browser launchers               | Launch arguments, platform defaults, Windows job helpers, and a real Chromium/CDP lifecycle smoke on Windows CI | Executable discovery, startup failures, and cleanup behavior on Linux, macOS, and other browser installations still require platform checks.   |
+| Provider adapters and history   | Fake-page submit, completion, cancellation, parser, and history fixtures                                        | Upstream DOM and protocol changes are only detectable against real provider pages.                                                             |
+| Runtime and thread cancellation | Runtime abort paths and operation coordinator behavior                                                          | Browser-side stop behavior still depends on each provider page.                                                                                |
+| MCP                             | Local stdio/HTTP integration, unknown outcomes, resources, prompts, and session ownership                       | Remote MCP implementations and network failures can differ from local fixtures.                                                                |
+| Terminal UI                     | Controller state and pure rendering helpers                                                                     | Full interactive Ink rendering is not exercised in a real terminal in CI.                                                                      |
 
 ## External smoke checks
 
-The launcher smoke test in Ubuntu CI covers only browser startup, CDP
-connection, and cleanup with a temporary profile. Its CI-only executable
-wrapper adds `--no-sandbox`, matching Playwright's Linux launcher default; this
-does not change Portal's normal browser arguments. The test does not open a
-Provider website or exercise the full TUI lifecycle.
+The launcher smoke test in Windows CI covers only browser startup, CDP
+connection, and cleanup with a temporary profile. It uses Playwright's matching
+Chromium executable without changing Portal's normal browser arguments. The
+test does not open a Provider website or exercise the full TUI lifecycle.
 Real provider checks stay outside `npm test` and ordinary public CI because they
 require private login state, network access, provider-specific accounts, and
 careful handling of captured output. A private runner can perform those checks,
