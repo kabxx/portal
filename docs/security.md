@@ -75,7 +75,7 @@ continues to follow inherited filesystem ACLs.
 
 Resume reads provider history into the terminal's in-memory timeline. The repository's ignored top-level `temp/` directory may also contain response captures, screenshots, or probe output created during provider development.
 
-Do not publish or attach `data/`, browser profiles, raw captures, screenshots, or private conversation URLs to bug reports. Removing a capture from the current tree does not remove it from existing Git history, clones, forks, or caches. Earlier repository history may contain a pre-sanitization ChatGPT response fixture; coordinate a separate history rewrite before redistributing that history, and invalidate the originating session when its provenance is uncertain.
+Do not publish or attach `data/`, browser profiles, raw captures, screenshots, or private conversation URLs to bug reports. Removing a capture from the current tree does not remove it from existing Git history, clones, forks, or caches. If sensitive content enters Git history, invalidate the related sessions or credentials first, then coordinate a history rewrite and replacement of affected clones before redistributing the repository.
 
 ## Project instructions
 

@@ -5,7 +5,7 @@
 [English](../README.md)
 
 > [!IMPORTANT]
-> portal 仍处于早期开发阶段。网页 Provider 可以随时改变页面结构，因此测试通过并不代表所有真实浏览器流程一定可用。
+> portal 1.0 是首个正式源码版本。项目仍会快速迭代，文档化接口可能在不同版本之间变化；破坏性变更和迁移步骤会在 Release notes 中说明。网页 Provider 可以随时改变页面结构，因此测试通过并不代表所有真实浏览器流程一定可用。
 
 portal 会启动真实的 Chromium 系浏览器，通过正常网页界面驱动支持的 AI 产品。网页模型可以请求本地工具、接收执行结果，然后在同一个 Provider 会话中继续工作。
 
@@ -27,7 +27,7 @@ portal 通过网页界面支持 ChatGPT、Gemini、DeepSeek、豆包、Grok、GL
 
 ## 环境要求
 
-- Node.js 24 或更高版本
+- Node.js 24 或更高版本。在仓库 CI 因 [nodejs/node#63638](https://github.com/nodejs/node/issues/63638) 固定版本期间，Windows 应使用 Node.js 24.15.0；较新的 Node.js 24 版本可能在 `fs.watch` 中崩溃。
 - npm 和 Git
 - Google Chrome 或其它受支持的 Chromium 系浏览器
 - 需要使用的各 Provider 账号

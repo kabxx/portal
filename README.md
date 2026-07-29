@@ -5,7 +5,7 @@
 [简体中文](docs/README.zh-CN.md)
 
 > [!IMPORTANT]
-> portal is an early-stage project. Provider websites can change without notice, so passing tests cannot guarantee that every real browser workflow still works.
+> portal 1.0 is the first official source release. The project remains actively developed, so documented interfaces may change between releases; breaking changes and migration steps are called out in release notes. Provider websites can change without notice, so passing tests cannot guarantee that every real browser workflow still works.
 
 portal launches a real Chromium-based browser and drives supported AI products through their normal websites. The web model can request local tools, receive their results, and continue in the same provider conversation.
 
@@ -27,7 +27,7 @@ Model, upload, and page capability availability depends on the current account, 
 
 ## Requirements
 
-- Node.js 24 or newer
+- Node.js 24 or newer. On Windows, use Node.js 24.15.0 while this repository's CI remains pinned for [nodejs/node#63638](https://github.com/nodejs/node/issues/63638); newer Node.js 24 releases can crash in `fs.watch`.
 - npm and Git
 - Google Chrome or another supported Chromium-based browser
 - A valid account for each provider you use

@@ -2,13 +2,13 @@
 
 [Back to README](../README.md)
 
-Contributions are welcome. portal is still evolving quickly, so small, focused changes with clear verification are easier to review and maintain.
+Contributions are welcome. portal is actively developed and may make deliberate breaking changes between releases, so small, focused changes with clear verification are easier to review and maintain.
 
 ## Development setup
 
 Requirements:
 
-- Node.js 24 or newer;
+- Node.js 24 or newer (use 24.15.0 on Windows while CI remains pinned for [nodejs/node#63638](https://github.com/nodejs/node/issues/63638));
 - npm;
 - Git;
 - a Chromium-based browser for real provider checks;
@@ -20,6 +20,12 @@ Install dependencies and run the development CLI:
 npm install
 npm run dev
 ```
+
+## Release and compatibility policy
+
+Release tags identify tested source snapshots, not binary distributions. portal prioritizes fast iteration and does not promise that documented CLI commands, configuration, HTTP API, Portal MCP, Provider model keys, or Tool surfaces remain backward-compatible across releases. Breaking changes must be called out in release notes; changes to persistent configuration or data must include migration or explicit upgrade steps.
+
+Internal modules, Provider DOM and private protocols, and account-dependent capabilities are implementation or upstream details rather than stable contracts.
 
 ## Verification commands
 
