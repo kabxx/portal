@@ -120,7 +120,7 @@ Each mechanism has different trust and lifecycle boundaries. Follow the detailed
 - Resume assumes that the existing conversation already contains portal's tool protocol and skips the setup handshake. It attaches a fresh local project-instruction snapshot for later path-aware activation, but does not resend always-on instructions or current Skill/MCP catalogs to the existing conversation.
 - Chat creation still sends a minimal `READY` handshake and can execute a valid model-generated tool call even though it does not advertise portal's tools.
 - portal currently runs from a source checkout as a TUI; stable global CLI packaging and a standalone headless service are outside the current local-first distribution.
-- Linux CI runs the browser launcher smoke with Playwright Chromium and a temporary profile. Public CI does not use real provider accounts, so provider UI compatibility still requires private or manual checks.
+- Windows CI runs the browser launcher smoke with Playwright Chromium and a temporary profile; Linux and macOS CI run deterministic tests only. Public CI does not use real provider accounts, so provider UI compatibility still requires private or manual checks.
 
 ## License
 

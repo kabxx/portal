@@ -117,7 +117,7 @@ flowchart LR
 - Resume 假定原会话已经包含 portal 工具协议并跳过 setup handshake。它会附加一份新的本地项目指令快照，用于之后按路径激活规则，但不会把 always-on 指令或当前 Skill/MCP catalog 重新发送到既有会话。
 - Chat 创建仍会发送最小 `READY` handshake；虽然不会向模型介绍 portal 工具，但合法的模型工具调用仍可能被执行。
 - portal 当前以源码 checkout 中的 TUI 方式运行；稳定的全局 CLI 安装包和独立 headless 服务不属于目前的本地优先发布形态。
-- Linux CI 会使用 Playwright Chromium 和临时 profile 运行浏览器 launcher smoke test；公开 CI 不使用真实 Provider 账号，因此 Provider UI 兼容性仍需私有或人工检查。
+- Windows CI 会使用 Playwright Chromium 和临时 profile 运行浏览器 launcher smoke test；Linux 和 macOS CI 只运行确定性测试。公开 CI 不使用真实 Provider 账号，因此 Provider UI 兼容性仍需私有或人工检查。
 
 ## 许可证
 
