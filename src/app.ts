@@ -136,6 +136,18 @@ interface Options {
   browserRemoteDebuggingPort?: string
 }
 
+export interface PortalRunDependencies {
+  cwd?: string
+  launchBrowser?: typeof launchBrowser
+  renderTerminal?: typeof render
+  terminalController?: TerminalController
+  createProviderAdapter?: typeof createAdapterForProvider
+  createRuntime?: typeof createRuntimeFromAdapter
+  createApiServer?: (
+    options: ConstructorParameters<typeof PortalApiServer>[0]
+  ) => PortalApiServer
+}
+
 function buildProgram() {
   return new Command()
     .name('portal')
@@ -158,12 +170,13 @@ function buildProgram() {
 }
 
 async function createProjectInstructions(
+  cwd: string,
   config: PortalAgentInstructionsConfig,
   onWarning: (warning: ProjectInstructionWarning) => void | Promise<void>,
   limits: ProjectInstructionLimits
 ): Promise<ProjectInstructions> {
   const loaded = await loadProjectInstructions({
-    cwd: process.cwd(),
+    cwd,
     config,
     limits,
   })
@@ -182,12 +195,25 @@ function formatInstructionWarning(
   ]
 }
 
-export async function run(argv = process.argv): Promise<void> {
+export async function run(
+  argv = process.argv,
+  dependencies: PortalRunDependencies = {}
+): Promise<void> {
   const program = buildProgram()
   program.parse(argv)
 
   const options = program.opts<Options>()
-  const dataDirectory = path.join(process.cwd(), 'data')
+  const cwd = dependencies.cwd ?? process.cwd()
+  const launchBrowserForRun = dependencies.launchBrowser ?? launchBrowser
+  const renderTerminal = dependencies.renderTerminal ?? render
+  const createProviderAdapter =
+    dependencies.createProviderAdapter ?? createAdapterForProvider
+  const createRuntime = dependencies.createRuntime ?? createRuntimeFromAdapter
+  const createApiServer =
+    dependencies.createApiServer ??
+    ((serverOptions: ConstructorParameters<typeof PortalApiServer>[0]) =>
+      new PortalApiServer(serverOptions))
+  const dataDirectory = path.join(cwd, 'data')
   const configPath = path.join(dataDirectory, 'config.yaml')
   const defaultPortalConfig = createDefaultPortalConfig(dataDirectory)
   const existingPortalConfig = await readPortalConfig(configPath)
@@ -242,11 +268,7 @@ export async function run(argv = process.argv): Promise<void> {
   const threadStore = await createThreadStore(
     path.join(dataDirectory, 'threads.db')
   )
-  const threadManager = new ThreadManager(
-    hookCatalog,
-    hookDispatcher,
-    process.cwd()
-  )
+  const threadManager = new ThreadManager(hookCatalog, hookDispatcher, cwd)
   const threadOperations = new ThreadOperationCoordinator(
     settings.cancelWaitTimeoutMs
   )
@@ -254,7 +276,7 @@ export async function run(argv = process.argv): Promise<void> {
   const mcpForegroundOperations = new Set<McpForegroundOperation>()
   const runCommandJobs = new RunCommandJobManager(settings.runCommand)
   const commandRegistry = new CommandRegistry(DEFAULT_COMMANDS)
-  const ui = new TerminalController()
+  const ui = dependencies.terminalController ?? new TerminalController()
   ui.bindThreadManager(threadManager)
   const keybindingCatalog = new KeybindingCatalog(
     configPath,
@@ -379,7 +401,7 @@ export async function run(argv = process.argv): Promise<void> {
 
   ui.renderWelcome({
     browserStatus: 'connecting',
-    directory: process.cwd(),
+    directory: cwd,
     version: PORTAL_VERSION,
   })
   clearTerminalBeforeRender(stdout)
@@ -388,7 +410,7 @@ export async function run(argv = process.argv): Promise<void> {
     renderTimelineEntryToAnsi
   )
 
-  const inkApp = render(
+  const inkApp = renderTerminal(
     createElement(TerminalScreen, {
       ui,
       commands: commandRegistry.list(),
@@ -458,7 +480,7 @@ export async function run(argv = process.argv): Promise<void> {
     try {
       const startupController = new AbortController()
       browserStartupController = startupController
-      const startupPromise = launchBrowser(
+      const startupPromise = launchBrowserForRun(
         browserEngine,
         browserExecutablePath,
         browserRemoteDebuggingPort,
@@ -610,12 +632,13 @@ export async function run(argv = process.argv): Promise<void> {
       resolveConversationUrl,
       createProjectInstructions: async (onWarning) =>
         await createProjectInstructions(
+          cwd,
           portalConfig.agentInstructions,
           onWarning,
           settings.instructionLimits
         ),
       createAdapter: async ({ provider, conversationUrl, signal }) =>
-        await createAdapterForProvider(
+        await createProviderAdapter(
           context,
           provider,
           conversationUrl,
@@ -630,7 +653,7 @@ export async function run(argv = process.argv): Promise<void> {
         projectInstructions,
         signal,
       }) =>
-        await createRuntimeFromAdapter(adapter, {
+        await createRuntime(adapter, {
           model,
           setupMode:
             mode === 'resume'
@@ -684,6 +707,7 @@ export async function run(argv = process.argv): Promise<void> {
         'chatgpt',
         async (request) => {
           const projectInstructions = await createProjectInstructions(
+            cwd,
             portalConfig.agentInstructions,
             (warning) => {
               ui.renderWarning(
@@ -693,7 +717,7 @@ export async function run(argv = process.argv): Promise<void> {
             },
             settings.instructionLimits
           )
-          const adapter = await createAdapterForProvider(
+          const adapter = await createProviderAdapter(
             context,
             request.provider,
             null,
@@ -706,7 +730,7 @@ export async function run(argv = process.argv): Promise<void> {
             const allowsMcp = request.allowedTools.some(
               (name) => name === 'mcp_search_tool' || name === 'mcp_call_tool'
             )
-            runtime = await createRuntimeFromAdapter(adapter, {
+            runtime = await createRuntime(adapter, {
               model: null,
               setupMode: 'full',
               providerPrompt: getProviderPrompt(request.provider),
@@ -786,7 +810,7 @@ export async function run(argv = process.argv): Promise<void> {
       withCancellableOperation,
     })
 
-    apiServer = new PortalApiServer({
+    apiServer = createApiServer({
       host: portalConfig.listeners.api.host,
       port: portalConfig.listeners.api.port,
       token: portalConfig.listeners.api.token,

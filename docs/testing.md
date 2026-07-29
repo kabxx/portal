@@ -54,14 +54,14 @@ Focused tests were added for:
 
 ## Known gaps
 
-| Area                            | Automated coverage                                                                                              | Remaining risk                                                                                                                                 |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app.ts` lifecycle              | Focused helpers and pending-thread flows                                                                        | Full CLI startup, real TTY input, login waits, and shutdown orchestration remain manual because they cross private process and browser wiring. |
-| Browser launchers               | Launch arguments, platform defaults, Windows job helpers, and a real Chromium/CDP lifecycle smoke on Windows CI | Executable discovery, startup failures, and cleanup behavior on Linux, macOS, and other browser installations still require platform checks.   |
-| Provider adapters and history   | Fake-page submit, completion, cancellation, parser, and history fixtures                                        | Upstream DOM and protocol changes are only detectable against real provider pages.                                                             |
-| Runtime and thread cancellation | Runtime abort paths and operation coordinator behavior                                                          | Browser-side stop behavior still depends on each provider page.                                                                                |
-| MCP                             | Local stdio/HTTP integration, unknown outcomes, resources, prompts, and session ownership                       | Remote MCP implementations and network failures can differ from local fixtures.                                                                |
-| Terminal UI                     | Controller state and pure rendering helpers                                                                     | Full interactive Ink rendering is not exercised in a real terminal in CI.                                                                      |
+| Area                            | Automated coverage                                                                                                                                                  | Remaining risk                                                                                                                                   |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `app.ts` lifecycle              | Minimal composition smoke with temporary config/storage, fake browser/provider boundaries, a local API listener, active thread operation, command job, and shutdown | Real TTY input, provider login waits, and the production browser remain manual because they cross private terminal, account, and browser wiring. |
+| Browser launchers               | Launch arguments, platform defaults, Windows job helpers, and a real Chromium/CDP lifecycle smoke on Windows CI                                                     | Executable discovery, startup failures, and cleanup behavior on Linux, macOS, and other browser installations still require platform checks.     |
+| Provider adapters and history   | Fake-page submit, completion, cancellation, parser, and history fixtures                                                                                            | Upstream DOM and protocol changes are only detectable against real provider pages.                                                               |
+| Runtime and thread cancellation | Runtime abort paths and operation coordinator behavior                                                                                                              | Browser-side stop behavior still depends on each provider page.                                                                                  |
+| MCP                             | Local stdio/HTTP integration, unknown outcomes, resources, prompts, and session ownership                                                                           | Remote MCP implementations and network failures can differ from local fixtures.                                                                  |
+| Terminal UI                     | Controller state and pure rendering helpers                                                                                                                         | Full interactive Ink rendering is not exercised in a real terminal in CI.                                                                        |
 
 ## External smoke checks
 
@@ -69,6 +69,11 @@ The launcher smoke test in Windows CI covers only browser startup, CDP
 connection, and cleanup with a temporary profile. It uses Playwright's matching
 Chromium executable without changing Portal's normal browser arguments. The
 test does not open a Provider website or exercise the full TUI lifecycle.
+The deterministic app composition smoke separately runs the top-level startup
+and shutdown wiring with temporary local state and injected browser, provider,
+runtime, and Ink boundaries. It starts a real local API listener, creates and
+cancels a thread operation, and verifies that a real command job and local
+resources close during shutdown; it is not a real terminal or provider test.
 Real provider checks stay outside `npm test` and ordinary public CI because they
 require private login state, network access, provider-specific accounts, and
 careful handling of captured output. A private runner can perform those checks,
