@@ -24,6 +24,16 @@ export default tseslint.config(
     files: ['**/*.{js,mjs,cjs,ts,tsx}'],
   },
   {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        URL: 'readonly',
+      },
+    },
+  },
+  {
     files: ['src/**/*.{ts,tsx}', 'test/**/*.{ts,tsx}', 'types/**/*.ts'],
     extends: tseslint.configs.recommendedTypeChecked,
     languageOptions: {

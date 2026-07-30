@@ -9,6 +9,8 @@ npm run lint
 npm run test:type
 npm run test:unit
 npm run test:coverage
+npm run build
+npm run test:package
 npm run fmt:check
 ```
 
@@ -24,6 +26,14 @@ npm run test:browser
 ```
 
 The smoke tests use temporary profiles and cover both an exact fixed CDP port and Chromium's dynamic port selection. They verify startup, connection, repeated close calls, and process cleanup without opening a provider website or using an account.
+
+`test:package` builds and audits the real npm tarball, installs it in a
+temporary directory with Git removed from `PATH`, executes the installed
+`portal --version` and `portal --help` bin, verifies that metadata commands do
+not create `data/` in the workspace, and loads the platform-native runtime
+dependencies. It also verifies that the bundled Git dependencies do not embed
+a build-machine-specific Koffi binary. CI builds and audits one tarball on
+Linux, then Windows, Linux, and macOS install and smoke-test that exact artifact.
 
 ## 2026-07-17 audit
 

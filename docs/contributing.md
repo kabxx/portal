@@ -23,7 +23,7 @@ npm run dev
 
 ## Release and compatibility policy
 
-Release tags identify tested source snapshots, not binary distributions. portal prioritizes fast iteration and does not promise that documented CLI commands, configuration, HTTP API, Portal MCP, Provider model keys, or Tool surfaces remain backward-compatible across releases. Breaking changes must be called out in release notes; changes to persistent configuration or data must include migration or explicit upgrade steps.
+Release tags identify tested source snapshots and, when applicable, the matching npm package contents. portal does not currently publish a standalone executable. The project prioritizes fast iteration and does not promise that documented CLI commands, configuration, HTTP API, Portal MCP, Provider model keys, or Tool surfaces remain backward-compatible across releases. Breaking changes must be called out in release notes; changes to persistent configuration or data must include migration or explicit upgrade steps.
 
 Internal modules, Provider DOM and private protocols, and account-dependent capabilities are implementation or upstream details rather than stable contracts.
 
@@ -35,6 +35,8 @@ npm run lint
 npm run test:type
 npm run test:unit
 npm run test:coverage
+npm run build
+npm run test:package
 npm run fmt:check
 ```
 
@@ -55,7 +57,7 @@ See [Testing](testing.md) for the current coverage inventory, audit decisions, a
 
 Use `npm run fmt` only when you intend to rewrite formatting. The pre-commit hook runs Prettier on staged files only and updates their staged contents automatically. Before submitting a change, review the final diff and make sure unrelated files were not modified.
 
-Every pull request uses Windows as the primary Node.js 24 quality gate for formatting, lint, type checking, the coverage run (which includes the full unit suite), and real browser startup, CDP connection, and cleanup with Playwright Chromium. Linux and macOS run the unit suite as compatibility checks. The browser lifecycle smoke does not cover Provider pages, account state, the full TUI lifecycle, or browser process behavior on Linux and macOS.
+Every pull request uses Windows as the primary Node.js 24 quality gate for formatting, lint, type checking, the coverage run (which includes the full unit suite), and real browser startup, CDP connection, and cleanup with Playwright Chromium. CI builds and audits one npm tarball, then Windows, Linux, and macOS install and smoke-test that exact artifact; Linux and macOS also run the unit suite as compatibility checks. The browser lifecycle smoke does not cover Provider pages, account state, the full TUI lifecycle, or browser process behavior on Linux and macOS.
 
 Tests should protect current observable behavior, failure handling, cleanup, and security boundaries. Do not keep migration-only assertions whose sole purpose is proving that a removed command, field, or wording is still absent. Negative tests remain valuable when they define a current invalid-input or safety contract.
 

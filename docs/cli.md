@@ -8,19 +8,47 @@ The interactive TUI stays on the primary terminal screen, so native mouse-wheel 
 
 ## Starting portal
 
-Start portal from a local clone:
+Install and run a fixed npm release globally:
 
 ```bash
+npm install --global @kabxx/portal@1.1.0
+portal
+```
+
+For a one-off run, use `npx @kabxx/portal@1.1.0`. To run from a local clone:
+
+```bash
+npm ci
 npm run dev
 ```
 
+The directory where `portal` starts is the workspace used by local tools and
+project instructions. It is separate from portal's persistent data directory.
+An npm-installed CLI uses these defaults:
+
+| Platform | Default data directory                                                 |
+| -------- | ---------------------------------------------------------------------- |
+| Windows  | `%LOCALAPPDATA%\portal`                                                |
+| macOS    | `~/Library/Application Support/portal`                                 |
+| Linux    | `$XDG_DATA_HOME/portal`, or `~/.local/share/portal` when it is not set |
+
+`--data-dir <path>` selects another location for one run. `PORTAL_DATA_DIR`
+provides a persistent environment override, and the command-line option takes
+precedence. Relative values resolve from the working directory; an absolute
+environment value is safer when portal is started in different workspaces.
+`npm run dev` explicitly uses the clone's `data/` directory.
+
 The only supported browser engine is `chromium`. portal checks common Edge, Chrome, Chromium, Brave, Vivaldi, Opera, Opera GX, and Arc locations where those browsers are available. Override the detected executable or remote debugging port when needed:
 
-```text
-npm run dev -- --browser-engine chromium --browser-executable-path "<browser executable path>" --browser-remote-debugging-port 9222
+```bash
+portal --browser-engine chromium --browser-executable-path "<browser executable path>" --browser-remote-debugging-port 9222
 ```
 
-`browser.executablePath` and `browser.profilePath` accept absolute or relative paths. Relative configured paths resolve from portal's working directory. Run `npm run dev -- --help` for every startup option, or see [Configuration](configuration.md#browser) for persistent settings.
+`browser.executablePath` and `browser.profilePath` accept absolute or relative paths. Relative configured paths resolve from portal's working directory. Run `portal --help` (or `npm run dev -- --help` from source) for every startup option, or see [Configuration](configuration.md#browser) for persistent settings.
+
+Upgrade with `npm install --global @kabxx/portal@<version>` and uninstall with
+`npm uninstall --global @kabxx/portal`. Upgrading or uninstalling the package
+does not delete the persistent data directory.
 
 ## Thread workflow
 
@@ -58,7 +86,7 @@ executed; it is not a sandbox.
 
 After `/thread agent`, `/thread chat`, or `/thread resume` succeeds, the new thread timeline starts with `Thread t-N is ready.` Resume then appends the visible user/assistant history from the provider's current conversation branch. Tool nodes, hidden setup messages, reasoning, and unsupported attachment content are not rendered as ordinary history messages.
 
-`data/threads.db` stores provider metadata, conversation URLs, titles, and timestamps, not transcripts. Remote history and terminal timelines remain in memory. After portal restarts, use `/thread resume` to load the provider conversation again. Switching among active threads restores their cached timelines without another provider request.
+`threads.db` under the portal data directory stores provider metadata, conversation URLs, titles, and timestamps, not transcripts. Remote history and terminal timelines remain in memory. After portal restarts, use `/thread resume` to load the provider conversation again. Switching among active threads restores their cached timelines without another provider request.
 
 ### Thread commands
 
@@ -112,7 +140,7 @@ The live `/help` output is the source of truth for commands available in the cur
 | `Ctrl+C`                                                | Cancel busy work; while idle with input, clear that input      |
 | `Ctrl+D`                                                | Exit while idle and the input is empty                         |
 
-Input submission is disabled while portal is busy. Edit the complete `keybindings` table in `data/config.yaml` to change shortcuts; valid saves apply automatically. See [Configuration](configuration.md#keybindings).
+Input submission is disabled while portal is busy. Edit the complete `keybindings` table in `<data-dir>/config.yaml` to change shortcuts; valid saves apply automatically. See [Configuration](configuration.md#keybindings).
 
 ## Background jobs
 

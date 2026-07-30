@@ -15,7 +15,7 @@ Provider-specific website behavior stays behind Provider UI components and adapt
 | Area              | Main files                               | Responsibility                                                                                                                                                        |
 | ----------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Process entry     | `src/index.ts`, `src/app.ts`, `src/app/` | Parse options, compose services and surface handlers, coordinate cancellation, and shut down                                                                          |
-| Configuration     | `src/config/`                            | Create, validate, comment, lock, and atomically update `data/config.yaml`                                                                                             |
+| Configuration     | `src/config/`                            | Create, validate, comment, lock, and atomically update `<data-dir>/config.yaml`                                                                                       |
 | HTTP API          | `src/api/`                               | Serve authenticated routes, thread operations, and per-thread SSE event streams                                                                                       |
 | MCP Server        | `src/mcp-server/`                        | Expose selected thread operations through an independent Streamable HTTP MCP listener                                                                                 |
 | Browser platform  | `src/platform/`                          | Launch Chromium, connect over CDP, and manage platform-specific process lifetime                                                                                      |
@@ -51,10 +51,10 @@ their three independent surfaces without merging their send semantics. Startup
 order, browser and server wiring, thread observers, the CLI command context and
 loop, and shared mutable lifecycle state remain in `run()`.
 
-1. Parse the browser engine, executable path, and remote debugging port.
-2. Resolve `data/` from the current working directory.
+1. Parse the data directory, browser engine, executable path, and remote debugging port.
+2. Keep the current working directory as the workspace and resolve persistent state from `--data-dir`, `PORTAL_DATA_DIR`, or the platform user data directory.
 3. Initialize missing `config.yaml` without overwriting existing user files.
-4. Open `data/threads.db` and initialize its schema.
+4. Open `<data-dir>/threads.db` and initialize its schema.
 5. Create `ThreadManager`, the command registry, `TerminalController`, and Ink `TerminalScreen`.
 6. Launch a dedicated Chromium process and connect through Playwright CDP.
 7. Clear startup details and render command help on the home timeline.
@@ -290,7 +290,7 @@ Spawned conversations are not added to the normal thread list or SQLite history.
 
 ## Skills
 
-The `skills` section of `data/config.yaml` is read for every Skill command and runtime creation. A valid enabled snapshot defines which names `load_skill` can resolve. Agent threads and spawned runtimes also include the name/description catalog in their full setup prompts; chat threads retain the snapshot locally without advertising it.
+The `skills` section of `<data-dir>/config.yaml` is read for every Skill command and runtime creation. A valid enabled snapshot defines which names `load_skill` can resolve. Agent threads and spawned runtimes also include the name/description catalog in their full setup prompts; chat threads retain the snapshot locally without advertising it.
 
 Catalog membership is immutable for an active runtime. The actual `SKILL.md` and resource list are read and validated on demand, so edits are visible to later loads while deleted or invalid files return errors. See [Skills](skills.md).
 
@@ -306,7 +306,7 @@ active state. See [Project Instructions](instructions.md).
 
 ## MCP
 
-The `mcpServers` section of `data/config.yaml` configures outbound MCP clients.
+The `mcpServers` section of `<data-dir>/config.yaml` configures outbound MCP clients.
 Every new, resumed, or spawned runtime creates a `ThreadMcpSession` and
 independent client transports for enabled valid servers. Failed servers are
 omitted and rendered as Markdown warnings; successful servers continue normally.
@@ -335,7 +335,7 @@ a cancelled message can leave its command job running.
 ## Local data layout
 
 ```text
-data/
+<data-dir>/
 ├── profiles/chromium/
 ├── threads.db
 ├── config.yaml
@@ -343,7 +343,12 @@ data/
 └── temp/skill-install/
 ```
 
-The repository's top-level `temp/` directory is separate. It contains provider fixtures, probes, screenshots, and other adapter-development artifacts and may include sensitive conversation data.
+The npm package installation directory contains code only; changing or
+uninstalling that package does not remove this state. Source development uses
+the repository's ignored `data/` directory because `npm run dev` passes it
+explicitly. The repository's top-level `temp/` directory is separate. It
+contains provider fixtures, probes, screenshots, and other adapter-development
+artifacts and may include sensitive conversation data.
 
 See [Configuration](configuration.md) for the ownership and reload behavior of
 each `config.yaml` section.

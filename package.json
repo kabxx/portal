@@ -1,19 +1,44 @@
 {
-  "name": "portal",
-  "version": "1.0.0",
-  "private": true,
+  "name": "@kabxx/portal",
+  "version": "1.1.0",
   "description": "A browser-backed terminal agent for web AI products and local tools.",
+  "bin": {
+    "portal": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kabxx/portal.git"
+  },
+  "homepage": "https://github.com/kabxx/portal#readme",
+  "bugs": {
+    "url": "https://github.com/kabxx/portal/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "bundleDependencies": [
+    "ink",
+    "markdansi"
+  ],
   "scripts": {
-    "dev": "tsx src/index.ts",
+    "dev": "tsx src/index.ts --data-dir data",
+    "clean": "node scripts/clean.mjs",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
     "test": "npm run test:type && npm run test:unit",
     "test:type": "tsc -p tsconfig.json --noEmit",
     "test:unit": "node --import tsx --test \"test/**/*.test.ts\"",
     "test:browser": "node --import tsx --test --test-timeout=90000 \"test/browser/**/*.smoke.ts\"",
     "test:coverage": "node --experimental-test-coverage --test-coverage-lines=85 --test-coverage-branches=75 --test-coverage-functions=75 --test-coverage-include=\"src/**\" --test-coverage-exclude=\"test/**\" --import tsx --test \"test/**/*.test.ts\"",
+    "test:package": "node scripts/package-smoke.mjs",
     "fmt": "prettier . --write",
     "fmt:check": "prettier . --check",
-    "prepare": "husky"
+    "prepare": "husky",
+    "prepack": "npm run build"
   },
   "lint-staged": {
     "*": "prettier --ignore-unknown --write"
@@ -31,8 +56,10 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "5.0.6",
     "@types/node": "^24.13.3",
+    "@types/react": "^19.2.16",
     "eslint": "10.7.0",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.8",
@@ -44,14 +71,12 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/react": "^19.2.16",
     "7zip-bin": "^5.2.0",
     "better-sqlite3": "^12.11.1",
     "commander": "^14.0.3",
     "fastify": "^5.10.0",
     "fs-native-extensions": "1.5.0",
-    "ink": "git+https://github.com/kabxx/ink4portal.git#8b4b540bfcb484655d2bcfb3fb3d3be8f097c3b6",
+    "ink": "git+https://github.com/kabxx/ink4portal.git#ce12936c40d2b713c5d279053619b814cb91fa4d",
     "koffi": "^3.0.2",
     "markdansi": "git+https://github.com/kabxx/Markdansi4portal.git#c2303ded5393b13c3cb24944be3f7bd9bac670f6",
     "node-unrar-js": "^2.0.2",

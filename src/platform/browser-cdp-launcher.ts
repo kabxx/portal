@@ -9,7 +9,7 @@ import {
   throwIfAborted,
 } from '../runtime/runtime-cancellation.ts'
 import { ensurePrivateDirectorySync } from '../shared/private-files.ts'
-import { launchWin32BrowserMinimized } from './win32-minimized-browser-launcher.ts'
+import { launchWin32Browser } from './win32-browser-launcher.ts'
 import type { BrowserEngine } from './platform-defaults.ts'
 
 export interface BrowserLaunch {
@@ -529,7 +529,7 @@ async function launchBrowserProcess(
   args: string[]
 ): Promise<BrowserProcess> {
   if (process.platform === 'win32') {
-    return await launchWin32BrowserMinimized(executable, args)
+    return await launchWin32Browser(executable, args)
   }
 
   const child = spawn(executable, args, {

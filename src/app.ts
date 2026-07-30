@@ -78,6 +78,7 @@ import { createApiHandlers } from './app/app-api-handlers.ts'
 import { createMcpHandlers } from './app/app-mcp-handlers.ts'
 import { createToolServices } from './app/app-spawn-tool-services.ts'
 import { createTuiThreadInputHandler } from './app/app-tui-thread-input-handler.ts'
+import { resolvePortalDataDirectory } from './platform/portal-data-directory.ts'
 import {
   canRunCommandWhileThreadBusy,
   clearInteractiveTerminal,
@@ -134,6 +135,7 @@ interface Options {
   browserEngine?: string
   browserExecutablePath?: string
   browserRemoteDebuggingPort?: string
+  dataDir?: string
 }
 
 export interface PortalRunDependencies {
@@ -166,6 +168,10 @@ function buildProgram() {
     .option(
       '--browser-remote-debugging-port <port>',
       'remote debugging port used when launching the browser and connecting over CDP'
+    )
+    .option(
+      '--data-dir <path>',
+      'directory for config, history, skills, and the browser profile'
     )
 }
 
@@ -213,7 +219,12 @@ export async function run(
     dependencies.createApiServer ??
     ((serverOptions: ConstructorParameters<typeof PortalApiServer>[0]) =>
       new PortalApiServer(serverOptions))
-  const dataDirectory = path.join(cwd, 'data')
+  const dataDirectory = resolvePortalDataDirectory({
+    cwd,
+    ...(options.dataDir === undefined
+      ? {}
+      : { dataDirectory: options.dataDir }),
+  })
   const configPath = path.join(dataDirectory, 'config.yaml')
   const defaultPortalConfig = createDefaultPortalConfig(dataDirectory)
   const existingPortalConfig = await readPortalConfig(configPath)

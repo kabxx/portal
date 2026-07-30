@@ -62,9 +62,9 @@ formatting is not an execution boundary.
 
 ## Browser and account data
 
-The dedicated browser profile lives at `browser.profilePath` from `data/config.yaml`. Browser path fields accept absolute or relative values: generated defaults are absolute, while configured relative values resolve from portal's working directory. The profile can contain login cookies, local storage, and other account state. The default directory is ignored by Git, but it is still sensitive local data.
+The dedicated browser profile lives at `browser.profilePath` from `<data-dir>/config.yaml`. Browser path fields accept absolute or relative values: generated defaults are absolute, while configured relative values resolve from portal's working directory. The profile can contain login cookies, local storage, and other account state. An npm-installed CLI stores it outside the workspace by default; source development uses the repository's ignored `data/` directory. Both locations still contain sensitive local data.
 
-`data/threads.db` stores provider conversation URLs and metadata. Those URLs may expose private conversation identifiers when combined with an authenticated browser session. It does not store transcripts or a persistent local Tool audit trail. The provider website remains the source of conversation content; local turns and rendered timelines live only for the current process and can grow with a long-running session.
+`<data-dir>/threads.db` stores provider conversation URLs and metadata. Those URLs may expose private conversation identifiers when combined with an authenticated browser session. It does not store transcripts or a persistent local Tool audit trail. The provider website remains the source of conversation content; local turns and rendered timelines live only for the current process and can grow with a long-running session.
 
 On POSIX systems, Portal restricts its managed config and lock directories, the
 configured browser profile root, and the thread database directory to mode
@@ -75,7 +75,9 @@ continues to follow inherited filesystem ACLs.
 
 Resume reads provider history into the terminal's in-memory timeline. The repository's ignored top-level `temp/` directory may also contain response captures, screenshots, or probe output created during provider development.
 
-Do not publish or attach `data/`, browser profiles, raw captures, screenshots, or private conversation URLs to bug reports. Removing a capture from the current tree does not remove it from existing Git history, clones, forks, or caches. If sensitive content enters Git history, invalidate the related sessions or credentials first, then coordinate a history rewrite and replacement of affected clones before redistributing the repository.
+Package upgrades and uninstall do not remove the portal data directory. Delete it only after deciding that its browser login state, configuration, Skills, and thread metadata are no longer needed.
+
+Do not publish or attach a portal data directory, browser profiles, raw captures, screenshots, or private conversation URLs to bug reports. Removing a capture from the current tree does not remove it from existing Git history, clones, forks, or caches. If sensitive content enters Git history, invalidate the related sessions or credentials first, then coordinate a history rewrite and replacement of affected clones before redistributing the repository.
 
 ## Project instructions
 

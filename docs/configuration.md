@@ -2,7 +2,7 @@
 
 [Back to README](../README.md)
 
-portal creates `data/config.yaml` on first start. The generated file contains
+portal creates `<data-dir>/config.yaml` on first start. The generated file contains
 comments for every managed section. The configuration parser rejects unknown
 fields and invalid values. A valid partial file using the current schema may be
 rewritten to add missing managed defaults and comments while preserving its
@@ -10,7 +10,7 @@ existing values; malformed or unsupported configuration is rejected without
 being overwritten.
 
 Configuration writers are serialized across portal processes with the native
-file lock at `data/.locks/config.lock`. The lock file is persistent; its
+file lock at `<data-dir>/.locks/config.lock`. The lock file is persistent; its
 presence does not mean the lock is currently held. The operating system
 releases the lock when the owning file descriptor closes, including after a
 process is terminated. Configuration contents are still replaced through a
@@ -36,13 +36,40 @@ MCP client connections, Skills, and Hooks have the narrower
 reload and new-runtime behavior described in their dedicated documents.
 Keybindings are watched independently and do not require a restart.
 
+## Portal data directory
+
+The current working directory is the workspace used by local tools and project
+instructions. Persistent portal state is stored separately. An npm-installed
+CLI uses `%LOCALAPPDATA%\portal` on Windows,
+`~/Library/Application Support/portal` on macOS, and
+`$XDG_DATA_HOME/portal` or `~/.local/share/portal` on Linux.
+
+The data directory is selected in this order:
+
+1. `--data-dir <path>`;
+2. `PORTAL_DATA_DIR` when it is non-empty;
+3. the platform default above.
+
+Relative command-line and environment values resolve from the current working
+directory. The source-development command `npm run dev` explicitly selects the
+clone's ignored `data/` directory.
+
+portal does not automatically import a `data/` directory from the current
+workspace. Existing 1.0 source users can keep using `npm run dev`, or start the
+npm CLI with `portal --data-dir <absolute-path-to-old-data>`. To move the data
+instead, stop portal and its browser, copy `config.yaml`, `threads.db`,
+`profiles/`, and `skills/` to the new data directory, and update an absolute
+`browser.profilePath` in the copied configuration to the new profile location.
+Do not copy `.locks/` or temporary staging directories. Keep the old data until
+the migrated browser login and thread history have been verified.
+
 ## Browser
 
 ```yaml
 browser:
   engine: chromium
   executablePath: '<platform-specific browser executable path>'
-  profilePath: data/profiles/chromium
+  profilePath: '<resolved data directory>/profiles/chromium'
   remoteDebuggingPort: 9222
 ```
 

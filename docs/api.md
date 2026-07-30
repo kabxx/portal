@@ -19,7 +19,7 @@ listed and stopped through either the TUI `/job` commands or the HTTP endpoints
 below. When a listener token is configured, those endpoints use the same Bearer
 authentication as the rest of the API.
 
-The default listener is `127.0.0.1:8787`. Configure it in `data/config.yaml`:
+The default listener is `127.0.0.1:8787`. Configure it in `<data-dir>/config.yaml`:
 
 ```yaml
 listeners:

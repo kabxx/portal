@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { launchWin32BrowserMinimized } from '../../src/platform/win32-minimized-browser-launcher.ts'
+import { launchWin32Browser } from '../../src/platform/win32-browser-launcher.ts'
 
 test(
   'Windows browser launch fails when Job Object assignment fails',
@@ -10,7 +10,7 @@ test(
     let closedJobs = 0
 
     await assert.rejects(
-      launchWin32BrowserMinimized(
+      launchWin32Browser(
         process.execPath,
         ['-e', 'setInterval(() => {}, 1000)'],
         {

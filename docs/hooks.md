@@ -4,7 +4,7 @@
 
 Hooks run configured handlers at stable thread, turn, tool, and spawn lifecycle points. They are implemented below the terminal and HTTP API surfaces, so the same Hook policy applies regardless of how a turn starts.
 
-Hooks are disabled by default. Editing `data/config.yaml` and enabling Hooks means accepting that configured command, prompt, and agent handlers can run with the current user's permissions and provider accounts.
+Hooks are disabled by default. Editing `<data-dir>/config.yaml` and enabling Hooks means accepting that configured command, prompt, and agent handlers can run with the current user's permissions and provider accounts.
 
 ## Configuration
 
@@ -115,6 +115,6 @@ A deny produces a structured `HOOK_BLOCKED` Tool Result and feeds it back to the
 /hook disable
 ```
 
-`reload` validates the complete config before atomically replacing the global snapshot. If validation fails, the prior snapshot remains active. `enable` and `disable` persist the global switch to `data/config.yaml`; active turns continue with their captured snapshot.
+`reload` validates the complete config before atomically replacing the global snapshot. If validation fails, the prior snapshot remains active. `enable` and `disable` persist the global switch to `<data-dir>/config.yaml`; active turns continue with their captured snapshot.
 
 The HTTP API does not modify Hook configuration. Thread event streams expose bounded `hook.execution` events with handler, phase, event, duration, and correlation ids, but not handler stdout or stderr.

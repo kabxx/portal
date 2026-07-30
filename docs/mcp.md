@@ -10,7 +10,7 @@ independent MCP service, see [Portal MCP Server](mcp-server.md).
 
 ## Configuration
 
-The user-editable file is `data/config.yaml`. Outbound MCP settings live under
+The user-editable file is `<data-dir>/config.yaml`. Outbound MCP settings live under
 its top-level `mcpServers` section. Server names are object keys and must be
 unique.
 
@@ -158,6 +158,6 @@ All rendered MCP Tool and attachment content is bounded. Error messages redact r
 
 ## Security notes
 
-An MCP server is an external process or network endpoint with its own permissions and side effects. Review its implementation and requested headers/environment before adding it. Do not commit bearer tokens or literal secrets to the `mcpServers` section of `data/config.yaml`; use environment placeholders and keep the file local.
+An MCP server is an external process or network endpoint with its own permissions and side effects. Review its implementation and requested headers/environment before adding it. Do not publish bearer tokens or literal secrets from the `mcpServers` section of `<data-dir>/config.yaml`; use environment placeholders and keep the file local.
 
 MCP calls are not subject to a separate human approval gate. Read [Security](security.md) before connecting servers that can modify files, access accounts, or perform irreversible operations.

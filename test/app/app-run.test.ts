@@ -29,7 +29,7 @@ test(
   { timeout: 20_000 },
   async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-app-run-'))
-    const dataDirectory = path.join(cwd, 'data')
+    const dataDirectory = path.join(cwd, 'portal-state')
     const configPath = path.join(dataDirectory, 'config.yaml')
     const portalConfig = createDefaultPortalConfig(dataDirectory)
     await ensurePortalConfig(configPath, portalConfig)
@@ -110,7 +110,10 @@ test(
       },
     }
 
-    const runPromise = run([process.execPath, 'portal'], dependencies)
+    const runPromise = run(
+      [process.execPath, 'portal', '--data-dir', dataDirectory],
+      dependencies
+    )
     void runPromise.catch(() => {})
     try {
       await waitFor(() => ui.getState().prompt.active, 'initial prompt')
@@ -154,6 +157,7 @@ test(
       assert.equal(browserCloseCount, 1)
       assert.equal(terminalUnmountCount, 1)
       assert.equal(existsSync(path.join(dataDirectory, 'threads.db')), true)
+      assert.equal(existsSync(path.join(cwd, 'data')), false)
     } finally {
       browserDisconnected.resolve()
       await observed.apiServer?.stop().catch(() => {})

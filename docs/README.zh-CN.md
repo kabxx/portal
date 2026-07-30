@@ -5,7 +5,7 @@
 [English](../README.md)
 
 > [!IMPORTANT]
-> portal 1.0 是首个正式源码版本。项目仍会快速迭代，文档化接口可能在不同版本之间变化；破坏性变更和迁移步骤会在 Release notes 中说明。网页 Provider 可以随时改变页面结构，因此测试通过并不代表所有真实浏览器流程一定可用。
+> portal 1.0 是首个正式源码版本，portal 1.1 新增公开 npm CLI。项目仍会快速迭代，文档化接口可能在不同版本之间变化；破坏性变更和迁移步骤会在 Release notes 中说明。网页 Provider 可以随时改变页面结构，因此测试通过并不代表所有真实浏览器流程一定可用。
 
 portal 会启动真实的 Chromium 系浏览器，通过正常网页界面驱动支持的 AI 产品。网页模型可以请求本地工具、接收执行结果，然后在同一个 Provider 会话中继续工作。
 
@@ -28,7 +28,7 @@ portal 通过网页界面支持 ChatGPT、Gemini、DeepSeek、豆包、Grok、GL
 ## 环境要求
 
 - Node.js 24 或更高版本。在仓库 CI 因 [nodejs/node#63638](https://github.com/nodejs/node/issues/63638) 固定版本期间，Windows 应使用 Node.js 24.15.0；较新的 Node.js 24 版本可能在 `fs.watch` 中崩溃。
-- npm 和 Git
+- npm；从源码安装时还需要 Git
 - Google Chrome 或其它受支持的 Chromium 系浏览器
 - 需要使用的各 Provider 账号
 
@@ -36,14 +36,37 @@ Windows、macOS 和 Linux 都是支持的启动环境。
 
 ## 快速开始
 
-在本地 clone 中执行：
+全局安装固定版本，然后在需要 portal 操作的工作区中启动：
 
 ```bash
-npm install
+npm install --global @kabxx/portal@1.1.0
+portal
+```
+
+如需临时运行而不全局安装：
+
+```bash
+npx @kabxx/portal@1.1.0
+```
+
+也可以继续从源码运行：
+
+```bash
+git clone https://github.com/kabxx/portal.git
+cd portal
+npm ci
 npm run dev
 ```
 
-首次运行时，portal 会创建带注释的 `data/config.yaml` 和专用浏览器 profile。创建 thread，在需要时通过浏览器完成登录，然后直接输入普通任务：
+当前目录仍是 portal 的工作区。通过 npm 安装的 CLI 会把配置、thread 历史、Skills 和浏览器 profile 放在平台用户数据目录中，不会在工作区创建 `data/`：
+
+- Windows：`%LOCALAPPDATA%\portal`
+- macOS：`~/Library/Application Support/portal`
+- Linux：`$XDG_DATA_HOME/portal` 或 `~/.local/share/portal`
+
+`npm run dev` 仍使用 clone 中被 Git 忽略的 `data/` 目录。如何选择其它位置或继续使用 1.0 源码版的数据，请参阅[配置文档](configuration.md#portal-data-directory)。
+
+首次运行时，portal 会在数据目录中创建带注释的 `config.yaml` 和专用浏览器 profile。创建 thread，在需要时通过浏览器完成登录，然后直接输入普通任务：
 
 ```text
 /thread agent chatgpt
@@ -87,7 +110,7 @@ flowchart LR
 /thread close
 ```
 
-会话 URL 和元信息保存在 `data/threads.db` 中，聊天记录不会写入该数据库。已打开 thread 的终端时间线会在 portal 退出时丢失；`/thread resume` 只重新加载 Provider 当前可见的 user/assistant 历史。
+会话 URL 和元信息保存在 portal 数据目录中的 `threads.db`，聊天记录不会写入该数据库。已打开 thread 的终端时间线会在 portal 退出时丢失；`/thread resume` 只重新加载 Provider 当前可见的 user/assistant 历史。
 
 使用 `Ctrl+J` 可靠地输入换行，使用 `Ctrl+C` 取消当前操作。portal busy 时不能提交输入。输入 `/` 或活动线程中的 `$` 前缀会打开最多五条的上下文提示；`Up` / `Down` 浏览提示，`Tab` 补全选中项，`Enter` 保持默认提交。命令索引和输入控制请参阅 [CLI 指南](cli.md)。
 
@@ -116,8 +139,8 @@ flowchart LR
 - Home 和 thread 时间线只保存在内存中；portal 不维护独立的持久化 transcript 或工具审计档案。
 - Resume 假定原会话已经包含 portal 工具协议并跳过 setup handshake。它会附加一份新的本地项目指令快照，用于之后按路径激活规则，但不会把 always-on 指令或当前 Skill/MCP catalog 重新发送到既有会话。
 - Chat 创建仍会发送最小 `READY` handshake；虽然不会向模型介绍 portal 工具，但合法的模型工具调用仍可能被执行。
-- portal 当前以源码 checkout 中的 TUI 方式运行；稳定的全局 CLI 安装包和独立 headless 服务不属于目前的本地优先发布形态。
-- Windows CI 会使用 Playwright Chromium 和临时 profile 运行浏览器 launcher smoke test；Linux 和 macOS CI 只运行确定性测试。公开 CI 不使用真实 Provider 账号，因此 Provider UI 兼容性仍需私有或人工检查。
+- portal 通过 npm CLI 和源码两种方式发行；独立可执行文件和 headless 服务仍不属于目前的本地优先发布形态。
+- CI 会生成并审计一份 npm tarball，再让 Windows、Linux 和 macOS 安装同一份 artifact 并运行确定性测试。Windows CI 还会使用 Playwright Chromium 和临时 profile 运行浏览器 launcher smoke test。公开 CI 不使用真实 Provider 账号，因此 Provider UI 兼容性仍需私有或人工检查。
 
 ## 许可证
 

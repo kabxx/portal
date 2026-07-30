@@ -55,11 +55,11 @@ Examples:
 /skill list
 ```
 
-Local Skill directories are validated and registered in place; portal does not copy them. For a local collection, each discovered Skill keeps its original absolute directory. HTTP(S) sources are downloaded and validated in a unique directory under `data/temp/skill-install/`. After validation, portal acquires the configuration lock, rechecks the registry and destination names, renames the prepared directories into `data/skills/<name>`, and commits the registry update.
+Local Skill directories are validated and registered in place; portal does not copy them. For a local collection, each discovered Skill keeps its original absolute directory. HTTP(S) sources are downloaded and validated in a unique directory under `<data-dir>/temp/skill-install/`. After validation, portal acquires the configuration lock, rechecks the registry and destination names, renames the prepared directories into `<data-dir>/skills/<name>`, and commits the registry update.
 
 A source root containing `SKILL.md` is one Skill, even if its resource tree contains another file with that name. If the source root has no `SKILL.md`, portal recursively discovers Skill directories and stops descending whenever it finds one. Discovery order is deterministic. The complete source tree and every discovered Skill are validated before any registration or managed directory is committed. An invalid manifest, duplicate name, existing registry entry, or managed-directory conflict rejects the entire collection.
 
-Removing an external absolute directory only removes its registry entry. Removing a portal-managed relative `skills/<name>` entry first renames that directory into `data/temp/skill-remove/`, commits the registry removal, and then deletes the temporary directory. A configuration write failure restores a directory moved by the current operation.
+Removing an external absolute directory only removes its registry entry. Removing a portal-managed relative `skills/<name>` entry first renames that directory into `<data-dir>/temp/skill-remove/`, commits the registry removal, and then deletes the temporary directory. A configuration write failure restores a directory moved by the current operation.
 
 If registry removal commits but the configuration lock or temporary directory
 cleanup reports an error afterward, the removal remains successful and portal
@@ -70,7 +70,7 @@ operations, not one cross-resource atomic transaction. portal serializes
 cooperating writers and rolls back ordinary failures while it is running. If
 the process is forcibly terminated between a directory rename and the config
 commit, an unregistered managed directory or a temporary removal directory may
-remain under `data/`; portal does not automatically recover those crash
+remain under `<data-dir>/`; portal does not automatically recover those crash
 orphans.
 
 The HTTP API accepts the same install inputs through `POST /skills` with
@@ -99,7 +99,7 @@ it does not synthesize the combined `$name task` form.
 
 ## Registry
 
-The `skills` section of `data/config.yaml` is the sole source of truth for which skills exist:
+The `skills` section of `<data-dir>/config.yaml` is the sole source of truth for which skills exist:
 
 ```yaml
 skills:
@@ -113,11 +113,11 @@ skills:
 
 The `skills` section is an object keyed by Skill name. Each value contains only
 `directory` and `enabled`; the key must match the corresponding manifest name.
-Relative directories resolve from `data/`; absolute directories can point
-anywhere on the local machine. Directories under `data/skills/` that are not
+Relative directories resolve from `<data-dir>/`; absolute directories can point
+anywhere on the local machine. Directories under `<data-dir>/skills/` that are not
 registered are ignored.
 
-During startup, when `config.yaml` does not exist, portal creates it once and imports valid directories already present under `data/skills/`; every imported entry is enabled. Existing configuration, including malformed registries, is never overwritten during startup initialization.
+During startup, when `config.yaml` does not exist, portal creates it once and imports valid directories already present under `<data-dir>/skills/`; every imported entry is enabled. Existing configuration, including malformed registries, is never overwritten during startup initialization.
 
 portal rereads the registry for every skill command and new runtime. Invalid
 YAML or a non-object `skills` section prevents registry writes and new runtime
@@ -175,7 +175,7 @@ Resources are not automatically injected into the conversation. The model must u
 ## Storage
 
 ```text
-data/
+<data-dir>/
 ├── config.yaml                # browser, instructions, API, MCP, Skills, Hooks, and limits
 ├── skills/<name>/             # remotely downloaded managed skills
 └── temp/skill-install/        # temporary download workspace
