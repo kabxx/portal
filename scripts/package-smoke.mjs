@@ -144,7 +144,7 @@ try {
       '--no-fund',
       tarball,
     ],
-    { env: installEnvironment }
+    { env: installEnvironment, timeout: 300_000 }
   )
 
   const binDirectory = path.join(installDirectory, 'node_modules', '.bin')
@@ -269,7 +269,7 @@ function run(command, args, options = {}) {
     cwd: options.cwd,
     env: options.env ?? process.env,
     encoding: 'utf8',
-    timeout: 120_000,
+    timeout: options.timeout ?? 120_000,
   })
   if (result.error !== undefined) {
     throw result.error
