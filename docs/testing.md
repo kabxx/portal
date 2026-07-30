@@ -28,7 +28,7 @@ npm run test:browser
 The smoke tests use temporary profiles and cover both an exact fixed CDP port and Chromium's dynamic port selection. They verify startup, connection, repeated close calls, and process cleanup without opening a provider website or using an account.
 
 `test:package` builds and audits the real npm tarball, installs it in a
-temporary directory with Git removed from `PATH`, executes the installed
+temporary directory with npm configured to use an unavailable Git executable, executes the installed
 `portal --version` and `portal --help` bin, verifies that metadata commands do
 not create `data/` in the workspace, and loads the platform-native runtime
 dependencies. It also verifies that the bundled Git dependencies do not embed

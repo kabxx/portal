@@ -109,15 +109,30 @@ try {
     assert.match(builtEntry, /^#!\/usr\/bin\/env node\r?\n/)
   }
 
-  const installEnvironment = withoutGitOnPath({
+  const unavailableGit = path.join(temporaryRoot, 'unavailable-git')
+  const installEnvironment = {
     ...process.env,
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1',
-  })
-  const gitProbe = spawnSync('git', ['--version'], {
+  }
+  for (const key of Object.keys(installEnvironment)) {
+    if (key.toLowerCase() === 'npm_config_git') {
+      delete installEnvironment[key]
+    }
+  }
+  installEnvironment.npm_config_git = unavailableGit
+  const configuredGit = runNode([npmCli, 'config', 'get', 'git'], {
+    env: installEnvironment,
+  }).stdout.trim()
+  assert.equal(path.resolve(configuredGit), unavailableGit)
+  const gitProbe = spawnSync(unavailableGit, ['--version'], {
     env: installEnvironment,
     encoding: 'utf8',
   })
-  assert.equal(gitProbe.error?.code, 'ENOENT', 'Git must not be visible')
+  assert.equal(
+    gitProbe.error?.code,
+    'ENOENT',
+    'configured Git must be unavailable'
+  )
 
   runNode(
     [
@@ -227,19 +242,6 @@ function isAllowedPackagePath(filePath) {
     filePath.startsWith('dist/') ||
     filePath.startsWith('node_modules/')
   )
-}
-
-function withoutGitOnPath(environment) {
-  const pathKey =
-    Object.keys(environment).find((key) => key.toLowerCase() === 'path') ??
-    'PATH'
-  for (const key of Object.keys(environment)) {
-    if (key.toLowerCase() === 'path' && key !== pathKey) {
-      delete environment[key]
-    }
-  }
-  environment[pathKey] = path.dirname(process.execPath)
-  return environment
 }
 
 function runNode(args, options = {}) {
