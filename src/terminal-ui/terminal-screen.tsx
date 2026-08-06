@@ -11,7 +11,7 @@ import {
   usePaste,
   useStdout,
   useWindowSize,
-} from 'ink'
+} from '../vendor/ink.ts'
 import type { CliCommand } from '../cli-commands/core/command-types.ts'
 import type { KeybindingCatalog } from '../keybindings/keybinding-catalog.ts'
 import type { ProviderId } from '../providers/provider-id.ts'
@@ -32,7 +32,7 @@ import {
   TerminalController,
 } from './terminal-controller.ts'
 import type { TerminalTranscriptWriter } from './terminal-transcript-writer.ts'
-import { render as renderMarkdown } from 'markdansi'
+import { render as renderMarkdown } from '../vendor/markdansi.ts'
 
 interface TerminalScreenProps {
   ui: TerminalController

@@ -27,13 +27,21 @@ npm run test:browser
 
 The smoke tests use temporary profiles and cover both an exact fixed CDP port and Chromium's dynamic port selection. They verify startup, connection, repeated close calls, and process cleanup without opening a provider website or using an account.
 
-`test:package` builds and audits the real npm tarball, installs it in a
-temporary directory with npm configured to use an unavailable Git executable, executes the installed
-`portal --version` and `portal --help` bin, verifies that metadata commands do
-not create `data/` in the workspace, and loads the platform-native runtime
-dependencies. It also verifies that the bundled Git dependencies do not embed
-a build-machine-specific Koffi binary. CI builds and audits one tarball on
-Linux, then Windows, Linux, and macOS install and smoke-test that exact artifact.
+`test:package` builds and audits the real npm tarball, installs it with
+`npm install --global --prefix` and an unavailable Git executable, executes the
+installed `portal --version` and `portal --help` entry point, and verifies that
+metadata commands do not create `data/` in the workspace. It confirms the
+tarball has no bundled or nested npm dependencies, checks that the separately
+installed Koffi package still contains `cnoke.cjs`, loads every native runtime
+dependency, executes an in-memory SQLite query, and renders text through the
+compiled Ink vendor module. CI builds and audits one tarball on Linux, then
+Windows, Linux, and macOS globally install and smoke-test that exact artifact.
+
+Ink and Markdansi are pinned build-only inputs under `vendor/`. The build
+bundles their JavaScript dependency trees into `dist/vendor/`, leaves React,
+Koffi, and other runtime/native packages external, and emits
+`dist/THIRD-PARTY-NOTICES.txt`. Start release builds from `npm ci`; do not
+replace the archives without updating their provenance and lockfile integrity.
 
 ## 2026-07-17 audit
 
