@@ -3,12 +3,20 @@ import { access, readFile, rm, mkdtemp, mkdir, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 const packageMetadata = JSON.parse(
   await readFile(path.join(projectRoot, 'package.json'), 'utf8')
 )
+const packageLock = JSON.parse(
+  await readFile(path.join(projectRoot, 'package-lock.json'), 'utf8')
+)
+const portalRuntimePackages = new Map([
+  ['@kabxx/ink', '7.1.1-portal.1'],
+  ['@kabxx/markdansi', '0.3.3-portal.1'],
+])
 const npmCli = process.env.npm_execpath
 const [packageMode, packagePath, ...extraArguments] = process.argv.slice(2)
 
@@ -20,7 +28,8 @@ assert.equal(
   undefined,
   'published packages must not bundle Git dependencies'
 )
-assertNoLocalDependencies(packageMetadata.dependencies)
+assertNoNonRegistryDependencies(packageMetadata.dependencies)
+assertRegistryRuntimePackages(packageMetadata, packageLock)
 assert.ok(
   (packageMode === undefined && packagePath === undefined) ||
     ((packageMode === '--output' || packageMode === '--tarball') &&
@@ -171,40 +180,46 @@ try {
   const installedMetadata = JSON.parse(
     await readFile(path.join(installedPackage, 'package.json'), 'utf8')
   )
-  const installedInkMetadata = JSON.parse(
-    await readFile(path.join(installedPackage, 'dist', 'package.json'), 'utf8')
-  )
   assert.equal(installedMetadata.name, packageMetadata.name)
   assert.equal(installedMetadata.version, packageMetadata.version)
-  assert.equal(installedInkMetadata.name, 'ink')
-  assert.equal(typeof installedInkMetadata.version, 'string')
-  assert.equal(installedInkMetadata.type, 'module')
+  const installedRequire = createRequire(
+    path.join(installedPackage, 'package.json')
+  )
+  for (const [name, expectedVersion] of portalRuntimePackages) {
+    assert.equal(installedMetadata.dependencies?.[name], expectedVersion)
+    const dependencyRoot = await findInstalledPackageRoot(
+      installedRequire.resolve(name),
+      name
+    )
+    const dependencyMetadata = JSON.parse(
+      await readFile(path.join(dependencyRoot, 'package.json'), 'utf8')
+    )
+    assert.equal(dependencyMetadata.name, name)
+    assert.equal(dependencyMetadata.version, expectedVersion)
+  }
   const installedEntry = await readFile(
     path.join(installedPackage, 'dist', 'index.js'),
     'utf8'
   )
   assert.match(installedEntry, /^#!\/usr\/bin\/env node\r?\n/)
-  for (const buildOnlyDependency of ['ink', 'markdansi']) {
+  for (const obsoleteDependency of ['ink', 'markdansi']) {
     assert.equal(
-      await pathExists(
-        path.join(installedPackage, 'node_modules', buildOnlyDependency)
-      ),
+      await pathExists(path.join(globalNodeModules, obsoleteDependency)),
       false,
-      `${buildOnlyDependency} must not be installed as a runtime dependency`
+      `${obsoleteDependency} must not be installed as an unscoped dependency`
     )
   }
 
-  const inkBundle = await readFile(
+  const inkFacade = await readFile(
     path.join(installedPackage, 'dist', 'vendor', 'ink.js'),
     'utf8'
   )
-  const markdansiBundle = await readFile(
+  const markdansiFacade = await readFile(
     path.join(installedPackage, 'dist', 'vendor', 'markdansi.js'),
     'utf8'
   )
-  assert.doesNotMatch(inkBundle, /from\s+["']ink(?:\/|["'])/)
-  assert.doesNotMatch(markdansiBundle, /from\s+["']markdansi(?:\/|["'])/)
-  assert.match(inkBundle, /koffi/)
+  assert.match(inkFacade, /from\s+["']@kabxx\/ink["']/)
+  assert.match(markdansiFacade, /from\s+["']@kabxx\/markdansi["']/)
 
   runNode(
     [
@@ -247,9 +262,9 @@ try {
         'const ink = await import(entry.href)',
         'const markdansi = await import(new URL(process.env.PORTAL_MARKDANSI_ENTRY, import.meta.url).href)',
         "const output = ink.renderToString(createElement(ink.Text, null, 'package-smoke'))",
-        "if (!output.includes('package-smoke')) throw new Error('Ink bundle did not render')",
+        "if (!output.includes('package-smoke')) throw new Error('Ink facade did not render')",
         "const markdown = markdansi.render('**package-smoke**', { color: false, hyperlinks: false })",
-        "if (!markdown.includes('package-smoke')) throw new Error('Markdansi bundle did not render')",
+        "if (!markdown.includes('package-smoke')) throw new Error('Markdansi facade did not render')",
       ].join(';'),
     ],
     {
@@ -284,11 +299,38 @@ try {
   await rm(temporaryRoot, { recursive: true, force: true })
 }
 
-function assertNoLocalDependencies(dependencies) {
-  const local = Object.entries(dependencies ?? {}).filter(([, value]) =>
-    /^(?:file|link):/.test(value)
+function assertNoNonRegistryDependencies(dependencies) {
+  const nonRegistry = Object.entries(dependencies ?? {}).filter(([, value]) =>
+    /^(?:file|git|github|gitlab|bitbucket|link|workspace)(?:\+[^:]+)?:/i.test(
+      value
+    )
   )
-  assert.deepEqual(local, [], 'published dependencies must not use local paths')
+  assert.deepEqual(
+    nonRegistry,
+    [],
+    'published dependencies must use registry versions'
+  )
+}
+
+function assertRegistryRuntimePackages(metadata, lock) {
+  const rootLock = lock.packages?.['']
+  assert.ok(rootLock, 'package lock must contain the project root')
+  for (const [name, expectedVersion] of portalRuntimePackages) {
+    assert.equal(metadata.dependencies?.[name], expectedVersion)
+    assert.equal(metadata.devDependencies?.[name], undefined)
+    assert.equal(rootLock.dependencies?.[name], expectedVersion)
+    assert.equal(rootLock.devDependencies?.[name], undefined)
+    const lockEntry = lock.packages?.[`node_modules/${name}`]
+    assert.ok(lockEntry, `package lock must contain ${name}`)
+    assert.equal(lockEntry.version, expectedVersion)
+    assert.equal(lockEntry.dev, undefined)
+    assert.match(lockEntry.resolved, /^https:\/\/registry\.npmjs\.org\//)
+    assert.equal(typeof lockEntry.integrity, 'string')
+  }
+  assert.equal(metadata.devDependencies?.ink, undefined)
+  assert.equal(metadata.devDependencies?.markdansi, undefined)
+  assert.equal(lock.packages?.['node_modules/ink'], undefined)
+  assert.equal(lock.packages?.['node_modules/markdansi'], undefined)
 }
 
 function auditPack(pack) {
@@ -301,8 +343,6 @@ function auditPack(pack) {
     'LICENSE',
     'README.md',
     'dist/index.js',
-    'dist/package.json',
-    'dist/THIRD-PARTY-NOTICES.txt',
     'dist/vendor/ink.js',
     'dist/vendor/markdansi.js',
     'package.json',
@@ -312,9 +352,15 @@ function auditPack(pack) {
       `missing package file: ${required}`
     )
   }
-  assert.ok(
-    allowedFiles.some((filePath) => filePath.startsWith('dist/vendor/chunks/')),
-    'tarball must contain the generated vendor chunks'
+  assert.deepEqual(
+    allowedFiles.filter(
+      (filePath) =>
+        filePath === 'dist/package.json' ||
+        filePath === 'dist/THIRD-PARTY-NOTICES.txt' ||
+        filePath.startsWith('dist/vendor/chunks/')
+    ),
+    [],
+    'tarball must not contain obsolete vendor bundle artifacts'
   )
   assert.deepEqual(
     allowedFiles.filter((filePath) =>
@@ -390,4 +436,21 @@ async function pathExists(target) {
     }
     throw error
   }
+}
+
+async function findInstalledPackageRoot(entryPath, expectedName) {
+  let directory = path.dirname(entryPath)
+  while (true) {
+    const metadataPath = path.join(directory, 'package.json')
+    try {
+      const metadata = JSON.parse(await readFile(metadataPath, 'utf8'))
+      if (metadata.name === expectedName) return directory
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+    const parent = path.dirname(directory)
+    if (parent === directory) break
+    directory = parent
+  }
+  throw new Error(`Unable to locate installed package root for ${expectedName}`)
 }

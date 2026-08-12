@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createElement } from 'react'
-import { renderToString } from 'ink'
+import { renderToString } from '@kabxx/ink'
 
 import { DEFAULT_COMMANDS } from '../../src/cli-commands/command-set.ts'
 import { SkillCatalogSnapshot } from '../../src/skills/skill-library.ts'

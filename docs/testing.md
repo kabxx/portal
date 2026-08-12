@@ -34,14 +34,15 @@ metadata commands do not create `data/` in the workspace. It confirms the
 tarball has no bundled or nested npm dependencies, checks that the separately
 installed Koffi package still contains `cnoke.cjs`, loads every native runtime
 dependency, executes an in-memory SQLite query, and renders text through the
-compiled Ink vendor module. CI builds and audits one tarball on Linux, then
-Windows, Linux, and macOS globally install and smoke-test that exact artifact.
+compiled Ink and Markdansi facades. CI builds and audits one tarball on Linux,
+then Windows, Linux, and macOS globally install and smoke-test that exact
+artifact.
 
-Ink and Markdansi are pinned build-only inputs under `vendor/`. The build
-bundles their JavaScript dependency trees into `dist/vendor/`, leaves React,
-Koffi, and other runtime/native packages external, and emits
-`dist/THIRD-PARTY-NOTICES.txt`. Start release builds from `npm ci`; do not
-replace the archives without updating their provenance and lockfile integrity.
+Ink and Markdansi are exact, scoped runtime dependencies from the npm registry.
+The package smoke test installs them with Git unavailable, verifies their
+versions against `package.json`, and exercises both compiled facades. Start
+release builds from `npm ci`; dependency upgrades must update the exact versions
+and lockfile integrity together.
 
 ## 2026-07-17 audit
 

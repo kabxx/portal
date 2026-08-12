@@ -1,1 +1,1 @@
-export { render } from 'markdansi'
+export { render } from '@kabxx/markdansi'

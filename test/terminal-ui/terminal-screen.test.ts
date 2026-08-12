@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createElement } from 'react'
-import { renderToString, stripAnsiSequences, Text } from 'ink'
+import { renderToString, stripAnsiSequences, Text } from '@kabxx/ink'
 import type { CliCommand } from '../../src/cli-commands/core/command-types.ts'
 
 import {

@@ -11,4 +11,4 @@ export {
   usePaste,
   useStdout,
   useWindowSize,
-} from 'ink'
+} from '@kabxx/ink'
