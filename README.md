@@ -4,9 +4,6 @@
 
 [简体中文](docs/README.zh-CN.md)
 
-> [!IMPORTANT]
-> portal 1.0 was the first official source release, and portal 1.1 adds the public npm CLI. The project remains actively developed, so documented interfaces may change between releases; breaking changes and migration steps are called out in release notes. Provider websites can change without notice, so passing tests cannot guarantee that every real browser workflow still works.
-
 portal launches a real Chromium-based browser and drives supported AI products through their normal websites. The web model can request local tools, receive their results, and continue in the same provider conversation.
 
 portal does **not** call provider model APIs or bypass provider accounts, subscriptions, usage limits, or terms.
@@ -27,7 +24,7 @@ Model, upload, and page capability availability depends on the current account, 
 
 ## Requirements
 
-- Node.js 24 or newer. On Windows, use Node.js 24.15.0 while this repository's CI remains pinned for [nodejs/node#63638](https://github.com/nodejs/node/issues/63638); newer Node.js 24 releases can crash in `fs.watch`.
+- Node.js 24 or newer. On Windows, use Node.js 24.15.0 for compatibility with [nodejs/node#63638](https://github.com/nodejs/node/issues/63638).
 - npm; Git is also required when installing from source
 - Google Chrome or another supported Chromium-based browser
 - A valid account for each provider you use
@@ -36,18 +33,17 @@ Windows, macOS, and Linux are supported launch environments.
 
 ## Quick start
 
-Install the fixed npm release globally and start portal in the workspace you
-want it to use:
+Install portal globally and start it in the workspace you want it to use:
 
 ```bash
-npm install --global @kabxx/portal@1.1.0
+npm install --global @kabxx/portal@latest
 portal
 ```
 
 For a one-off run without a global install:
 
 ```bash
-npx @kabxx/portal@1.1.0
+npx @kabxx/portal@latest
 ```
 
 To run from source instead:
@@ -59,33 +55,20 @@ npm ci
 npm run dev
 ```
 
-The current directory remains portal's workspace. An npm-installed CLI keeps
-configuration, thread history, Skills, and its browser profile in the platform
-user data directory instead of creating `data/` in that workspace:
-
-- Windows: `%LOCALAPPDATA%\portal`
-- macOS: `~/Library/Application Support/portal`
-- Linux: `$XDG_DATA_HOME/portal` or `~/.local/share/portal`
-
-`npm run dev` continues to use the clone's ignored `data/` directory. See
-[Configuration](docs/configuration.md#portal-data-directory) to select another
-location or reuse data from the 1.0 source release.
-
-On first run, portal creates a commented `config.yaml` and a dedicated browser
-profile in its data directory. Create a thread, complete login in the browser
-when needed, and enter a normal task:
+The current directory is portal's workspace. The npm CLI keeps configuration,
+thread metadata, Skills, and its dedicated browser profile in the platform user
+data directory. On first run, complete provider login in the browser when
+needed, create a thread, and enter a normal task:
 
 ```text
 /thread agent chatgpt
 Summarize this repository and identify its highest-risk module.
 ```
 
-Use `/thread chat <provider> [model-key] [option-key]` to create a minimally initialized provider
-conversation. Chat creation sends only the shared `READY` handshake instead of
-portal's full agent setup prompt. Local tools, Skills, MCP connections, and
-Hooks remain active, so chat creation is not a sandbox or an execution boundary.
-
-Use `/help` for the command index. See the [CLI guide](docs/cli.md) for threads, resume, input controls, background jobs, and startup options.
+Use `/help` for the command index. See the [CLI guide](docs/cli.md) for thread
+modes, resume, input controls, background jobs, and startup options, and
+[Configuration](docs/configuration.md#portal-data-directory) for data-directory
+defaults and overrides.
 
 > [!WARNING]
 > portal is not a sandbox. Local tools, Skills, Hooks, MCP servers, and spawned workers run with the permissions of the portal user, and valid model-generated tool calls have no human approval gate. Read [Security](docs/security.md) before using portal with sensitive data.
@@ -120,7 +103,10 @@ Common thread operations:
 /thread close
 ```
 
-Conversation URLs and metadata are stored in `threads.db` under portal's data directory; transcripts and Tool audit records are not. The provider website remains the source of conversation content. Active-thread terminal timelines are lost when portal exits and can grow for the lifetime of a long-running process. `/thread resume` reloads only the provider's current visible user/assistant history.
+portal stores conversation URLs and metadata in its data directory, so
+`/thread resume` can reopen the provider's currently visible conversation
+history. See the [CLI guide](docs/cli.md) for the complete persistence and resume
+behavior.
 
 Use `Ctrl+J` for a reliable multiline input and `Ctrl+C` to cancel the current operation. Input submission remains unavailable while portal is busy. Typing `/` or an active-thread `$` prefix opens a five-row contextual hint bubble; `Up` / `Down` browse it, `Tab` completes the selected item, and `Enter` keeps normal submission. The command index and input controls are documented in the [CLI guide](docs/cli.md).
 
@@ -132,7 +118,7 @@ Use `Ctrl+J` for a reliable multiline input and `Ctrl+C` to cancel the current o
 - **Hooks** observe lifecycle events or allow, deny, and rewrite tool parameters.
 - **Built-in tools** cover images, shell commands, file patches, focused child tasks, Skills, and MCP calls.
 
-Each mechanism has different trust and lifecycle boundaries. Follow the detailed documentation before enabling it.
+See the linked guides for configuration and trust boundaries.
 
 ## Documentation
 
@@ -142,15 +128,14 @@ Each mechanism has different trust and lifecycle boundaries. Follow the detailed
 - **Internals and safety:** [Architecture](docs/architecture.md), [Security](docs/security.md), [Testing](docs/testing.md)
 - **Contributing:** [Contributing guide](docs/contributing.md), [Provider development](docs/provider-development.md)
 
-## Current limitations
+## Release quality
 
-- Provider selectors, private web protocols, and menus can change without notice.
-- Resume displays the provider's current visible user/assistant branch; unsupported content and alternate branches are filtered.
-- Home and thread timelines are in memory only; portal does not maintain a separate persistent transcript or Tool audit archive.
-- Resume assumes that the existing conversation already contains portal's tool protocol and skips the setup handshake. It attaches a fresh local project-instruction snapshot for later path-aware activation, but does not resend always-on instructions or current Skill/MCP catalogs to the existing conversation.
-- Chat creation still sends a minimal `READY` handshake and can execute a valid model-generated tool call even though it does not advertise portal's tools.
-- portal is distributed as an npm CLI and as source; a standalone executable and a headless service remain outside the current local-first distribution.
-- CI builds and audits one npm tarball, then installs that same artifact on Windows, Linux, and macOS before running deterministic tests. Windows CI also runs the browser launcher smoke with Playwright Chromium and a temporary profile. Public CI does not use real provider accounts, so provider UI compatibility still requires private or manual checks.
+Each release is built and audited as one npm tarball, then installed and tested
+from that same artifact on Windows, Linux, and macOS. Windows CI also exercises
+the Chromium launcher lifecycle with Playwright and a temporary browser profile.
+The [Providers guide](docs/providers.md) maintains the supported URLs, model
+syntax, capabilities, response capture, and history behavior for each web
+product.
 
 ## License
 

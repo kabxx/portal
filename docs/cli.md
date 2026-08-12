@@ -8,14 +8,14 @@ The interactive TUI stays on the primary terminal screen, so native mouse-wheel 
 
 ## Starting portal
 
-Install and run a fixed npm release globally:
+Install and run the latest npm release globally:
 
 ```bash
-npm install --global @kabxx/portal@1.1.0
+npm install --global @kabxx/portal@latest
 portal
 ```
 
-For a one-off run, use `npx @kabxx/portal@1.1.0`. To run from a local clone:
+For a one-off run, use `npx @kabxx/portal@latest`. To run from a local clone:
 
 ```bash
 npm ci
