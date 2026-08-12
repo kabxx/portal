@@ -553,8 +553,7 @@ test('RuntimeCore executes revalidated rewritten params and records both inputs'
   })
   hookTargetInputs = []
   let details:
-    | import('../../src/runtime/runtime-core.ts').ToolCallMetadata
-    | undefined
+    import('../../src/runtime/runtime-core.ts').ToolCallMetadata | undefined
 
   await runtime.submitUserInput('Run it.', {
     executionScope: scope,

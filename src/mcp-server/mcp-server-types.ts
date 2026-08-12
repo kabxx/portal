@@ -15,10 +15,7 @@ export type PortalMcpThreadSummary = {
 }
 
 export type PortalMcpMessageStatus =
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
+  'running' | 'completed' | 'failed' | 'cancelled'
 
 export type PortalMcpMessageOperation = {
   operationId: string
@@ -31,8 +28,7 @@ export type PortalMcpMessageOperation = {
 export interface PortalMcpHandlers {
   listProviders(): Promise<{ providers: string[] }> | { providers: string[] }
   listJobs():
-    | Promise<{ jobs: PortalMcpJobSummary[] }>
-    | { jobs: PortalMcpJobSummary[] }
+    Promise<{ jobs: PortalMcpJobSummary[] }> | { jobs: PortalMcpJobSummary[] }
   stopJob(jobId: string): Promise<{ stopped: true; jobId: string }>
   listThreads():
     | Promise<{ threads: PortalMcpThreadSummary[] }>

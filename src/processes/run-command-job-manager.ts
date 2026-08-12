@@ -22,11 +22,7 @@ export type { RunCommandShell } from '../platform/platform-defaults.ts'
 export type RunCommandOutputStream = 'stdout' | 'stderr'
 export type RunCommandJobState = 'running' | 'stopping'
 export type RunCommandTerminationReason =
-  | 'timeout'
-  | 'user'
-  | 'shutdown'
-  | 'encoding_error'
-  | null
+  'timeout' | 'user' | 'shutdown' | 'encoding_error' | null
 
 export interface RunCommandInput {
   command: string

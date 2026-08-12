@@ -108,7 +108,7 @@ function maskMarkdownCode(value: string): string {
   let delimiterLength: number | null = null
   let masked = ''
 
-  for (let index = 0; index < value.length; ) {
+  for (let index = 0; index < value.length;) {
     if (value[index] !== '`') {
       const character = value[index]!
       masked += delimiterLength === null || character === '\n' ? character : ' '

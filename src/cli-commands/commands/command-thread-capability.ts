@@ -17,11 +17,7 @@ export interface ProviderCapabilityState {
 }
 
 type ActionCapabilityState =
-  | 'available'
-  | 'selected'
-  | 'cleared'
-  | 'disabled'
-  | 'unavailable'
+  'available' | 'selected' | 'cleared' | 'disabled' | 'unavailable'
 
 type ToggleCapabilityDefinition = Extract<
   ProviderCapabilityDefinition,
@@ -42,10 +38,7 @@ export interface ProviderCapabilityResult {
 }
 
 type ProviderCapabilityStatus =
-  | 'ok'
-  | 'invalid_args'
-  | 'unknown_capability'
-  | 'unsupported_provider'
+  'ok' | 'invalid_args' | 'unknown_capability' | 'unsupported_provider'
 
 export interface ProviderCapabilityExecution {
   status: ProviderCapabilityStatus

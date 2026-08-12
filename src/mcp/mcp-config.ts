@@ -44,9 +44,7 @@ export interface McpConfigData {
 }
 
 export type McpConfigErrorKind =
-  | 'invalid-input'
-  | 'duplicate-name'
-  | 'stored-config-invalid'
+  'invalid-input' | 'duplicate-name' | 'stored-config-invalid'
 
 export class McpConfigError extends Error {
   public constructor(

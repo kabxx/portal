@@ -53,8 +53,7 @@ class FakeAdapter extends ProviderAdapter {
   private readonly failSubmitWithAuth: boolean
   private readonly responses: string[]
   private readonly onSubmit:
-    | ((options: AbortOptions | undefined) => void)
-    | null
+    ((options: AbortOptions | undefined) => void) | null
 
   public async close() {
     this.closeCalls += 1

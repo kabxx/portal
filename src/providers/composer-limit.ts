@@ -9,9 +9,7 @@ import type { ProviderPage } from './adapters/adapter-base.ts'
 import type { ProviderId } from './provider-id.ts'
 
 export type ComposerLimitUnit =
-  | 'utf16_code_units'
-  | 'unicode_code_points'
-  | 'utf8_bytes'
+  'utf16_code_units' | 'unicode_code_points' | 'utf8_bytes'
 
 export type ComposerLimitConfidence = 'exact' | 'safe_cap'
 

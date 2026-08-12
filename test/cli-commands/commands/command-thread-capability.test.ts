@@ -26,10 +26,7 @@ test.afterEach(() => {
 type ToggleCapability = 'thinking' | 'search' | 'advanced_search' | 'web_search'
 type ToggleState = 'on' | 'off'
 type ActionCapabilityState =
-  | 'available'
-  | 'selected'
-  | 'disabled'
-  | 'unavailable'
+  'available' | 'selected' | 'disabled' | 'unavailable'
 
 interface CapabilityAdapterOverrides {
   hasToggleCapability?: (capability: ToggleCapability) => Promise<boolean>

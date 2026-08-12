@@ -6,12 +6,7 @@ export type PortalPlatform = 'win32' | 'darwin' | 'linux'
 export type BrowserEngine = 'chromium'
 
 export type RunCommandShell =
-  | 'powershell'
-  | 'cmd'
-  | 'bash'
-  | 'zsh'
-  | 'fish'
-  | 'sh'
+  'powershell' | 'cmd' | 'bash' | 'zsh' | 'fish' | 'sh'
 
 export interface ShellCommand {
   file: string

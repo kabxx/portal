@@ -54,9 +54,7 @@ export interface AgentHookHandler extends ModelHookHandlerBase {
 }
 
 export type HookHandler =
-  | CommandHookHandler
-  | PromptHookHandler
-  | AgentHookHandler
+  CommandHookHandler | PromptHookHandler | AgentHookHandler
 
 export interface HooksConfig {
   enabled: boolean

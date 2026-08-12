@@ -30,6 +30,11 @@ assert.equal(
 )
 assertNoNonRegistryDependencies(packageMetadata.dependencies)
 assertRegistryRuntimePackages(packageMetadata, packageLock)
+assert.equal(
+  packageLock.packages?.['node_modules/prebuild-install'],
+  undefined,
+  'production lockfile must not contain deprecated prebuild-install'
+)
 assert.ok(
   (packageMode === undefined && packagePath === undefined) ||
     ((packageMode === '--output' || packageMode === '--tarball') &&
@@ -127,7 +132,7 @@ try {
     'configured Git must be unavailable'
   )
 
-  runNode(
+  const installResult = runNode(
     [
       npmCli,
       'install',
@@ -140,6 +145,18 @@ try {
     ],
     { env: installEnvironment, timeout: 300_000 }
   )
+  assert.doesNotMatch(
+    `${installResult.stdout}\n${installResult.stderr}`,
+    /prebuild-install|npm warn deprecated/i,
+    'package installation must not emit dependency deprecation warnings'
+  )
+  const installedTree = JSON.parse(
+    runNode(
+      [npmCli, 'ls', '--global', '--prefix', globalPrefix, '--all', '--json'],
+      { env: installEnvironment }
+    ).stdout
+  )
+  assertDependencyAbsent(installedTree, 'prebuild-install')
 
   const globalNodeModules = path.join(
     globalPrefix,
@@ -171,6 +188,16 @@ try {
   assertNoModuleTypeWarning(helpResult)
   const help = helpResult.stdout
   assert.match(help, /--data-dir <path>/)
+  const invalidOptionResult = runInstalledPortal(
+    portalBin,
+    ['--portal-invalid-option'],
+    {
+      cwd: workspaceDirectory,
+      env: installEnvironment,
+      expectedStatus: 1,
+    }
+  )
+  assert.match(invalidOptionResult.stderr, /unknown option/i)
   assert.equal(
     await pathExists(path.join(workspaceDirectory, 'data')),
     false,
@@ -227,18 +254,20 @@ try {
       '--eval',
       [
         "import { createRequire } from 'node:module'",
-        "import { existsSync, readFileSync } from 'node:fs'",
-        "import path from 'node:path'",
         'const require = createRequire(process.env.PORTAL_PACKAGE_JSON)',
-        "for (const name of ['fs-native-extensions', 'koffi', '7zip-bin']) require(name)",
-        "let koffiRoot = path.dirname(require.resolve('koffi'))",
-        'let koffiMetadata = null',
-        "for (let depth = 0; depth < 5; depth += 1) { const metadataPath = path.join(koffiRoot, 'package.json'); if (existsSync(metadataPath)) { const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')); if (metadata.name === 'koffi') { koffiMetadata = metadata; break } } koffiRoot = path.dirname(koffiRoot) }",
-        "if (koffiMetadata === null) throw new Error('Unable to locate the Koffi package root')",
-        "if (!existsSync(path.join(koffiRoot, 'cnoke.cjs'))) throw new Error('koffi/cnoke.cjs is missing')",
+        "for (const name of ['fs-native-extensions', '7zip-bin']) require(name)",
+        "const koffi = require('koffi')",
+        "if (typeof koffi.load !== 'function') throw new Error('Koffi native API did not load')",
         "const Database = require('better-sqlite3')",
-        "const database = new Database(':memory:')",
-        "if (database.prepare('select 1 as value').get().value !== 1) throw new Error('SQLite probe failed')",
+        'let database = new Database(process.env.PORTAL_SQLITE_PATH)',
+        "database.pragma('journal_mode = WAL')",
+        "database.exec('CREATE TABLE package_smoke (id INTEGER PRIMARY KEY, value TEXT NOT NULL)')",
+        "const write = database.transaction(() => { database.prepare('INSERT INTO package_smoke (value) VALUES (?)').run('created'); database.prepare('UPDATE package_smoke SET value = ? WHERE id = 1').run('updated') })",
+        'write()',
+        'database.close()',
+        'database = new Database(process.env.PORTAL_SQLITE_PATH)',
+        "if (database.prepare('SELECT value FROM package_smoke WHERE id = 1').get().value !== 'updated') throw new Error('SQLite persistence probe failed')",
+        "if (database.pragma('journal_mode', { simple: true }) !== 'wal') throw new Error('SQLite WAL probe failed')",
         'database.close()',
       ].join(';'),
     ],
@@ -246,6 +275,7 @@ try {
       env: {
         ...installEnvironment,
         PORTAL_PACKAGE_JSON: path.join(installedPackage, 'package.json'),
+        PORTAL_SQLITE_PATH: path.join(workspaceDirectory, 'package-smoke.db'),
       },
     }
   )
@@ -333,6 +363,18 @@ function assertRegistryRuntimePackages(metadata, lock) {
   assert.equal(lock.packages?.['node_modules/markdansi'], undefined)
 }
 
+function assertDependencyAbsent(tree, packageName) {
+  const visit = (node) => {
+    for (const [name, dependency] of Object.entries(node.dependencies ?? {})) {
+      assert.notEqual(name, packageName, `${packageName} must not be installed`)
+      if (dependency !== null && typeof dependency === 'object') {
+        visit(dependency)
+      }
+    }
+  }
+  visit(tree)
+}
+
 function auditPack(pack) {
   assert.equal(pack.name, '@kabxx/portal')
   assert.equal(pack.version, packageMetadata.version)
@@ -416,7 +458,7 @@ function run(command, args, options = {}) {
   }
   assert.equal(
     result.status,
-    0,
+    options.expectedStatus ?? 0,
     [
       `${command} ${args.join(' ')} exited with ${String(result.status)}`,
       result.stdout,

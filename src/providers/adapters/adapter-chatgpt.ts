@@ -36,10 +36,7 @@ const CHATGPT_FINISHED_RESPONSE_SETTLE_MS = 1000
 export type ChatGPTActionCapability = string
 
 export type ChatGPTActionCapabilityState =
-  | 'available'
-  | 'selected'
-  | 'disabled'
-  | 'unavailable'
+  'available' | 'selected' | 'disabled' | 'unavailable'
 
 export interface ChatGPTActionCapabilityInfo {
   name: ChatGPTActionCapability

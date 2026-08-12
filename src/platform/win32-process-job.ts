@@ -33,11 +33,9 @@ let _SetInformationJobObject:
   | ((hJob: number, type_: number, info: Buffer, size: number) => boolean)
   | null = null
 let _AssignProcessToJobObject:
-  | ((hJob: number, hProcess: number) => boolean)
-  | null = null
+  ((hJob: number, hProcess: number) => boolean) | null = null
 let _OpenProcess:
-  | ((access: number, inherit: boolean, pid: number) => number)
-  | null = null
+  ((access: number, inherit: boolean, pid: number) => number) | null = null
 let _CloseHandle: ((handle: number) => boolean) | null = null
 
 function ensureLoaded() {

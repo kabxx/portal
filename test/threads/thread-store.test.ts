@@ -145,10 +145,9 @@ test('createThreadStore resets the unpublished legacy schema', async () => {
     const inspection = new Database(storagePath, { readonly: true })
     try {
       const tables = inspection
-        .prepare<
-          [],
-          { name: string }
-        >("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        .prepare<[], { name: string }>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        )
         .all()
       assert.deepEqual(
         tables.map(({ name }) => name),

@@ -33,9 +33,7 @@ export type UiTone =
 export type UiPhase = 'idle' | 'working' | 'attention'
 export type BubbleFormat = 'plain' | 'markdown' | 'v4a'
 export type BrowserConnectionStatus =
-  | 'connecting'
-  | 'connected'
-  | 'disconnected'
+  'connecting' | 'connected' | 'disconnected'
 
 export interface WelcomeTimelineDetails {
   browserStatus: BrowserConnectionStatus

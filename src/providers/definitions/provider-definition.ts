@@ -22,8 +22,7 @@ type ToggleCapabilityDefinition = {
 }
 
 export type ProviderCapabilityDefinitionFor<P extends ProviderId> = P extends
-  | 'chatgpt'
-  | 'qwen'
+  'chatgpt' | 'qwen'
   ? ActionCapabilityDefinition
   : P extends 'deepseek' | 'glm' | 'kimi'
     ? ToggleCapabilityDefinition

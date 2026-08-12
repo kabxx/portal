@@ -2,11 +2,7 @@ import type { ProviderId } from '../providers/provider-id.ts'
 
 /** State of a thread after it has been admitted to the runtime registry. */
 export type ThreadState =
-  | 'idle'
-  | 'running'
-  | 'cancelling'
-  | 'closing'
-  | 'closed'
+  'idle' | 'running' | 'cancelling' | 'closing' | 'closed'
 
 export type ThreadOrigin = 'new' | 'resumed'
 

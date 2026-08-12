@@ -83,10 +83,7 @@ export type ProviderAdapterErrorKind =
   | 'unknown'
 
 export type ProviderAdapterRecoveryAction =
-  | 'none'
-  | 'retry'
-  | 'restore'
-  | 'reload'
+  'none' | 'retry' | 'restore' | 'reload'
 
 export interface RecoverableProviderAdapter {
   close(): Promise<void>
@@ -599,11 +596,9 @@ export abstract class ProviderAdapter<
   protected context: ProviderBrowserContext<TPage, TSession>
   protected page!: TPage
   private submitStatusReporter:
-    | ((message: string) => void | Promise<void>)
-    | null = null
+    ((message: string) => void | Promise<void>) | null = null
   private submitTextReporter:
-    | ((message: string) => void | Promise<void>)
-    | null = null
+    ((message: string) => void | Promise<void>) | null = null
   private submitSentReporter: (() => void) | null = null
   private submitActivityReporter: (() => void) | null = null
   private submitDispatchReporter: (() => void) | null = null

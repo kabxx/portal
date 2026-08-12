@@ -116,10 +116,7 @@ const ACTION_BAR_INPUT_ITEMS_SOURCE = String.raw`(() => {
 
 export type DoubaoActionCapability = string
 export type DoubaoActionCapabilityState =
-  | 'available'
-  | 'selected'
-  | 'disabled'
-  | 'unavailable'
+  'available' | 'selected' | 'disabled' | 'unavailable'
 
 export interface DoubaoActionCapabilityInfo {
   name: string

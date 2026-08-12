@@ -78,11 +78,7 @@ const QWEN_ACTION_CAPABILITIES = Object.entries(QWEN_ACTION_CAPABILITY_UI).map(
 )
 
 export type QwenActionCapabilityState =
-  | 'available'
-  | 'selected'
-  | 'cleared'
-  | 'disabled'
-  | 'unavailable'
+  'available' | 'selected' | 'cleared' | 'disabled' | 'unavailable'
 
 export interface QwenActionCapabilityInfo {
   readonly name: QwenActionCapability

@@ -63,10 +63,7 @@ const selectors = defineProviderUiSelectors({
 })
 
 export type ChatGPTActionCapabilityState =
-  | 'available'
-  | 'selected'
-  | 'disabled'
-  | 'unavailable'
+  'available' | 'selected' | 'disabled' | 'unavailable'
 
 export interface ChatGPTActionCapabilityInfo {
   name: string

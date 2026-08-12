@@ -95,10 +95,7 @@ export type ThreadLifecycleEvent =
     }
 
 export type ThreadCloseReason =
-  | 'user'
-  | 'provider_page_closed'
-  | 'shutdown'
-  | 'provision_failed'
+  'user' | 'provider_page_closed' | 'shutdown' | 'provision_failed'
 
 export type ThreadLifecycleSource = HookExecutionScope['source']
 
@@ -169,8 +166,7 @@ export interface ThreadLifecycleFailureResult {
 }
 
 export type ProvisionResult =
-  | ThreadLifecycleResult
-  | ThreadLifecycleFailureResult
+  ThreadLifecycleResult | ThreadLifecycleFailureResult
 
 export interface CreateThreadCommand {
   provider: ProviderId
@@ -325,8 +321,7 @@ export class ThreadLifecycleService {
     threadId: string,
     input: string,
     handlers:
-      | ThreadInputHandlers
-      | ((signal: AbortSignal) => Promise<void>) = {},
+      ThreadInputHandlers | ((signal: AbortSignal) => Promise<void>) = {},
     onResult?: (result: ThreadInputResult | null) => void
   ): StartThreadOperationResult {
     return this.startOperation(threadId, async ({ signal }) => {

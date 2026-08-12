@@ -95,10 +95,13 @@ export class ThreadStore {
   ): Promise<ThreadHistoryEntry[]> {
     const safeLimit = normalizeLimit(limit)
     const rows = this.database
-      .prepare<
-        [number],
-        ThreadHistoryRow
-      >(['SELECT * FROM threads', 'ORDER BY last_used_at DESC, id DESC', 'LIMIT ?'].join(' '))
+      .prepare<[number], ThreadHistoryRow>(
+        [
+          'SELECT * FROM threads',
+          'ORDER BY last_used_at DESC, id DESC',
+          'LIMIT ?',
+        ].join(' ')
+      )
       .all(safeLimit)
 
     return rows.map(mapRow)
@@ -111,10 +114,9 @@ export class ThreadStore {
 
   public getSchemaVersion(): number {
     const row = this.database
-      .prepare<
-        [],
-        { version: number }
-      >('SELECT version FROM schema_version WHERE id = 1')
+      .prepare<[], { version: number }>(
+        'SELECT version FROM schema_version WHERE id = 1'
+      )
       .get()
     if (row === undefined) {
       throw new ThreadStoreSchemaError(
@@ -166,10 +168,9 @@ export class ThreadStore {
       }
 
       const row = this.database
-        .prepare<
-          [string],
-          ThreadHistoryRow
-        >('SELECT * FROM threads WHERE conversation_url = ?')
+        .prepare<[string], ThreadHistoryRow>(
+          'SELECT * FROM threads WHERE conversation_url = ?'
+        )
         .get(input.conversationUrl)
       if (row === undefined) {
         throw new Error('Thread history upsert did not return a row.')
@@ -426,10 +427,9 @@ function isCurrentSchema(tables: readonly string[]): boolean {
 
 function validateCurrentSchema(database: DatabaseType): void {
   const versionRows = database
-    .prepare<
-      [],
-      { id: number; version: number }
-    >('SELECT id, version FROM schema_version')
+    .prepare<[], { id: number; version: number }>(
+      'SELECT id, version FROM schema_version'
+    )
     .all()
   if (
     versionRows.length !== 1 ||

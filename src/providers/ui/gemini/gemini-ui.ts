@@ -64,10 +64,7 @@ const selectors = defineProviderUiSelectors({
 })
 
 export type GeminiActionCapabilityState =
-  | 'available'
-  | 'selected'
-  | 'disabled'
-  | 'unavailable'
+  'available' | 'selected' | 'disabled' | 'unavailable'
 
 export interface GeminiActionCapabilityInfo {
   name: string
