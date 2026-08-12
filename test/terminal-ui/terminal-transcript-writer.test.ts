@@ -13,13 +13,13 @@ function entry(id: number, body = `message-${id}`): TimelineEntry {
   }
 }
 
-function createHarness() {
+function createHarness(platform: NodeJS.Platform = 'linux') {
   const writes: string[] = []
   let renderCalls = 0
   const writer = new TerminalTranscriptWriter((item, width) => {
     renderCalls += 1
     return `[${item.id}@${width}]${item.body}\n`
-  })
+  }, platform)
   const write = (data: string) => {
     writes.push(data)
   }
@@ -48,6 +48,39 @@ test('transcript writer appends only new completed bubbles at the same width', (
     { status: 'written' }
   )
   assert.deepEqual(harness.writes, ['[3@80]message-3\n'])
+})
+
+test('transcript writer uses explicit carriage returns on Windows', () => {
+  const harness = createHarness('win32')
+
+  harness.writer.sync([entry(1), entry(2)], 80, true, harness.write)
+
+  assert.deepEqual(harness.writes, [
+    '\u001B[2J\u001B[3J\u001B[H[1@80]message-1\r\n[2@80]message-2\r\n',
+  ])
+})
+
+test('transcript writer appends with explicit carriage returns on Windows', () => {
+  const harness = createHarness('win32')
+  const first = [entry(1)]
+
+  harness.writer.sync(first, 80, true, harness.write)
+  harness.writes.length = 0
+  harness.writer.sync([...first, entry(2)], 80, false, harness.write)
+
+  assert.deepEqual(harness.writes, ['[2@80]message-2\r\n'])
+})
+
+test('transcript writer preserves existing CRLF on Windows', () => {
+  const writes: string[] = []
+  const writer = new TerminalTranscriptWriter(
+    (item, width) => `[${item.id}@${width}]${item.body}\r\n`,
+    'win32'
+  )
+
+  writer.sync([entry(1)], 80, true, (data) => writes.push(data))
+
+  assert.deepEqual(writes, ['\u001B[2J\u001B[3J\u001B[H[1@80]message-1\r\n'])
 })
 
 test('transcript writer rebuilds every completed bubble after a resize', () => {

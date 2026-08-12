@@ -22,7 +22,10 @@ export class TerminalTranscriptWriter {
   private renderedWidth: number | null = null
   private readonly renderedEntries = new Map<string, string>()
 
-  public constructor(private readonly renderEntry: TimelineAnsiRenderer) {}
+  public constructor(
+    private readonly renderEntry: TimelineAnsiRenderer,
+    private readonly platform: NodeJS.Platform = process.platform
+  ) {}
 
   public reset(): void {
     this.committedSignatures = []
@@ -49,7 +52,9 @@ export class TerminalTranscriptWriter {
       const rendered = entries
         .map((entry) => this.render(entry, width))
         .join('')
-      writePreservingLiveFrame(`${CLEAR_TERMINAL_ESCAPE}${rendered}`)
+      writePreservingLiveFrame(
+        this.prepareTerminalOutput(`${CLEAR_TERMINAL_ESCAPE}${rendered}`)
+      )
       const activeSignatures = new Set(signatures)
       for (const signature of this.renderedEntries.keys()) {
         if (!activeSignatures.has(signature)) {
@@ -69,7 +74,7 @@ export class TerminalTranscriptWriter {
     const appended = entries.slice(this.committedSignatures.length)
     const rendered = appended.map((entry) => this.render(entry, width)).join('')
     if (rendered !== '') {
-      writePreservingLiveFrame(rendered)
+      writePreservingLiveFrame(this.prepareTerminalOutput(rendered))
     }
     this.committedSignatures = signatures
     return { status: 'written' }
@@ -88,6 +93,15 @@ export class TerminalTranscriptWriter {
     const rendered = this.renderEntry(entry, width)
     this.renderedEntries.set(signature, rendered)
     return rendered
+  }
+
+  private prepareTerminalOutput(output: string): string {
+    // Ink disables Windows' automatic newline return so full-width frames do
+    // not scroll. Transcript writes bypass Ink's frame writer, so restore the
+    // carriage return explicitly for every line written to that console.
+    return this.platform === 'win32'
+      ? output.replace(/(?<!\r)\n/g, '\r\n')
+      : output
   }
 }
 
