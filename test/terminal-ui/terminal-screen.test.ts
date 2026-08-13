@@ -8,6 +8,7 @@ import type { ProviderId } from '../../src/providers/provider-id.ts'
 
 import {
   INPUT_CURSOR,
+  buildLiveFrameSignature,
   buildWelcomeRows,
   calculateBubbleWidth,
   canSubmitInput,
@@ -33,6 +34,7 @@ import {
   wrapAnsiLine,
   resolveInputSyntaxHighlight,
   resolveSubmittedInputValue,
+  createTranscriptSyncScheduler,
   shouldClearInputForCtrlC,
   shouldInterruptForKey,
   shouldNavigateInputHistory,
@@ -108,6 +110,310 @@ test('cancelled transcript sync neither writes nor commits its layout', async ()
   assert.equal(await pending, 'cancelled')
   assert.equal(writes, 0)
   assert.equal(commits, 0)
+})
+
+test('transcript sync rejects a live frame that changes before flush', async () => {
+  const flush = Promise.withResolvers<void>()
+  let liveFrame = 'before'
+  let writes = 0
+  let commits = 0
+
+  const pending = syncTranscriptAfterRenderFlush({
+    waitUntilRenderFlush: async () => await flush.promise,
+    isCancelled: () => liveFrame !== 'before',
+    sync: () => {
+      writes += 1
+    },
+    commitLayout: () => {
+      commits += 1
+    },
+  })
+
+  liveFrame = 'after'
+  flush.resolve()
+
+  assert.equal(await pending, 'cancelled')
+  assert.equal(writes, 0)
+  assert.equal(commits, 0)
+})
+
+test('transcript sync scheduler coalesces live updates and writes the latest request', async () => {
+  const firstFlush = Promise.withResolvers<void>()
+  const secondFlush = Promise.withResolvers<void>()
+  const flushes = [firstFlush.promise, secondFlush.promise]
+  const writes: string[] = []
+  let waitCount = 0
+
+  const scheduler = createTranscriptSyncScheduler({
+    waitUntilRenderFlush: async () => {
+      waitCount += 1
+      await flushes[waitCount - 1]
+    },
+    getLiveFrameSignature: () => 'stable',
+    sync: (request) => writes.push(request.completedTimeline[0]!.body),
+    commitLayout: () => {},
+  })
+
+  scheduler.request({
+    completedTimeline: [
+      { id: 1, tone: 'info', label: '', body: 'old', format: 'plain' },
+    ],
+    bubbleWidth: 10,
+    forceReflow: false,
+    layout: { columns: 80, rows: 24 },
+    liveFrameSignature: 'stable',
+  })
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+  scheduler.request({
+    completedTimeline: [
+      { id: 1, tone: 'info', label: '', body: 'latest', format: 'plain' },
+    ],
+    bubbleWidth: 10,
+    forceReflow: false,
+    layout: { columns: 80, rows: 24 },
+    liveFrameSignature: 'stable',
+  })
+  firstFlush.resolve()
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  secondFlush.resolve()
+
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  assert.equal(waitCount, 2)
+  assert.deepEqual(writes, ['latest'])
+  scheduler.dispose()
+})
+
+test('transcript sync scheduler retries when the live frame changes during flush', async () => {
+  const firstFlush = Promise.withResolvers<void>()
+  const secondFlush = Promise.withResolvers<void>()
+  const flushes = [firstFlush.promise, secondFlush.promise]
+  const writes: string[] = []
+  let liveFrame = 'before'
+  let waitCount = 0
+
+  const scheduler = createTranscriptSyncScheduler({
+    waitUntilRenderFlush: async () => {
+      waitCount += 1
+      await flushes[waitCount - 1]
+    },
+    getLiveFrameSignature: () => liveFrame,
+    sync: (request) => writes.push(request.liveFrameSignature),
+    commitLayout: () => {},
+  })
+
+  scheduler.request({
+    completedTimeline: [],
+    bubbleWidth: 10,
+    forceReflow: false,
+    layout: { columns: 80, rows: 24 },
+    liveFrameSignature: 'before',
+  })
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+  liveFrame = 'after'
+  scheduler.updateLiveFrame(liveFrame)
+  firstFlush.resolve()
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  secondFlush.resolve()
+
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  assert.equal(waitCount, 2)
+  assert.deepEqual(writes, ['after'])
+  scheduler.dispose()
+})
+
+test('live frame updates do not schedule transcript work without a pending request', async () => {
+  let waitCount = 0
+  const scheduler = createTranscriptSyncScheduler({
+    waitUntilRenderFlush: async () => {
+      waitCount += 1
+    },
+    getLiveFrameSignature: () => 'after',
+    sync: () => {},
+    commitLayout: () => {},
+  })
+
+  scheduler.updateLiveFrame('after')
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(waitCount, 0)
+  scheduler.dispose()
+})
+
+test('transcript sync scheduler preserves full reflow until the latest request commits', async () => {
+  const firstFlush = Promise.withResolvers<void>()
+  const secondFlush = Promise.withResolvers<void>()
+  const flushes = [firstFlush.promise, secondFlush.promise]
+  const syncedReflows: boolean[] = []
+  const committedLayouts: Array<{ columns: number; rows: number }> = []
+  let waitCount = 0
+
+  const scheduler = createTranscriptSyncScheduler({
+    waitUntilRenderFlush: async () => {
+      waitCount += 1
+      await flushes[waitCount - 1]
+    },
+    getLiveFrameSignature: () => 'stable',
+    sync: (request) => syncedReflows.push(request.forceReflow),
+    commitLayout: (request) => committedLayouts.push(request.layout),
+  })
+
+  scheduler.request({
+    completedTimeline: [],
+    bubbleWidth: 100,
+    forceReflow: true,
+    layout: { columns: 100, rows: 30 },
+    liveFrameSignature: 'stable',
+  })
+  await new Promise<void>((resolve) => setTimeout(resolve, 80))
+  scheduler.request({
+    completedTimeline: [],
+    bubbleWidth: 120,
+    forceReflow: true,
+    layout: { columns: 120, rows: 40 },
+    liveFrameSignature: 'stable',
+  })
+
+  firstFlush.resolve()
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  secondFlush.resolve()
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+  assert.deepEqual(syncedReflows, [true])
+  assert.deepEqual(committedLayouts, [{ columns: 120, rows: 40 }])
+  scheduler.dispose()
+})
+
+test('disposed transcript sync scheduler ignores a pending flush', async () => {
+  const flush = Promise.withResolvers<void>()
+  let writes = 0
+  let commits = 0
+  const scheduler = createTranscriptSyncScheduler({
+    waitUntilRenderFlush: async () => await flush.promise,
+    getLiveFrameSignature: () => 'stable',
+    sync: () => {
+      writes += 1
+    },
+    commitLayout: () => {
+      commits += 1
+    },
+  })
+
+  scheduler.request({
+    completedTimeline: [],
+    bubbleWidth: 10,
+    forceReflow: false,
+    layout: { columns: 80, rows: 24 },
+    liveFrameSignature: 'stable',
+  })
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  scheduler.dispose()
+  flush.resolve()
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(writes, 0)
+  assert.equal(commits, 0)
+})
+
+test('transcript sync scheduler drops a request when sync fails', async () => {
+  let attempts = 0
+  const errors: unknown[] = []
+  const scheduler = createTranscriptSyncScheduler({
+    waitUntilRenderFlush: async () => {},
+    getLiveFrameSignature: () => 'stable',
+    sync: () => {
+      attempts += 1
+      throw new Error('write failed')
+    },
+    commitLayout: () => {},
+    onError: (error) => errors.push(error),
+  })
+
+  scheduler.request({
+    completedTimeline: [],
+    bubbleWidth: 10,
+    forceReflow: false,
+    layout: { columns: 80, rows: 24 },
+    liveFrameSignature: 'stable',
+  })
+  await new Promise<void>((resolve) => setTimeout(resolve, 10))
+
+  assert.equal(attempts, 1)
+  assert.equal(errors.length, 1)
+  assert.ok(errors[0] instanceof Error)
+  assert.equal(errors[0].message, 'write failed')
+  scheduler.dispose()
+})
+
+test('transcript sync scheduler reports flush failures and retries new requests', async () => {
+  let shouldFail = true
+  let waits = 0
+  const errors: unknown[] = []
+  const scheduler = createTranscriptSyncScheduler({
+    waitUntilRenderFlush: async () => {
+      waits += 1
+      if (shouldFail) throw new Error('flush failed')
+    },
+    getLiveFrameSignature: () => 'stable',
+    sync: () => {},
+    commitLayout: () => {},
+    onError: (error) => errors.push(error),
+  })
+
+  const request = {
+    completedTimeline: [],
+    bubbleWidth: 10,
+    forceReflow: false,
+    layout: { columns: 80, rows: 24 },
+    liveFrameSignature: 'stable',
+  }
+  scheduler.request(request)
+  await new Promise<void>((resolve) => setTimeout(resolve, 10))
+  shouldFail = false
+  scheduler.request(request)
+  await new Promise<void>((resolve) => setTimeout(resolve, 10))
+
+  assert.equal(waits, 2)
+  assert.equal(errors.length, 1)
+  assert.ok(errors[0] instanceof Error)
+  assert.equal(errors[0].message, 'flush failed')
+  scheduler.dispose()
+})
+
+test('live frame signature changes when input or hints change', () => {
+  const base = {
+    inputValue: '',
+    inputCursor: 0,
+    selectedHintCompletion: null,
+    prompt: { active: true, label: 'deepseek > ', hint: '' },
+    busy: false,
+    connectingWelcome: null,
+    liveAssistant: null,
+    liveCommand: null,
+    liveCommandTitle: null,
+    inputHintGroup: null,
+  } as const
+
+  assert.equal(buildLiveFrameSignature(base), buildLiveFrameSignature(base))
+  assert.notEqual(
+    buildLiveFrameSignature(base),
+    buildLiveFrameSignature({ ...base, inputValue: '/' })
+  )
+  assert.notEqual(
+    buildLiveFrameSignature(base),
+    buildLiveFrameSignature({
+      ...base,
+      inputHintGroup: { title: 'commands', hints: [] },
+    })
+  )
+  assert.notEqual(
+    buildLiveFrameSignature(base),
+    buildLiveFrameSignature({
+      ...base,
+      liveCommandTitle: 'spawn · running · 1s',
+    })
+  )
 })
 
 test('isNewlineKey keeps plain Enter as submit', () => {

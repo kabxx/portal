@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Box,
   sanitizeTerminalText,
@@ -96,11 +96,40 @@ export interface InputHintGroup {
   hints: readonly InputHint[]
 }
 
+export interface LiveFrameSignatureInput {
+  inputValue: string
+  inputCursor: number
+  selectedHintCompletion: string | null
+  prompt: TerminalState['prompt']
+  busy: boolean
+  connectingWelcome: TimelineEntry | null
+  liveAssistant: TerminalState['liveAssistant']
+  liveCommand: TerminalState['liveCommand']
+  liveCommandTitle: string | null
+  inputHintGroup: InputHintGroup | null
+}
+
 interface TranscriptSyncAfterRenderOptions {
   waitUntilRenderFlush: () => Promise<void>
   isCancelled: () => boolean
   sync: () => void
   commitLayout: () => void
+}
+
+export interface TranscriptSyncRequest {
+  completedTimeline: readonly TimelineEntry[]
+  bubbleWidth: number
+  forceReflow: boolean
+  layout: { columns: number; rows: number }
+  liveFrameSignature: string
+}
+
+interface TranscriptSyncSchedulerOptions {
+  waitUntilRenderFlush: () => Promise<void>
+  getLiveFrameSignature: () => string
+  sync: (request: TranscriptSyncRequest) => void
+  commitLayout: (request: TranscriptSyncRequest) => void
+  onError?: (error: unknown) => void
 }
 
 export async function syncTranscriptAfterRenderFlush({
@@ -115,6 +144,136 @@ export async function syncTranscriptAfterRenderFlush({
   sync()
   commitLayout()
   return 'synced'
+}
+
+export function createTranscriptSyncScheduler({
+  waitUntilRenderFlush,
+  getLiveFrameSignature,
+  sync,
+  commitLayout,
+  onError,
+}: TranscriptSyncSchedulerOptions) {
+  type PendingRequest = TranscriptSyncRequest & { version: number }
+
+  let latestRequest: PendingRequest | null = null
+  let nextVersion = 0
+  let running = false
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let disposed = false
+
+  const schedule = (delay: number) => {
+    if (disposed || running || timer !== null) return
+    timer = setTimeout(() => {
+      timer = null
+      void run()
+    }, delay)
+  }
+
+  const run = async () => {
+    if (disposed || running) return
+    running = true
+    let waitingForLiveFrameUpdate = false
+    const request = latestRequest
+
+    try {
+      if (request === null) return
+      await waitUntilRenderFlush()
+
+      if (disposed) return
+      if (latestRequest?.version !== request.version) {
+        return
+      }
+      if (getLiveFrameSignature() !== request.liveFrameSignature) {
+        waitingForLiveFrameUpdate = true
+        return
+      }
+
+      sync(request)
+
+      if (disposed) return
+      if (latestRequest?.version !== request.version) {
+        return
+      }
+      if (getLiveFrameSignature() !== request.liveFrameSignature) {
+        waitingForLiveFrameUpdate = true
+        return
+      }
+
+      commitLayout(request)
+      latestRequest = null
+    } catch (error) {
+      if (request !== null && latestRequest?.version === request.version) {
+        latestRequest = null
+      }
+      try {
+        onError?.(error)
+      } catch {
+        // Error reporting must not create an unhandled scheduler rejection.
+      }
+    } finally {
+      running = false
+      if (!disposed && !waitingForLiveFrameUpdate && latestRequest !== null) {
+        schedule(0)
+      }
+    }
+  }
+
+  return {
+    request(request: TranscriptSyncRequest) {
+      if (disposed) return
+      latestRequest = { ...request, version: ++nextVersion }
+      schedule(request.forceReflow ? 75 : 0)
+    },
+    updateLiveFrame(liveFrameSignature: string) {
+      if (
+        disposed ||
+        latestRequest === null ||
+        latestRequest.liveFrameSignature === liveFrameSignature
+      ) {
+        return
+      }
+      latestRequest = {
+        ...latestRequest,
+        liveFrameSignature,
+        version: ++nextVersion,
+      }
+      schedule(0)
+    },
+    dispose() {
+      disposed = true
+      latestRequest = null
+      if (timer !== null) {
+        clearTimeout(timer)
+        timer = null
+      }
+    },
+  }
+}
+
+export function buildLiveFrameSignature({
+  inputValue,
+  inputCursor,
+  selectedHintCompletion,
+  prompt,
+  busy,
+  connectingWelcome,
+  liveAssistant,
+  liveCommand,
+  liveCommandTitle,
+  inputHintGroup,
+}: LiveFrameSignatureInput): string {
+  return JSON.stringify({
+    inputValue,
+    inputCursor,
+    selectedHintCompletion,
+    prompt,
+    busy,
+    connectingWelcome,
+    liveAssistant,
+    liveCommand,
+    liveCommandTitle,
+    inputHintGroup,
+  })
 }
 
 const INPUT_SYNTAX_COLOR: Record<InputSyntaxKind, string> = {
@@ -851,6 +1010,10 @@ export function TerminalScreen({
   const inputStateRef = useRef(inputState)
   const inputRevisionRef = useRef(0)
   const inputSubmissionRef = useRef(0)
+  const liveFrameSignatureRef = useRef('')
+  const transcriptSyncSchedulerRef = useRef<ReturnType<
+    typeof createTranscriptSyncScheduler
+  > | null>(null)
   const transcriptLayoutRef = useRef<{
     columns: number
     rows: number
@@ -1312,55 +1475,80 @@ export function TerminalScreen({
     connectingWelcome === null
       ? state.timeline
       : state.timeline.filter((entry) => entry.id !== connectingWelcome.id)
+  const liveCommandTitle =
+    state.liveCommand === null
+      ? null
+      : formatLiveCommandTitle(
+          state.liveCommand.toolName,
+          state.liveCommand.startedAt
+        )
+
+  const liveFrameSignature = buildLiveFrameSignature({
+    inputValue,
+    inputCursor: inputState.cursor,
+    selectedHintCompletion,
+    prompt: state.prompt,
+    busy: state.busy,
+    connectingWelcome,
+    liveAssistant: state.liveAssistant,
+    liveCommand: state.liveCommand,
+    liveCommandTitle,
+    inputHintGroup,
+  })
 
   const completedTimelineSignature = completedTimeline
     .map((entry) => timelineEntrySignature(entry))
     .join('\u001F')
 
   useEffect(() => {
-    if (transcriptWriter === null) {
-      return
+    if (transcriptWriter === null) return
+
+    const scheduler = createTranscriptSyncScheduler({
+      waitUntilRenderFlush,
+      getLiveFrameSignature: () => liveFrameSignatureRef.current,
+      sync: (request) => {
+        transcriptWriter.sync(
+          request.completedTimeline,
+          request.bubbleWidth,
+          request.forceReflow,
+          writeToStdout
+        )
+      },
+      commitLayout: (request) => {
+        transcriptLayoutRef.current = request.layout
+      },
+    })
+    transcriptSyncSchedulerRef.current = scheduler
+
+    return () => {
+      scheduler.dispose()
+      if (transcriptSyncSchedulerRef.current === scheduler) {
+        transcriptSyncSchedulerRef.current = null
+      }
     }
+  }, [transcriptWriter, waitUntilRenderFlush, writeToStdout])
+
+  useLayoutEffect(() => {
+    liveFrameSignatureRef.current = liveFrameSignature
+    transcriptSyncSchedulerRef.current?.updateLiveFrame(liveFrameSignature)
+  }, [liveFrameSignature])
+
+  useEffect(() => {
+    const scheduler = transcriptSyncSchedulerRef.current
+    if (scheduler === null || transcriptWriter === null) return
 
     const previousLayout = transcriptLayoutRef.current
     const forceReflow =
       previousLayout === null ||
       previousLayout.columns !== screenColumns ||
       previousLayout.rows !== screenRows
-    const nextLayout = {
-      columns: screenColumns,
-      rows: screenRows,
-    }
-    let cancelled = false
-
-    const sync = async () => {
-      await syncTranscriptAfterRenderFlush({
-        waitUntilRenderFlush,
-        isCancelled: () => cancelled,
-        sync: () => {
-          transcriptWriter.sync(
-            completedTimeline,
-            bubbleWidth,
-            forceReflow,
-            writeToStdout
-          )
-        },
-        commitLayout: () => {
-          transcriptLayoutRef.current = nextLayout
-        },
-      })
-    }
-
-    const timer = setTimeout(
-      () => {
-        void sync()
-      },
-      forceReflow ? 75 : 0
-    )
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
+    scheduler.request({
+      completedTimeline,
+      bubbleWidth,
+      forceReflow,
+      layout: { columns: screenColumns, rows: screenRows },
+      liveFrameSignature,
+    })
   }, [
     bubbleWidth,
     completedTimelineSignature,
@@ -1368,8 +1556,6 @@ export function TerminalScreen({
     screenRows,
     state.timelineVersion,
     transcriptWriter,
-    waitUntilRenderFlush,
-    writeToStdout,
   ])
 
   return (
@@ -1384,6 +1570,7 @@ export function TerminalScreen({
         <ChatPanel
           bubbleWidth={bubbleWidth}
           connectingWelcome={connectingWelcome}
+          liveCommandTitle={liveCommandTitle}
           spinnerText={SPINNER_FRAMES[spinnerFrameIndex]!}
           state={state}
         />
@@ -1522,11 +1709,13 @@ function ChatPanel({
   state,
   bubbleWidth,
   connectingWelcome,
+  liveCommandTitle,
   spinnerText,
 }: {
   state: TerminalState
   bubbleWidth: number
   connectingWelcome: TimelineEntry | null
+  liveCommandTitle: string | null
   spinnerText: string
 }) {
   const shouldShowWaiting = shouldShowWaitingIndicator(state)
@@ -1554,10 +1743,9 @@ function ChatPanel({
           entry={state.liveCommand}
           key={state.liveCommand.id}
           width={bubbleWidth}
-          labelOverride={formatLiveCommandTitle(
-            state.liveCommand.toolName,
-            state.liveCommand.startedAt
-          )}
+          {...(liveCommandTitle === null
+            ? {}
+            : { labelOverride: liveCommandTitle })}
           {...(state.liveCommand.fixedLineCount === undefined
             ? {}
             : { fixedLineCount: state.liveCommand.fixedLineCount })}
