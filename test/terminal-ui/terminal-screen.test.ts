@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { createElement } from 'react'
 import { renderToString, stripAnsiSequences, Text } from '@kabxx/ink'
 import type { CliCommand } from '../../src/cli-commands/core/command-types.ts'
+import { DEFAULT_COMMANDS } from '../../src/cli-commands/command-set.ts'
+import type { ProviderId } from '../../src/providers/provider-id.ts'
 
 import {
   INPUT_CURSOR,
@@ -30,6 +32,7 @@ import {
   renderTimelineEntryToAnsi,
   wrapAnsiLine,
   resolveInputSyntaxHighlight,
+  resolveSubmittedInputValue,
   shouldClearInputForCtrlC,
   shouldInterruptForKey,
   shouldNavigateInputHistory,
@@ -37,6 +40,17 @@ import {
   truncateMiddleLine,
 } from '../../src/terminal-ui/terminal-screen.tsx'
 import type { KeyModifiers } from '../../src/terminal-ui/terminal-screen.tsx'
+
+const PROVIDERS: readonly ProviderId[] = [
+  'chatgpt',
+  'gemini',
+  'deepseek',
+  'doubao',
+  'grok',
+  'glm',
+  'qwen',
+  'kimi',
+]
 
 function key(modifiers: Partial<KeyModifiers> = {}): KeyModifiers {
   return {
@@ -521,6 +535,102 @@ test('busy input accepts slash commands but keeps ordinary prompts pending', () 
   assert.equal(canSubmitInput('  /thread list', true), true)
   assert.equal(canSubmitInput('continue with the tests', true), false)
   assert.equal(canSubmitInput('continue with the tests', false), true)
+})
+
+test('slash command submission completes the current hint once', () => {
+  assert.equal(
+    resolveSubmittedInputValue('/', null, DEFAULT_COMMANDS, PROVIDERS),
+    '/help'
+  )
+  assert.equal(
+    resolveSubmittedInputValue('/thread ag', null, DEFAULT_COMMANDS, PROVIDERS),
+    '/thread agent'
+  )
+  assert.equal(
+    resolveSubmittedInputValue(
+      '/thread agent gem',
+      null,
+      DEFAULT_COMMANDS,
+      PROVIDERS
+    ),
+    '/thread agent gemini'
+  )
+})
+
+test('slash command submission uses the selected or current default hint', () => {
+  assert.equal(
+    resolveSubmittedInputValue('/', '/thread ', DEFAULT_COMMANDS, PROVIDERS),
+    '/thread'
+  )
+  assert.equal(
+    resolveSubmittedInputValue('/', '/missing ', DEFAULT_COMMANDS, PROVIDERS),
+    '/help'
+  )
+  assert.equal(
+    resolveSubmittedInputValue(
+      '/thread agent ',
+      '/thread agent deepseek ',
+      DEFAULT_COMMANDS,
+      PROVIDERS
+    ),
+    '/thread agent deepseek'
+  )
+  assert.equal(
+    resolveSubmittedInputValue(
+      '/thread agent gemini ',
+      '/thread agent gemini 3.1-pro ',
+      DEFAULT_COMMANDS,
+      PROVIDERS
+    ),
+    '/thread agent gemini 3.1-pro'
+  )
+  assert.equal(
+    resolveSubmittedInputValue(
+      '/thread agent gemini ',
+      null,
+      DEFAULT_COMMANDS,
+      PROVIDERS
+    ),
+    '/thread agent gemini 3.5-flash-lite'
+  )
+  assert.equal(
+    resolveSubmittedInputValue(
+      '/thread agent gemini 3.1-pro e',
+      null,
+      DEFAULT_COMMANDS,
+      PROVIDERS
+    ),
+    '/thread agent gemini 3.1-pro extended'
+  )
+})
+
+test('slash command submission preserves inputs without a selectable hint', () => {
+  const values = [
+    'hello',
+    '$review',
+    '/unknown',
+    '/unknown ',
+    '/help ',
+    '/thread\nagent',
+  ]
+  for (const value of values) {
+    assert.equal(
+      resolveSubmittedInputValue(
+        value,
+        '/thread ',
+        DEFAULT_COMMANDS,
+        PROVIDERS
+      ),
+      value
+    )
+  }
+})
+
+test('slash command submission matches hints for leading whitespace', () => {
+  assert.equal(
+    resolveSubmittedInputValue('  /thr', null, DEFAULT_COMMANDS, PROVIDERS),
+    '/thread'
+  )
 })
 
 test('shouldInterruptForKey only allows Ctrl+D to exit on empty non-busy input', () => {

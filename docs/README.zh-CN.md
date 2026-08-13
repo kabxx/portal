@@ -103,7 +103,7 @@ flowchart LR
 portal 会在数据目录中保存会话 URL 和元信息，因此 `/thread resume` 可以重新打开
 Provider 当前可见的会话历史。完整的持久化和 Resume 行为请参阅 [CLI 指南](cli.md)。
 
-使用 `Ctrl+J` 可靠地输入换行，使用 `Ctrl+C` 取消当前操作。portal busy 时不能提交输入。输入 `/` 或活动线程中的 `$` 前缀会打开最多五条的上下文提示；`Up` / `Down` 浏览提示，`Tab` 补全选中项，`Enter` 保持默认提交。命令索引和输入控制请参阅 [CLI 指南](cli.md)。
+使用 `Ctrl+J` 可靠地输入换行，使用 `Ctrl+C` 取消当前操作。portal busy 时不能提交输入。输入 `/` 或活动线程中的 `$` 前缀会打开最多五条的上下文提示；`Up` / `Down` 浏览提示，`Tab` 补全选中项。`Enter` 会一步补全并提交当前选中的斜杠命令提示；普通文本和 `$skill` 输入仍原样提交。命令索引和输入控制请参阅 [CLI 指南](cli.md)。
 
 ## 扩展能力
 

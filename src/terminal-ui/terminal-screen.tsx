@@ -619,6 +619,21 @@ export function resolveInputHintGroup(
   return skillHints.length > 0 ? { title: 'skills', hints: skillHints } : null
 }
 
+export function resolveSubmittedInputValue(
+  value: string,
+  selectedHintCompletion: string | null,
+  commands: readonly CliCommand[],
+  providers: readonly ProviderId[]
+): string {
+  const commandHints = resolveCommandHints(value, commands, providers)
+  const completion = resolveInputHintSelection(
+    commandHints,
+    value,
+    selectedHintCompletion
+  )
+  return completion?.trimEnd() ?? value
+}
+
 export function resolveInputSyntaxHighlight(
   value: string,
   commands: readonly CliCommand[],
@@ -1038,7 +1053,13 @@ export function TerminalScreen({
 
     if (action === 'input.submit') {
       const currentState = ui.getState()
-      const submittedValue = inputStateRef.current.value
+      const currentInput = inputStateRef.current
+      const submittedValue = resolveSubmittedInputValue(
+        currentInput.value,
+        currentInput.selectedHintCompletion,
+        commands,
+        providers
+      )
       const submittedRevision = inputRevisionRef.current
       if (
         !currentState.prompt.active ||

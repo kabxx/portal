@@ -199,6 +199,8 @@ by multiple actions are rejected.
 Editing and saving a valid section applies it automatically. Invalid edits show
 an error in the TUI and leave the last valid snapshot active. `[]` explicitly
 unbinds an action, except `input.submit`, which must keep at least one binding.
+Any key bound to `input.submit` completes the selected slash-command hint before
+submitting; ordinary text and `$skill` input submit unchanged.
 Missing known actions use current-platform defaults and are written into the
 complete table during the next startup migration. Unknown actions are errors.
 
