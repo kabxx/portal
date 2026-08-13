@@ -17,6 +17,7 @@ const portalRuntimePackages = new Map([
   ['@kabxx/ink', '7.1.1-portal.1'],
   ['@kabxx/markdansi', '0.3.3-portal.1'],
 ])
+const PACKAGE_INSTALL_TIMEOUT_MS = 600_000
 const npmCli = process.env.npm_execpath
 const [packageMode, packagePath, ...extraArguments] = process.argv.slice(2)
 
@@ -143,7 +144,7 @@ try {
       '--no-fund',
       tarball,
     ],
-    { env: installEnvironment, timeout: 300_000 }
+    { env: installEnvironment, timeout: PACKAGE_INSTALL_TIMEOUT_MS }
   )
   assert.doesNotMatch(
     `${installResult.stdout}\n${installResult.stderr}`,

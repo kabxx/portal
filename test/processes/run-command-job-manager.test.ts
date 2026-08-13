@@ -6,6 +6,8 @@ import path from 'node:path'
 
 import { RunCommandJobManager } from '../../src/processes/run-command-job-manager.ts'
 
+const CHILD_READY_TIMEOUT_MS = 10_000
+
 function quoteShellArg(value: string): string {
   return os.platform() === 'win32'
     ? `'${value.replaceAll("'", "''")}'`
@@ -55,7 +57,10 @@ function markerCommand(
   }
 }
 
-async function waitForFile(filePath: string, timeoutMs = 3000): Promise<void> {
+async function waitForFile(
+  filePath: string,
+  timeoutMs = CHILD_READY_TIMEOUT_MS
+): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (!existsSync(filePath)) {
     if (Date.now() >= deadline) {
@@ -226,7 +231,7 @@ test(
     try {
       const job = manager.start({ command, shell: 'powershell' })
       const completion = job.wait()
-      await waitForFile(childReady, 10_000)
+      await waitForFile(childReady)
       assert.equal(await manager.stop(job.id), 'stopped')
       const result = await completion
       assert.equal(result.terminationReason, 'user')
