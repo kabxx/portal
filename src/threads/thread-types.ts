@@ -6,7 +6,7 @@ export type ThreadState =
 
 export type ThreadOrigin = 'new' | 'resumed'
 
-export type ThreadSource = 'tui' | 'mcp' | 'spawn' | 'hook' | 'system'
+export type ThreadSource = 'tui' | 'mcp' | 'exec' | 'spawn' | 'hook' | 'system'
 
 export interface ThreadSnapshot {
   id: string

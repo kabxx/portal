@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 
-import { run } from './app.ts'
+import { runPortalCli } from './cli-entry.ts'
 
-run().catch((error) => {
-  console.error(error)
-  process.exitCode = 1
-})
+runPortalCli()
+  .then((exitCode) => {
+    process.exitCode = exitCode
+  })
+  .catch((error) => {
+    console.error(error)
+    process.exitCode = 1
+  })

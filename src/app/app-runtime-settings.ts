@@ -82,6 +82,6 @@ export function createPortalRuntimeSettings(
 
 export function runtimeSetupModeForThreadCreation(
   mode: ThreadCreationMode
-): Exclude<RuntimeSetupMode, 'skip'> {
+): Exclude<RuntimeSetupMode, 'skip' | 'inline'> {
   return mode === 'chat' ? 'handshake' : 'full'
 }

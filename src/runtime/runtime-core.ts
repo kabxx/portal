@@ -93,6 +93,7 @@ export class RuntimeCore {
   private readonly hookDispatcher: HookDispatcher | null
   private readonly requestAttemptLimit: number
   private readonly workingDirectory: string
+  private inlineSetupPending = false
 
   constructor(
     private readonly agentAdapter: ProviderAdapter,
@@ -108,7 +109,7 @@ export class RuntimeCore {
 
   public async init(
     options: AbortOptions & {
-      setupMode?: Exclude<RuntimeSetupMode, 'skip'>
+      setupMode?: Exclude<RuntimeSetupMode, 'skip' | 'inline'>
     } = {}
   ) {
     await this.retryAsync(async () => {
@@ -143,6 +144,20 @@ export class RuntimeCore {
     })
   }
 
+  public enableInlineSetup(): void {
+    this.inlineSetupPending = true
+  }
+
+  public buildInlineTaskPrompt(input: string): string {
+    return buildSetupPrompt({
+      tools: this.toolRegistry.prompt,
+      skills: this.skills,
+      projectInstructions: this.projectInstructions?.prompt ?? null,
+      workingDirectory: this.workingDirectory,
+      task: input,
+    })
+  }
+
   public get conversationId(): string | null {
     return this.agentAdapter.conversationId
   }
@@ -159,9 +174,12 @@ export class RuntimeCore {
     input: string,
     signal?: AbortSignal
   ): Promise<ComposerLimitCheck> {
+    const outboundText = this.inlineSetupPending
+      ? this.buildInlineTaskPrompt(input)
+      : input
     const limit = await this.agentAdapter.getComposerLimit({ signal })
     throwIfAborted(signal)
-    return checkComposerLimit(input, limit)
+    return checkComposerLimit(outboundText, limit)
   }
 
   public onUnexpectedPageClose(listener: () => void): () => void {
@@ -206,6 +224,10 @@ export class RuntimeCore {
     handlers: RuntimeCoreHandlers = {}
   ): Promise<string> {
     let user = input
+    if (this.inlineSetupPending) {
+      user = this.buildInlineTaskPrompt(user)
+      this.inlineSetupPending = false
+    }
     let outboundOrigin: ComposerTextOrigin = 'user'
     let outboundToolResult: OutboundToolResult | null = null
     let assistant: string

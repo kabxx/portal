@@ -85,7 +85,9 @@ export async function createRuntimeFromAdapter(
     }
     throwIfAborted(signal)
     const setupMode = options.setupMode ?? 'full'
-    if (setupMode !== 'skip') {
+    if (setupMode === 'inline') {
+      runtime.enableInlineSetup()
+    } else if (setupMode !== 'skip') {
       await runtime.init({ signal, setupMode })
     }
     throwIfAborted(signal)

@@ -157,6 +157,24 @@ test('createRuntimeFromAdapter can skip the setup handshake for resumed conversa
   assert.equal(adapter.closeCalls, 0)
 })
 
+test('createRuntimeFromAdapter can inline setup with the first task', async () => {
+  const adapter = new FakeAdapter({ responses: ['Completed.'] })
+  const runtime = await createRuntimeFromAdapter(adapter, {
+    model: null,
+    setupMode: 'inline',
+  })
+
+  assert.deepEqual(adapter.attachedTexts, [])
+  assert.equal(await runtime.submitUserInput('Do the task.'), 'Completed.')
+  assert.equal(adapter.attachedTexts.length, 1)
+  assert.match(adapter.attachedTexts[0] ?? '', /# System/)
+  assert.match(adapter.attachedTexts[0] ?? '', /# Task\nDo the task\./)
+  assert.doesNotMatch(
+    adapter.attachedTexts[0] ?? '',
+    /Reply with exactly: READY/
+  )
+})
+
 test('createRuntimeFromAdapter can send only the setup handshake for chat threads', async () => {
   const adapter = new FakeAdapter({ responses: ['ready - complete'] })
 

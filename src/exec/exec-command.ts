@@ -1,0 +1,260 @@
+import { Command, CommanderError } from 'commander'
+import { stdin, stderr, stdout } from 'node:process'
+import type { Readable } from 'node:stream'
+
+import { normalizeProviderId, PROVIDERS } from '../app/app-provider-catalog.ts'
+import {
+  ProviderModelSelectionError,
+  resolveProviderModel,
+} from '../providers/provider-model-catalog.ts'
+import { createPortalExecSession } from './portal-exec-session.ts'
+import {
+  ExecUsageError,
+  parseExecTimeoutSeconds,
+  resolveExecTask,
+} from './exec-input.ts'
+import type {
+  ExecProgressEvent,
+  PortalExecSession,
+  PortalExecSessionFactory,
+} from './exec-types.ts'
+
+export const EXEC_EXIT_SUCCESS = 0
+export const EXEC_EXIT_RUNTIME_ERROR = 1
+export const EXEC_EXIT_USAGE = 2
+export const EXEC_EXIT_TIMEOUT = 124
+export const EXEC_EXIT_INTERRUPTED = 130
+
+interface ExecCommandOptions {
+  provider?: string
+  model?: string
+  option?: string
+  timeout?: string
+  dataDir?: string
+  browserEngine?: string
+  browserExecutablePath?: string
+  browserRemoteDebuggingPort?: string
+}
+
+interface TextWriter {
+  write(text: string): unknown
+}
+
+export interface ExecCliDependencies {
+  cwd?: string
+  input?: Readable & { isTTY?: boolean }
+  output?: TextWriter
+  errorOutput?: TextWriter
+  createSession?: PortalExecSessionFactory
+  addSigintListener?: (listener: () => void) => () => void
+}
+
+export async function runExecCli(
+  argv: readonly string[],
+  dependencies: ExecCliDependencies = {}
+): Promise<number> {
+  const input = dependencies.input ?? stdin
+  const output = dependencies.output ?? stdout
+  const errorOutput = dependencies.errorOutput ?? stderr
+  const parsed = parseExecArguments(argv, output, errorOutput)
+  if (typeof parsed === 'number') return parsed
+
+  let timeoutSeconds: number | null
+  let task: string
+  try {
+    timeoutSeconds = parseExecTimeoutSeconds(parsed.options.timeout)
+    const stdinIsTty = input.isTTY === true
+    const stdinText = stdinIsTty ? '' : await readStream(input)
+    task = resolveExecTask(parsed.prompt, stdinText, stdinIsTty)
+  } catch (error) {
+    writeError(errorOutput, error)
+    return EXEC_EXIT_USAGE
+  }
+
+  const provider = normalizeProviderId(parsed.options.provider ?? '')
+  if (provider === null) {
+    writeError(
+      errorOutput,
+      new ExecUsageError(
+        `--provider is required. Available providers: ${PROVIDERS.join(', ')}.`
+      )
+    )
+    return EXEC_EXIT_USAGE
+  }
+
+  let model
+  try {
+    model = resolveProviderModel(
+      provider,
+      parsed.options.model ?? null,
+      parsed.options.option ?? null
+    )
+  } catch (error) {
+    writeError(errorOutput, error)
+    return EXEC_EXIT_USAGE
+  }
+
+  let browserRemoteDebuggingPort: number | undefined
+  try {
+    browserRemoteDebuggingPort = parsePort(
+      parsed.options.browserRemoteDebuggingPort
+    )
+  } catch (error) {
+    writeError(errorOutput, error)
+    return EXEC_EXIT_USAGE
+  }
+
+  const controller = new AbortController()
+  let interrupted = false
+  let timedOut = false
+  const removeSigintListener = (
+    dependencies.addSigintListener ?? addProcessSigintListener
+  )(() => {
+    interrupted = true
+    controller.abort(new Error('Interrupted.'))
+  })
+  const timer =
+    timeoutSeconds === null
+      ? null
+      : setTimeout(() => {
+          timedOut = true
+          controller.abort(new Error('Timed out.'))
+        }, timeoutSeconds * 1000)
+
+  let session: PortalExecSession | null = null
+  let exitCode = EXEC_EXIT_SUCCESS
+  try {
+    session = await (dependencies.createSession ?? createPortalExecSession)({
+      cwd: dependencies.cwd ?? process.cwd(),
+      ...(parsed.options.dataDir === undefined
+        ? {}
+        : { dataDirectory: parsed.options.dataDir }),
+      ...(parsed.options.browserEngine === undefined
+        ? {}
+        : { browserEngine: parsed.options.browserEngine }),
+      ...(parsed.options.browserExecutablePath === undefined
+        ? {}
+        : { browserExecutablePath: parsed.options.browserExecutablePath }),
+      ...(browserRemoteDebuggingPort === undefined
+        ? {}
+        : { browserRemoteDebuggingPort }),
+      provider,
+      model,
+      signal: controller.signal,
+      onProgress: (event) => writeProgress(errorOutput, event),
+    })
+    const assistant = await session.run(task, controller.signal)
+    output.write(assistant.endsWith('\n') ? assistant : `${assistant}\n`)
+  } catch (error) {
+    exitCode = interrupted
+      ? EXEC_EXIT_INTERRUPTED
+      : timedOut
+        ? EXEC_EXIT_TIMEOUT
+        : EXEC_EXIT_RUNTIME_ERROR
+    if (!interrupted) writeError(errorOutput, error)
+  } finally {
+    if (timer !== null) clearTimeout(timer)
+    removeSigintListener()
+    if (session !== null) {
+      try {
+        await session.close()
+      } catch (error) {
+        if (exitCode === EXEC_EXIT_SUCCESS) {
+          exitCode = EXEC_EXIT_RUNTIME_ERROR
+          writeError(errorOutput, error)
+        }
+      }
+    }
+  }
+  return exitCode
+}
+
+function parseExecArguments(
+  argv: readonly string[],
+  output: TextWriter,
+  errorOutput: TextWriter
+): { prompt: string[]; options: ExecCommandOptions } | number {
+  let prompt: string[] = []
+  const program = new Command()
+    .name('portal exec')
+    .description('Run one Portal agent task without starting the TUI.')
+    .exitOverride()
+    .configureOutput({
+      writeOut: (text) => output.write(text),
+      writeErr: (text) => errorOutput.write(text),
+    })
+    .argument('[prompt...]', 'task to send to the agent')
+    .requiredOption('--provider <provider>', 'web AI provider')
+    .option('--model <key>', 'provider model key')
+    .option('--option <key>', 'provider model option')
+    .option('--timeout <seconds>', 'hard timeout for the complete command')
+    .option('--data-dir <path>', 'Portal data directory')
+    .option('--browser-engine <engine>', 'browser automation engine')
+    .option('--browser-executable-path <path>', 'browser executable path')
+    .option(
+      '--browser-remote-debugging-port <port>',
+      'browser remote debugging port'
+    )
+    .action((value: string[] | undefined) => {
+      prompt = value ?? []
+    })
+
+  try {
+    program.parse(['node', 'portal exec', ...argv])
+  } catch (error) {
+    if (
+      error instanceof CommanderError &&
+      error.code === 'commander.helpDisplayed'
+    ) {
+      return EXEC_EXIT_SUCCESS
+    }
+    return EXEC_EXIT_USAGE
+  }
+  return { prompt, options: program.opts<ExecCommandOptions>() }
+}
+
+function parsePort(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined
+  const port = Number(value)
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) {
+    throw new ExecUsageError(
+      '--browser-remote-debugging-port must be an integer from 0 to 65535.'
+    )
+  }
+  return port
+}
+
+async function readStream(stream: Readable): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)))
+  }
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+function writeProgress(output: TextWriter, event: ExecProgressEvent): void {
+  switch (event.type) {
+    case 'status':
+      output.write(`${event.message}\n`)
+      break
+    case 'warning':
+      output.write(`warning: ${event.message}\n`)
+      break
+    case 'tool':
+      output.write(`tool: ${event.name}\n`)
+      break
+  }
+}
+
+function writeError(output: TextWriter, error: unknown): void {
+  const message =
+    error instanceof ProviderModelSelectionError || error instanceof Error
+      ? error.message
+      : String(error)
+  output.write(`error: ${message}\n`)
+}
+
+function addProcessSigintListener(listener: () => void): () => void {
+  process.once('SIGINT', listener)
+  return () => process.off('SIGINT', listener)
+}

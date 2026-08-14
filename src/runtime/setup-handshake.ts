@@ -1,6 +1,6 @@
 import { buildSetupHandshakePrompt } from './setup-prompt.ts'
 
-export type RuntimeSetupMode = 'full' | 'handshake' | 'skip'
+export type RuntimeSetupMode = 'full' | 'handshake' | 'inline' | 'skip'
 
 export const SETUP_HANDSHAKE_PROMPT = buildSetupHandshakePrompt()
 
