@@ -72,7 +72,7 @@ export interface HookEventEnvelope {
   event: HookEventName
   occurredAt: number
   cwd: string
-  source: 'tui' | 'api' | 'mcp' | 'spawn' | 'hook' | 'system'
+  source: 'tui' | 'mcp' | 'spawn' | 'hook' | 'system'
   spawnDepth: number
   provider?: ProviderId
   threadId?: string

@@ -618,9 +618,9 @@ test('completeSlashCommand completes unique command and subcommand prefixes', ()
       execute,
     },
     {
-      name: '/serve',
-      description: 'listeners',
-      subcommands: ['api', 'mcp'],
+      name: '/mcp',
+      description: 'MCP server',
+      subcommands: ['start', 'status', 'stop', 'token'],
       execute,
     },
   ]
@@ -632,9 +632,9 @@ test('completeSlashCommand completes unique command and subcommand prefixes', ()
     '/thread capability '
   )
   assert.equal(completeSlashCommand('/skill a', commands), '/skill add ')
-  assert.equal(completeSlashCommand('/serve a', commands), '/serve api ')
-  assert.equal(completeSlashCommand('/serve m', commands), '/serve mcp ')
-  assert.equal(completeSlashCommand('/serve api st', commands), '/serve api st')
+  assert.equal(completeSlashCommand('/mcp sto', commands), '/mcp stop ')
+  assert.equal(completeSlashCommand('/mcp t', commands), '/mcp token ')
+  assert.equal(completeSlashCommand('/mcp sta', commands), '/mcp sta')
   assert.equal(completeSlashCommand('/thread s', commands), '/thread s')
   assert.equal(
     completeSlashCommand('/thread agent gemini', commands),

@@ -11,7 +11,6 @@ import type {
   SkillLibrary,
 } from '../../skills/skill-library.ts'
 import type { SkillAddOptions } from '../../skills/skill-installer.ts'
-import type { McpLibrary } from '../../mcp/mcp-library.ts'
 import type { HookCatalog } from '../../hooks/hook-catalog.ts'
 import type { KeybindingCatalog } from '../../keybindings/keybinding-catalog.ts'
 import type { RunCommandJobService } from '../../processes/run-command-job-manager.ts'
@@ -37,11 +36,9 @@ export interface CliCommandContext {
   threadManager: ThreadManager
   threadStore: ThreadStore
   skillLibrary: SkillLibrary
-  mcpLibrary: McpLibrary
   runCommandJobs?: RunCommandJobService
   hookCatalog?: HookCatalog
   keybindingCatalog?: KeybindingCatalog
-  api?: ListenerCommandController
   mcpServer?: ListenerCommandController
   ui: TerminalController
   browserProfileDir: string

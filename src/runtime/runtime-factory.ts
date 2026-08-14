@@ -13,16 +13,7 @@ import { ApplyPatchTool } from '../tools/builtins/apply-patch-tool.ts'
 import { RunCommandTool } from '../tools/builtins/run-command-tool.ts'
 import { SpawnTool } from '../tools/builtins/spawn-tool.ts'
 import { LoadSkillTool } from '../tools/builtins/load-skill-tool.ts'
-import { McpSearchTool } from '../tools/builtins/mcp-search-tool.ts'
-import { McpCallTool } from '../tools/builtins/mcp-call-tool.ts'
 import type { SkillLibrary } from '../skills/skill-library.ts'
-import type { McpLibrary } from '../mcp/mcp-library.ts'
-import type { McpConnector } from '../mcp/mcp-connection.ts'
-import {
-  createThreadMcpSession,
-  type McpSessionWarning,
-  type ThreadMcpSession,
-} from '../mcp/thread-mcp-session.ts'
 import { RuntimeCore } from './runtime-core.ts'
 import { throwIfAborted } from './runtime-cancellation.ts'
 import type { ProjectInstructions } from '../instructions/project-instructions.ts'
@@ -34,9 +25,6 @@ export interface RuntimeFactoryOptions extends ProviderAdapterOptions {
   providerPrompt?: string | null
   toolServices?: ToolServices
   skillLibrary?: SkillLibrary
-  mcpLibrary?: McpLibrary
-  mcpConnector?: McpConnector
-  onMcpWarning?: (warning: McpSessionWarning) => void | Promise<void>
   projectInstructions?: ProjectInstructions | null
   hookDispatcher?: HookDispatcher | null
   allowedTools?: readonly string[] | null
@@ -56,31 +44,17 @@ export async function createRuntimeFromAdapter(
   options: RuntimeFactoryOptions = { model: null }
 ): Promise<RuntimeCore> {
   const { signal } = options
-  let mcpSession: ThreadMcpSession | null = null
 
   try {
-    if (options.mcpLibrary !== undefined) {
-      mcpSession = await createThreadMcpSession(options.mcpLibrary, {
-        ...(options.mcpConnector !== undefined
-          ? { connector: options.mcpConnector }
-          : {}),
-        ...(options.onMcpWarning !== undefined
-          ? { onWarning: options.onMcpWarning }
-          : {}),
-        ...(signal !== undefined ? { signal } : {}),
-      })
-    }
     const skillCatalog = await options.skillLibrary?.createCatalogSnapshot()
     const hasSkills = skillCatalog !== undefined && skillCatalog.size > 0
     const manualSkillLoader =
       hasSkills && skillCatalog !== undefined
         ? async (name: string) => await skillCatalog.load(name)
         : null
-    const hasMcp = mcpSession?.hasAvailableConnections === true
     const availableTools = [
       ...DEFAULT_TOOLS,
       ...(hasSkills ? [LoadSkillTool] : []),
-      ...(hasMcp ? [McpSearchTool, McpCallTool] : []),
     ]
     const allowedTools = options.allowedTools ?? null
     const tools =
@@ -95,10 +69,11 @@ export async function createRuntimeFromAdapter(
         tools.map((ToolClass) => new ToolClass(adapter, {}).name)
       )
       const unavailable = allowedTools.filter((name) => !selected.has(name))
-      if (unavailable.length > 0)
+      if (unavailable.length > 0) {
         throw new Error(
           `Hook requested unavailable tools: ${unavailable.join(', ')}`
         )
+      }
     }
     const services: ToolServices = {
       ...(options.toolServices ?? {}),
@@ -129,26 +104,6 @@ export async function createRuntimeFromAdapter(
             },
           }
         : {}),
-      ...(hasMcp
-        ? {
-            mcpSearchTool: async (server: string, tool: string) =>
-              mcpSession!.searchTool(server, tool),
-            mcpCallTool: async (
-              input: {
-                server: string
-                tool: string
-                arguments: Record<string, unknown>
-              },
-              callOptions = {}
-            ) =>
-              await mcpSession!.callTool(
-                input.server,
-                input.tool,
-                input.arguments,
-                callOptions
-              ),
-          }
-        : {}),
     }
     const toolRegistry = new ToolRegistry(
       adapter,
@@ -161,8 +116,6 @@ export async function createRuntimeFromAdapter(
       toolRegistry,
       options.providerPrompt ?? null,
       skillCatalog?.prompt ?? null,
-      mcpSession?.prompt ?? null,
-      mcpSession,
       manualSkillLoader,
       options.projectInstructions ?? null,
       skillCatalog?.summaries ?? [],
@@ -182,11 +135,9 @@ export async function createRuntimeFromAdapter(
     return runtime
   } catch (error) {
     if (isProviderAdapterError(error) && error.kind === 'auth') {
-      await mcpSession?.close().catch(() => {})
       error.adapter = adapter
       throw error
     }
-    await mcpSession?.close().catch(() => {})
     await adapter.close().catch(() => {})
     throw error
   }

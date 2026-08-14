@@ -11,7 +11,6 @@ import { createDefaultAdvancedConfig } from '../../src/config/portal-config.ts'
 import { createPortalRuntimeSettings } from '../../src/app/app-runtime-settings.ts'
 import type { HookDispatcher } from '../../src/hooks/hook-dispatcher.ts'
 import type { ProjectInstructions } from '../../src/instructions/project-instructions.ts'
-import type { McpLibrary } from '../../src/mcp/mcp-library.ts'
 import type { RunCommandJobManager } from '../../src/processes/run-command-job-manager.ts'
 import type { SkillLibrary } from '../../src/skills/skill-library.ts'
 
@@ -49,8 +48,6 @@ test('spawn depth rejection occurs before project, browser, or Hook side effects
     model: null,
     // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
     skillLibrary: {} as SkillLibrary,
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-    mcpLibrary: {} as McpLibrary,
     projectInstructions,
     // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
     runCommandJobs: {} as RunCommandJobManager,

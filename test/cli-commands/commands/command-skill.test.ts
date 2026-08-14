@@ -11,7 +11,6 @@ import { TerminalController } from '../../../src/terminal-ui/terminal-controller
 import { createCliCommandContext } from '../../helpers/cli-command-context.ts'
 import { createTestSkill } from '../../helpers/skills.ts'
 import { latestTimelineEntry } from '../../helpers/ui.ts'
-import { McpLibrary } from '../../../src/mcp/mcp-library.ts'
 
 test('SkillCommand manages the registered skill lifecycle', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-command-'))
@@ -28,7 +27,6 @@ test('SkillCommand manages the registered skill lifecycle', async () => {
   const registry = new CommandRegistry([SkillCommand])
   const { context, cleanup } = createCliCommandContext({
     skillLibrary,
-    mcpLibrary: new McpLibrary(path.join(root, 'data', 'config.yaml')),
     ui,
     browserProfileDir: path.join(root, 'profile'),
     providers: [],

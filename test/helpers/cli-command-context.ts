@@ -1,5 +1,4 @@
 import type { CliCommandContext } from '../../src/cli-commands/core/command-types.ts'
-import { McpLibrary } from '../../src/mcp/mcp-library.ts'
 import type { ProviderId } from '../../src/providers/provider-id.ts'
 import { SkillLibrary } from '../../src/skills/skill-library.ts'
 import { TerminalController } from '../../src/terminal-ui/terminal-controller.ts'
@@ -38,15 +37,12 @@ export function createCliCommandContext(
       tempDirectory: 'test-data/temp/skill-install',
       registryPath: 'test-data/config.yaml',
     })
-  const mcpLibrary =
-    overrides.mcpLibrary ?? new McpLibrary('test-data/config.yaml')
   const ui = overrides.ui ?? new TerminalController()
 
   const context: CliCommandContext = {
     threadManager,
     threadStore,
     skillLibrary,
-    mcpLibrary,
     ui,
     browserProfileDir: 'test-data/browser-profile',
     providers: TEST_PROVIDER_IDS,

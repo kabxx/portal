@@ -22,7 +22,6 @@ import {
   isAbortError,
   throwIfAborted,
 } from './runtime-cancellation.ts'
-import type { ThreadMcpSession } from '../mcp/thread-mcp-session.ts'
 import type { ConversationHistoryResult } from '../providers/conversation-history.ts'
 import type {
   ProjectInstructionWarning,
@@ -100,8 +99,6 @@ export class RuntimeCore {
     private readonly toolRegistry: ToolRegistry,
     private readonly providerPrompt: string | null = null,
     private readonly skillPrompt: string | null = null,
-    private readonly mcpPrompt: string | null = null,
-    private readonly mcpSession: ThreadMcpSession | null = null,
     private readonly manualSkillLoader: ManualSkillLoader | null = null,
     private readonly projectInstructions: ProjectInstructions | null = null,
     manualSkills: readonly ManualSkillSummary[] = [],
@@ -169,7 +166,6 @@ export class RuntimeCore {
         ].join('\n'),
         this.toolRegistry.prompt,
         this.skillPrompt,
-        this.mcpPrompt,
         [
           `# Runtime Context`,
           `- Current working directory: ${process.cwd()}`,
@@ -192,10 +188,6 @@ export class RuntimeCore {
 
   public getAdapter(): ProviderAdapter {
     return this.agentAdapter
-  }
-
-  public getMcpSession(): ThreadMcpSession | null {
-    return this.mcpSession
   }
 
   public async preflightInitialInput(
@@ -617,16 +609,7 @@ export class RuntimeCore {
   }
 
   public async close() {
-    const results = await Promise.allSettled([
-      this.agentAdapter.close(),
-      this.mcpSession?.close() ?? Promise.resolve(),
-    ])
-    const failure = results.find(
-      (result): result is PromiseRejectedResult => result.status === 'rejected'
-    )
-    if (failure !== undefined) {
-      throw failure.reason
-    }
+    await this.agentAdapter.close()
   }
 
   private async resolveManualSkill(

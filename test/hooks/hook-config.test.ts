@@ -99,6 +99,26 @@ test('parseHooksConfig rejects duplicate names and spawn in agent hooks', () => 
   )
 })
 
+test('parseHooksConfig rejects removed outbound MCP tools', () => {
+  for (const tool of ['mcp_search_tool', 'mcp_call_tool']) {
+    assert.throws(
+      () =>
+        parseHooksConfig({
+          handlers: [
+            {
+              name: 'legacy-mcp-agent',
+              type: 'agent',
+              events: ['tool.before'],
+              prompt: 'inspect',
+              tools: [tool],
+            },
+          ],
+        }),
+      new RegExp(`removed Portal 2\\.0 tool: ${tool}`)
+    )
+  }
+})
+
 test('parseHooksConfig rejects invalid integer and enum fields', () => {
   for (const maxDepth of ['1', -1, 9, 1.5]) {
     assert.throws(

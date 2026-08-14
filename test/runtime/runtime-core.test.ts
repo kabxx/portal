@@ -310,8 +310,6 @@ function createRuntimeForRetryTests(
     null,
     null,
     null,
-    null,
-    null,
     [],
     null,
     3
@@ -494,8 +492,6 @@ test('RuntimeCore blocks a tool through tool.before and feeds HOOK_BLOCKED back'
     null,
     null,
     null,
-    null,
-    null,
     [],
     dispatcher
   )
@@ -536,8 +532,6 @@ test('RuntimeCore executes revalidated rewritten params and records both inputs'
   const runtime = new RuntimeCore(
     adapter,
     new ToolRegistry(adapter, [HookTargetTool]),
-    null,
-    null,
     null,
     null,
     null,
@@ -677,8 +671,6 @@ test('RuntimeCore loads an explicitly selected skill before submitting the task'
     new ToolRegistry(adapter, []),
     null,
     null,
-    null,
-    null,
     async (name) =>
       name === 'manual-skill'
         ? {
@@ -718,8 +710,6 @@ test('RuntimeCore keeps an explicitly selected skill task section empty when no 
     new ToolRegistry(adapter, []),
     null,
     null,
-    null,
-    null,
     async (name) =>
       name === 'manual-skill'
         ? { name, content: 'Follow the manual workflow.' }
@@ -736,8 +726,6 @@ test('RuntimeCore leaves unknown manual skill prefixes as ordinary user input', 
   const runtime = new RuntimeCore(
     adapter,
     new ToolRegistry(adapter, []),
-    null,
-    null,
     null,
     null,
     async () => null
@@ -976,8 +964,6 @@ test('RuntimeCore inserts project instructions after runtime context', async () 
       '# Provider Boundary\n- Provider-specific rule.',
       null,
       null,
-      null,
-      null,
       instructions
     )
 
@@ -1028,8 +1014,6 @@ test('RuntimeCore activates scoped instructions before executing a tool', async 
       null,
       null,
       null,
-      null,
-      null,
       instructions
     )
     let emittedToolCalls = 0
@@ -1060,15 +1044,14 @@ test('RuntimeCore normalizes optional prompt section boundaries', () => {
     adapter,
     new ToolRegistry(adapter, []),
     '\n# Provider Boundary\n- Provider-specific rule.\n\n',
-    '\n\n# Skills\n- Skill catalog.\n',
-    '\n# MCP Servers\n- Server catalog.\n\n'
+    '\n\n# Skills\n- Skill catalog.\n'
   )
 
   assert.equal(runtime.prompt, runtime.prompt.trim())
   assert.doesNotMatch(runtime.prompt, /\n{4,}/)
   assert.match(
     runtime.prompt,
-    /# Skills\n- Skill catalog\.\n\n# MCP Servers\n- Server catalog\.\n\n# Runtime Context/
+    /# Skills\n- Skill catalog\.\n\n# Runtime Context/
   )
 })
 
@@ -1376,8 +1359,6 @@ test('RuntimeCore reuses one over-limit delivery across a bounded retry without 
   const runtime = new RuntimeCore(
     adapter,
     new ToolRegistry(adapter, [OversizedOutcomeTool]),
-    null,
-    null,
     null,
     null,
     null,

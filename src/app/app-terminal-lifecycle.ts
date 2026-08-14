@@ -25,13 +25,13 @@ export function clearInteractiveTerminal(
 }
 
 export function canRunCommandWhileThreadBusy(input: string): boolean {
-  const [command, subcommand, action] = tokenizeCommandInput(input)
+  const [command, subcommand] = tokenizeCommandInput(input)
   if (
     command === '/help' ||
     command === '/providers' ||
     command === '/job' ||
     command === '/keybinding' ||
-    command === '/serve' ||
+    command === '/mcp' ||
     command === '/exit'
   ) {
     return true
@@ -54,14 +54,6 @@ export function canRunCommandWhileThreadBusy(input: string): boolean {
   }
   if (command === '/skill') {
     return subcommand === undefined || subcommand === 'list'
-  }
-  if (command === '/mcp') {
-    return (
-      subcommand === undefined ||
-      subcommand === 'list' ||
-      ((subcommand === 'resource' || subcommand === 'prompt') &&
-        action === 'list')
-    )
   }
   if (command === '/hook') {
     return true

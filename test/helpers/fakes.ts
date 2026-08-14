@@ -8,7 +8,6 @@ import {
   type ProviderCdpSession,
   type ProviderPage,
 } from '../../src/providers/adapters/adapter-base.ts'
-import type { ThreadMcpSession } from '../../src/mcp/thread-mcp-session.ts'
 import type { ConversationHistoryResult } from '../../src/providers/conversation-history.ts'
 import type { CDPSession, Page } from 'playwright'
 import { ToolRegistry } from '../../src/tools/core/tool-registry.ts'
@@ -22,7 +21,6 @@ export interface FakeRuntimeOptions {
   stopGeneration?: () => Promise<void>
   adapter?: ProviderAdapter
   submitUserInput?: RuntimeCore['submitUserInput']
-  mcpSession?: ThreadMcpSession | null
   manualSkills?: readonly ManualSkillSummary[]
   onUnexpectedPageClose?: (listener: () => void) => () => void
   loadHistory?: RuntimeCore['loadHistory']
@@ -180,10 +178,6 @@ class FakeRuntime extends RuntimeCore {
       throw new Error('Fake runtime has no adapter.')
     }
     return this.adapter
-  }
-
-  public override getMcpSession(): ThreadMcpSession | null {
-    return this.fakeOptions.mcpSession ?? null
   }
 
   public override async init(): Promise<void> {}

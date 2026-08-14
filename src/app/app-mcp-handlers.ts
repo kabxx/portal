@@ -1,5 +1,4 @@
 import type { ProjectInstructionWarning } from '../instructions/project-instructions.ts'
-import { ApiHttpError } from '../api/api-server.ts'
 import type { McpMessageOperationStore } from '../mcp-server/mcp-message-operations.ts'
 import type {
   PortalMcpHandlers,
@@ -172,8 +171,7 @@ export function createMcpHandlers({
                 activate: false,
               },
               operationSignal
-            ),
-            'THREAD_CREATE_FAILED'
+            )
           )
         }
       )
@@ -196,8 +194,7 @@ export function createMcpHandlers({
                 activate: false,
               },
               operationSignal
-            ),
-            'THREAD_RESUME_FAILED'
+            )
           )
         }
       )
@@ -345,11 +342,10 @@ export function createMcpHandlers({
 }
 
 function requireProvisionResult(
-  result: ProvisionResult,
-  failureCode: string
+  result: ProvisionResult
 ): Extract<ProvisionResult, { ok: true }> {
   if (result.ok) return result
-  throw new ApiHttpError(502, failureCode, result.failure.message)
+  throw new Error(result.failure.message)
 }
 
 function formatInstructionWarning(

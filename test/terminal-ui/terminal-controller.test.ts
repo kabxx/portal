@@ -104,13 +104,13 @@ test('TerminalController renders the thread command namespace in help', () => {
   assert.equal(new Set(descriptionColumns).size, 1)
 })
 
-test('default commands expose both listeners only through serve', () => {
+test('default commands expose the inbound MCP server directly', () => {
   assert.deepEqual(
-    DEFAULT_COMMANDS.find(({ name }) => name === '/serve')?.subcommands,
-    ['api', 'mcp']
+    DEFAULT_COMMANDS.find(({ name }) => name === '/mcp')?.subcommands,
+    ['start', 'status', 'stop', 'token']
   )
   assert.equal(
-    DEFAULT_COMMANDS.some(({ name }) => name === '/mcp-server'),
+    DEFAULT_COMMANDS.some(({ name }) => name === '/serve'),
     false
   )
 })
@@ -1191,21 +1191,6 @@ test('TerminalController summarizes named JSON tool calls', () => {
       params: { name: 'hybrid-catgirl' },
       expected: 'name: hybrid-catgirl',
     },
-    {
-      tool: 'mcp_search_tool',
-      params: { server: 'github', tool: 'create_issue' },
-      expected: 'server: github\ntool: create_issue',
-    },
-    {
-      tool: 'mcp_call_tool',
-      params: {
-        server: 'github',
-        tool: 'create_issue',
-        arguments: { title: 'Bug' },
-      },
-      expected:
-        'server: github\ntool: create_issue\narguments: {"title":"Bug"}',
-    },
   ] as const
 
   for (const item of cases) {
@@ -1245,25 +1230,25 @@ test('TerminalController renders error and unknown tool outcomes distinctly', ()
 
   ui.renderToolResult(
     thread,
-    'mcp_call_tool',
+    'run_command',
     'error',
     { server: 'github', tool: 'create_issue', isError: true },
     'MCP tool returned an error.\nserver: github\ntool: create_issue'
   )
   let entry = ui.getState().timeline.at(-1)
   assert.equal(entry?.tone, 'error')
-  assert.equal(entry?.label, 'mcp_call_tool · error')
+  assert.equal(entry?.label, 'run_command · error')
 
   ui.renderToolResult(
     thread,
-    'mcp_call_tool',
+    'run_command',
     'unknown',
     { server: 'github', tool: 'create_issue', retry: false },
     'MCP tool outcome is unknown.\nDo not retry automatically.'
   )
   entry = ui.getState().timeline.at(-1)
   assert.equal(entry?.tone, 'warning')
-  assert.equal(entry?.label, 'mcp_call_tool · unknown')
+  assert.equal(entry?.label, 'run_command · unknown')
   assert.match(entry?.body ?? '', /Do not retry automatically/)
 })
 

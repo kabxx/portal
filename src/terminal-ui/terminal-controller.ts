@@ -1183,19 +1183,6 @@ export class TerminalController {
           ]
         case 'load_skill':
           return [`name: ${displayScalar(params.name, '(missing)')}`]
-        case 'mcp_search_tool':
-        case 'mcp_call_tool': {
-          const lines = [
-            `server: ${displayScalar(params.server, '(missing)')}`,
-            `tool: ${displayScalar(params.tool, '(missing)')}`,
-          ]
-          if (toolName === 'mcp_call_tool') {
-            lines.push(
-              `arguments: ${truncatePreview(compactJson(params.arguments ?? {}), 600)}`
-            )
-          }
-          return lines
-        }
         default:
           return [`payload: ${truncatePreview(rawPayload, 600)}`]
       }
@@ -1243,20 +1230,6 @@ export class TerminalController {
 
     if (toolName === 'load_skill' && typeof result.name === 'string') {
       return [`Loaded skill: ${result.name}`]
-    }
-
-    if (
-      (toolName === 'mcp_search_tool' || toolName === 'mcp_call_tool') &&
-      typeof result.server === 'string' &&
-      typeof result.tool === 'string'
-    ) {
-      return [
-        toolName === 'mcp_search_tool'
-          ? 'MCP tool definition loaded.'
-          : 'MCP tool returned a result.',
-        `server: ${result.server}`,
-        `tool: ${result.tool}`,
-      ]
     }
 
     return Object.entries(result)

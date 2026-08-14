@@ -42,7 +42,7 @@ test('ThreadRuntimeRegistry commits runtime and URL claim in one synchronous ste
     provider: 'chatgpt',
     runtime,
     origin: 'resumed',
-    source: 'api',
+    source: 'mcp',
     conversationId: 'one',
     conversationUrl: 'https://chatgpt.com/c/one#latest',
     history: { status: 'complete' },
@@ -74,7 +74,7 @@ test('ThreadRuntimeRegistry releases stale reservations after a redirected commi
     provider: 'chatgpt',
     runtime: {},
     origin: 'resumed',
-    source: 'api',
+    source: 'mcp',
     conversationUrl: 'https://chatgpt.com/c/after-redirect',
   })
 

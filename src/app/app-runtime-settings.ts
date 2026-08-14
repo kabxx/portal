@@ -1,4 +1,3 @@
-import { ApiHttpError } from '../api/api-server.ts'
 import type { PortalAdvancedConfig } from '../config/portal-config.ts'
 import type { ProjectInstructionLimits } from '../instructions/project-instructions.ts'
 import type { BrowserLaunchOptions } from '../platform/browser-cdp-launcher.ts'
@@ -6,10 +5,7 @@ import type { RunCommandJobManagerOptions } from '../processes/run-command-job-m
 import type { ProviderTimingOptions } from '../providers/adapters/adapter-base.ts'
 import type { RuntimeSetupMode } from '../runtime/setup-handshake.ts'
 import type { SkillPolicy } from '../skills/skill-policy.ts'
-import {
-  isThreadCreationMode,
-  type ThreadCreationMode,
-} from '../threads/thread-creation-mode.ts'
+import type { ThreadCreationMode } from '../threads/thread-creation-mode.ts'
 
 export interface PortalRuntimeSettings {
   browserLaunch: BrowserLaunchOptions
@@ -22,11 +18,6 @@ export interface PortalRuntimeSettings {
   childRuntimeCloseTimeoutMs: number
   runCommand: RunCommandJobManagerOptions
   skillPolicy: SkillPolicy
-  api: {
-    bodyLimitBytes: number
-    requestTimeoutMs: number
-    sseHeartbeatMs: number
-  }
   instructionLimits: ProjectInstructionLimits
   hookCommandOutputLimitBytes: number
 }
@@ -87,11 +78,6 @@ export function createPortalRuntimeSettings(
       maxManifestBytes: kb(advanced.skillInstall.manifestSizeLimitKB),
       maxRedirects: advanced.skillInstall.redirectLimit,
     },
-    api: {
-      bodyLimitBytes: kb(advanced.api.requestBodyLimitKB),
-      requestTimeoutMs: seconds(advanced.api.requestTimeoutSeconds),
-      sseHeartbeatMs: seconds(advanced.api.sseHeartbeatSeconds),
-    },
     instructionLimits: {
       codexMaxBytes: kb(advanced.instructions.codexSizeLimitKB),
       claudeMaxBytes: kb(advanced.instructions.claudeSizeLimitKB),
@@ -106,18 +92,4 @@ export function runtimeSetupModeForThreadCreation(
   mode: ThreadCreationMode
 ): Exclude<RuntimeSetupMode, 'skip'> {
   return mode === 'chat' ? 'handshake' : 'full'
-}
-
-export function parseApiThreadCreationMode(value: unknown): ThreadCreationMode {
-  if (value === undefined) {
-    return 'agent'
-  }
-  if (isThreadCreationMode(value)) {
-    return value
-  }
-  throw new ApiHttpError(
-    400,
-    'INVALID_REQUEST',
-    'mode must be "agent" or "chat".'
-  )
 }

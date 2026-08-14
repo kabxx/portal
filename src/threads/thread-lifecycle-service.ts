@@ -206,9 +206,7 @@ export class ThreadLifecycleService {
         model: command.model,
         mode: command.mode,
         source: command.source ?? 'tui',
-        activate:
-          command.activate ??
-          (command.source !== 'api' && command.source !== 'mcp'),
+        activate: command.activate ?? command.source !== 'mcp',
       },
       signal
     )
@@ -223,9 +221,7 @@ export class ThreadLifecycleService {
         origin: 'resumed',
         conversationUrl: command.conversationUrl,
         source: command.source ?? 'tui',
-        activate:
-          command.activate ??
-          (command.source !== 'api' && command.source !== 'mcp'),
+        activate: command.activate ?? command.source !== 'mcp',
       },
       signal
     )

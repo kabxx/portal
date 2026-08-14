@@ -80,25 +80,19 @@ test('subcommand prefixes show one candidate per literal path', () => {
   assert.equal(skillHints[0]?.usage, 'add')
   assert.equal(skillHints[0]?.completion, '/skill add ')
 
-  const mcpHints = resolveCommandHints(
-    '/mcp resource ',
-    DEFAULT_COMMANDS,
-    PROVIDERS
-  )
+  const mcpHints = resolveCommandHints('/mcp sta', DEFAULT_COMMANDS, PROVIDERS)
   assert.deepEqual(
     mcpHints.map(({ usage }) => usage),
-    ['resource list [server]', 'resource attach <server> <uri>']
+    ['start', 'status']
   )
   assert.deepEqual(
     mcpHints.map(({ completion }) => completion),
-    ['/mcp resource list ', '/mcp resource attach ']
+    ['/mcp start ', '/mcp status ']
   )
 
-  assert.deepEqual(
-    resolveCommandHints('/serve ', DEFAULT_COMMANDS, PROVIDERS).map(
-      ({ usage }) => usage
-    ),
-    ['api <start|status|stop|token>', 'mcp <start|status|stop|token>']
+  assert.equal(
+    resolveCommandHints('/serve ', DEFAULT_COMMANDS, PROVIDERS)[0]?.kind,
+    'warning'
   )
 })
 
@@ -121,12 +115,12 @@ test('completed paths show all usage forms and ignore free-form arguments', () =
     true
   )
 
-  const attachHints = resolveCommandHints(
-    '/mcp resource attach server-name ',
+  const startHints = resolveCommandHints(
+    '/mcp start ',
     DEFAULT_COMMANDS,
     PROVIDERS
   )
-  assert.equal(attachHints[0]?.usage, '/mcp resource attach <server> <uri>')
+  assert.equal(startHints[0]?.usage, '/mcp start')
 })
 
 test('thread agent hints filter providers then advance to the optional model', () => {
@@ -270,17 +264,17 @@ test('unknown warnings wait until the invalid token is completed', () => {
     'warning'
   )
   assert.deepEqual(
-    resolveCommandHints('/mcp resource att', DEFAULT_COMMANDS, PROVIDERS).map(
+    resolveCommandHints('/mcp sto', DEFAULT_COMMANDS, PROVIDERS).map(
       ({ usage }) => usage
     ),
-    ['resource attach <server> <uri>']
+    ['stop']
   )
   assert.equal(
     resolveCommandHints('/thr open', DEFAULT_COMMANDS, PROVIDERS)[0]?.kind,
     'warning'
   )
   assert.equal(
-    resolveCommandHints('/mcp res att', DEFAULT_COMMANDS, PROVIDERS)[0]?.kind,
+    resolveCommandHints('/mcp unknown ', DEFAULT_COMMANDS, PROVIDERS)[0]?.kind,
     'warning'
   )
 })
@@ -497,15 +491,7 @@ test('guide-derived subcommands preserve existing completion order', () => {
       'capability',
     ],
     '/skill': ['add', 'list', 'enable', 'disable', 'remove'],
-    '/mcp': [
-      'add',
-      'list',
-      'enable',
-      'disable',
-      'remove',
-      'resource',
-      'prompt',
-    ],
+    '/mcp': ['start', 'status', 'stop', 'token'],
   }
 
   for (const [name, subcommands] of Object.entries(expected)) {

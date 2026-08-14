@@ -6,7 +6,6 @@ import test from 'node:test'
 import type { BrowserContext } from 'playwright'
 
 import { run, type PortalRunDependencies } from '../../src/app.ts'
-import { PortalApiServer } from '../../src/api/api-server.ts'
 import {
   createDefaultPortalConfig,
   ensurePortalConfig,
@@ -40,7 +39,6 @@ test(
     const adapter = createProviderAdapterStub()
     const readyPath = path.join(cwd, 'job-ready.txt')
     const observed: {
-      apiServer?: PortalApiServer
       runCommandJobs?: RunCommandJobService
       job?: RunCommandJobHandle
     } = {}
@@ -50,7 +48,7 @@ test(
     let terminalUnmountCount = 0
 
     // The launcher boundary is replaced, while the app still composes its real
-    // config, stores, listeners, thread lifecycle, job manager, and shutdown.
+    // config, stores, thread lifecycle, job manager, and shutdown.
     // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
     const browserContext = {
       isClosed: () => false,
@@ -103,11 +101,6 @@ test(
           },
         })
       },
-      createApiServer: (options) => {
-        const server = new PortalApiServer({ ...options, port: 0 })
-        observed.apiServer = server
-        return server
-      },
     }
 
     const runPromise = run(
@@ -116,19 +109,6 @@ test(
     )
     void runPromise.catch(() => {})
     try {
-      await waitFor(() => ui.getState().prompt.active, 'initial prompt')
-      assert.equal(ui.submitInput('/serve api start'), true)
-      await waitFor(
-        () => observed.apiServer?.status().running === true,
-        'HTTP API listener to start'
-      )
-      const runningApiServer = observed.apiServer
-      assert.ok(runningApiServer !== undefined)
-      const address = runningApiServer.address()
-      assert.ok(address !== null)
-      const health = await fetch(`${address}/health`)
-      assert.equal(health.status, 200)
-
       await waitFor(() => ui.getState().prompt.active, 'thread command prompt')
       assert.equal(ui.submitInput('/thread agent chatgpt'), true)
       await waitFor(
@@ -150,7 +130,6 @@ test(
       assert.ok(completedJob !== undefined)
       assert.equal((await completedJob.wait()).terminationReason, 'shutdown')
       assert.equal(runCommandJobs.list().length, 0)
-      assert.equal(runningApiServer.status().running, false)
       assert.deepEqual(ui.getThreadManager()?.listThreads(), [])
       assert.equal(adapterCloseCount, 1)
       assert.equal(runtimeCloseCount, 1)
@@ -160,7 +139,6 @@ test(
       assert.equal(existsSync(path.join(cwd, 'data')), false)
     } finally {
       browserDisconnected.resolve()
-      await observed.apiServer?.stop().catch(() => {})
       if (observed.job !== undefined && observed.runCommandJobs !== undefined) {
         await observed.runCommandJobs.stop(observed.job.id).catch(() => {})
       }

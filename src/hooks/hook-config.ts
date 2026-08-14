@@ -46,6 +46,7 @@ const PROVIDER_IDS = new Set<string>([
   'qwen',
   'kimi',
 ])
+const REMOVED_AGENT_TOOLS = new Set(['mcp_search_tool', 'mcp_call_tool'])
 
 export function createDefaultHooksConfig(): HooksConfig {
   return { enabled: false, maxDepth: 1, handlers: [] }
@@ -174,6 +175,12 @@ function parseHandler(value: unknown, label: string): HookHandler {
   }
   if (tools.includes('spawn')) {
     throw new HookConfigError(`${label}.tools cannot include spawn`)
+  }
+  const removedTool = tools.find((tool) => REMOVED_AGENT_TOOLS.has(tool))
+  if (removedTool !== undefined) {
+    throw new HookConfigError(
+      `${label}.tools includes removed Portal 2.0 tool: ${removedTool}`
+    )
   }
   const maxTurns = value.maxTurns ?? 8
   if (!isSafeInteger(maxTurns) || maxTurns < 1 || maxTurns > 32) {

@@ -29,7 +29,6 @@ import { TerminalTranscriptWriter } from './terminal-ui/terminal-transcript-writ
 import { KeybindingCatalog } from './keybindings/keybinding-catalog.ts'
 import { TerminalController } from './terminal-ui/terminal-controller.ts'
 import { SkillLibrary } from './skills/skill-library.ts'
-import { McpLibrary } from './mcp/mcp-library.ts'
 import {
   createDefaultPortalConfig,
   ensurePortalConfig,
@@ -42,7 +41,6 @@ import {
   type ProjectInstructions,
   type ProjectInstructionLimits,
 } from './instructions/project-instructions.ts'
-import { PortalApiServer } from './api/api-server.ts'
 import { createHookSnapshot } from './hooks/hook-config.ts'
 import { HookCatalog } from './hooks/hook-catalog.ts'
 import { HookDispatcher } from './hooks/hook-dispatcher.ts'
@@ -74,8 +72,8 @@ import {
   createPortalRuntimeSettings,
   runtimeSetupModeForThreadCreation,
 } from './app/app-runtime-settings.ts'
-import { createApiHandlers } from './app/app-api-handlers.ts'
 import { createMcpHandlers } from './app/app-mcp-handlers.ts'
+import { startThreadReload } from './app/app-thread-reload.ts'
 import { createToolServices } from './app/app-spawn-tool-services.ts'
 import { createTuiThreadInputHandler } from './app/app-tui-thread-input-handler.ts'
 import { resolvePortalDataDirectory } from './platform/portal-data-directory.ts'
@@ -97,13 +95,8 @@ export {
 export { GROK_PROVIDER_PROMPT, PROVIDERS } from './app/app-provider-catalog.ts'
 export {
   createPortalRuntimeSettings,
-  parseApiThreadCreationMode,
   runtimeSetupModeForThreadCreation,
 } from './app/app-runtime-settings.ts'
-export {
-  clearApiProviderCapability,
-  setApiProviderCapability,
-} from './app/app-api-handlers.ts'
 export { inheritSpawnModelSelection } from './app/app-spawn-tool-services.ts'
 export {
   canRunCommandWhileThreadBusy,
@@ -145,9 +138,6 @@ export interface PortalRunDependencies {
   terminalController?: TerminalController
   createProviderAdapter?: typeof createAdapterForProvider
   createRuntime?: typeof createRuntimeFromAdapter
-  createApiServer?: (
-    options: ConstructorParameters<typeof PortalApiServer>[0]
-  ) => PortalApiServer
 }
 
 function buildProgram() {
@@ -215,10 +205,6 @@ export async function run(
   const createProviderAdapter =
     dependencies.createProviderAdapter ?? createAdapterForProvider
   const createRuntime = dependencies.createRuntime ?? createRuntimeFromAdapter
-  const createApiServer =
-    dependencies.createApiServer ??
-    ((serverOptions: ConstructorParameters<typeof PortalApiServer>[0]) =>
-      new PortalApiServer(serverOptions))
   const dataDirectory = resolvePortalDataDirectory({
     cwd,
     ...(options.dataDir === undefined
@@ -274,8 +260,6 @@ export async function run(
     )
   }
   const browserProfileDir = path.resolve(portalConfig.browser.profilePath)
-  const mcpLibrary = new McpLibrary(configPath)
-  await mcpLibrary.initialize()
   const threadStore = await createThreadStore(
     path.join(dataDirectory, 'threads.db')
   )
@@ -309,7 +293,6 @@ export async function run(
   let browserLaunch: Awaited<ReturnType<typeof launchBrowser>> | null = null
   let browserStartupController: AbortController | null = null
   let browserStartupPromise: ReturnType<typeof launchBrowser> | null = null
-  let apiServer: PortalApiServer | null = null
   let mcpServer: PortalMcpServer | null = null
   let unsubscribeThreadPageClose: (() => void) | null = null
   let lifecycleForShutdown: ThreadLifecycleService | null = null
@@ -324,9 +307,6 @@ export async function run(
     runCommandJobs.beginShutdown()
     const hasMcpForegroundOperation = mcpForegroundOperations.size > 0
     const mcpStop = mcpServer?.stop().catch(() => {})
-    if (apiServer !== null) {
-      await apiServer.stop().catch(() => {})
-    }
     const foregroundOperation = currentOperation
     if (foregroundOperation !== null && !hasMcpForegroundOperation) {
       foregroundOperation.controller.abort()
@@ -628,9 +608,6 @@ export async function run(
             `Thread ${event.threadId} was closed because its browser page was closed.`
           )
         }
-        apiServer?.eventHub.closeThread(event.threadId, {
-          reason: event.reason,
-        })
       }
     }
     threadLifecycle = new ThreadLifecycleService({
@@ -672,7 +649,6 @@ export async function run(
               : runtimeSetupModeForThreadCreation(mode),
           providerPrompt: getProviderPrompt(provider),
           skillLibrary,
-          mcpLibrary,
           projectInstructions,
           hookDispatcher,
           advertiseSpawnTool: settings.spawnDepthLimit > 0,
@@ -682,7 +658,6 @@ export async function run(
             provider,
             model,
             skillLibrary,
-            mcpLibrary,
             projectInstructions,
             runCommandJobs,
             hookDispatcher,
@@ -738,15 +713,11 @@ export async function run(
           let runtime: RuntimeCore | null = null
           try {
             const allowsSkills = request.allowedTools.includes('load_skill')
-            const allowsMcp = request.allowedTools.some(
-              (name) => name === 'mcp_search_tool' || name === 'mcp_call_tool'
-            )
             runtime = await createRuntime(adapter, {
               model: null,
               setupMode: 'full',
               providerPrompt: getProviderPrompt(request.provider),
               ...(allowsSkills ? { skillLibrary } : {}),
-              ...(allowsMcp ? { mcpLibrary } : {}),
               projectInstructions,
               hookDispatcher,
               requestAttemptLimit: settings.requestAttemptLimit,
@@ -756,7 +727,6 @@ export async function run(
                 provider: request.provider,
                 model: null,
                 skillLibrary,
-                mcpLibrary,
                 projectInstructions,
                 runCommandJobs,
                 hookDispatcher,
@@ -792,22 +762,6 @@ export async function run(
       runCommandJobs,
       browserProfileDir,
     })
-    const { handlers: apiHandlers, startThreadReload } = createApiHandlers({
-      threadManager,
-      threadOperations,
-      threadLifecycle,
-      ui,
-      skillLibrary,
-      mcpLibrary,
-      runCommandJobs,
-      isBrowserConnected: () => browserLaunch !== null,
-      isForegroundOperationActive: () => currentOperation !== null,
-      getServerStatus: () => apiServer!.status(),
-      getHookStatus: () => hookCatalog.status(),
-      publishEvent: (threadId, event) =>
-        apiServer!.eventHub.publish(threadId, event),
-      withCancellableOperation,
-    })
     const mcpHandlers = createMcpHandlers({
       threadManager,
       threadOperations,
@@ -821,15 +775,6 @@ export async function run(
       withCancellableOperation,
     })
 
-    apiServer = createApiServer({
-      host: portalConfig.listeners.api.host,
-      port: portalConfig.listeners.api.port,
-      token: portalConfig.listeners.api.token,
-      handlers: apiHandlers,
-      bodyLimitBytes: settings.api.bodyLimitBytes,
-      requestTimeoutMs: settings.api.requestTimeoutMs,
-      sseHeartbeatMs: settings.api.sseHeartbeatMs,
-    })
     mcpServer = new PortalMcpServer({
       host: portalConfig.listeners.mcp.host,
       port: portalConfig.listeners.mcp.port,
@@ -852,10 +797,6 @@ export async function run(
     })
     hookEvents.subscribe((event) => {
       if (event.threadId !== undefined) {
-        apiServer?.eventHub.publish(event.threadId, {
-          type: 'hook.execution',
-          data: event,
-        })
         const thread = threadManager.getThread(event.threadId)
         if (
           thread !== null &&
@@ -874,11 +815,9 @@ export async function run(
       threadManager,
       threadStore,
       skillLibrary,
-      mcpLibrary,
       runCommandJobs,
       hookCatalog,
       keybindingCatalog,
-      api: apiServer,
       mcpServer,
       ui,
       browserProfileDir,
@@ -908,7 +847,11 @@ export async function run(
           }
         }),
       reloadThread: async (threadId: string) => {
-        const result = startThreadReload(threadId)
+        const result = startThreadReload(threadId, {
+          threadManager,
+          threadLifecycle,
+          ui,
+        })
         if (!result.accepted) {
           throw new Error(
             result.reason === 'not_found'

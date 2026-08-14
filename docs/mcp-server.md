@@ -3,29 +3,24 @@
 [Back to README](../README.md)
 
 Portal can expose selected thread operations as a native Streamable HTTP MCP
-Server. This service is independent from the [HTTP API](api.md): it has its own
-listener, configuration, authentication, protocol, and lifecycle, and it never
-calls the API. Both services share the same in-process browser, runtimes, and
+Server. The `listeners.mcp` section configures its listener, authentication,
+and lifecycle. The server shares Portal's in-process browser, runtimes, and
 active threads.
-
-The [`mcpServers` configuration](mcp.md) has the opposite direction: it makes
-Portal an MCP client. The `listeners.mcp` section documented here configures
-Portal's own MCP Server listener.
 
 ## Start and stop
 
 The server is disabled by default. Manage it from the TUI:
 
 ```text
-/serve mcp start
-/serve mcp status
-/serve mcp token
-/serve mcp stop
+/mcp start
+/mcp status
+/mcp token
+/mcp stop
 ```
 
-API and MCP listeners can run at the same time. Stopping the MCP Server rejects
-new MCP requests, cancels MCP-owned message and foreground operations, and
-closes active transports. It does not cancel work started by the TUI or API.
+Stopping the MCP Server rejects new MCP requests, cancels MCP-owned message and
+foreground operations, and closes active transports. It does not cancel work
+started by the TUI.
 
 ## Configuration
 
@@ -57,9 +52,9 @@ Token strings support `${env:VARIABLE_NAME}` placeholders and the
 `$${env:VARIABLE_NAME}` literal escape. Portal keeps the configured placeholder
 on disk and resolves it whenever the listener starts, so stopping and starting
 the listener can pick up a changed process environment without reloading the
-configuration. A missing variable fails before the port is bound. `/serve mcp
-token` reports only whether authentication is configured and never prints the
-Token value.
+configuration. A missing variable fails before the port is bound. `/mcp token`
+reports only whether authentication is configured and never prints the Token
+value.
 
 The first version targets non-browser MCP clients. Requests containing any
 `Origin` header, including `Origin: null`, are rejected. CORS is not enabled.
@@ -84,7 +79,7 @@ The first version targets non-browser MCP clients. Requests containing any
 defaults to `"agent"`. Chat creation sends only the shared `READY` handshake,
 using a case-insensitive whole-word match, instead of the full portal setup
 prompt. It still creates a normal local runtime with configured tools, Skills,
-MCP connections, and Hooks, so chat mode is not a sandbox.
+and Hooks, so chat mode is not a sandbox.
 
 `portal_create_thread` accepts `provider` plus optional named `model` and
 model-specific `option` keys from [Providers](providers.md). Numeric menu

@@ -62,15 +62,6 @@ interface ToolServices {
     options?: ToolExecutionOptions
   ) => Promise<SpawnTaskResult>
   loadSkill?: (name: string) => Promise<ToolOutput>
-  mcpSearchTool?: (server: string, tool: string) => Promise<ToolOutput>
-  mcpCallTool?: (
-    input: {
-      server: string
-      tool: string
-      arguments: Record<string, unknown>
-    },
-    options?: AbortOptions
-  ) => Promise<ToolOutput>
 }
 
 type SpawnTaskResult =

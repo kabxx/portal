@@ -7,11 +7,6 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 
-import { PortalApiServer } from '../../src/api/api-server.ts'
-import {
-  createApiHandlers,
-  type ApiHandlerDependencies,
-} from '../../src/app/app-api-handlers.ts'
 import {
   createMcpHandlers,
   type McpHandlerDependencies,
@@ -25,62 +20,6 @@ import {
 } from '../../src/processes/run-command-job-manager.ts'
 
 const TEST_TOKEN = 'integration-test-token'
-
-test(
-  'HTTP job endpoints list and stop a real run_command job',
-  { timeout: 20_000 },
-  async () => {
-    const manager = new RunCommandJobManager()
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'portal-api-job-'))
-    const ready = path.join(tempDir, 'ready.txt')
-    const server = new PortalApiServer({
-      host: '127.0.0.1',
-      port: 0,
-      token: TEST_TOKEN,
-      handlers: createFocusedApiHandlers(manager),
-    })
-    try {
-      const input = longRunningCommand(ready, tempDir)
-      const job = manager.start(input)
-      await waitForJobReady(job, ready)
-      const snapshot = requireRunningSnapshot(manager, job.id, input)
-
-      await server.start()
-      const address = server.address()
-      assert.ok(address !== null)
-
-      const unauthorized = await fetch(`${address}/jobs`)
-      assert.equal(unauthorized.status, 401)
-
-      const headers = { Authorization: `Bearer ${TEST_TOKEN}` }
-      const listed = await fetch(`${address}/jobs`, { headers })
-      assert.equal(listed.status, 200)
-      assert.deepEqual(await listed.json(), { jobs: [snapshot] })
-
-      const stopped = await fetch(`${address}/jobs/${job.id}/stop`, {
-        method: 'POST',
-        headers,
-      })
-      assert.equal(stopped.status, 200)
-      assert.deepEqual(await stopped.json(), {
-        stopped: true,
-        jobId: job.id,
-      })
-
-      const result = await job.wait()
-      assert.equal(result.terminationReason, 'user')
-      await waitFor(() => manager.list().length === 0, 'job list to clear')
-
-      const afterStop = await fetch(`${address}/jobs`, { headers })
-      assert.equal(afterStop.status, 200)
-      assert.deepEqual(await afterStop.json(), { jobs: [] })
-    } finally {
-      await server.stop().catch(() => {})
-      await manager.stopAll()
-      rmSync(tempDir, { recursive: true, force: true })
-    }
-  }
-)
 
 test(
   'Portal MCP job tools list and stop a real run_command job',
@@ -142,15 +81,6 @@ test(
     }
   }
 )
-
-function createFocusedApiHandlers(manager: RunCommandJobManager) {
-  // The job routes only exercise this dependency path.
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-  const dependencies = {
-    runCommandJobs: manager,
-  } as unknown as ApiHandlerDependencies
-  return createApiHandlers(dependencies).handlers
-}
 
 function createFocusedMcpHandlers(manager: RunCommandJobManager) {
   // The job tools only exercise this dependency path.

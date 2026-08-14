@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 
 import { ThreadSelectionController } from '../../src/threads/thread-selection.ts'
 
-test('ThreadSelectionController does not activate registered API or MCP threads', () => {
+test('ThreadSelectionController does not activate registered MCP threads', () => {
   const selection = new ThreadSelectionController()
   selection.register('t-api')
   selection.register('t-mcp')

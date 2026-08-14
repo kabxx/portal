@@ -60,12 +60,6 @@ export interface PortalAgentInstructionsConfig {
   codex: PortalInstructionScopeConfig
 }
 
-export interface PortalApiConfig {
-  host: string
-  port: number
-  token: string | null
-}
-
 export interface PortalMcpServerConfig {
   host: string
   port: number
@@ -73,7 +67,6 @@ export interface PortalMcpServerConfig {
 }
 
 export interface PortalListenersConfig {
-  api: PortalApiConfig
   mcp: PortalMcpServerConfig
 }
 
@@ -117,12 +110,6 @@ export interface PortalAdvancedSkillInstallConfig {
   redirectLimit: number
 }
 
-export interface PortalAdvancedApiConfig {
-  requestBodyLimitKB: number
-  requestTimeoutSeconds: number
-  sseHeartbeatSeconds: number
-}
-
 export interface PortalAdvancedInstructionsConfig {
   codexSizeLimitKB: number
   claudeSizeLimitKB: number
@@ -140,7 +127,6 @@ export interface PortalAdvancedConfig {
   runtime: PortalAdvancedRuntimeConfig
   command: PortalAdvancedCommandConfig
   skillInstall: PortalAdvancedSkillInstallConfig
-  api: PortalAdvancedApiConfig
   instructions: PortalAdvancedInstructionsConfig
   hooks: PortalAdvancedHooksConfig
 }
@@ -149,7 +135,6 @@ export interface PortalConfigDocument {
   browser: PortalBrowserConfig
   agentInstructions: PortalAgentInstructionsConfig
   listeners: PortalListenersConfig
-  mcpServers: Record<string, unknown>
   skills: Record<string, unknown>
   hooks: HooksConfig
   keybindings: KeybindingConfig
@@ -175,7 +160,6 @@ const CONFIG_FIELDS = new Set([
   'browser',
   'agentInstructions',
   'listeners',
-  'mcpServers',
   'skills',
   'hooks',
   'keybindings',
@@ -189,15 +173,14 @@ const BROWSER_FIELDS = new Set([
 ])
 const AGENT_INSTRUCTIONS_FIELDS = new Set(['claude', 'codex'])
 const INSTRUCTION_SCOPE_FIELDS = new Set(['global', 'local'])
-const LISTENER_FIELDS = new Set(['api', 'mcp'])
-const API_FIELDS = new Set(['host', 'port', 'token'])
+const LISTENER_FIELDS = new Set(['mcp'])
+const LISTENER_SERVER_FIELDS = new Set(['host', 'port', 'token'])
 const ADVANCED_FIELDS = new Set([
   'browser',
   'provider',
   'runtime',
   'command',
   'skillInstall',
-  'api',
   'instructions',
   'hooks',
 ])
@@ -236,11 +219,6 @@ const ADVANCED_SKILL_INSTALL_FIELDS = new Set([
   'manifestSizeLimitKB',
   'redirectLimit',
 ])
-const ADVANCED_API_FIELDS = new Set([
-  'requestBodyLimitKB',
-  'requestTimeoutSeconds',
-  'sseHeartbeatSeconds',
-])
 const ADVANCED_INSTRUCTIONS_FIELDS = new Set([
   'codexSizeLimitKB',
   'claudeSizeLimitKB',
@@ -261,18 +239,12 @@ export function createDefaultPortalConfig(
       codex: createDefaultInstructionScope(),
     },
     listeners: {
-      api: {
-        host: '127.0.0.1',
-        port: 8787,
-        token: null,
-      },
       mcp: {
         host: '127.0.0.1',
         port: 8788,
         token: null,
       },
     },
-    mcpServers: {},
     skills: {},
     hooks: createDefaultHooksConfig(),
     keybindings: createDefaultKeybindings(),
@@ -316,11 +288,6 @@ export function createDefaultAdvancedConfig(): PortalAdvancedConfig {
       resourceFileCountLimit: 2000,
       manifestSizeLimitKB: 512,
       redirectLimit: 5,
-    },
-    api: {
-      requestBodyLimitKB: 256,
-      requestTimeoutSeconds: 0,
-      sseHeartbeatSeconds: 15,
     },
     instructions: {
       codexSizeLimitKB: 32,
@@ -371,10 +338,39 @@ export async function readPortalConfig(
   return parsePortalConfig(document)
 }
 
-export function parsePortalConfig(document: unknown): PortalConfigDocument {
-  if (!isRecord(document)) {
+function migrateRemovedNetworkConfig(
+  document: Record<string, unknown>
+): Record<string, unknown> {
+  const outboundServers = document.mcpServers
+  if (
+    outboundServers !== undefined &&
+    (!isRecord(outboundServers) || Object.keys(outboundServers).length > 0)
+  ) {
+    throw new PortalConfigError(
+      'Outbound MCP clients are no longer supported. Back up and remove mcpServers before starting Portal.'
+    )
+  }
+
+  const migrated = { ...document }
+  delete migrated.mcpServers
+  if (isRecord(document.listeners)) {
+    const listeners = { ...document.listeners }
+    delete listeners.api
+    migrated.listeners = listeners
+  }
+  if (isRecord(document.advanced)) {
+    const advanced = { ...document.advanced }
+    delete advanced.api
+    migrated.advanced = advanced
+  }
+  return migrated
+}
+
+export function parsePortalConfig(rawDocument: unknown): PortalConfigDocument {
+  if (!isRecord(rawDocument)) {
     throw new PortalConfigError('Config root must be an object')
   }
+  const document = migrateRemovedNetworkConfig(rawDocument)
   assertSupportedFields(document, CONFIG_FIELDS, 'config root')
 
   const browser = document.browser
@@ -441,40 +437,12 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
   }
   const listenersRecord = isRecord(listeners) ? listeners : {}
 
-  const api = listenersRecord.api
-  if (api !== undefined && !isRecord(api)) {
-    throw new PortalConfigError('listeners.api must be an object')
-  }
-  if (api !== undefined) {
-    assertSupportedFields(api, API_FIELDS, 'listeners.api')
-  }
-  const apiRecord = isRecord(api) ? api : {}
-  const host = apiRecord.host ?? '127.0.0.1'
-  if (typeof host !== 'string' || host.trim() === '') {
-    throw new PortalConfigError('listeners.api.host must be a non-empty string')
-  }
-  const port = apiRecord.port ?? 8787
-  if (
-    typeof port !== 'number' ||
-    !Number.isSafeInteger(port) ||
-    port <= 0 ||
-    port > 65_535
-  ) {
-    throw new PortalConfigError(
-      'listeners.api.port must be an integer from 1 to 65535'
-    )
-  }
-  const rawToken = apiRecord.token ?? null
-  if (rawToken !== null && typeof rawToken !== 'string') {
-    throw new PortalConfigError('listeners.api.token must be a string or null')
-  }
-
   const mcpServer = listenersRecord.mcp
   if (mcpServer !== undefined && !isRecord(mcpServer)) {
     throw new PortalConfigError('listeners.mcp must be an object')
   }
   if (mcpServer !== undefined) {
-    assertSupportedFields(mcpServer, API_FIELDS, 'listeners.mcp')
+    assertSupportedFields(mcpServer, LISTENER_SERVER_FIELDS, 'listeners.mcp')
   }
   const mcpServerRecord = isRecord(mcpServer) ? mcpServer : {}
   const mcpServerHost = mcpServerRecord.host ?? '127.0.0.1'
@@ -497,10 +465,6 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
     throw new PortalConfigError('listeners.mcp.token must be a string or null')
   }
 
-  const mcpServers = document.mcpServers
-  if (!isRecord(mcpServers)) {
-    throw new PortalConfigError('mcpServers must be an object keyed by name')
-  }
   const skills = document.skills
   if (!isRecord(skills)) {
     throw new PortalConfigError('skills must be an object keyed by name')
@@ -534,14 +498,12 @@ export function parsePortalConfig(document: unknown): PortalConfigDocument {
     },
     agentInstructions: { claude, codex },
     listeners: {
-      api: { host, port, token: rawToken },
       mcp: {
         host: mcpServerHost,
         port: mcpServerPort,
         token: mcpServerToken,
       },
     },
-    mcpServers: { ...mcpServers },
     skills: { ...skills },
     hooks,
     keybindings,
@@ -561,7 +523,6 @@ export function parseAdvancedConfig(value: unknown): PortalAdvancedConfig {
     advanced.skillInstall,
     'advanced.skillInstall'
   )
-  const api = parseOptionalRecord(advanced.api, 'advanced.api')
   const instructions = parseOptionalRecord(
     advanced.instructions,
     'advanced.instructions'
@@ -577,7 +538,6 @@ export function parseAdvancedConfig(value: unknown): PortalAdvancedConfig {
     ADVANCED_SKILL_INSTALL_FIELDS,
     'advanced.skillInstall'
   )
-  assertSupportedFields(api, ADVANCED_API_FIELDS, 'advanced.api')
   assertSupportedFields(
     instructions,
     ADVANCED_INSTRUCTIONS_FIELDS,
@@ -720,23 +680,6 @@ export function parseAdvancedConfig(value: unknown): PortalAdvancedConfig {
         'advanced.skillInstall.redirectLimit'
       ),
     },
-    api: {
-      requestBodyLimitKB: parsePositiveInteger(
-        api.requestBodyLimitKB,
-        defaults.api.requestBodyLimitKB,
-        'advanced.api.requestBodyLimitKB'
-      ),
-      requestTimeoutSeconds: parseNonNegativeInteger(
-        api.requestTimeoutSeconds,
-        defaults.api.requestTimeoutSeconds,
-        'advanced.api.requestTimeoutSeconds'
-      ),
-      sseHeartbeatSeconds: parsePositiveInteger(
-        api.sseHeartbeatSeconds,
-        defaults.api.sseHeartbeatSeconds,
-        'advanced.api.sseHeartbeatSeconds'
-      ),
-    },
     instructions: {
       codexSizeLimitKB: parsePositiveInteger(
         instructions.codexSizeLimitKB,
@@ -799,17 +742,18 @@ async function hasCompleteManagedSections(
   if (!isRecord(document)) {
     return false
   }
+  if (Object.hasOwn(document, 'mcpServers')) {
+    return false
+  }
   const listeners = document.listeners
   if (!isRecord(listeners)) {
     return false
   }
-  const api = listeners.api
   const mcp = listeners.mcp
   const hooks = document.hooks
   const keybindings = document.keybindings
   const advanced = document.advanced
   if (
-    !isRecord(api) ||
     !isRecord(mcp) ||
     !isRecord(hooks) ||
     !isRecord(keybindings) ||
@@ -817,9 +761,9 @@ async function hasCompleteManagedSections(
   ) {
     return false
   }
-  const apiComplete = ['host', 'port', 'token'].every((field) =>
-    Object.hasOwn(api, field)
-  )
+  if (Object.hasOwn(listeners, 'api') || Object.hasOwn(advanced, 'api')) {
+    return false
+  }
   const mcpServerComplete = ['host', 'port', 'token'].every((field) =>
     Object.hasOwn(mcp, field)
   )
@@ -834,7 +778,6 @@ async function hasCompleteManagedSections(
     ['runtime', ADVANCED_RUNTIME_FIELDS],
     ['command', ADVANCED_COMMAND_FIELDS],
     ['skillInstall', ADVANCED_SKILL_INSTALL_FIELDS],
-    ['api', ADVANCED_API_FIELDS],
     ['instructions', ADVANCED_INSTRUCTIONS_FIELDS],
     ['hooks', ADVANCED_HOOKS_FIELDS],
   ]
@@ -845,9 +788,7 @@ async function hasCompleteManagedSections(
       [...fields].every((field) => Object.hasOwn(section, field))
     )
   })
-  return (
-    apiComplete && mcpServerComplete && keybindingsComplete && advancedComplete
-  )
+  return mcpServerComplete && keybindingsComplete && advancedComplete
 }
 
 export async function readPortalKeybindings(
@@ -1125,10 +1066,8 @@ function cloneConfig(config: PortalConfigDocument): PortalConfigDocument {
       codex: { ...config.agentInstructions.codex },
     },
     listeners: {
-      api: { ...config.listeners.api },
       mcp: { ...config.listeners.mcp },
     },
-    mcpServers: structuredClone(config.mcpServers),
     skills: structuredClone(config.skills),
     hooks: structuredClone(config.hooks),
     keybindings: structuredClone(config.keybindings),
@@ -1148,7 +1087,6 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
         'Project instruction sources loaded into runtimes.',
       ],
       ['listeners', 'Inbound network listeners exposed by Portal.'],
-      ['mcpServers', 'Outbound MCP servers keyed by local name.'],
       ['skills', 'Registered Skill directories and enabled states.'],
       ['hooks', 'Lifecycle hook handlers and execution policy.'],
       ['keybindings', 'Terminal input shortcuts. Changes apply automatically.'],
@@ -1190,22 +1128,7 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
   commentMap(
     document,
     ['listeners'],
-    [
-      ['api', 'Local HTTP API listener and authentication settings.'],
-      ['mcp', 'Portal MCP Server listener and authentication settings.'],
-    ]
-  )
-  commentMap(
-    document,
-    ['listeners', 'api'],
-    [
-      ['host', 'Network interface used by the local HTTP API.'],
-      ['port', 'TCP port used by the local HTTP API.'],
-      [
-        'token',
-        'Bearer token used by the API; null or empty is allowed only on 127.0.0.1.',
-      ],
-    ]
+    [['mcp', 'Portal MCP Server listener and authentication settings.']]
   )
   commentMap(
     document,
@@ -1242,7 +1165,6 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
       ['runtime', 'Runtime retry, cancellation, and shutdown behavior.'],
       ['command', 'Local command output and process termination limits.'],
       ['skillInstall', 'Skill download, extraction, and file limits.'],
-      ['api', 'HTTP API request and event-stream limits.'],
       ['instructions', 'Project instruction loading limits.'],
       ['hooks', 'Hook command resource limits.'],
     ],
@@ -1363,21 +1285,6 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
       [
         'redirectLimit',
         'Maximum HTTP redirects followed during a Skill download.',
-      ],
-    ]
-  )
-  commentMap(
-    document,
-    ['advanced', 'api'],
-    [
-      ['requestBodyLimitKB', 'Maximum HTTP API request body size, in KB.'],
-      [
-        'requestTimeoutSeconds',
-        'HTTP request timeout in seconds; 0 disables the timeout.',
-      ],
-      [
-        'sseHeartbeatSeconds',
-        'Seconds between HTTP event-stream heartbeat messages.',
       ],
     ]
   )
@@ -1504,18 +1411,6 @@ function parsePositiveInteger(
   const parsed = value === undefined ? fallback : value
   if (!isSafeInteger(parsed) || parsed <= 0) {
     throw new PortalConfigError(`${label} must be a positive integer`)
-  }
-  return parsed
-}
-
-function parseNonNegativeInteger(
-  value: unknown,
-  fallback: number,
-  label: string
-): number {
-  const parsed = value === undefined ? fallback : value
-  if (!isSafeInteger(parsed) || parsed < 0) {
-    throw new PortalConfigError(`${label} must be a non-negative integer`)
   }
   return parsed
 }

@@ -3,7 +3,6 @@ import type { BrowserContext } from 'playwright'
 import type { HookExecutionScope } from '../hooks/hook-types.ts'
 import type { HookDispatcher } from '../hooks/hook-dispatcher.ts'
 import type { ProjectInstructions } from '../instructions/project-instructions.ts'
-import type { McpLibrary } from '../mcp/mcp-library.ts'
 import type { RunCommandJobManager } from '../processes/run-command-job-manager.ts'
 import type { ProviderAdapter } from '../providers/adapters/adapter-base.ts'
 import type { ProviderId } from '../providers/provider-id.ts'
@@ -46,7 +45,6 @@ export function createToolServices({
   provider,
   model,
   skillLibrary,
-  mcpLibrary,
   projectInstructions,
   runCommandJobs,
   hookDispatcher,
@@ -57,7 +55,6 @@ export function createToolServices({
   provider: ProviderId
   model: ResolvedProviderModel | null
   skillLibrary: SkillLibrary
-  mcpLibrary: McpLibrary
   projectInstructions: ProjectInstructions
   runCommandJobs: RunCommandJobManager
   hookDispatcher: HookDispatcher
@@ -96,7 +93,6 @@ export function createToolServices({
         model: inheritSpawnModelSelection(provider, spawnProvider, model),
         prompt,
         skillLibrary,
-        mcpLibrary,
         projectInstructions: projectInstructions.fork(),
         runCommandJobs,
         hookDispatcher,
@@ -133,7 +129,6 @@ async function runSpawnTask({
   model,
   prompt,
   skillLibrary,
-  mcpLibrary,
   projectInstructions,
   runCommandJobs,
   hookDispatcher,
@@ -147,7 +142,6 @@ async function runSpawnTask({
   model: ResolvedProviderModel | null
   prompt: string
   skillLibrary: SkillLibrary
-  mcpLibrary: McpLibrary
   projectInstructions: ProjectInstructions
   runCommandJobs: RunCommandJobManager
   hookDispatcher: HookDispatcher
@@ -185,7 +179,6 @@ async function runSpawnTask({
       setupMode: 'full',
       providerPrompt: getProviderPrompt(provider),
       skillLibrary,
-      mcpLibrary,
       projectInstructions,
       hookDispatcher,
       advertiseSpawnTool: currentSpawnDepth < settings.spawnDepthLimit,
@@ -195,7 +188,6 @@ async function runSpawnTask({
         provider,
         model,
         skillLibrary,
-        mcpLibrary,
         projectInstructions,
         runCommandJobs,
         hookDispatcher,

@@ -3,18 +3,13 @@ import test from 'node:test'
 
 import {
   createPortalRuntimeSettings,
-  parseApiThreadCreationMode,
   runtimeSetupModeForThreadCreation,
 } from '../../src/app/app-runtime-settings.ts'
 import { createDefaultAdvancedConfig } from '../../src/config/portal-config.ts'
 
-test('thread creation modes map to setup modes and API defaults safely', () => {
+test('thread creation modes map to setup modes', () => {
   assert.equal(runtimeSetupModeForThreadCreation('agent'), 'full')
   assert.equal(runtimeSetupModeForThreadCreation('chat'), 'handshake')
-  assert.equal(parseApiThreadCreationMode(undefined), 'agent')
-  assert.equal(parseApiThreadCreationMode('chat'), 'chat')
-  assert.throws(() => parseApiThreadCreationMode(null), /mode must be/)
-  assert.throws(() => parseApiThreadCreationMode('clean'), /mode must be/)
 })
 
 test('runtime settings convert every advanced section to runtime units', () => {
@@ -50,11 +45,6 @@ test('runtime settings convert every advanced section to runtime units', () => {
     resourceFileCountLimit: 31,
     manifestSizeLimitKB: 32,
     redirectLimit: 33,
-  }
-  advanced.api = {
-    requestBodyLimitKB: 34,
-    requestTimeoutSeconds: 35,
-    sseHeartbeatSeconds: 36,
   }
   advanced.instructions = {
     codexSizeLimitKB: 37,
@@ -94,11 +84,6 @@ test('runtime settings convert every advanced section to runtime units', () => {
       maxResourceFiles: 31,
       maxManifestBytes: 32 * 1024,
       maxRedirects: 33,
-    },
-    api: {
-      bodyLimitBytes: 34 * 1024,
-      requestTimeoutMs: 35_000,
-      sseHeartbeatMs: 36_000,
     },
     instructionLimits: {
       codexMaxBytes: 37 * 1024,
