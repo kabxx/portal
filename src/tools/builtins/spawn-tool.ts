@@ -15,9 +15,7 @@ interface SpawnInput {
 
 @defineToolMetadata({
   name: 'spawn',
-  description: [
-    'Spawn child worker for self-contained subtask, wait for result.',
-  ].join('\n'),
+  description: 'Run a self-contained child task and wait for its result.',
   inputSchema: {
     type: 'object',
     properties: {

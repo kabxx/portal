@@ -20,7 +20,6 @@ import type {
 } from '../tools/core/tool-definition.ts'
 import {
   createAdapterForProvider,
-  getProviderPrompt,
   normalizeProviderId,
 } from './app-provider-catalog.ts'
 import type { PortalRuntimeSettings } from './app-runtime-settings.ts'
@@ -50,6 +49,7 @@ export function createToolServices({
   hookDispatcher,
   settings,
   currentSpawnDepth,
+  workingDirectory,
 }: {
   context: BrowserContext
   provider: ProviderId
@@ -60,6 +60,7 @@ export function createToolServices({
   hookDispatcher: HookDispatcher
   settings: PortalRuntimeSettings
   currentSpawnDepth: number
+  workingDirectory: string
 }): ToolServices {
   return {
     runCommandJobs,
@@ -93,11 +94,12 @@ export function createToolServices({
         model: inheritSpawnModelSelection(provider, spawnProvider, model),
         prompt,
         skillLibrary,
-        projectInstructions: projectInstructions.fork(),
+        projectInstructions,
         runCommandJobs,
         hookDispatcher,
         settings,
         currentSpawnDepth: childSpawnDepth,
+        workingDirectory,
         ...(options.executionScope !== undefined
           ? {
               executionScope: {
@@ -136,6 +138,7 @@ async function runSpawnTask({
   currentSpawnDepth,
   executionScope,
   signal,
+  workingDirectory,
 }: {
   context: BrowserContext
   provider: ProviderId
@@ -149,6 +152,7 @@ async function runSpawnTask({
   currentSpawnDepth: number
   executionScope?: HookExecutionScope
   signal?: AbortSignal
+  workingDirectory: string
 }): Promise<SpawnTaskResult> {
   let adapter: ProviderAdapter | null = null
   let runtime: RuntimeCore | null = null
@@ -177,12 +181,12 @@ async function runSpawnTask({
     runtime = await createRuntimeFromAdapter(adapter, {
       model,
       setupMode: 'full',
-      providerPrompt: getProviderPrompt(provider),
       skillLibrary,
       projectInstructions,
       hookDispatcher,
       advertiseSpawnTool: currentSpawnDepth < settings.spawnDepthLimit,
       requestAttemptLimit: settings.requestAttemptLimit,
+      workingDirectory,
       toolServices: createToolServices({
         context,
         provider,
@@ -193,6 +197,7 @@ async function runSpawnTask({
         hookDispatcher,
         settings,
         currentSpawnDepth,
+        workingDirectory,
       }),
       signal,
     })

@@ -64,6 +64,7 @@ test('spawn depth rejection occurs before project, browser, or Hook side effects
     } as unknown as HookDispatcher,
     settings,
     currentSpawnDepth: 5,
+    workingDirectory: process.cwd(),
   })
 
   const result = await services.spawnTask?.(

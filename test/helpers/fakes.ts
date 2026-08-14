@@ -11,7 +11,6 @@ import {
 import type { ConversationHistoryResult } from '../../src/providers/conversation-history.ts'
 import type { CDPSession, Page } from 'playwright'
 import { ToolRegistry } from '../../src/tools/core/tool-registry.ts'
-import type { ManualSkillSummary } from '../../src/skills/manual-skill-summary.ts'
 
 export interface FakeRuntimeOptions {
   conversationId?: string | null
@@ -21,7 +20,6 @@ export interface FakeRuntimeOptions {
   stopGeneration?: () => Promise<void>
   adapter?: ProviderAdapter
   submitUserInput?: RuntimeCore['submitUserInput']
-  manualSkills?: readonly ManualSkillSummary[]
   onUnexpectedPageClose?: (listener: () => void) => () => void
   loadHistory?: RuntimeCore['loadHistory']
   preflightInitialInput?: RuntimeCore['preflightInitialInput']
@@ -159,14 +157,6 @@ class FakeRuntime extends RuntimeCore {
 
   public override get conversationUrl(): string {
     return this.fakeOptions.conversationUrl ?? 'https://example.com/thread'
-  }
-
-  public override get availableManualSkills(): readonly ManualSkillSummary[] {
-    return this.fakeOptions.manualSkills ?? []
-  }
-
-  public override get availableManualSkillNames(): readonly string[] {
-    return this.availableManualSkills.map(({ name }) => name)
   }
 
   public override get prompt(): string {

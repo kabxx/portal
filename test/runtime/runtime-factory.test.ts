@@ -17,10 +17,6 @@ import { loadProjectInstructions } from '../../src/instructions/project-instruct
 import { createBrowserContextStub } from '../helpers/fakes.ts'
 import { SETUP_HANDSHAKE_PROMPT } from '../../src/runtime/setup-handshake.ts'
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 interface FakeAdapterOptions {
   failChangeModel?: boolean
   failSubmit?: boolean
@@ -167,25 +163,22 @@ test('createRuntimeFromAdapter can send only the setup handshake for chat thread
   await createRuntimeFromAdapter(adapter, {
     model: null,
     setupMode: 'handshake',
-    providerPrompt: '# Provider Boundary',
   })
 
   assert.deepEqual(adapter.attachedTexts, [SETUP_HANDSHAKE_PROMPT])
 })
 
-test('createRuntimeFromAdapter includes provider prompt in setup', async () => {
+test('createRuntimeFromAdapter keeps the default four-tool setup compact', async () => {
   const adapter = new FakeAdapter()
 
   await createRuntimeFromAdapter(adapter, {
     model: null,
-    providerPrompt: '# Provider Boundary\n- Use tools only.',
+    workingDirectory: 'C:\\Users\\portal\\workspace',
   })
 
-  assert.match(adapter.attachedTexts[0] ?? '', /# Provider Boundary/)
-  assert.ok(
-    adapter.attachedTexts[0]!.indexOf('# Provider Boundary') <
-      adapter.attachedTexts[0]!.indexOf('# Setup Handshake')
-  )
+  const setup = adapter.attachedTexts[0] ?? ''
+  assert.ok(setup.length <= 1_400, `setup is ${setup.length} characters`)
+  assert.doesNotMatch(setup, /Examples?:|```/)
 })
 
 test('createRuntimeFromAdapter includes project instructions in setup', async () => {
@@ -199,12 +192,9 @@ test('createRuntimeFromAdapter includes project instructions in setup', async ()
       'Factory project rule.',
       'utf8'
     )
-    const { instructions } = await loadProjectInstructions({
+    const instructions = await loadProjectInstructions({
       cwd: root,
-      config: {
-        claude: { global: false, local: true },
-        codex: { global: false, local: true },
-      },
+      enabled: true,
     })
     const adapter = new FakeAdapter()
 
@@ -226,7 +216,7 @@ test('createRuntimeFromAdapter includes the spawn tool in setup', async () => {
   await createRuntimeFromAdapter(adapter, { model: null })
 
   assert.match(adapter.attachedTexts[0] ?? '', /### spawn/)
-  assert.match(adapter.attachedTexts[0] ?? '', /"prompt"/)
+  assert.match(adapter.attachedTexts[0] ?? '', /prompt: string/)
 })
 
 test('createRuntimeFromAdapter can omit the spawn tool from setup', async () => {
@@ -271,7 +261,7 @@ test('a spawn hidden from setup remains guarded for stale calls', async () => {
   assert.match(adapter.attachedTexts.at(-1) ?? '', /SPAWN_DEPTH_LIMIT_REACHED/)
 })
 
-test('createRuntimeFromAdapter catalogs enabled skills into setup and load_skill', async () => {
+test('createRuntimeFromAdapter catalogs enabled skill metadata and paths', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-runtime-skill-'))
   const skillsDirectory = path.join(root, 'data', 'skills')
   await createTestSkill(skillsDirectory, 'runtime-skill', {
@@ -285,127 +275,41 @@ test('createRuntimeFromAdapter catalogs enabled skills into setup and load_skill
   })
 
   try {
-    const enabledAdapter = new FakeAdapter({
-      responses: [
-        'READY',
-        '<tool name="load_skill">{"name":"runtime-skill"}</tool>',
-        'Skill loaded.',
-        'Manual skill loaded.',
-      ],
-    })
-    const enabledRuntime = await createRuntimeFromAdapter(enabledAdapter, {
+    const enabledAdapter = new FakeAdapter()
+    await createRuntimeFromAdapter(enabledAdapter, {
       model: null,
       skillLibrary,
     })
-    assert.deepEqual(enabledRuntime.availableManualSkillNames, [
-      'runtime-skill',
-    ])
-    assert.deepEqual(enabledRuntime.availableManualSkills, [
-      {
-        name: 'runtime-skill',
-        description: 'Use this runtime skill for setup tests.',
-      },
-    ])
     const enabledPrompt = enabledAdapter.attachedTexts[0] ?? ''
-    assert.match(enabledPrompt, /# Skills/)
-    assert.match(enabledPrompt, /runtime-skill:/)
-    assert.match(enabledPrompt, /### load_skill/)
+    assert.match(enabledPrompt, /## Skills/)
+    assert.match(enabledPrompt, /### runtime-skill/)
+    assert.ok(
+      enabledPrompt.includes(
+        `Path: ${JSON.stringify(path.join(skillsDirectory, 'runtime-skill', 'SKILL.md'))}`
+      )
+    )
+    assert.doesNotMatch(enabledPrompt, /### load_skill/)
     assert.match(
       enabledPrompt,
-      /Load a skill by its exact name from the catalog\./
+      /Description: Use this runtime skill for setup tests\./
     )
-    assert.doesNotMatch(enabledPrompt, /<skill_content>/)
     assert.doesNotMatch(enabledPrompt, /SECRET INSTRUCTIONS/)
     assert.ok(
-      enabledPrompt.indexOf('# Tools') < enabledPrompt.indexOf('# Skills')
+      enabledPrompt.indexOf('## Tools') < enabledPrompt.indexOf('## Skills')
     )
     assert.ok(
-      enabledPrompt.indexOf('# Skills') <
-        enabledPrompt.indexOf('# Runtime Context')
+      enabledPrompt.indexOf('## Skills') < enabledPrompt.indexOf('## Runtime')
     )
-
-    await enabledRuntime.submitUserInput('Load runtime-skill.')
-    const loadedResult: unknown = JSON.parse(
-      enabledAdapter.attachedTexts[2]!.slice('### Tool Result ###\n'.length)
-    )
-    assert.ok(isRecord(loadedResult))
-    assert.ok(isRecord(loadedResult.result))
-    assert.equal(loadedResult.tool, 'load_skill')
-    assert.equal(loadedResult.outcome, 'success')
-    assert.equal(loadedResult.result.name, 'runtime-skill')
-    assert.deepEqual(loadedResult.result.resources, [])
-    assert.match(
-      String(loadedResult.result.instructions),
-      /SECRET INSTRUCTIONS/
-    )
-
-    await enabledRuntime.submitUserInput('$runtime-skill')
-    assert.match(enabledAdapter.attachedTexts[3] ?? '', /SECRET INSTRUCTIONS/)
-    assert.match(enabledAdapter.attachedTexts[3] ?? '', /## User Task\n\n$/)
 
     await skillLibrary.disable('runtime-skill')
-    assert.deepEqual(enabledRuntime.availableManualSkills, [
-      {
-        name: 'runtime-skill',
-        description: 'Use this runtime skill for setup tests.',
-      },
-    ])
     const disabledAdapter = new FakeAdapter()
-    const disabledRuntime = await createRuntimeFromAdapter(disabledAdapter, {
+    await createRuntimeFromAdapter(disabledAdapter, {
       model: null,
       skillLibrary,
     })
-    assert.deepEqual(disabledRuntime.availableManualSkillNames, [])
-    assert.deepEqual(disabledRuntime.availableManualSkills, [])
     const disabledPrompt = disabledAdapter.attachedTexts[0] ?? ''
-    assert.doesNotMatch(disabledPrompt, /# Skills/)
+    assert.doesNotMatch(disabledPrompt, /## Skills/)
     assert.doesNotMatch(disabledPrompt, /### load_skill/)
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
-test('load_skill reports files deleted after runtime creation to the model', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-runtime-skill-'))
-  const skillsDirectory = path.join(root, 'data', 'skills')
-  const skillDirectory = await createTestSkill(skillsDirectory, 'deleted-skill')
-  const skillLibrary = new SkillLibrary({
-    skillsDirectory,
-    tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
-    registryPath: path.join(root, 'data', 'config.yaml'),
-  })
-  const adapter = new FakeAdapter({
-    responses: [
-      'READY',
-      '<tool name="load_skill">{"name":"deleted-skill"}</tool>',
-      'The missing skill was reported.',
-    ],
-  })
-
-  try {
-    const runtime = await createRuntimeFromAdapter(adapter, {
-      model: null,
-      skillLibrary,
-    })
-    await rm(skillDirectory, { recursive: true, force: true })
-    const toolResults: Array<Record<string, unknown>> = []
-
-    const output = await runtime.submitUserInput('Load deleted-skill.', {
-      onToolResult: async (toolResult) => {
-        toolResults.push(toolResult.result)
-      },
-    })
-
-    assert.equal(output, 'The missing skill was reported.')
-    assert.equal(toolResults.length, 1)
-    assert.match(
-      String(toolResults[0]?.message),
-      /^Skill files are no longer available or valid: deleted-skill/
-    )
-    assert.match(
-      adapter.attachedTexts[2] ?? '',
-      /^### Tool Result ###\n\{[\s\S]*"tool": "load_skill"[\s\S]*"outcome": "error"[\s\S]*Skill files are no longer available or valid: deleted-skill/
-    )
   } finally {
     await rm(root, { recursive: true, force: true })
   }

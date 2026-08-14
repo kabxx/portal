@@ -3,9 +3,7 @@ import type { ToolOutput } from '../core/tool-definition.ts'
 
 @defineToolMetadata({
   name: 'attach_image',
-  description: [
-    'Attach local images for inspection. No manual upload required.',
-  ].join('\n'),
+  description: 'Attach a local image for inspection.',
   inputSchema: {
     type: 'object',
     properties: {

@@ -102,11 +102,9 @@ Both modes require the response to contain `READY` as a case-insensitive whole
 word. Agent creation sends a full setup prompt composed from:
 
 - the shared tool invocation protocol and built-in tool definitions;
-- enabled Skill names and descriptions, when the catalog is non-empty;
-- successfully connected MCP Server and Tool names;
-- the current working directory;
+- enabled Skill names, descriptions, and absolute manifest paths, when the catalog is non-empty;
 - enabled always-on project instructions;
-- optional provider rules, currently used for Grok;
+- the current working directory;
 - a setup handshake instruction to reply with `READY`.
 
 Chat creation sends only the shared setup handshake. It still constructs the
@@ -115,7 +113,7 @@ Hooks, and retains project-instruction state. Those capabilities are not
 advertised to the model, but a valid model-generated tool call can still be
 executed, so chat mode is not a sandbox.
 
-`load_skill` is registered only when the new runtime has at least one enabled valid Skill. MCP host tools are backed by the runtime's `ThreadMcpSession`.
+MCP host tools are backed by the runtime's `ThreadMcpSession`.
 
 ## Resume lifecycle
 
@@ -278,7 +276,7 @@ stopping a listener or closing a thread does not implicitly stop detached jobs.
 
 ## Spawned runtimes
 
-`spawn` creates a temporary child provider conversation in the existing browser context. It selects the requested provider or defaults to the parent provider, creates the normal Skill snapshot and independent MCP connections, forks the parent project-instruction snapshot, runs the standard setup handshake, executes one focused prompt synchronously, returns JSON containing provider, conversation URL, and output, then closes the child runtime.
+`spawn` creates a temporary child provider conversation in the existing browser context. It selects the requested provider or defaults to the parent provider, creates the normal Skill snapshot and independent MCP connections, shares the application Project Instructions snapshot, runs the standard setup handshake, executes one focused prompt synchronously, returns JSON containing provider, conversation URL, and output, then closes the child runtime.
 
 Root runtimes carry an internal spawn depth of `0`; each spawned runtime adds
 one. `advanced.runtime.spawnDepthLimit` defaults to `5`, allowing child depths
@@ -290,19 +288,20 @@ Spawned conversations are not added to the normal thread list or SQLite history.
 
 ## Skills
 
-The `skills` section of `<data-dir>/config.yaml` is read for every Skill command and runtime creation. A valid enabled snapshot defines which names `load_skill` can resolve. Agent threads and spawned runtimes also include the name/description catalog in their full setup prompts; chat threads retain the snapshot locally without advertising it.
-
-Catalog membership is immutable for an active runtime. The actual `SKILL.md` and resource list are read and validated on demand, so edits are visible to later loads while deleted or invalid files return errors. See [Skills](skills.md).
+The `skills` section of `<data-dir>/config.yaml` is read for every Skill command
+and runtime creation. Agent threads and spawned runtimes include enabled Skill
+names, sanitized descriptions, and absolute `SKILL.md` paths in their full setup
+prompts; manifest bodies and resources are not injected. Chat threads retain
+the snapshot locally without advertising it. Catalog membership and metadata
+are immutable for an active runtime. See [Skills](skills.md).
 
 ## Project instructions
 
-The `agentInstructions` section is disabled by default. When enabled, new
-runtimes load reviewed Codex and Claude Code files from configured global roots
-and the current workspace. Always-on text joins full agent and spawned setup
-prompts; chat creation does not send it. Supported file-targeting tool calls can
-still activate nested instructions and path rules before execution. Loader
-membership is snapshotted per runtime, while a child `spawn` forks the parent's
-active state. See [Project Instructions](instructions.md).
+The `projectInstructions` setting is disabled by default. When enabled, portal
+reads only `<startup-cwd>/AGENTS.md` once at application startup. The immutable
+text joins full agent and spawned setup prompts; chat creation does not send it.
+There is no parent, nested, override, Claude, user-level, import, or tool-target
+discovery. See [Project Instructions](instructions.md).
 
 ## MCP
 

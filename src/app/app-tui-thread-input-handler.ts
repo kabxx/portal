@@ -1,4 +1,3 @@
-import type { ProjectInstructionWarning } from '../instructions/project-instructions.ts'
 import type { RunCommandJobManager } from '../processes/run-command-job-manager.ts'
 import {
   buildRuntimeRecoveryPlan,
@@ -55,22 +54,6 @@ export function createTuiThreadInputHandler({
                 onAssistantStream: async (message) => {
                   throwIfAborted(signal)
                   ui.renderAssistantStream(activeThread, message)
-                },
-                onManualSkill: async (name) => {
-                  throwIfAborted(signal)
-                  ui.renderThreadInfo(
-                    activeThread,
-                    'skill',
-                    `Using skill: ${name}`
-                  )
-                },
-                onInstructionWarning: async (warning) => {
-                  throwIfAborted(signal)
-                  ui.renderThreadWarning(
-                    activeThread,
-                    'instructions',
-                    formatInstructionWarning(warning)
-                  )
                 },
                 onToolProgress: (event, toolCall, toolCallId) => {
                   if (
@@ -198,13 +181,4 @@ export function createTuiThreadInputHandler({
       }
     })
   }
-}
-
-function formatInstructionWarning(
-  warning: ProjectInstructionWarning
-): string[] {
-  return [
-    warning.message,
-    ...(warning.path === undefined ? [] : [`source: ${warning.path}`]),
-  ]
 }

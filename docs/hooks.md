@@ -69,7 +69,9 @@ An agent handler creates an isolated multi-turn child runtime. Every Tool must b
   timeoutMs: 60000
 ```
 
-Available host tool names are `attach_image`, `run_command`, `apply_patch`, `load_skill`, `mcp_search_tool`, and `mcp_call_tool`. Availability still depends on the runtime's configured Skills and MCP connections.
+Available host tool names are `attach_image`, `run_command`, `apply_patch`,
+`mcp_search_tool`, and `mcp_call_tool`. Availability still depends on the
+runtime's configured MCP connections.
 
 ## Events
 

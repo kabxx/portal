@@ -1,7 +1,4 @@
-import type {
-  ProjectInstructions,
-  ProjectInstructionWarning,
-} from '../instructions/project-instructions.ts'
+import type { ProjectInstructions } from '../instructions/project-instructions.ts'
 import type { ProviderAdapter } from '../providers/adapters/adapter-base.ts'
 import type { ProviderId } from '../providers/provider-id.ts'
 import type { ResolvedProviderModel } from '../providers/provider-model-catalog.ts'
@@ -113,9 +110,7 @@ export interface ThreadLifecycleDependencies {
   resolveConversationUrl(
     value: string
   ): { provider: ProviderId; conversationUrl: string } | null
-  createProjectInstructions(
-    onWarning: (warning: ProjectInstructionWarning) => void | Promise<void>
-  ): Promise<ProjectInstructions>
+  projectInstructions: ProjectInstructions
   createAdapter(input: {
     provider: ProviderId
     conversationUrl: string | null
@@ -530,21 +525,7 @@ export class ThreadLifecycleService {
       }
 
       stage = 'preparing'
-      const projectInstructions =
-        await this.dependencies.createProjectInstructions(async (warning) => {
-          await this.notify({
-            type: 'provision.warning',
-            threadId,
-            source: request.source,
-            title: 'instructions',
-            lines: [
-              warning.message,
-              ...(warning.path === undefined
-                ? []
-                : [`source: ${warning.path}`]),
-            ],
-          })
-        })
+      const projectInstructions = this.dependencies.projectInstructions
       throwIfAborted(signal)
 
       let loginWarningSent = false

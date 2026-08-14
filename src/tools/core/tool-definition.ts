@@ -1,16 +1,9 @@
 import type { ProviderAdapter } from '../../providers/adapters/adapter-base.ts'
 import type { RunCommandJobService } from '../../processes/run-command-job-manager.ts'
 import type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
-import { joinPromptSections } from '../../shared/prompt-sections.ts'
 import type { HookExecutionScope } from '../../hooks/hook-types.ts'
 
 const TOOL_METADATA_SYMBOL = Symbol('TOOL_METADATA')
-
-interface ToolMetadataExample {
-  tool?: string
-  params?: unknown
-  input?: string
-}
 
 type ToolInputFormat = 'json' | 'freeform'
 
@@ -19,7 +12,7 @@ interface ToolMetadata {
   description: string
   inputFormat?: ToolInputFormat
   inputSchema?: unknown
-  examples?: ToolMetadataExample[]
+  parameters?: string
 }
 
 type ToolOutcome = 'success' | 'error' | 'unknown'
@@ -61,7 +54,6 @@ interface ToolServices {
     input: { prompt: string; provider?: string },
     options?: ToolExecutionOptions
   ) => Promise<SpawnTaskResult>
-  loadSkill?: (name: string) => Promise<ToolOutput>
 }
 
 type SpawnTaskResult =
@@ -107,9 +99,9 @@ function isToolMetadata(value: unknown): value is ToolMetadata {
     return false
   }
   return !(
-    'examples' in value &&
-    value.examples !== undefined &&
-    !Array.isArray(value.examples)
+    'parameters' in value &&
+    value.parameters !== undefined &&
+    typeof value.parameters !== 'string'
   )
 }
 
@@ -141,42 +133,55 @@ abstract class Tool<TInput = unknown, TOutput extends ToolOutput = ToolOutput> {
   }
 
   public get prompt(): string {
-    const { name, description, inputSchema, examples } = this.metadata
-    const inputPrompt =
+    const { name, description, inputSchema, parameters } = this.metadata
+    const format = this.inputFormat === 'freeform' ? 'freeform' : 'JSON'
+    const renderedParameters =
       this.inputFormat === 'freeform'
-        ? ''
-        : [
-            `Input schema:`,
-            `\`\`\`json`,
-            JSON.stringify(inputSchema ?? {}, null, 2),
-            `\`\`\``,
-          ].join('\n')
-    const examplesPrompt = examples?.length
-      ? [
-          `Examples:`,
-          ...examples.map((example) => {
-            if (this.inputFormat === 'freeform') {
-              return [
-                `<tool name="${example.tool ?? name}">`,
-                example.input ?? '',
-                `</tool>`,
-              ].join('\n')
-            }
-            return [
-              `<tool name="${example.tool ?? name}">`,
-              JSON.stringify(example.params ?? {}, null, 2),
-              `</tool>`,
-            ].join('\n')
-          }),
-        ].join('\n\n')
-      : null
-    return joinPromptSections([
-      `### ${name} (${this.inputFormat.toUpperCase()} Format)`,
-      description,
-      inputPrompt,
-      examplesPrompt,
-    ])
+        ? (parameters ?? 'raw text')
+        : renderJsonParameters(inputSchema)
+    return [
+      `### ${name}`,
+      `Description: ${description.replace(/\s+/g, ' ').trim()}`,
+      `Parameters (${format}): ${renderedParameters}`,
+    ].join('\n')
   }
+}
+
+function renderJsonParameters(schema: unknown): string {
+  if (!isRecord(schema) || schema.type !== 'object') {
+    return '{}'
+  }
+  const properties = isRecord(schema.properties) ? schema.properties : {}
+  const required = new Set(
+    Array.isArray(schema.required)
+      ? schema.required.filter(
+          (value): value is string => typeof value === 'string'
+        )
+      : []
+  )
+  return `{${Object.entries(properties)
+    .map(
+      ([name, value]) =>
+        `${name}${required.has(name) ? '' : '?'}: ${renderJsonType(value)}`
+    )
+    .join('; ')}}`
+}
+
+function renderJsonType(schema: unknown): string {
+  if (!isRecord(schema)) {
+    return 'unknown'
+  }
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    return schema.enum.map((value) => JSON.stringify(value)).join(' | ')
+  }
+  if (schema.type === 'array') {
+    return `${renderJsonType(schema.items)}[]`
+  }
+  return typeof schema.type === 'string' ? schema.type : 'unknown'
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 interface ToolConstructor {
@@ -187,7 +192,6 @@ export { TOOL_METADATA_SYMBOL, createToolError, defineToolMetadata, Tool }
 export type {
   ToolConstructor,
   ToolMetadata,
-  ToolMetadataExample,
   ToolInputFormat,
   ToolExecutionOptions,
   ToolOutcome,

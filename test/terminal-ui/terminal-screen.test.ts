@@ -13,7 +13,6 @@ import {
   calculateBubbleWidth,
   canSubmitInput,
   clearInput,
-  completeManualSkill,
   completeSlashCommand,
   deleteBackwardAtCursor,
   deleteForwardAtCursor,
@@ -644,40 +643,7 @@ test('completeSlashCommand completes unique command and subcommand prefixes', ()
   assert.equal(completeSlashCommand('hello /op', commands), 'hello /op')
 })
 
-test('completeManualSkill completes only a unique skill prefix at the cursor', () => {
-  const skills = ['chrome-automation', 'code-review']
-
-  assert.deepEqual(completeManualSkill('$chr', 4, skills), {
-    value: '$chrome-automation ',
-    cursor: 19,
-  })
-  assert.deepEqual(completeManualSkill('$chr inspect the page', 4, skills), {
-    value: '$chrome-automation inspect the page',
-    cursor: 18,
-  })
-  assert.deepEqual(completeManualSkill('$chr  inspect the page', 4, skills), {
-    value: '$chrome-automation  inspect the page',
-    cursor: 18,
-  })
-  assert.deepEqual(completeManualSkill('$c', 2, skills), {
-    value: '$c',
-    cursor: 2,
-  })
-  assert.deepEqual(completeManualSkill('$unknown', 8, skills), {
-    value: '$unknown',
-    cursor: 8,
-  })
-  assert.deepEqual(completeManualSkill('$chrdo', 4, skills), {
-    value: '$chrdo',
-    cursor: 4,
-  })
-  assert.deepEqual(completeManualSkill('  $chr', 6, skills), {
-    value: '  $chr',
-    cursor: 6,
-  })
-})
-
-test('resolveInputSyntaxHighlight only marks recognized commands and skills', () => {
+test('resolveInputSyntaxHighlight only marks recognized commands', () => {
   const execute: CliCommand['execute'] = async () => ({ continue: true })
   const commands: readonly CliCommand[] = [
     { name: '/help', description: 'help', execute },
@@ -688,36 +654,23 @@ test('resolveInputSyntaxHighlight only marks recognized commands and skills', ()
       execute,
     },
   ]
-  const skills = ['chrome-automation']
-
   assert.deepEqual(
-    resolveInputSyntaxHighlight('/thread reload t-1', commands, skills),
+    resolveInputSyntaxHighlight('/thread reload t-1', commands),
     { start: 0, end: 14, kind: 'command' }
   )
-  assert.deepEqual(
-    resolveInputSyntaxHighlight('/thread unknown', commands, skills),
-    { start: 0, end: 7, kind: 'command' }
-  )
-  assert.deepEqual(resolveInputSyntaxHighlight('  /help', commands, skills), {
+  assert.deepEqual(resolveInputSyntaxHighlight('/thread unknown', commands), {
+    start: 0,
+    end: 7,
+    kind: 'command',
+  })
+  assert.deepEqual(resolveInputSyntaxHighlight('  /help', commands), {
     start: 2,
     end: 7,
     kind: 'command',
   })
-  assert.deepEqual(
-    resolveInputSyntaxHighlight('$chrome-automation inspect', commands, skills),
-    { start: 0, end: 18, kind: 'skill' }
-  )
-  assert.equal(resolveInputSyntaxHighlight('/th', commands, skills), null)
+  assert.equal(resolveInputSyntaxHighlight('/th', commands), null)
   assert.equal(
-    resolveInputSyntaxHighlight('$unknown inspect', commands, skills),
-    null
-  )
-  assert.equal(
-    resolveInputSyntaxHighlight('$chrome-automation-extra', commands, skills),
-    null
-  )
-  assert.equal(
-    resolveInputSyntaxHighlight('use $chrome-automation', commands, skills),
+    resolveInputSyntaxHighlight('$chrome-automation', commands),
     null
   )
 })

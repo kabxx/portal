@@ -2,105 +2,44 @@
 
 [Back to README](../README.md)
 
-Project instructions are optional repository and user-owned Markdown files that
-are loaded into portal runtimes. They can shape model behavior, but they do not
-change system, tool, provider, safety, or current-user boundaries.
-
-The feature is disabled by default. Enable only sources you have reviewed:
+Project Instructions are disabled by default. Enable them with one setting:
 
 ```yaml
-agentInstructions:
-  claude:
-    global: false
-    local: true
-  codex:
-    global: false
-    local: true
+projectInstructions: true
 ```
 
-The configuration section is described in [Configuration](configuration.md).
+When enabled, portal reads exactly `AGENTS.md` from the working directory in
+which the application starts. It does not search parent or child directories,
+inspect a Git root, load `AGENTS.override.md` or `CLAUDE.md`, read user-level
+Codex or Claude files, expand imports, or activate additional instructions when
+a tool targets another directory.
 
-## Workspace and sources
+The file is read once during application startup. Agent threads, spawned
+runtimes, Hooks, and listener-created runtimes share that immutable snapshot.
+Changing the file has no effect until portal is restarted. Resumed provider
+conversations do not receive another setup turn.
 
-portal starts from its current working directory and walks upward until it
-finds a `.git` directory or file. That directory is the workspace root. If no
-Git marker is found, the current working directory is used.
+If the setting is disabled, portal does not inspect `AGENTS.md`. If it is
+enabled and the file is missing or empty, the Project Instructions section is
+omitted from setup.
 
-Codex sources are loaded from each workspace directory in order. In one
-directory, `AGENTS.override.md` takes precedence over `AGENTS.md` and suppresses
-the ordinary file when both exist. When `global: true`, portal also reads
-the first available `AGENTS.override.md` or `AGENTS.md` under `~/.codex`.
+## File Requirements
 
-Claude Code sources are loaded from each workspace directory in this order:
+`AGENTS.md` must be a regular, non-symbolic-link file containing valid UTF-8.
+A UTF-8 byte-order mark is accepted and removed. The file may contain at most
+32 KiB; portal rejects invalid or oversized files instead of truncating them.
 
-1. `CLAUDE.md`;
-2. `.claude/CLAUDE.md`;
-3. `.claude/rules/*.md` files;
-4. `CLAUDE.local.md`.
+When present, the setup prompt contains the file text verbatim under:
 
-When `global: true`, the corresponding home directory is `~/.claude`, including
-its `CLAUDE.md` and `rules/` directory. Broader directories are loaded before
-more specific directories. The resulting instruction prompt records the
-source paths and scope so the model can distinguish global and local text.
+```text
+## Project Instructions
 
-## Imports and path rules
+<AGENTS.md content>
+```
 
-Claude files may import other regular files using the supported Claude import
-syntax. Imports are resolved inside the workspace root or the configured global
-root, after lexical, realpath, and symlink checks. Absolute and relative imports
-are accepted only while they remain inside the current source root; `..`
-escapes, external symlinks, missing files, cyclic imports, and non-regular files
-are rejected or reported as warnings.
+## Security Boundary
 
-Files under `.claude/rules/` may declare `paths:` patterns. A matching rule is
-not added to the active prompt until a tool call targets a matching directory.
-Currently, target-aware activation reads paths from `run_command` (`cwd`),
-`attach_image` (`path`), and `apply_patch` file headers. Other tools do not
-activate directory-specific rules.
-
-## Runtime lifecycle
-
-| Runtime                 | Instruction behavior                                                                                                                                               |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Agent thread            | Loads the configured snapshot and includes always-on instructions in the full setup prompt                                                                         |
-| Chat thread             | Loads the snapshot locally but sends only the shared handshake; a later target-aware tool call can still activate matching instructions                            |
-| Spawned runtime         | Forks the parent snapshot and runs its own full setup handshake                                                                                                    |
-| Hook prompt/agent child | Loads the configured sources for the isolated child runtime                                                                                                        |
-| Resumed thread          | Reads and attaches a fresh snapshot locally, but `setupMode: 'skip'` means it does not resend the initial instruction prompt to the existing provider conversation |
-
-The resumed `RuntimeCore` keeps that fresh snapshot, so supported later tool
-calls can still activate target-aware directory instructions and path rules.
-Always-on instruction text is not resent to the existing provider conversation,
-however, and the conversation continues with whichever setup and catalog it
-previously received. A child `spawn` created from the resumed runtime receives
-the forked snapshot through the normal child setup path.
-
-Instruction files are read from disk when a runtime snapshot is created. A
-later file edit does not rewrite an already submitted provider setup message.
-
-## Limits
-
-The default limits are:
-
-- Codex instructions: 32 KiB;
-- Claude Code instructions: 96 KiB;
-- instruction files loaded in one context: 128;
-- nested import depth: 4.
-
-The limits can be changed under `advanced.instructions`, but the values apply
-when portal starts. Truncation, rejected imports, and other loader problems are
-reported as instruction warnings rather than silently treating the file as
-fully loaded.
-
-## Security boundary
-
-Project instruction text is sent to the web Provider as part of the runtime
-prompt. A repository-controlled `AGENTS.md`, `CLAUDE.md`, imported file, or
-path rule can therefore influence a model that has access to `run_command`,
-`apply_patch`, MCP, Skills, and spawned runtimes. There is no human approval
-gate before a valid model-generated tool call executes.
-
-Do not place credentials, private keys, or unrelated sensitive data in
-instruction files. Review repository instructions before enabling `local`,
-and use the narrower default (`global: false`, `local: false`) for untrusted
-repositories. See [Security](security.md).
+Project instruction text is sent to the web Provider and can influence a model
+that has access to local tools. Review `AGENTS.md` before enabling this feature
+in an untrusted repository, and do not place credentials or unrelated private
+data in it. See [Security](security.md) for the complete tool trust model.

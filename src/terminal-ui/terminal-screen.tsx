@@ -15,7 +15,6 @@ import {
 import type { CliCommand } from '../cli-commands/core/command-types.ts'
 import type { KeybindingCatalog } from '../keybindings/keybinding-catalog.ts'
 import type { ProviderId } from '../providers/provider-id.ts'
-import type { ManualSkillSummary } from '../skills/manual-skill-summary.ts'
 import { resolveCommandHints } from './command-hints.ts'
 import {
   navigateInputHintSelection,
@@ -23,7 +22,6 @@ import {
   sliceInputHintWindow,
   type InputHint,
 } from './input-hints.ts'
-import { resolveSkillHints } from './skill-hints.ts'
 import {
   type TerminalState,
   type TimelineEntry,
@@ -65,7 +63,7 @@ const WELCOME_LOGO = [
 ] as const
 const MIN_WIDE_WELCOME_CONTENT_WIDTH = 48
 export const INPUT_CURSOR = '█'
-export type InputSyntaxKind = 'command' | 'skill'
+export type InputSyntaxKind = 'command'
 
 export interface InputSyntaxHighlight {
   start: number
@@ -278,7 +276,6 @@ export function buildLiveFrameSignature({
 
 const INPUT_SYNTAX_COLOR: Record<InputSyntaxKind, string> = {
   command: 'cyan',
-  skill: '#a78bfa',
 }
 const SPINNER_FRAMES = ['waiting', 'waiting.', 'waiting..', 'waiting...']
 
@@ -730,52 +727,15 @@ export function completeSlashCommand(
   return `/${commandPrefix} ${matches[0]} `
 }
 
-export function completeManualSkill(
-  value: string,
-  cursor: number,
-  manualSkillNames: readonly string[]
-): { value: string; cursor: number } {
-  const safeCursor = clampCursor(value, cursor)
-  const beforeCursor = value.slice(0, safeCursor)
-  const match = beforeCursor.match(/^\$(\S*)$/)
-  if (match === null) {
-    return { value, cursor: safeCursor }
-  }
-
-  const suffix = value.slice(safeCursor)
-  if (suffix.length > 0 && !/^\s/.test(suffix)) {
-    return { value, cursor: safeCursor }
-  }
-
-  const prefix = match[1] ?? ''
-  const matches = manualSkillNames.filter((name) => name.startsWith(prefix))
-  if (matches.length !== 1) {
-    return { value, cursor: safeCursor }
-  }
-
-  const completedToken = `$${matches[0]}`
-  const replacement =
-    suffix.length === 0 ? `${completedToken} ` : completedToken
-  const tokenStart = beforeCursor.length - match[0].length
-  return {
-    value: value.slice(0, tokenStart) + replacement + suffix,
-    cursor: tokenStart + replacement.length,
-  }
-}
-
 export function resolveInputHintGroup(
   value: string,
   commands: readonly CliCommand[],
-  providers: readonly ProviderId[],
-  manualSkills: readonly ManualSkillSummary[]
+  providers: readonly ProviderId[]
 ): InputHintGroup | null {
   const commandHints = resolveCommandHints(value, commands, providers)
-  if (commandHints.length > 0) {
-    return { title: 'commands', hints: commandHints }
-  }
-
-  const skillHints = resolveSkillHints(value, manualSkills)
-  return skillHints.length > 0 ? { title: 'skills', hints: skillHints } : null
+  return commandHints.length > 0
+    ? { title: 'commands', hints: commandHints }
+    : null
 }
 
 export function resolveSubmittedInputValue(
@@ -795,8 +755,7 @@ export function resolveSubmittedInputValue(
 
 export function resolveInputSyntaxHighlight(
   value: string,
-  commands: readonly CliCommand[],
-  manualSkillNames: readonly string[]
+  commands: readonly CliCommand[]
 ): InputSyntaxHighlight | null {
   const normalized = normalizePastedInput(value)
   const trimmed = normalized.trimStart()
@@ -821,21 +780,7 @@ export function resolveInputSyntaxHighlight(
     return { start, end: start + end, kind: 'command' }
   }
 
-  const skillName = manualSkillNames.find((name) => {
-    const token = `$${name}`
-    return (
-      trimmed.startsWith(token) && hasInputTokenBoundary(trimmed, token.length)
-    )
-  })
-  if (skillName === undefined) {
-    return null
-  }
-
-  return {
-    start,
-    end: start + skillName.length + 1,
-    kind: 'skill',
-  }
+  return null
 }
 
 function hasInputTokenBoundary(value: string, index: number): boolean {
@@ -1107,8 +1052,7 @@ export function TerminalScreen({
       const hintGroup = resolveInputHintGroup(
         current.value,
         commands,
-        providers,
-        ui.getActiveManualSkills()
+        providers
       )
       const selectedHint = navigateInputHintSelection(
         hintGroup?.hints ?? [],
@@ -1150,18 +1094,13 @@ export function TerminalScreen({
       historyRef.current.resetCursor()
       updateInputState((current) => {
         const trimmedInput = current.value.trimStart()
-        if (
-          state.busy &&
-          !trimmedInput.startsWith('/') &&
-          !trimmedInput.startsWith('$')
-        ) {
+        if (state.busy && !trimmedInput.startsWith('/')) {
           return current
         }
         const currentHintGroup = resolveInputHintGroup(
           current.value,
           commands,
-          providers,
-          ui.getActiveManualSkills()
+          providers
         )
         const selected = resolveInputHintSelection(
           currentHintGroup?.hints ?? [],
@@ -1187,19 +1126,7 @@ export function TerminalScreen({
           }
         }
 
-        const skillCompletion = completeManualSkill(
-          current.value,
-          current.cursor,
-          ui.getActiveManualSkillNames()
-        )
-        return {
-          ...skillCompletion,
-          preferredColumn: null,
-          selectedHintCompletion:
-            skillCompletion.value === current.value
-              ? current.selectedHintCompletion
-              : null,
-        }
+        return current
       })
       return
     }
@@ -1437,23 +1364,13 @@ export function TerminalScreen({
     inputValue,
     SPINNER_FRAMES[spinnerFrameIndex]!
   )
-  const manualSkills = ui.getActiveManualSkills()
-  const inputHighlight = resolveInputSyntaxHighlight(
-    inputValue,
-    commands,
-    manualSkills.map(({ name }) => name)
-  )
+  const inputHighlight = resolveInputSyntaxHighlight(inputValue, commands)
   const inputCursorDisplay = formatInputAroundCursorWithSyntax(
     inputValue,
     inputState.cursor,
     inputHighlight
   )
-  const inputHintGroup = resolveInputHintGroup(
-    inputValue,
-    commands,
-    providers,
-    manualSkills
-  )
+  const inputHintGroup = resolveInputHintGroup(inputValue, commands, providers)
   const selectedHintCompletion = resolveInputHintSelection(
     inputHintGroup?.hints ?? [],
     inputValue,

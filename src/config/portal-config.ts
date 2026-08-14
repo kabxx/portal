@@ -50,16 +50,6 @@ export interface PortalBrowserConfig {
   remoteDebuggingPort: number
 }
 
-export interface PortalInstructionScopeConfig {
-  global: boolean
-  local: boolean
-}
-
-export interface PortalAgentInstructionsConfig {
-  claude: PortalInstructionScopeConfig
-  codex: PortalInstructionScopeConfig
-}
-
 export interface PortalMcpServerConfig {
   host: string
   port: number
@@ -110,13 +100,6 @@ export interface PortalAdvancedSkillInstallConfig {
   redirectLimit: number
 }
 
-export interface PortalAdvancedInstructionsConfig {
-  codexSizeLimitKB: number
-  claudeSizeLimitKB: number
-  fileCountLimit: number
-  importDepthLimit: number
-}
-
 export interface PortalAdvancedHooksConfig {
   commandOutputLimitMB: number
 }
@@ -127,13 +110,12 @@ export interface PortalAdvancedConfig {
   runtime: PortalAdvancedRuntimeConfig
   command: PortalAdvancedCommandConfig
   skillInstall: PortalAdvancedSkillInstallConfig
-  instructions: PortalAdvancedInstructionsConfig
   hooks: PortalAdvancedHooksConfig
 }
 
 export interface PortalConfigDocument {
   browser: PortalBrowserConfig
-  agentInstructions: PortalAgentInstructionsConfig
+  projectInstructions: boolean
   listeners: PortalListenersConfig
   skills: Record<string, unknown>
   hooks: HooksConfig
@@ -158,7 +140,7 @@ const DEFAULT_LOCK_WAIT_MS = 5_000
 const LOCK_RETRY_MS = 25
 const CONFIG_FIELDS = new Set([
   'browser',
-  'agentInstructions',
+  'projectInstructions',
   'listeners',
   'skills',
   'hooks',
@@ -171,8 +153,6 @@ const BROWSER_FIELDS = new Set([
   'profilePath',
   'remoteDebuggingPort',
 ])
-const AGENT_INSTRUCTIONS_FIELDS = new Set(['claude', 'codex'])
-const INSTRUCTION_SCOPE_FIELDS = new Set(['global', 'local'])
 const LISTENER_FIELDS = new Set(['mcp'])
 const LISTENER_SERVER_FIELDS = new Set(['host', 'port', 'token'])
 const ADVANCED_FIELDS = new Set([
@@ -181,7 +161,6 @@ const ADVANCED_FIELDS = new Set([
   'runtime',
   'command',
   'skillInstall',
-  'instructions',
   'hooks',
 ])
 const ADVANCED_BROWSER_FIELDS = new Set([
@@ -219,12 +198,6 @@ const ADVANCED_SKILL_INSTALL_FIELDS = new Set([
   'manifestSizeLimitKB',
   'redirectLimit',
 ])
-const ADVANCED_INSTRUCTIONS_FIELDS = new Set([
-  'codexSizeLimitKB',
-  'claudeSizeLimitKB',
-  'fileCountLimit',
-  'importDepthLimit',
-])
 const ADVANCED_HOOKS_FIELDS = new Set(['commandOutputLimitMB'])
 const localTails = new Map<string, Promise<void>>()
 
@@ -234,10 +207,7 @@ export function createDefaultPortalConfig(
 ): PortalConfigDocument {
   return {
     browser,
-    agentInstructions: {
-      claude: createDefaultInstructionScope(),
-      codex: createDefaultInstructionScope(),
-    },
+    projectInstructions: false,
     listeners: {
       mcp: {
         host: '127.0.0.1',
@@ -289,12 +259,6 @@ export function createDefaultAdvancedConfig(): PortalAdvancedConfig {
       manifestSizeLimitKB: 512,
       redirectLimit: 5,
     },
-    instructions: {
-      codexSizeLimitKB: 32,
-      claudeSizeLimitKB: 96,
-      fileCountLimit: 128,
-      importDepthLimit: 4,
-    },
     hooks: {
       commandOutputLimitMB: 1,
     },
@@ -338,7 +302,7 @@ export async function readPortalConfig(
   return parsePortalConfig(document)
 }
 
-function migrateRemovedNetworkConfig(
+function migrateLegacyConfig(
   document: Record<string, unknown>
 ): Record<string, unknown> {
   const outboundServers = document.mcpServers
@@ -351,8 +315,14 @@ function migrateRemovedNetworkConfig(
     )
   }
 
+  const legacyInstructions = document.agentInstructions
+  if (legacyInstructions !== undefined) {
+    validateLegacyInstructions(legacyInstructions)
+  }
+
   const migrated = { ...document }
   delete migrated.mcpServers
+  delete migrated.agentInstructions
   if (isRecord(document.listeners)) {
     const listeners = { ...document.listeners }
     delete listeners.api
@@ -361,16 +331,62 @@ function migrateRemovedNetworkConfig(
   if (isRecord(document.advanced)) {
     const advanced = { ...document.advanced }
     delete advanced.api
+    delete advanced.instructions
     migrated.advanced = advanced
   }
   return migrated
+}
+
+function validateLegacyInstructions(value: unknown): void {
+  if (!isRecord(value)) {
+    throw new PortalConfigError(
+      'Legacy agentInstructions must be removed before starting Portal.'
+    )
+  }
+  const supportedSources = new Set(['claude', 'codex'])
+  if (Object.keys(value).some((field) => !supportedSources.has(field))) {
+    throw new PortalConfigError(
+      'Legacy agentInstructions contains unsupported fields and must be removed before starting Portal.'
+    )
+  }
+  for (const source of supportedSources) {
+    const scope = value[source]
+    if (scope === undefined) continue
+    if (!isRecord(scope)) {
+      throw new PortalConfigError(
+        'Legacy agentInstructions must contain only boolean global and local fields.'
+      )
+    }
+    if (
+      Object.keys(scope).some(
+        (field) => field !== 'global' && field !== 'local'
+      )
+    ) {
+      throw new PortalConfigError(
+        'Legacy agentInstructions contains unsupported fields and must be removed before starting Portal.'
+      )
+    }
+    for (const field of ['global', 'local']) {
+      const enabled = scope[field]
+      if (enabled !== undefined && typeof enabled !== 'boolean') {
+        throw new PortalConfigError(
+          'Legacy agentInstructions must contain only boolean global and local fields.'
+        )
+      }
+      if (enabled === true) {
+        throw new PortalConfigError(
+          'Legacy project instruction sources were enabled. Remove agentInstructions and set projectInstructions explicitly after reviewing the Portal 2.0 semantics.'
+        )
+      }
+    }
+  }
 }
 
 export function parsePortalConfig(rawDocument: unknown): PortalConfigDocument {
   if (!isRecord(rawDocument)) {
     throw new PortalConfigError('Config root must be an object')
   }
-  const document = migrateRemovedNetworkConfig(rawDocument)
+  const document = migrateLegacyConfig(rawDocument)
   assertSupportedFields(document, CONFIG_FIELDS, 'config root')
 
   const browser = document.browser
@@ -407,26 +423,10 @@ export function parsePortalConfig(rawDocument: unknown): PortalConfigDocument {
     )
   }
 
-  const agentInstructions = document.agentInstructions
-  const agentInstructionsLabel = 'agentInstructions'
-  if (agentInstructions !== undefined && !isRecord(agentInstructions)) {
-    throw new PortalConfigError(`${agentInstructionsLabel} must be an object`)
+  const projectInstructions = document.projectInstructions ?? false
+  if (typeof projectInstructions !== 'boolean') {
+    throw new PortalConfigError('projectInstructions must be a boolean')
   }
-  if (agentInstructions !== undefined) {
-    assertSupportedFields(
-      agentInstructions,
-      AGENT_INSTRUCTIONS_FIELDS,
-      agentInstructionsLabel
-    )
-  }
-  const claude = parseInstructionScope(
-    agentInstructions?.claude,
-    `${agentInstructionsLabel}.claude`
-  )
-  const codex = parseInstructionScope(
-    agentInstructions?.codex,
-    `${agentInstructionsLabel}.codex`
-  )
 
   const listeners = document.listeners
   if (listeners !== undefined && !isRecord(listeners)) {
@@ -496,7 +496,7 @@ export function parsePortalConfig(rawDocument: unknown): PortalConfigDocument {
       profilePath: browser.profilePath,
       remoteDebuggingPort: browser.remoteDebuggingPort,
     },
-    agentInstructions: { claude, codex },
+    projectInstructions,
     listeners: {
       mcp: {
         host: mcpServerHost,
@@ -523,10 +523,6 @@ export function parseAdvancedConfig(value: unknown): PortalAdvancedConfig {
     advanced.skillInstall,
     'advanced.skillInstall'
   )
-  const instructions = parseOptionalRecord(
-    advanced.instructions,
-    'advanced.instructions'
-  )
   const hooks = parseOptionalRecord(advanced.hooks, 'advanced.hooks')
 
   assertSupportedFields(browser, ADVANCED_BROWSER_FIELDS, 'advanced.browser')
@@ -537,11 +533,6 @@ export function parseAdvancedConfig(value: unknown): PortalAdvancedConfig {
     skillInstall,
     ADVANCED_SKILL_INSTALL_FIELDS,
     'advanced.skillInstall'
-  )
-  assertSupportedFields(
-    instructions,
-    ADVANCED_INSTRUCTIONS_FIELDS,
-    'advanced.instructions'
   )
   assertSupportedFields(hooks, ADVANCED_HOOKS_FIELDS, 'advanced.hooks')
 
@@ -680,28 +671,6 @@ export function parseAdvancedConfig(value: unknown): PortalAdvancedConfig {
         'advanced.skillInstall.redirectLimit'
       ),
     },
-    instructions: {
-      codexSizeLimitKB: parsePositiveInteger(
-        instructions.codexSizeLimitKB,
-        defaults.instructions.codexSizeLimitKB,
-        'advanced.instructions.codexSizeLimitKB'
-      ),
-      claudeSizeLimitKB: parsePositiveInteger(
-        instructions.claudeSizeLimitKB,
-        defaults.instructions.claudeSizeLimitKB,
-        'advanced.instructions.claudeSizeLimitKB'
-      ),
-      fileCountLimit: parsePositiveInteger(
-        instructions.fileCountLimit,
-        defaults.instructions.fileCountLimit,
-        'advanced.instructions.fileCountLimit'
-      ),
-      importDepthLimit: parsePositiveInteger(
-        instructions.importDepthLimit,
-        defaults.instructions.importDepthLimit,
-        'advanced.instructions.importDepthLimit'
-      ),
-    },
     hooks: {
       commandOutputLimitMB: parsePositiveInteger(
         hooks.commandOutputLimitMB,
@@ -742,7 +711,11 @@ async function hasCompleteManagedSections(
   if (!isRecord(document)) {
     return false
   }
-  if (Object.hasOwn(document, 'mcpServers')) {
+  if (
+    Object.hasOwn(document, 'mcpServers') ||
+    Object.hasOwn(document, 'agentInstructions') ||
+    !Object.hasOwn(document, 'projectInstructions')
+  ) {
     return false
   }
   const listeners = document.listeners
@@ -761,7 +734,11 @@ async function hasCompleteManagedSections(
   ) {
     return false
   }
-  if (Object.hasOwn(listeners, 'api') || Object.hasOwn(advanced, 'api')) {
+  if (
+    Object.hasOwn(listeners, 'api') ||
+    Object.hasOwn(advanced, 'api') ||
+    Object.hasOwn(advanced, 'instructions')
+  ) {
     return false
   }
   const mcpServerComplete = ['host', 'port', 'token'].every((field) =>
@@ -778,7 +755,6 @@ async function hasCompleteManagedSections(
     ['runtime', ADVANCED_RUNTIME_FIELDS],
     ['command', ADVANCED_COMMAND_FIELDS],
     ['skillInstall', ADVANCED_SKILL_INSTALL_FIELDS],
-    ['instructions', ADVANCED_INSTRUCTIONS_FIELDS],
     ['hooks', ADVANCED_HOOKS_FIELDS],
   ]
   const advancedComplete = advancedSections.every(([name, fields]) => {
@@ -1061,10 +1037,7 @@ async function withFileLock<T>(
 function cloneConfig(config: PortalConfigDocument): PortalConfigDocument {
   return {
     browser: { ...config.browser },
-    agentInstructions: {
-      claude: { ...config.agentInstructions.claude },
-      codex: { ...config.agentInstructions.codex },
-    },
+    projectInstructions: config.projectInstructions,
     listeners: {
       mcp: { ...config.listeners.mcp },
     },
@@ -1082,10 +1055,7 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
     [],
     [
       ['browser', 'Browser launch and profile settings.'],
-      [
-        'agentInstructions',
-        'Project instruction sources loaded into runtimes.',
-      ],
+      ['projectInstructions', 'Load AGENTS.md from the startup directory.'],
       ['listeners', 'Inbound network listeners exposed by Portal.'],
       ['skills', 'Registered Skill directories and enabled states.'],
       ['hooks', 'Lifecycle hook handlers and execution policy.'],
@@ -1107,24 +1077,6 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
       ],
     ]
   )
-  commentMap(
-    document,
-    ['agentInstructions'],
-    [
-      ['claude', 'Enable global or project-local Claude instruction files.'],
-      ['codex', 'Enable global or project-local Codex instruction files.'],
-    ]
-  )
-  for (const source of ['claude', 'codex']) {
-    commentMap(
-      document,
-      ['agentInstructions', source],
-      [
-        ['global', 'Load the user-level instruction file when available.'],
-        ['local', 'Load instruction files from the current project.'],
-      ]
-    )
-  }
   commentMap(
     document,
     ['listeners'],
@@ -1290,25 +1242,6 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
   )
   commentMap(
     document,
-    ['advanced', 'instructions'],
-    [
-      [
-        'codexSizeLimitKB',
-        'Maximum Codex instruction bytes loaded, expressed in KB.',
-      ],
-      [
-        'claudeSizeLimitKB',
-        'Maximum Claude instruction bytes loaded, expressed in KB.',
-      ],
-      ['fileCountLimit', 'Maximum instruction files scanned for one project.'],
-      [
-        'importDepthLimit',
-        'Maximum nested depth for imported instruction files.',
-      ],
-    ]
-  )
-  commentMap(
-    document,
     ['advanced', 'hooks'],
     [
       [
@@ -1346,37 +1279,6 @@ function commentMap(
     pair.key.commentBefore = ` ${comment}`
     pair.key.spaceBefore = addSpacing && matched > 0
     matched += 1
-  }
-}
-
-function createDefaultInstructionScope(): PortalInstructionScopeConfig {
-  return { global: false, local: false }
-}
-
-function parseInstructionScope(
-  value: unknown,
-  label: string
-): PortalInstructionScopeConfig {
-  if (value === undefined) {
-    return createDefaultInstructionScope()
-  }
-  if (!isRecord(value)) {
-    throw new PortalConfigError(`${label} must be an object`)
-  }
-  assertSupportedFields(value, INSTRUCTION_SCOPE_FIELDS, label)
-
-  const global = value.global
-  const local = value.local
-  if (global !== undefined && typeof global !== 'boolean') {
-    throw new PortalConfigError(`${label}.global must be a boolean`)
-  }
-  if (local !== undefined && typeof local !== 'boolean') {
-    throw new PortalConfigError(`${label}.local must be a boolean`)
-  }
-  const defaults = createDefaultInstructionScope()
-  return {
-    global: global === undefined ? defaults.global : global,
-    local: local === undefined ? defaults.local : local,
   }
 }
 

@@ -2,7 +2,7 @@
 
 [README](../README.md) | [Configuration](configuration.md) | [Providers](providers.md) | [Architecture](architecture.md)
 
-portal opens on the command help screen. Run `/help` at any time to list the available top-level commands. Top-level commands and first-level subcommands support unique-prefix completion with `Tab`. Typing `/` opens a contextual command hint bubble below the input; an active thread also supports `$` and `$prefix` Skill hints with descriptions. Each hint list shows at most five rows, `Up` / `Down` browse with wraparound, and `Tab` completes the selected item. `Enter` completes the selected slash-command hint and submits it in one step; ordinary text and `$skill` input submit unchanged.
+portal opens on the command help screen. Run `/help` at any time to list the available top-level commands. Top-level commands and first-level subcommands support unique-prefix completion with `Tab`. Typing `/` opens a contextual command hint bubble below the input. Each hint list shows at most five rows, `Up` / `Down` browse with wraparound, and `Tab` completes the selected item. `Enter` completes the selected slash-command hint and submits it in one step; ordinary text submits unchanged.
 
 The interactive TUI stays on the primary terminal screen, so native mouse-wheel scrolling and zoom shortcuts remain available. Completed bubbles are written to terminal scrollback while the active bubble and input remain live. After a width or height resize settles, portal clears its old layout and replays the complete active timeline at the new size; portal does not impose an additional history-row limit, although the terminal's own scrollback capacity still applies.
 
@@ -127,18 +127,18 @@ The live `/help` output is the source of truth for commands available in the cur
 
 ## Input controls
 
-| Key                                                     | Behavior                                                       |
-| ------------------------------------------------------- | -------------------------------------------------------------- |
-| `Enter`                                                 | Complete a selected slash-command hint and submit while idle   |
-| `Shift+Enter` (Windows/Linux) or `Option+Enter` (macOS) | Insert a newline when supported by the terminal                |
-| `Ctrl+J`                                                | Insert a newline; reliable fallback on every platform          |
-| Paste                                                   | Preserve multiline layout and normalize Windows line endings   |
-| `Up` / `Down`                                           | Browse command/Skill hints, input boundaries, or input history |
-| `Tab`                                                   | Complete the selected hint, command, provider, or `$skill`     |
-| `Ctrl+W`                                                | Delete the previous word                                       |
-| `Ctrl+U` or `Esc`                                       | Clear the current input                                        |
-| `Ctrl+C`                                                | Cancel busy work; while idle with input, clear that input      |
-| `Ctrl+D`                                                | Exit while idle and the input is empty                         |
+| Key                                                     | Behavior                                                     |
+| ------------------------------------------------------- | ------------------------------------------------------------ |
+| `Enter`                                                 | Complete a selected slash-command hint and submit while idle |
+| `Shift+Enter` (Windows/Linux) or `Option+Enter` (macOS) | Insert a newline when supported by the terminal              |
+| `Ctrl+J`                                                | Insert a newline; reliable fallback on every platform        |
+| Paste                                                   | Preserve multiline layout and normalize Windows line endings |
+| `Up` / `Down`                                           | Browse command hints, input boundaries, or input history     |
+| `Tab`                                                   | Complete the selected hint, command, or provider             |
+| `Ctrl+W`                                                | Delete the previous word                                     |
+| `Ctrl+U` or `Esc`                                       | Clear the current input                                      |
+| `Ctrl+C`                                                | Cancel busy work; while idle with input, clear that input    |
+| `Ctrl+D`                                                | Exit while idle and the input is empty                       |
 
 Input submission is disabled while portal is busy. Edit the complete `keybindings` table in `<data-dir>/config.yaml` to change shortcuts; valid saves apply automatically. See [Configuration](configuration.md#keybindings).
 

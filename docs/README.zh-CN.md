@@ -103,12 +103,12 @@ flowchart LR
 portal 会在数据目录中保存会话 URL 和元信息，因此 `/thread resume` 可以重新打开
 Provider 当前可见的会话历史。完整的持久化和 Resume 行为请参阅 [CLI 指南](cli.md)。
 
-使用 `Ctrl+J` 可靠地输入换行，使用 `Ctrl+C` 取消当前操作。portal busy 时不能提交输入。输入 `/` 或活动线程中的 `$` 前缀会打开最多五条的上下文提示；`Up` / `Down` 浏览提示，`Tab` 补全选中项。`Enter` 会一步补全并提交当前选中的斜杠命令提示；普通文本和 `$skill` 输入仍原样提交。命令索引和输入控制请参阅 [CLI 指南](cli.md)。
+使用 `Ctrl+J` 可靠地输入换行，使用 `Ctrl+C` 取消当前操作。portal busy 时不能提交输入。输入 `/` 会打开最多五条的命令提示；`Up` / `Down` 浏览提示，`Tab` 补全选中项。`Enter` 会一步补全并提交当前选中的斜杠命令提示；普通文本仍原样提交。命令索引和输入控制请参阅 [CLI 指南](cli.md)。
 
 ## 扩展能力
 
-- **项目指令**把经过审查的 Codex 或 Claude Code 工作区规则加载到新 runtime。
-- **Skills**提供模型可以按需读取的本地指令包。
+- **项目指令**可选择把启动目录中的 `AGENTS.md` 加载到新 runtime。
+- **Skills**通过名称、描述和 manifest 路径公布已启用的本地指令包。
 - **MCP**为每个 runtime 连接配置的 stdio 或 Streamable HTTP Server。
 - **Hooks**观察生命周期事件，或允许、拒绝和重写工具参数。
 - **内置工具**覆盖图片、Shell 命令、文件 Patch、独立子任务、Skills 和 MCP 调用。

@@ -27,8 +27,12 @@ formatting is not an execution boundary.
 | `apply_patch`   | Creates or modifies UTF-8 files with V4A patches; paths are not confined to the repository                     |
 | `attach_image`  | Sends a selected local image and its contents to the active provider website                                   |
 | `spawn`         | Starts another provider conversation with local tools, a Skill snapshot, and fresh MCP connections             |
-| `load_skill`    | Adds third-party instructions and local resource paths to the provider conversation                            |
 | `mcp_call_tool` | Invokes operations exposed by a configured MCP server with that server's effective permissions                 |
+
+Enabled Skill names, descriptions, and absolute `SKILL.md` paths are included
+in the agent setup prompt. Skill bodies and resources are not injected, but a
+model can inspect them with `run_command`; review enabled Skills as untrusted
+instructions.
 
 `mcp_search_tool` only returns a cached Tool definition, but the definition itself is untrusted text. User-selected MCP Resources and Prompts are submitted as complete user turns and can also influence later tool use.
 

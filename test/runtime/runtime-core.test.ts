@@ -1,8 +1,5 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import os from 'node:os'
-import path from 'node:path'
 
 import { RuntimeCore } from '../../src/runtime/runtime-core.ts'
 import {
@@ -31,7 +28,7 @@ import {
   abortable,
   PortalAbortError,
 } from '../../src/runtime/runtime-cancellation.ts'
-import { loadProjectInstructions } from '../../src/instructions/project-instructions.ts'
+import { ProjectInstructions } from '../../src/instructions/project-instructions.ts'
 import {
   createHookSnapshot,
   parseHooksConfig,
@@ -303,17 +300,9 @@ function createRuntimeForRetryTests(
   adapter: ProviderAdapter,
   tools: ToolConstructor[] = []
 ): RuntimeCore {
-  return new RuntimeCore(
-    adapter,
-    new ToolRegistry(adapter, tools),
-    null,
-    null,
-    null,
-    null,
-    [],
-    null,
-    3
-  )
+  return new RuntimeCore(adapter, new ToolRegistry(adapter, tools), {
+    requestAttemptLimit: 3,
+  })
 }
 
 let retryCountingToolCalls = 0
@@ -426,25 +415,6 @@ class FreeformTool extends Tool<string, ToolOutput> {
   }
 }
 
-let instructionRunCommandCalls = 0
-
-@defineToolMetadata({
-  name: 'run_command',
-  description: 'A project-instruction preflight test tool.',
-})
-class InstructionRunCommandTool extends Tool<
-  Record<string, unknown>,
-  ToolOutput
-> {
-  public async call(): Promise<ToolOutput> {
-    instructionRunCommandCalls += 1
-    return {
-      result: { content: 'command completed' },
-      displayText: 'command completed',
-    }
-  }
-}
-
 let hookTargetInputs: Array<Record<string, unknown> | string> = []
 
 @defineToolMetadata({
@@ -488,12 +458,7 @@ test('RuntimeCore blocks a tool through tool.before and feeds HOOK_BLOCKED back'
   const runtime = new RuntimeCore(
     adapter,
     new ToolRegistry(adapter, [HookTargetTool]),
-    null,
-    null,
-    null,
-    null,
-    [],
-    dispatcher
+    { hookDispatcher: dispatcher }
   )
   const scope = createHookScope({
     name: 'deny-tool',
@@ -532,12 +497,7 @@ test('RuntimeCore executes revalidated rewritten params and records both inputs'
   const runtime = new RuntimeCore(
     adapter,
     new ToolRegistry(adapter, [HookTargetTool]),
-    null,
-    null,
-    null,
-    null,
-    [],
-    dispatcher
+    { hookDispatcher: dispatcher }
   )
   const scope = createHookScope({
     name: 'rewrite-tool',
@@ -662,84 +622,6 @@ test('RuntimeCore executes named JSON tool payloads as direct params', async () 
   })
   assert.match(adapter.attachedTexts[1] ?? '', /FULL MODEL CONTENT/)
   assert.equal(assistant, 'Done.')
-})
-
-test('RuntimeCore loads an explicitly selected skill before submitting the task', async () => {
-  const adapter = new FakeAdapter(['Done.'])
-  const runtime = new RuntimeCore(
-    adapter,
-    new ToolRegistry(adapter, []),
-    null,
-    null,
-    async (name) =>
-      name === 'manual-skill'
-        ? {
-            name,
-            content: '# Manual instructions\n\nUse the test workflow.',
-          }
-        : null
-  )
-  const loaded: string[] = []
-
-  await runtime.submitUserInput('$manual-skill Inspect this.', {
-    onManualSkill: async (name) => {
-      loaded.push(name)
-    },
-  })
-
-  assert.deepEqual(loaded, ['manual-skill'])
-  assert.match(
-    adapter.attachedTexts[0] ?? '',
-    /^# Portal Manual Skill Context\nThe user explicitly selected the skill "manual-skill" for this turn\./
-  )
-  assert.match(
-    adapter.attachedTexts[0] ?? '',
-    /## Skill Instructions\n\n# Manual instructions\n\nUse the test workflow\./
-  )
-  assert.match(
-    adapter.attachedTexts[0] ?? '',
-    /## User Task\n\nInspect this\.$/
-  )
-  assert.doesNotMatch(adapter.attachedTexts[0] ?? '', /\$manual-skill/)
-})
-
-test('RuntimeCore keeps an explicitly selected skill task section empty when no task is provided', async () => {
-  const adapter = new FakeAdapter(['Tell me what you need.'])
-  const runtime = new RuntimeCore(
-    adapter,
-    new ToolRegistry(adapter, []),
-    null,
-    null,
-    async (name) =>
-      name === 'manual-skill'
-        ? { name, content: 'Follow the manual workflow.' }
-        : null
-  )
-
-  await runtime.submitUserInput('$manual-skill')
-
-  assert.match(adapter.attachedTexts[0] ?? '', /## User Task\n\n$/)
-})
-
-test('RuntimeCore leaves unknown manual skill prefixes as ordinary user input', async () => {
-  const adapter = new FakeAdapter(['Done.'])
-  const runtime = new RuntimeCore(
-    adapter,
-    new ToolRegistry(adapter, []),
-    null,
-    null,
-    async () => null
-  )
-  const loaded: string[] = []
-
-  await runtime.submitUserInput('$unknown-skill Continue normally.', {
-    onManualSkill: async (name) => {
-      loaded.push(name)
-    },
-  })
-
-  assert.deepEqual(loaded, [])
-  assert.equal(adapter.attachedTexts[0], '$unknown-skill Continue normally.')
 })
 
 test('RuntimeCore forwards transient tool progress without changing tool results', async () => {
@@ -921,155 +803,40 @@ test('RuntimeCore cancels an adapter restore during retry recovery', async () =>
   assert.equal(adapter.restoreSignal, controller.signal)
 })
 
-test('RuntimeCore inserts provider prompt before setup handshake', () => {
+test('RuntimeCore renders the unified setup structure', () => {
   const adapter = new FakeAdapter(['READY'])
   const runtime = new RuntimeCore(
     adapter,
-    new ToolRegistry(adapter, []),
-    '# Provider Boundary\n- Provider-specific rule.'
-  )
-
-  assert.match(
-    runtime.prompt,
-    /# Runtime Context\n- Current working directory:/
-  )
-  assert.ok(
-    runtime.prompt.indexOf('# Provider Boundary') >
-      runtime.prompt.indexOf('# Runtime Context')
-  )
-  assert.ok(
-    runtime.prompt.indexOf('# Provider Boundary') <
-      runtime.prompt.indexOf('# Setup Handshake')
-  )
-})
-
-test('RuntimeCore inserts project instructions after runtime context', async () => {
-  const root = await mkdtemp(
-    path.join(os.tmpdir(), 'portal-runtime-instructions-')
-  )
-  try {
-    await mkdir(path.join(root, '.git'))
-    await writeFile(path.join(root, 'AGENTS.md'), 'Project rule.', 'utf8')
-    const { instructions } = await loadProjectInstructions({
-      cwd: root,
-      config: {
-        claude: { global: false, local: true },
-        codex: { global: false, local: true },
-      },
-    })
-    const adapter = new FakeAdapter(['READY'])
-    const runtime = new RuntimeCore(
-      adapter,
-      new ToolRegistry(adapter, []),
-      '# Provider Boundary\n- Provider-specific rule.',
-      null,
-      null,
-      instructions
-    )
-
-    assert.match(runtime.prompt, /# Project Instructions/)
-    assert.match(runtime.prompt, /Project rule\./)
-    assert.ok(
-      runtime.prompt.indexOf('# Runtime Context') <
-        runtime.prompt.indexOf('# Project Instructions')
-    )
-    assert.ok(
-      runtime.prompt.indexOf('# Project Instructions') <
-        runtime.prompt.indexOf('# Provider Boundary')
-    )
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
-test('RuntimeCore activates scoped instructions before executing a tool', async () => {
-  const root = await mkdtemp(
-    path.join(os.tmpdir(), 'portal-runtime-instructions-')
-  )
-  const sourceDirectory = path.join(root, 'src')
-  try {
-    await mkdir(path.join(root, '.git'))
-    await mkdir(sourceDirectory)
-    await writeFile(
-      path.join(sourceDirectory, 'AGENTS.md'),
-      'Scoped source rule.',
-      'utf8'
-    )
-    const { instructions } = await loadProjectInstructions({
-      cwd: root,
-      config: {
-        claude: { global: false, local: false },
-        codex: { global: false, local: true },
-      },
-    })
-    const toolCall = `<tool name="run_command">${JSON.stringify({
-      command: 'test',
-      cwd: sourceDirectory,
-    })}</tool>`
-    const adapter = new FakeAdapter([toolCall, toolCall, 'Done.'])
-    instructionRunCommandCalls = 0
-    const runtime = new RuntimeCore(
-      adapter,
-      new ToolRegistry(adapter, [InstructionRunCommandTool]),
-      null,
-      null,
-      null,
-      instructions
-    )
-    let emittedToolCalls = 0
-
-    const result = await runtime.submitUserInput('Run the command.', {
-      onToolCall: async () => {
-        emittedToolCalls += 1
-      },
-    })
-
-    assert.equal(result, 'Done.')
-    assert.equal(instructionRunCommandCalls, 1)
-    assert.equal(emittedToolCalls, 1)
-    assert.match(
-      adapter.attachedTexts[1] ?? '',
-      /^# Project Instructions Update/
-    )
-    assert.match(adapter.attachedTexts[1] ?? '', /Scoped source rule\./)
-    assert.match(adapter.attachedTexts[2] ?? '', /^### Tool Result ###/)
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
-test('RuntimeCore normalizes optional prompt section boundaries', () => {
-  const adapter = new FakeAdapter(['READY'])
-  const runtime = new RuntimeCore(
-    adapter,
-    new ToolRegistry(adapter, []),
-    '\n# Provider Boundary\n- Provider-specific rule.\n\n',
-    '\n\n# Skills\n- Skill catalog.\n'
+    new ToolRegistry(adapter, [StructuredTool]),
+    {
+      skills: [
+        {
+          name: 'review',
+          description: 'Review changes.',
+          manifestPath: 'C:\\skills\\review\\SKILL.md',
+        },
+      ],
+      projectInstructions: new ProjectInstructions('Project rule.'),
+      workingDirectory: 'C:\\workspace',
+    }
   )
 
   assert.equal(runtime.prompt, runtime.prompt.trim())
   assert.doesNotMatch(runtime.prompt, /\n{4,}/)
-  assert.match(
-    runtime.prompt,
-    /# Skills\n- Skill catalog\.\n\n# Runtime Context/
-  )
-})
-
-test('RuntimeCore exposes Tools directly and ends with the READY handshake', () => {
-  const adapter = new FakeAdapter(['READY'])
-  const runtime = new RuntimeCore(adapter, new ToolRegistry(adapter, []))
-
-  assert.equal(runtime.prompt, runtime.prompt.trim())
-  assert.doesNotMatch(runtime.prompt, /\n{4,}/)
-  assert.match(runtime.prompt, /# Tools/)
+  assert.match(runtime.prompt, /^# Portal Agent/)
+  assert.match(runtime.prompt, /## Tool Protocol/)
+  assert.match(runtime.prompt, /## Tools/)
+  assert.match(runtime.prompt, /## Skills/)
+  assert.match(runtime.prompt, /## Project Instructions/)
   assert.ok(
-    runtime.prompt.indexOf('# Tools') <
-      runtime.prompt.indexOf('# Runtime Context')
+    runtime.prompt.indexOf('## Project Instructions') <
+      runtime.prompt.indexOf('## Runtime')
   )
-  assert.match(
-    runtime.prompt,
-    /# Setup Handshake\n- Reply with exactly: READY$/
+  assert.equal(
+    runtime.prompt.slice(runtime.prompt.indexOf('## Runtime')),
+    `## Runtime\nWorking directory: ${JSON.stringify('C:\\workspace')}\n\n## Initialization\nReply exactly: READY`
   )
+  assert.doesNotMatch(runtime.prompt, /Provider Constraints|Objective|Example/)
 })
 
 test('RuntimeCore accepts a case-insensitive READY token with extra text', async () => {
@@ -1359,13 +1126,7 @@ test('RuntimeCore reuses one over-limit delivery across a bounded retry without 
   const runtime = new RuntimeCore(
     adapter,
     new ToolRegistry(adapter, [OversizedOutcomeTool]),
-    null,
-    null,
-    null,
-    null,
-    [],
-    dispatcher,
-    3
+    { hookDispatcher: dispatcher, requestAttemptLimit: 3 }
   )
   const scope = createHookScope({
     name: 'record-result',

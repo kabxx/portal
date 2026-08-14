@@ -196,52 +196,6 @@ test('TerminalController exposes the active thread through bound thread state', 
   assert.equal(ui.getThreadManager()?.getActiveThread()?.id, 't-1')
 })
 
-test('TerminalController exposes manual skills from the active thread snapshot', () => {
-  const homeUi = new TerminalController()
-  assert.deepEqual(homeUi.getActiveManualSkills(), [])
-  assert.deepEqual(homeUi.getActiveManualSkillNames(), [])
-
-  const manager = new ThreadManager()
-  const first = manager.addThread({
-    id: manager.createThreadId(),
-    provider: 'chatgpt',
-    runtime: createFakeRuntime({
-      manualSkills: [
-        { name: 'first-skill', description: 'Use the first workflow.' },
-      ],
-    }),
-    createdAt: 1,
-  })
-  const second = manager.addThread({
-    id: manager.createThreadId(),
-    provider: 'gemini',
-    runtime: createFakeRuntime({
-      manualSkills: [
-        { name: 'second-skill', description: 'Use the second workflow.' },
-      ],
-    }),
-    createdAt: 2,
-  })
-  const ui = new TerminalController()
-  ui.bindThreadManager(manager)
-  ui.showThreadTimeline(second.id)
-
-  assert.deepEqual(ui.getActiveManualSkillNames(), ['second-skill'])
-  assert.deepEqual(ui.getActiveManualSkills(), [
-    { name: 'second-skill', description: 'Use the second workflow.' },
-  ])
-  manager.switchThread(first.id)
-  ui.showThreadTimeline(first.id)
-  assert.deepEqual(ui.getActiveManualSkillNames(), ['first-skill'])
-  assert.deepEqual(ui.getActiveManualSkills(), [
-    { name: 'first-skill', description: 'Use the first workflow.' },
-  ])
-
-  ui.showHomeTimeline()
-  assert.deepEqual(ui.getActiveManualSkills(), [])
-  assert.deepEqual(ui.getActiveManualSkillNames(), [])
-})
-
 test('TerminalController caches home and thread timelines independently', () => {
   const manager = new ThreadManager()
   const first = manager.addThread({
@@ -1150,17 +1104,17 @@ test('TerminalController prefers explicit tool display text', () => {
 
   ui.renderToolResult(
     thread,
-    'load_skill',
+    'future_tool',
     'success',
-    { name: 'pdf-processing', instructions: 'FULL SKILL CONTENT' },
-    'Loaded skill: pdf-processing'
+    { content: 'FULL TOOL CONTENT' },
+    'Concise tool output'
   )
 
   const latest = ui.getState().timeline.at(-1)
-  assert.equal(latest?.body, 'Loaded skill: pdf-processing')
-  assert.equal(latest?.label, 'load_skill · result')
+  assert.equal(latest?.body, 'Concise tool output')
+  assert.equal(latest?.label, 'future_tool · result')
   assert.equal(latest?.tone, 'tool_result')
-  assert.equal(latest?.body.includes('FULL SKILL CONTENT'), false)
+  assert.equal(latest?.body.includes('FULL TOOL CONTENT'), false)
 })
 
 test('TerminalController summarizes named JSON tool calls', () => {
@@ -1185,11 +1139,6 @@ test('TerminalController summarizes named JSON tool calls', () => {
         prompt: 'Inspect this.\nIgnore this line.',
       },
       expected: 'provider: chatgpt\nprompt: Inspect this.',
-    },
-    {
-      tool: 'load_skill',
-      params: { name: 'hybrid-catgirl' },
-      expected: 'name: hybrid-catgirl',
     },
   ] as const
 

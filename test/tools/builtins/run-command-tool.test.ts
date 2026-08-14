@@ -120,7 +120,8 @@ test('RunCommandTool does not advertise a default timeout', () => {
   const timeout = requireRecord(properties.timeoutMs, 'timeout schema')
 
   assert.equal(timeout.default, undefined)
-  assert.match(tool.prompt, /When omitted, the command has no timeout\./)
+  assert.match(tool.prompt, /timeoutMs\?: number/)
+  assert.doesNotMatch(tool.prompt, /default timeout|When omitted/)
 })
 
 test('RunCommandTool requires the portal shared job manager', async () => {

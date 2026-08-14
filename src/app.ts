@@ -33,14 +33,8 @@ import {
   createDefaultPortalConfig,
   ensurePortalConfig,
   readPortalConfig,
-  type PortalAgentInstructionsConfig,
 } from './config/portal-config.ts'
-import {
-  loadProjectInstructions,
-  type ProjectInstructionWarning,
-  type ProjectInstructions,
-  type ProjectInstructionLimits,
-} from './instructions/project-instructions.ts'
+import { loadProjectInstructions } from './instructions/project-instructions.ts'
 import { createHookSnapshot } from './hooks/hook-config.ts'
 import { HookCatalog } from './hooks/hook-catalog.ts'
 import { HookDispatcher } from './hooks/hook-dispatcher.ts'
@@ -65,7 +59,6 @@ import {
 import {
   PROVIDERS,
   createAdapterForProvider,
-  getProviderPrompt,
   normalizeProviderId,
 } from './app/app-provider-catalog.ts'
 import {
@@ -165,32 +158,6 @@ function buildProgram() {
     )
 }
 
-async function createProjectInstructions(
-  cwd: string,
-  config: PortalAgentInstructionsConfig,
-  onWarning: (warning: ProjectInstructionWarning) => void | Promise<void>,
-  limits: ProjectInstructionLimits
-): Promise<ProjectInstructions> {
-  const loaded = await loadProjectInstructions({
-    cwd,
-    config,
-    limits,
-  })
-  for (const warning of loaded.warnings) {
-    await onWarning(warning)
-  }
-  return loaded.instructions
-}
-
-function formatInstructionWarning(
-  warning: ProjectInstructionWarning
-): string[] {
-  return [
-    warning.message,
-    ...(warning.path === undefined ? [] : [`source: ${warning.path}`]),
-  ]
-}
-
 export async function run(
   argv = process.argv,
   dependencies: PortalRunDependencies = {}
@@ -199,7 +166,7 @@ export async function run(
   program.parse(argv)
 
   const options = program.opts<Options>()
-  const cwd = dependencies.cwd ?? process.cwd()
+  const cwd = path.resolve(dependencies.cwd ?? process.cwd())
   const launchBrowserForRun = dependencies.launchBrowser ?? launchBrowser
   const renderTerminal = dependencies.renderTerminal ?? render
   const createProviderAdapter =
@@ -229,6 +196,10 @@ export async function run(
     defaultPortalConfig,
     { rewriteWithComments: existingPortalConfig === null }
   )
+  const projectInstructions = await loadProjectInstructions({
+    cwd,
+    enabled: portalConfig.projectInstructions,
+  })
   const hookCatalog = new HookCatalog(
     configPath,
     createHookSnapshot(portalConfig.hooks)
@@ -618,13 +589,7 @@ export async function run(
       browserProfileDir,
       initializationAttemptLimit: settings.initializationAttemptLimit,
       resolveConversationUrl,
-      createProjectInstructions: async (onWarning) =>
-        await createProjectInstructions(
-          cwd,
-          portalConfig.agentInstructions,
-          onWarning,
-          settings.instructionLimits
-        ),
+      projectInstructions,
       createAdapter: async ({ provider, conversationUrl, signal }) =>
         await createProviderAdapter(
           context,
@@ -647,12 +612,12 @@ export async function run(
             mode === 'resume'
               ? 'skip'
               : runtimeSetupModeForThreadCreation(mode),
-          providerPrompt: getProviderPrompt(provider),
           skillLibrary,
           projectInstructions,
           hookDispatcher,
           advertiseSpawnTool: settings.spawnDepthLimit > 0,
           requestAttemptLimit: settings.requestAttemptLimit,
+          workingDirectory: cwd,
           toolServices: createToolServices({
             context,
             provider,
@@ -663,6 +628,7 @@ export async function run(
             hookDispatcher,
             settings,
             currentSpawnDepth: 0,
+            workingDirectory: cwd,
           }),
           signal,
         }),
@@ -692,17 +658,6 @@ export async function run(
       new ChildRuntimeFactory(
         'chatgpt',
         async (request) => {
-          const projectInstructions = await createProjectInstructions(
-            cwd,
-            portalConfig.agentInstructions,
-            (warning) => {
-              ui.renderWarning(
-                'Hook instructions',
-                formatInstructionWarning(warning)
-              )
-            },
-            settings.instructionLimits
-          )
           const adapter = await createProviderAdapter(
             context,
             request.provider,
@@ -712,15 +667,14 @@ export async function run(
           )
           let runtime: RuntimeCore | null = null
           try {
-            const allowsSkills = request.allowedTools.includes('load_skill')
             runtime = await createRuntime(adapter, {
               model: null,
               setupMode: 'full',
-              providerPrompt: getProviderPrompt(request.provider),
-              ...(allowsSkills ? { skillLibrary } : {}),
+              skillLibrary,
               projectInstructions,
               hookDispatcher,
               requestAttemptLimit: settings.requestAttemptLimit,
+              workingDirectory: cwd,
               allowedTools: request.allowedTools,
               toolServices: createToolServices({
                 context,
@@ -732,6 +686,7 @@ export async function run(
                 hookDispatcher,
                 settings,
                 currentSpawnDepth: request.executionScope.spawnDepth,
+                workingDirectory: cwd,
               }),
               signal: request.signal,
             })

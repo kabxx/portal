@@ -72,10 +72,7 @@ test('ensurePortalConfig creates one YAML file with concrete defaults', async ()
       path.join(dataDirectory, 'profiles', defaults.browser.engine)
     )
     assert.equal(defaults.browser.remoteDebuggingPort, 9222)
-    assert.deepEqual(defaults.agentInstructions, {
-      claude: { global: false, local: false },
-      codex: { global: false, local: false },
-    })
+    assert.equal(defaults.projectInstructions, false)
     assert.deepEqual(defaults.listeners, {
       mcp: { host: '127.0.0.1', port: 8788, token: null },
     })
@@ -168,10 +165,7 @@ test('readPortalConfig parses YAML and strips a UTF-8 BOM', async () => {
         profilePath,
         remoteDebuggingPort: 9222,
       },
-      agentInstructions: {
-        claude: { global: false, local: false },
-        codex: { global: false, local: false },
-      },
+      projectInstructions: false,
       listeners: {
         mcp: { host: '127.0.0.1', port: 8788, token: null },
       },
@@ -247,9 +241,6 @@ test('ensurePortalConfig writes advanced last with field comments and section sp
       'resourceFileCountLimit',
       'manifestSizeLimitKB',
       'redirectLimit',
-      'codexSizeLimitKB',
-      'claudeSizeLimitKB',
-      'importDepthLimit',
       'commandOutputLimitMB',
     ]
 
@@ -272,7 +263,7 @@ test('ensurePortalConfig writes advanced last with field comments and section sp
     assert.equal(
       (advancedContents.match(/\n {4}# [^\n]+\n {4}fileCountLimit:/g) ?? [])
         .length,
-      2
+      1
     )
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -455,32 +446,31 @@ test('parsePortalConfig rejects non-empty outbound MCP config without exposing v
   )
 })
 
-test('parsePortalConfig defaults missing instruction scope fields to false', () => {
+test('parsePortalConfig defaults project instructions to false', () => {
   const defaults = createDefaultPortalConfig()
-  const parsed = parsePortalConfig({
-    ...defaults,
-    agentInstructions: {
-      claude: {},
-      codex: { global: false, local: true },
-    },
-  })
+  const { projectInstructions: _projectInstructions, ...withoutSetting } =
+    defaults
+  const parsed = parsePortalConfig(withoutSetting)
 
-  assert.deepEqual(parsed.agentInstructions, {
-    claude: { global: false, local: false },
-    codex: { global: false, local: true },
-  })
+  assert.equal(parsed.projectInstructions, false)
 })
 
-test('ensurePortalConfig preserves the MCP Server token and removes legacy API settings', async () => {
+test('ensurePortalConfig migrates removed network and instruction settings', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-config-token-'))
   const configPath = path.join(root, 'config.yaml')
   const defaults = createDefaultPortalConfig(root)
+  const { projectInstructions: _projectInstructions, ...legacyDefaults } =
+    defaults
 
   try {
     await writeFile(
       configPath,
       stringifyYaml({
-        ...defaults,
+        ...legacyDefaults,
+        agentInstructions: {
+          claude: { global: false, local: false },
+          codex: { global: false, local: false },
+        },
         mcpServers: {},
         listeners: {
           api: {
@@ -500,6 +490,12 @@ test('ensurePortalConfig preserves the MCP Server token and removes legacy API s
             requestTimeoutSeconds: 0,
             sseHeartbeatSeconds: 15,
           },
+          instructions: {
+            codexSizeLimitKB: 32,
+            claudeSizeLimitKB: 96,
+            fileCountLimit: 128,
+            importDepthLimit: 4,
+          },
         },
       }),
       'utf8'
@@ -508,11 +504,12 @@ test('ensurePortalConfig preserves the MCP Server token and removes legacy API s
     let document = parseConfigYaml(await readFile(configPath, 'utf8'))
     let listeners = readConfigSection(document, 'listeners')
     assert.equal(Object.hasOwn(document, 'mcpServers'), false)
+    assert.equal(Object.hasOwn(document, 'agentInstructions'), false)
+    assert.equal(document.projectInstructions, false)
     assert.equal(Object.hasOwn(listeners, 'api'), false)
-    assert.equal(
-      Object.hasOwn(readConfigSection(document, 'advanced'), 'api'),
-      false
-    )
+    const advanced = readConfigSection(document, 'advanced')
+    assert.equal(Object.hasOwn(advanced, 'api'), false)
+    assert.equal(Object.hasOwn(advanced, 'instructions'), false)
     assert.equal(
       readConfigSection(listeners, 'mcp').token,
       '$${env:LITERAL_MCP_TOKEN}'
@@ -535,6 +532,22 @@ test('ensurePortalConfig preserves the MCP Server token and removes legacy API s
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test('parsePortalConfig rejects enabled legacy instruction sources', () => {
+  const defaults = createDefaultPortalConfig()
+
+  assert.throws(
+    () =>
+      parsePortalConfig({
+        ...defaults,
+        agentInstructions: {
+          claude: { global: false, local: true },
+          codex: { global: false, local: false },
+        },
+      }),
+    /Legacy project instruction sources were enabled/
+  )
 })
 
 test('ensurePortalConfig preserves rejected outbound MCP config without exposing values', async () => {
@@ -825,47 +838,16 @@ test('parsePortalConfig rejects invalid browser, MCP, and Skill sections', () =>
     () =>
       parsePortalConfig({
         ...valid,
-        agentInstructions: {
-          claude: { global: 'yes' },
-          codex: { global: false, local: true },
-        },
+        projectInstructions: 'yes',
       }),
-    /agentInstructions\.claude\.global must be a boolean/
+    /projectInstructions must be a boolean/
   )
-  assert.throws(
-    () =>
-      parsePortalConfig({
-        ...valid,
-        agentInstructions: {
-          claude: { global: false, local: true },
-          codex: { local: null },
-        },
-      }),
-    /agentInstructions\.codex\.local must be a boolean/
-  )
-  assert.throws(
-    () =>
-      parsePortalConfig({
-        ...valid,
-        agentInstructions: {
-          claude: { global: false, local: true, cursor: true },
-          codex: { global: false, local: true },
-        },
-      }),
-    /Unsupported agentInstructions\.claude fields: cursor/
-  )
-  assert.deepEqual(
+  assert.equal(
     parsePortalConfig({
       ...valid,
-      agentInstructions: {
-        claude: { global: true, local: false },
-        codex: { global: false, local: true },
-      },
-    }).agentInstructions,
-    {
-      claude: { global: true, local: false },
-      codex: { global: false, local: true },
-    }
+      projectInstructions: true,
+    }).projectInstructions,
+    true
   )
   assert.throws(
     () =>

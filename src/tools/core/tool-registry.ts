@@ -1,7 +1,6 @@
 import { Tool } from './tool-definition.ts'
 import type { ProviderAdapter } from '../../providers/adapters/adapter-base.ts'
 import { isAbortError } from '../../runtime/runtime-cancellation.ts'
-import { joinPromptSections } from '../../shared/prompt-sections.ts'
 import type {
   ToolConstructor,
   ToolExecutionOptions,
@@ -182,25 +181,7 @@ class ToolRegistry {
   }
 
   public get prompt(): string {
-    return joinPromptSections([
-      [
-        `# Tools`,
-        `- JSON Format tools use an object matching the input schema as PAYLOAD.`,
-        `- Freeform Format tools use raw text as PAYLOAD.`,
-        `- A tool call may follow user-facing text but must end the response.`,
-        ``,
-      ].join('\n'),
-      [
-        `## Tool Call Format`,
-        `<tool name="tool_name">`,
-        `PAYLOAD`,
-        `</tool>`,
-      ].join('\n'),
-      [
-        `## Available Tools`,
-        this.promptedTools.map((tool) => tool.prompt).join('\n\n'),
-      ].join('\n'),
-    ])
+    return this.promptedTools.map((tool) => tool.prompt).join('\n\n')
   }
 
   public async extractToolCall(

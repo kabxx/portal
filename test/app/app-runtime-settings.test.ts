@@ -46,12 +46,6 @@ test('runtime settings convert every advanced section to runtime units', () => {
     manifestSizeLimitKB: 32,
     redirectLimit: 33,
   }
-  advanced.instructions = {
-    codexSizeLimitKB: 37,
-    claudeSizeLimitKB: 38,
-    fileCountLimit: 39,
-    importDepthLimit: 40,
-  }
   advanced.hooks = { commandOutputLimitMB: 41 }
 
   assert.deepEqual(createPortalRuntimeSettings(advanced), {
@@ -84,12 +78,6 @@ test('runtime settings convert every advanced section to runtime units', () => {
       maxResourceFiles: 31,
       maxManifestBytes: 32 * 1024,
       maxRedirects: 33,
-    },
-    instructionLimits: {
-      codexMaxBytes: 37 * 1024,
-      claudeMaxBytes: 38 * 1024,
-      maxFiles: 39,
-      maxImportDepth: 40,
     },
     hookCommandOutputLimitBytes: 41 * 1024 * 1024,
   })

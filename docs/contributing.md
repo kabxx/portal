@@ -141,7 +141,9 @@ A tool is part of portal's local security boundary. New or changed tools should:
 
 Skills changes should keep downloads and registry writes atomic, reject path escapes and symbolic links, apply bounded resource limits, and never overwrite a malformed user-edited registry.
 
-Add tests for manifest parsing, source resolution, archive handling, state changes, runtime catalogs, and `load_skill` output. Update [Skills](skills.md) when the accepted format or lifecycle changes.
+Add tests for manifest parsing, source resolution, archive handling, state
+changes, and runtime setup catalogs. Update [Skills](skills.md) when the
+accepted format or lifecycle changes.
 
 ## MCP changes
 

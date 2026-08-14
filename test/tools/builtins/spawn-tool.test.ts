@@ -34,8 +34,12 @@ test('SpawnTool exposes prompt and optional provider as input', () => {
     'qwen',
     'kimi',
   ])
-  assert.match(tool.prompt, /### spawn \(JSON Format\)/)
-  assert.match(tool.prompt, /Input schema:/)
+  assert.match(tool.prompt, /^### spawn\nDescription:/)
+  assert.match(
+    tool.prompt,
+    /Parameters \(JSON\): \{prompt: string; provider\?:/
+  )
+  assert.doesNotMatch(tool.prompt, /Input schema:|Example/)
 })
 
 test('SpawnTool delegates prompt to the configured synchronous runner', async () => {

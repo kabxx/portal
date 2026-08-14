@@ -3,16 +3,12 @@ import type {
   ProviderAdapterOptions,
 } from '../providers/adapters/adapter-base.ts'
 import { isProviderAdapterError } from '../providers/adapters/adapter-base.ts'
-import {
-  createToolError,
-  type ToolServices,
-} from '../tools/core/tool-definition.ts'
+import type { ToolServices } from '../tools/core/tool-definition.ts'
 import { ToolRegistry } from '../tools/core/tool-registry.ts'
 import { AttachImageTool } from '../tools/builtins/attach-image-tool.ts'
 import { ApplyPatchTool } from '../tools/builtins/apply-patch-tool.ts'
 import { RunCommandTool } from '../tools/builtins/run-command-tool.ts'
 import { SpawnTool } from '../tools/builtins/spawn-tool.ts'
-import { LoadSkillTool } from '../tools/builtins/load-skill-tool.ts'
 import type { SkillLibrary } from '../skills/skill-library.ts'
 import { RuntimeCore } from './runtime-core.ts'
 import { throwIfAborted } from './runtime-cancellation.ts'
@@ -22,7 +18,6 @@ import type { RuntimeSetupMode } from './setup-handshake.ts'
 
 export interface RuntimeFactoryOptions extends ProviderAdapterOptions {
   setupMode?: RuntimeSetupMode
-  providerPrompt?: string | null
   toolServices?: ToolServices
   skillLibrary?: SkillLibrary
   projectInstructions?: ProjectInstructions | null
@@ -30,6 +25,7 @@ export interface RuntimeFactoryOptions extends ProviderAdapterOptions {
   allowedTools?: readonly string[] | null
   advertiseSpawnTool?: boolean
   requestAttemptLimit?: number
+  workingDirectory?: string
 }
 
 const DEFAULT_TOOLS = [
@@ -47,15 +43,7 @@ export async function createRuntimeFromAdapter(
 
   try {
     const skillCatalog = await options.skillLibrary?.createCatalogSnapshot()
-    const hasSkills = skillCatalog !== undefined && skillCatalog.size > 0
-    const manualSkillLoader =
-      hasSkills && skillCatalog !== undefined
-        ? async (name: string) => await skillCatalog.load(name)
-        : null
-    const availableTools = [
-      ...DEFAULT_TOOLS,
-      ...(hasSkills ? [LoadSkillTool] : []),
-    ]
+    const availableTools = [...DEFAULT_TOOLS]
     const allowedTools = options.allowedTools ?? null
     const tools =
       allowedTools === null
@@ -77,33 +65,6 @@ export async function createRuntimeFromAdapter(
     }
     const services: ToolServices = {
       ...(options.toolServices ?? {}),
-      ...(hasSkills
-        ? {
-            loadSkill: async (name: string) => {
-              try {
-                const loaded = await skillCatalog.load(name)
-                if (loaded === null) {
-                  return createToolError(
-                    `Skill is not available in this runtime: ${name}`
-                  )
-                }
-                return {
-                  result: {
-                    name: loaded.name,
-                    directory: loaded.directory,
-                    resources: [...loaded.resources],
-                    instructions: loaded.instructions,
-                  },
-                  displayText: `Loaded skill: ${loaded.name}`,
-                }
-              } catch (error) {
-                const message =
-                  error instanceof Error ? error.message : String(error)
-                return createToolError(message)
-              }
-            },
-          }
-        : {}),
     }
     const toolRegistry = new ToolRegistry(
       adapter,
@@ -111,17 +72,13 @@ export async function createRuntimeFromAdapter(
       services,
       options.advertiseSpawnTool === false ? ['spawn'] : []
     )
-    const runtime = new RuntimeCore(
-      adapter,
-      toolRegistry,
-      options.providerPrompt ?? null,
-      skillCatalog?.prompt ?? null,
-      manualSkillLoader,
-      options.projectInstructions ?? null,
-      skillCatalog?.summaries ?? [],
-      options.hookDispatcher ?? null,
-      options.requestAttemptLimit ?? 3
-    )
+    const runtime = new RuntimeCore(adapter, toolRegistry, {
+      skills: skillCatalog?.setupSkills ?? [],
+      projectInstructions: options.projectInstructions ?? null,
+      hookDispatcher: options.hookDispatcher ?? null,
+      requestAttemptLimit: options.requestAttemptLimit ?? 3,
+      workingDirectory: options.workingDirectory ?? process.cwd(),
+    })
     throwIfAborted(signal)
     if (options.model !== null) {
       await adapter.changeModel(options.model)

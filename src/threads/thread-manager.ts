@@ -6,7 +6,6 @@ import {
   throwIfAborted,
 } from '../runtime/runtime-cancellation.ts'
 import type { ProviderId } from '../providers/provider-id.ts'
-import type { ProjectInstructionWarning } from '../instructions/project-instructions.ts'
 import {
   ThreadRegistry,
   type ThreadRecord,
@@ -45,11 +44,6 @@ export interface ThreadInputHandlers {
     turn: TurnRecord
   ) => void | Promise<void>
   onAssistantStreamReset?: (turn: TurnRecord) => void | Promise<void>
-  onManualSkill?: (name: string, turn: TurnRecord) => void | Promise<void>
-  onInstructionWarning?: (
-    warning: ProjectInstructionWarning,
-    turn: TurnRecord
-  ) => void | Promise<void>
   onTurnItem?: (item: TurnItem, turn: TurnRecord) => void | Promise<void>
   onToolProgress?: (
     event: ToolProgressEvent,
@@ -368,14 +362,6 @@ export class ThreadManager {
         onAssistantStreamReset: async () => {
           throwIfAborted(handlers.signal)
           await handlers.onAssistantStreamReset?.(turn)
-        },
-        onManualSkill: async (name) => {
-          throwIfAborted(handlers.signal)
-          await handlers.onManualSkill?.(name, turn)
-        },
-        onInstructionWarning: async (warning) => {
-          throwIfAborted(handlers.signal)
-          await handlers.onInstructionWarning?.(warning, turn)
         },
         onAssistantText: async (message) => {
           await emitTurnItem({

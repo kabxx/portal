@@ -120,21 +120,13 @@ test('SkillLibrary installs, catalogs, disables, enables, and removes skills', a
     const enabledCatalog = await library.createCatalogSnapshot()
     assert.equal(enabledCatalog.size, 1)
     assert.deepEqual(enabledCatalog.names, ['test-skill'])
-    assert.match(enabledCatalog.prompt ?? '', /test-skill:/)
-    assert.doesNotMatch(enabledCatalog.prompt ?? '', /SECRET BODY/)
-    const loaded = await enabledCatalog.load('test-skill')
-    assert.ok(loaded)
-    assert.match(loaded.content, /SECRET BODY/)
-    assert.match(loaded.content, /references\/guide\.md/)
-    assert.doesNotMatch(loaded.content, /<skill_(?:content|resources)>/)
-    assert.ok(
-      loaded.content.indexOf('#### Skill Resources') <
-        loaded.content.indexOf('#### Skill Instructions')
-    )
-    assert.ok(
-      loaded.content.indexOf('#### Skill Instructions') <
-        loaded.content.indexOf('SECRET BODY')
-    )
+    assert.deepEqual(enabledCatalog.setupSkills, [
+      {
+        name: 'test-skill',
+        description: 'Use test-skill for tests.',
+        manifestPath: path.join(path.resolve(source), 'SKILL.md'),
+      },
+    ])
 
     await writeFile(
       path.join(installed.directory, 'SKILL.md'),
@@ -151,13 +143,12 @@ test('SkillLibrary installs, catalogs, disables, enables, and removes skills', a
       ].join('\n'),
       'utf8'
     )
-    const reloaded = await enabledCatalog.load('test-skill')
-    assert.ok(reloaded)
-    assert.match(reloaded.content, /UPDATED BODY/)
-    assert.doesNotMatch(reloaded.content, /SECRET BODY/)
+    assert.equal(
+      enabledCatalog.setupSkills[0]?.description,
+      'Use test-skill for tests.'
+    )
 
     assert.equal(await library.disable('test-skill'), true)
-    assert.ok(await enabledCatalog.load('test-skill'))
     assert.deepEqual(enabledCatalog.names, ['test-skill'])
     const disabledCatalog = await library.createCatalogSnapshot()
     assert.equal(disabledCatalog.size, 0)

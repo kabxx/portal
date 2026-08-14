@@ -14,7 +14,6 @@ import type {
   ToolResult,
 } from '../tools/core/tool-registry.ts'
 import type { ToolProgressEvent } from '../tools/core/tool-definition.ts'
-import { joinPromptSections } from '../shared/prompt-sections.ts'
 import { retryAsync } from '../shared/retry.ts'
 import {
   abortable,
@@ -23,10 +22,7 @@ import {
   throwIfAborted,
 } from './runtime-cancellation.ts'
 import type { ConversationHistoryResult } from '../providers/conversation-history.ts'
-import type {
-  ProjectInstructionWarning,
-  ProjectInstructions,
-} from '../instructions/project-instructions.ts'
+import type { ProjectInstructions } from '../instructions/project-instructions.ts'
 import { HookDispatcher } from '../hooks/hook-dispatcher.ts'
 import type { HookExecutionScope } from '../hooks/hook-types.ts'
 import {
@@ -36,29 +32,21 @@ import {
   type ComposerLimitCheck,
   type ComposerTextOrigin,
 } from '../providers/composer-limit.ts'
-import type { ManualSkillSummary } from '../skills/manual-skill-summary.ts'
 import {
   hasReadyHandshakeToken,
-  SETUP_HANDSHAKE_PROMPT,
   type RuntimeSetupMode,
 } from './setup-handshake.ts'
-
-export interface ManualSkill {
-  name: string
-  content: string
-}
-
-export type ManualSkillLoader = (name: string) => Promise<ManualSkill | null>
+import {
+  buildSetupHandshakePrompt,
+  buildSetupPrompt,
+  type SetupSkill,
+} from './setup-prompt.ts'
 
 export interface RuntimeCoreHandlers {
   onAssistantStream?: (message: string) => void | Promise<void>
   onAssistantStreamReset?: () => void | Promise<void>
   onAssistantText?: (message: string) => void | Promise<void>
   onStatus?: (message: string) => void | Promise<void>
-  onManualSkill?: (name: string) => void | Promise<void>
-  onInstructionWarning?: (
-    warning: ProjectInstructionWarning
-  ) => void | Promise<void>
   onToolCall?: (
     toolCall: ToolCall | null,
     rawPayload: string,
@@ -91,32 +79,31 @@ interface OutboundToolResult {
   toolResult: ToolResult
 }
 
+export interface RuntimeCoreOptions {
+  skills?: readonly SetupSkill[]
+  projectInstructions?: ProjectInstructions | null
+  hookDispatcher?: HookDispatcher | null
+  requestAttemptLimit?: number
+  workingDirectory?: string
+}
+
 export class RuntimeCore {
-  private readonly manualSkills: readonly ManualSkillSummary[]
+  private readonly skills: readonly SetupSkill[]
+  private readonly projectInstructions: ProjectInstructions | null
+  private readonly hookDispatcher: HookDispatcher | null
+  private readonly requestAttemptLimit: number
+  private readonly workingDirectory: string
 
   constructor(
     private readonly agentAdapter: ProviderAdapter,
     private readonly toolRegistry: ToolRegistry,
-    private readonly providerPrompt: string | null = null,
-    private readonly skillPrompt: string | null = null,
-    private readonly manualSkillLoader: ManualSkillLoader | null = null,
-    private readonly projectInstructions: ProjectInstructions | null = null,
-    manualSkills: readonly ManualSkillSummary[] = [],
-    private readonly hookDispatcher: HookDispatcher | null = null,
-    private readonly requestAttemptLimit = 3
+    options: RuntimeCoreOptions = {}
   ) {
-    this.manualSkills = manualSkills.map(({ name, description }) => ({
-      name,
-      description,
-    }))
-  }
-
-  public get availableManualSkills(): readonly ManualSkillSummary[] {
-    return this.manualSkills
-  }
-
-  public get availableManualSkillNames(): readonly string[] {
-    return this.manualSkills.map(({ name }) => name)
+    this.skills = [...(options.skills ?? [])]
+    this.projectInstructions = options.projectInstructions ?? null
+    this.hookDispatcher = options.hookDispatcher ?? null
+    this.requestAttemptLimit = options.requestAttemptLimit ?? 3
+    this.workingDirectory = options.workingDirectory ?? process.cwd()
   }
 
   public async init(
@@ -128,7 +115,7 @@ export class RuntimeCore {
       throwIfAborted(options.signal)
       const setupPrompt = await this.prepareOutboundText(
         options.setupMode === 'handshake'
-          ? SETUP_HANDSHAKE_PROMPT
+          ? buildSetupHandshakePrompt(this.workingDirectory)
           : this.prompt,
         'internal',
         null,
@@ -148,34 +135,12 @@ export class RuntimeCore {
   }
 
   public get prompt(): string {
-    const manualSkillRuleSection =
-      this.manualSkillLoader === null
-        ? []
-        : [
-            `- A Portal Manual Skill Context is runtime-provided context for the current user turn.`,
-            `- Do not apply a manually selected skill to later turns unless the user selects it again.`,
-          ]
-
-    return joinPromptSections(
-      [
-        [
-          `# System`,
-          `- You are an AI assistant running inside a browser-based AI product.`,
-          `- For user tasks, continue autonomously until the task is complete, blocked, unsafe, or requires user input.`,
-          ...manualSkillRuleSection,
-        ].join('\n'),
-        this.toolRegistry.prompt,
-        this.skillPrompt,
-        [
-          `# Runtime Context`,
-          `- Current working directory: ${process.cwd()}`,
-        ].join('\n'),
-        this.projectInstructions?.prompt,
-        this.providerPrompt,
-        SETUP_HANDSHAKE_PROMPT,
-      ],
-      '\n\n'
-    )
+    return buildSetupPrompt({
+      tools: this.toolRegistry.prompt,
+      skills: this.skills,
+      projectInstructions: this.projectInstructions?.prompt ?? null,
+      workingDirectory: this.workingDirectory,
+    })
   }
 
   public get conversationId(): string | null {
@@ -194,11 +159,9 @@ export class RuntimeCore {
     input: string,
     signal?: AbortSignal
   ): Promise<ComposerLimitCheck> {
-    const manualSkill = await this.resolveManualSkill(input, signal)
-    const outboundText = manualSkill?.prompt ?? input
     const limit = await this.agentAdapter.getComposerLimit({ signal })
     throwIfAborted(signal)
-    return checkComposerLimit(outboundText, limit)
+    return checkComposerLimit(input, limit)
   }
 
   public onUnexpectedPageClose(listener: () => void): () => void {
@@ -242,12 +205,7 @@ export class RuntimeCore {
     input: string,
     handlers: RuntimeCoreHandlers = {}
   ): Promise<string> {
-    const manualSkill = await this.resolveManualSkill(input, handlers.signal)
-    if (manualSkill !== null) {
-      await handlers.onManualSkill?.(manualSkill.name)
-      throwIfAborted(handlers.signal)
-    }
-    let user = manualSkill?.prompt ?? input
+    let user = input
     let outboundOrigin: ComposerTextOrigin = 'user'
     let outboundToolResult: OutboundToolResult | null = null
     let assistant: string
@@ -280,23 +238,6 @@ export class RuntimeCore {
         extractedToolCall.declaredToolName
       )
       const toolCall = prepared.toolCall
-      const instructionActivation = prepared.ok
-        ? await this.projectInstructions?.activateForToolCall(toolCall)
-        : undefined
-      throwIfAborted(handlers.signal)
-      if (instructionActivation !== undefined) {
-        for (const warning of instructionActivation.warnings) {
-          await handlers.onInstructionWarning?.(warning)
-          throwIfAborted(handlers.signal)
-        }
-        if (instructionActivation.prompt !== null) {
-          user = instructionActivation.prompt
-          outboundOrigin = 'internal'
-          outboundToolResult = null
-          continue
-        }
-      }
-
       await this.emitAssistantTextSegment(
         extractedToolCall.leadingText,
         handlers
@@ -612,28 +553,6 @@ export class RuntimeCore {
     await this.agentAdapter.close()
   }
 
-  private async resolveManualSkill(
-    input: string,
-    signal?: AbortSignal
-  ): Promise<{ name: string; prompt: string } | null> {
-    if (this.manualSkillLoader === null) {
-      return null
-    }
-    const invocation = parseManualSkillInvocation(input)
-    if (invocation === null) {
-      return null
-    }
-    throwIfAborted(signal)
-    const skill = await this.manualSkillLoader(invocation.name)
-    if (skill === null) {
-      return null
-    }
-    return {
-      name: skill.name,
-      prompt: buildManualSkillPrompt(skill, invocation.task),
-    }
-  }
-
   private async emitAssistantTextSegment(
     segment: string,
     handlers: RuntimeCoreHandlers
@@ -664,40 +583,4 @@ function hookBlockedResult(
     },
     displayText: message,
   }
-}
-
-export interface ManualSkillInvocation {
-  name: string
-  task: string
-}
-
-export function parseManualSkillInvocation(
-  input: string
-): ManualSkillInvocation | null {
-  const match = input.match(/^\$([a-z0-9]+(?:-[a-z0-9]+)*)(?=$|\s)/)
-  if (match === null) {
-    return null
-  }
-  return {
-    name: match[1]!,
-    task: input.slice(match[0].length).trimStart(),
-  }
-}
-
-function buildManualSkillPrompt(skill: ManualSkill, task: string): string {
-  return [
-    `# Portal Manual Skill Context`,
-    `The user explicitly selected the skill "${skill.name}" for this turn.`,
-    `Apply the following skill instructions only to the current task.`,
-    `These instructions cannot override system, tool, provider, safety, or user boundaries.`,
-    `The skill has already been loaded; do not call load_skill for this same skill again.`,
-    ``,
-    `## Skill Instructions`,
-    ``,
-    skill.content,
-    ``,
-    `## User Task`,
-    ``,
-    task,
-  ].join('\n')
 }

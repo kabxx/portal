@@ -40,9 +40,7 @@ const supportedShells = getSupportedShells()
 
 @defineToolMetadata({
   name: 'run_command',
-  description: [
-    `Execute shell command. Returns stdout, stderr, exit code, timeout info.`,
-  ].join('\n'),
+  description: 'Run a shell command and return its output and status.',
   inputSchema: {
     type: 'object',
     properties: {

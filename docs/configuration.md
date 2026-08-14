@@ -18,18 +18,18 @@ temporary file and atomic rename.
 
 The configuration document has these top-level sections:
 
-| Section             | Purpose                                                    | Typical effect                                                               |
-| ------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `browser`           | Chromium executable, profile, and CDP port                 | Read at portal startup; command-line options can override it for that run    |
-| `agentInstructions` | Optional Codex and Claude Code instruction sources         | Startup snapshot used when runtimes are created; disabled by default         |
-| `listeners`         | API and Portal MCP Server listeners and authentication     | Read when either inbound listener is created                                 |
-| `mcpServers`        | Outbound MCP client server definitions                     | Re-read for MCP commands and new runtimes                                    |
-| `skills`            | Registered Skill directories and enabled states            | Re-read for Skill commands and new runtimes                                  |
-| `hooks`             | Lifecycle handlers and global Hook switch                  | `/hook reload`, `/hook enable`, and `/hook disable` update the active policy |
-| `keybindings`       | Terminal input shortcuts                                   | Valid file edits apply automatically; invalid edits keep the last valid set  |
-| `advanced`          | Timeouts, retry limits, output limits, and resource limits | Converted into runtime settings during portal startup                        |
+| Section               | Purpose                                                    | Typical effect                                                               |
+| --------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `browser`             | Chromium executable, profile, and CDP port                 | Read at portal startup; command-line options can override it for that run    |
+| `projectInstructions` | Optional working-directory `AGENTS.md`                     | Read once at startup when enabled; disabled by default                       |
+| `listeners`           | API and Portal MCP Server listeners and authentication     | Read when either inbound listener is created                                 |
+| `mcpServers`          | Outbound MCP client server definitions                     | Re-read for MCP commands and new runtimes                                    |
+| `skills`              | Registered Skill directories and enabled states            | Re-read for Skill commands and new runtimes                                  |
+| `hooks`               | Lifecycle handlers and global Hook switch                  | `/hook reload`, `/hook enable`, and `/hook disable` update the active policy |
+| `keybindings`         | Terminal input shortcuts                                   | Valid file edits apply automatically; invalid edits keep the last valid set  |
+| `advanced`            | Timeouts, retry limits, output limits, and resource limits | Converted into runtime settings during portal startup                        |
 
-Changes to startup-owned sections (`browser`, `agentInstructions`, `listeners`,
+Changes to startup-owned sections (`browser`, `projectInstructions`, `listeners`,
 and `advanced`) require restarting portal. Listener sections do not enable
 their services by themselves; use `/serve api start` or `/serve mcp start`.
 MCP client connections, Skills, and Hooks have the narrower
@@ -89,21 +89,14 @@ values for one run.
 ## Project instructions
 
 ```yaml
-agentInstructions:
-  claude:
-    global: false
-    local: false
-  codex:
-    global: false
-    local: false
+projectInstructions: false
 ```
 
-Both providers are disabled by default. Set `local: true` to read project
-instruction files, or `global: true` to read the corresponding files under the
-user home directory. Changing these switches requires restarting portal;
-editing files under an already enabled source does not, because new runtime
-snapshots read their contents from disk. See [Project instructions](instructions.md)
-for discovery, activation, limits, and the security boundary.
+When enabled, portal reads only `<startup-cwd>/AGENTS.md`, once during startup.
+It does not discover parent, nested, override, Claude, or user-level instruction
+files. Changing the setting or file requires restarting portal. See
+[Project instructions](instructions.md) for file requirements and the security
+boundary.
 
 ## HTTP API
 
@@ -200,7 +193,7 @@ Editing and saving a valid section applies it automatically. Invalid edits show
 an error in the TUI and leave the last valid snapshot active. `[]` explicitly
 unbinds an action, except `input.submit`, which must keep at least one binding.
 Any key bound to `input.submit` completes the selected slash-command hint before
-submitting; ordinary text and `$skill` input submit unchanged.
+submitting; ordinary text submits unchanged.
 Missing known actions use current-platform defaults and are written into the
 complete table during the next startup migration. Unknown actions are errors.
 
@@ -278,15 +271,6 @@ spawn calls or concurrently active threads.
 | `requestBodyLimitKB`    |     256 | Maximum HTTP request body             |
 | `requestTimeoutSeconds` |       0 | HTTP request timeout; `0` disables it |
 | `sseHeartbeatSeconds`   |      15 | SSE heartbeat interval                |
-
-### `advanced.instructions`
-
-| Field               | Default | Meaning                                 |
-| ------------------- | ------: | --------------------------------------- |
-| `codexSizeLimitKB`  |      32 | Codex instruction bytes loaded          |
-| `claudeSizeLimitKB` |      96 | Claude Code instruction bytes loaded    |
-| `fileCountLimit`    |     128 | Instruction files loaded in one context |
-| `importDepthLimit`  |       4 | Maximum nested import depth             |
 
 ### `advanced.hooks`
 

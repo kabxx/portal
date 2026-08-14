@@ -2,7 +2,6 @@ import { randomUUID } from 'crypto'
 import { lstat, mkdir, readdir, rename, rm } from 'fs/promises'
 import path from 'path'
 import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
-import { joinPromptSections } from '../shared/prompt-sections.ts'
 import {
   SkillInstallError,
   SkillInstaller,
@@ -13,10 +12,8 @@ import {
 import { readSkillManifest, validateSkillName } from './skill-manifest.ts'
 import { listSkillResources } from './skill-files.ts'
 import { DEFAULT_SKILL_POLICY, type SkillPolicy } from './skill-policy.ts'
-import {
-  sanitizeSkillDescription,
-  type ManualSkillSummary,
-} from './manual-skill-summary.ts'
+import { stripVTControlCharacters } from 'node:util'
+import type { SetupSkill } from '../runtime/setup-prompt.ts'
 import {
   readSkillRegistry,
   resolveSkillDirectory,
@@ -70,14 +67,6 @@ interface SkillCatalogEntry {
   directory: string
 }
 
-export interface LoadedSkill {
-  name: string
-  directory: string
-  resources: readonly string[]
-  instructions: string
-  content: string
-}
-
 export interface SkillLibraryOptions {
   skillsDirectory: string
   tempDirectory: string
@@ -87,14 +76,8 @@ export interface SkillLibraryOptions {
 
 export class SkillCatalogSnapshot {
   private readonly skillsByName: ReadonlyMap<string, SkillCatalogEntry>
-  private readonly policy: SkillPolicy
-
-  public constructor(
-    skills: readonly SkillCatalogEntry[],
-    policy: SkillPolicy = DEFAULT_SKILL_POLICY
-  ) {
+  public constructor(skills: readonly SkillCatalogEntry[]) {
     this.skillsByName = new Map(skills.map((skill) => [skill.name, skill]))
-    this.policy = policy
   }
 
   public get size(): number {
@@ -102,87 +85,17 @@ export class SkillCatalogSnapshot {
   }
 
   public get names(): readonly string[] {
-    return this.summaries.map(({ name }) => name)
+    return [...this.skillsByName.keys()]
   }
 
-  public get summaries(): readonly ManualSkillSummary[] {
-    return [...this.skillsByName.values()].map(({ name, description }) => ({
-      name,
-      description: sanitizeSkillDescription(description),
-    }))
-  }
-
-  public get prompt(): string | null {
-    if (this.skillsByName.size === 0) {
-      return null
-    }
-
-    return joinPromptSections([
-      [
-        `## Skills`,
-        ...this.summaries.map(
-          ({ name, description }) => `- ${name}: ${description}`
-        ),
-      ].join('\n'),
-    ])
-  }
-
-  public async load(name: string): Promise<LoadedSkill | null> {
-    const skill = this.skillsByName.get(name)
-    if (skill === undefined) {
-      return null
-    }
-
-    let manifest
-    let resources: readonly string[]
-    try {
-      manifest = await readSkillManifest(
-        skill.directory,
-        this.policy.maxManifestBytes
-      )
-      if (manifest.name !== skill.name) {
-        throw new Error(
-          `Manifest name "${manifest.name}" does not match catalog name "${skill.name}"`
-        )
-      }
-      resources = await listSkillResources(
-        skill.directory,
-        this.policy.maxResourceFiles
-      )
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
-      throw new Error(
-        `Skill files are no longer available or valid: ${name}\n${detail}`,
-        { cause: error }
-      )
-    }
-
-    const resourceSection =
-      resources.length === 0
-        ? []
-        : [
-            ``,
-            `#### Skill Resources`,
-            ``,
-            ...resources.map((resource) => `- ${resource}`),
-          ]
-    return {
-      name: skill.name,
-      directory: skill.directory,
-      resources,
-      instructions: manifest.body,
-      content: [
-        `Loaded skill: ${skill.name}`,
-        ``,
-        `Skill directory: ${skill.directory}`,
-        `Resolve relative paths in these instructions against the skill directory.`,
-        ...resourceSection,
-        ``,
-        `#### Skill Instructions`,
-        ``,
-        manifest.body,
-      ].join('\n'),
-    }
+  public get setupSkills(): readonly SetupSkill[] {
+    return [...this.skillsByName.values()].map(
+      ({ name, description, directory }) => ({
+        name,
+        description: sanitizeSkillDescription(description),
+        manifestPath: path.join(directory, 'SKILL.md'),
+      })
+    )
   }
 }
 
@@ -371,8 +284,7 @@ export class SkillLibrary {
           name,
           description,
           directory,
-        })),
-      this.policy
+        }))
     )
   }
 
@@ -499,6 +411,17 @@ export class SkillLibrary {
     const expected = path.resolve(this.options.skillsDirectory, name)
     return normalizePath(actual) === normalizePath(expected)
   }
+}
+
+function sanitizeSkillDescription(value: string): string {
+  let plainText = ''
+  for (const character of stripVTControlCharacters(value)) {
+    const codePoint = character.codePointAt(0) ?? 0
+    const isControlCharacter =
+      codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)
+    plainText += isControlCharacter ? ' ' : character
+  }
+  return plainText.replace(/\s+/g, ' ').trim()
 }
 
 export async function commitPreparedSkillBatch(

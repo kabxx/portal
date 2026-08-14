@@ -1,8 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { loadProjectInstructions } from '../../src/instructions/project-instructions.ts'
-import type { PortalAgentInstructionsConfig } from '../../src/config/portal-config.ts'
+import { ProjectInstructions } from '../../src/instructions/project-instructions.ts'
 import type { ConversationHistoryResult } from '../../src/providers/conversation-history.ts'
 import type { RuntimeCore } from '../../src/runtime/runtime-core.ts'
 import { ProviderAdapterError } from '../../src/providers/adapters/adapter-base.ts'
@@ -42,11 +41,6 @@ interface Harness {
   operations: ThreadOperationCoordinator
   registry: ThreadRuntimeRegistry<RuntimeCore>
   events: ThreadLifecycleEvent[]
-}
-
-const EMPTY_INSTRUCTION_CONFIG: PortalAgentInstructionsConfig = {
-  claude: { global: false, local: false },
-  codex: { global: false, local: false },
 }
 
 class TestThreadStore extends ThreadStore {
@@ -102,13 +96,7 @@ function createHarness(options: HarnessOptions = {}): Harness {
         return null
       }
     },
-    createProjectInstructions: async () =>
-      (
-        await loadProjectInstructions({
-          cwd: process.cwd(),
-          config: EMPTY_INSTRUCTION_CONFIG,
-        })
-      ).instructions,
+    projectInstructions: new ProjectInstructions(null),
     createAdapter: async () => adapter,
     createRuntime: async () =>
       options.runtimeFactory === undefined

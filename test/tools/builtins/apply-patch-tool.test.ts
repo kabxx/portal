@@ -38,24 +38,14 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
-test('ApplyPatchTool prompt teaches distinct Add and Update V4A syntax', () => {
+test('ApplyPatchTool prompt keeps the minimal V4A grammar without examples', () => {
   const prompt = new ApplyPatchTool(createProviderAdapterStub()).prompt
 
-  assert.match(prompt, /### apply_patch \(FREEFORM Format\)/)
-  assert.match(
-    prompt,
-    /Add File: no @@; every content line starts with \+ \(blank line = \+\)\./
-  )
-  assert.match(
-    prompt,
-    /\*\*\* Add File: src\/new\.ts\n\+export const value = 1\n\+\n\+export default value/
-  )
-  assert.match(prompt, /Update File: use @@; \+ add, - remove, space context\./)
-  assert.match(prompt, /Multiple @@ sections must follow source order\./)
-  assert.match(
-    prompt,
-    /export function first\(\)[\s\S]*@@\n export function second\(\)/
-  )
+  assert.match(prompt, /^### apply_patch\nDescription:/)
+  assert.match(prompt, /Parameters \(freeform\): V4A patch enclosed by/)
+  assert.match(prompt, /Add File content lines start with \+\./)
+  assert.match(prompt, /Update File hunks use @@;/)
+  assert.doesNotMatch(prompt, /src\/new\.ts|export function/)
 })
 
 test('ApplyPatchTool returns a structured error for empty input', async () => {

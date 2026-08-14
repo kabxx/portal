@@ -43,7 +43,6 @@ class InheritedMetadataTool extends BaseMetadataTool {}
     },
     required: ['value'],
   },
-  examples: [{ params: { value: 'example' } }],
 })
 class JsonEchoTool extends Tool<Record<string, unknown>, ToolOutput> {
   public async call(input: Record<string, unknown>): Promise<ToolOutput> {
@@ -231,7 +230,8 @@ test('ToolRegistry keeps JSON tools and executes named freeform tools', async ()
   const registry = new ToolRegistry(adapter, [ApplyPatchTool])
 
   try {
-    assert.match(registry.prompt, /<tool name="apply_patch">/)
+    assert.match(registry.prompt, /^### apply_patch/)
+    assert.doesNotMatch(registry.prompt, /Examples?:|<tool name=/)
     const payload = [
       '*** Begin Patch',
       `*** Add File: ${filePath}`,
@@ -270,19 +270,25 @@ test('ToolRegistry can hide a registered tool from its prompt', async () => {
   assert.deepEqual(result.result, { input: { value: 'hidden' } })
 })
 
-test('ToolRegistry advertises and accepts only the named tool format', async () => {
+test('ToolRegistry advertises only names, descriptions, and parameters', async () => {
   const registry = new ToolRegistry(createProviderAdapterStub(), [
     JsonEchoTool,
     FreeformEchoTool,
   ])
 
-  assert.match(registry.prompt, /## Tool Call Format\n<tool name="tool_name">/)
-  assert.match(registry.prompt, /must end the response/)
-  assert.doesNotMatch(registry.prompt, /Tool Call Format \(JSON\)/)
-  assert.match(
+  assert.equal(
     registry.prompt,
-    /<tool name="json_echo">\n\{\n {2}"value": "example"\n\}\n<\/tool>/
+    [
+      '### json_echo',
+      'Description: Returns its JSON input.',
+      'Parameters (JSON): {value: string}',
+      '',
+      '### freeform_echo',
+      'Description: Returns its freeform input.',
+      'Parameters (freeform): raw text',
+    ].join('\n')
   )
+  assert.doesNotMatch(registry.prompt, /Examples?:|<tool name=|```/)
 
   const namedJson = await registry.executeToolCall(
     '{"value":"named"}',

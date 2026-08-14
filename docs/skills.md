@@ -77,26 +77,6 @@ The HTTP API accepts the same install inputs through `POST /skills` with
 `{ "source": "...", "registryUrl": "..." }`. Omit `registryUrl` for a local
 path or direct remote source. See [HTTP API](api.md).
 
-## Manual selection
-
-An enabled Skill can be selected explicitly for one turn by putting its name at
-the start of the input:
-
-```text
-$release-notes Summarize the changes since the last tag.
-$release-notes
-```
-
-The prefix must be `$` followed immediately by the exact registered name. The
-Skill must be enabled in the current runtime snapshot. portal loads its current
-manifest and resources, wraps the optional trailing text as the user task, and
-applies the Skill only to that turn. With no trailing task, the model is told to
-ask what to do. An unknown or unavailable `$name` prefix remains ordinary user
-input.
-
-`POST /threads/:threadId/skill` provides the activation-only form by name;
-it does not synthesize the combined `$name task` form.
-
 ## Registry
 
 The `skills` section of `<data-dir>/config.yaml` is the sole source of truth for which skills exist:
@@ -156,21 +136,27 @@ These checks reduce accidental damage; they do not prove that a skill is safe.
 When a new agent thread, chat thread, or spawned runtime is created:
 
 1. portal reads registered skills and their enabled state from `config.yaml`.
-2. It creates an immutable catalog snapshot containing enabled skill names, descriptions, and directories.
-3. Agent threads and spawned runtimes advertise each skill's name and description in the full setup prompt; chat threads retain the snapshot locally without advertising it.
-4. If the browser model decides that a skill matches the task, it invokes `load_skill`.
-5. portal rereads and validates the current `SKILL.md`, rescans its resources, and returns name, directory, resources, and instructions in the standard JSON Tool Result envelope.
-6. The model continues using only the tools already available to the runtime.
+2. It creates an immutable catalog snapshot containing each enabled Skill's
+   name, sanitized description, and absolute `SKILL.md` path.
+3. Agent threads and spawned runtimes include that metadata under `## Skills`
+   in the full setup prompt. The manifest body and resources are not injected.
+4. Chat threads retain the local snapshot without advertising it because they
+   send only the minimal handshake.
 
-An active runtime keeps its catalog membership: newly added or enabled skills require a new runtime, and disabling a skill does not remove it from an existing catalog. Skill files are loaded from disk on demand, so modifying them changes later `load_skill` results, while deleting or corrupting them returns an error even in an existing runtime.
-
-A resumed conversation also creates a fresh snapshot from the current registry and registers `load_skill` when that snapshot is non-empty. Resume uses `setupMode: 'skip'`, however, so portal does not submit a new `# Skills` catalog or Tool definition turn. A chat thread likewise registers `load_skill` but sends only the minimal handshake. The provider conversation keeps whichever catalog it previously saw; newly enabled names are therefore reliably advertised only by creating a new agent thread or a spawned runtime.
+An active runtime keeps its catalog membership and metadata. Adding, enabling,
+disabling, removing, or editing a Skill requires a new runtime before the setup
+catalog changes. A resumed conversation creates a current local snapshot, but
+`setupMode: 'skip'` does not send a new setup turn to the existing provider
+conversation. Newly enabled names are therefore reliably advertised only by
+creating a new agent thread or spawned runtime.
 
 ## Resources
 
-Any regular file recursively contained in the skill directory, other than `SKILL.md`, is treated as a skill resource and listed with a relative path. The loaded instructions tell the model to resolve those paths against the skill directory.
-
-Resources are not automatically injected into the conversation. The model must use an available tool, such as `run_command`, when it needs to inspect a resource.
+Any regular file recursively contained in the Skill directory, other than
+`SKILL.md`, is treated as a Skill resource during installation validation.
+Resources are not listed or injected into the conversation. The setup catalog's
+absolute manifest path allows a model with local command access to inspect the
+Skill directory when needed.
 
 ## Storage
 

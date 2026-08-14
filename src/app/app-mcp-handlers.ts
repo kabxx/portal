@@ -1,4 +1,3 @@
-import type { ProjectInstructionWarning } from '../instructions/project-instructions.ts'
 import type { McpMessageOperationStore } from '../mcp-server/mcp-message-operations.ts'
 import type {
   PortalMcpHandlers,
@@ -236,18 +235,6 @@ export function createMcpHandlers({
                   throwIfAborted(signal)
                   ui.renderAssistantStream(thread, message)
                 },
-                onManualSkill: async (name) => {
-                  throwIfAborted(signal)
-                  ui.renderThreadInfo(thread, 'skill', `Using skill: ${name}`)
-                },
-                onInstructionWarning: async (warning) => {
-                  throwIfAborted(signal)
-                  ui.renderThreadWarning(
-                    thread,
-                    'instructions',
-                    formatInstructionWarning(warning)
-                  )
-                },
                 onToolProgress: (event, toolCall, toolCallId) => {
                   if (
                     signal.aborted ||
@@ -346,13 +333,4 @@ function requireProvisionResult(
 ): Extract<ProvisionResult, { ok: true }> {
   if (result.ok) return result
   throw new Error(result.failure.message)
-}
-
-function formatInstructionWarning(
-  warning: ProjectInstructionWarning
-): string[] {
-  return [
-    warning.message,
-    ...(warning.path === undefined ? [] : [`source: ${warning.path}`]),
-  ]
 }

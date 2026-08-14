@@ -309,46 +309,9 @@ async function commitPatch(files: PlannedFile[]): Promise<void> {
 @defineToolMetadata({
   name: 'apply_patch',
   inputFormat: 'freeform',
-  description: [
-    'Apply raw V4A patches to local UTF-8 files.',
-    '',
-    'Patch format:',
-    '- Exactly one Begin/End envelope.',
-    '- Add File: no @@; every content line starts with + (blank line = +).',
-    '- Update File: use @@; + add, - remove, space context.',
-    '- Multiple @@ sections must follow source order.',
-    '',
-    'Always use this tool for any file creation or modification tasks.',
-  ].join('\n'),
-  examples: [
-    {
-      input: [
-        '*** Begin Patch',
-        '*** Add File: src/new.ts',
-        '+export const value = 1',
-        '+',
-        '+export default value',
-        '*** End Patch',
-      ].join('\n'),
-    },
-    {
-      input: [
-        '*** Begin Patch',
-        '*** Update File: src/multiple.ts',
-        '@@',
-        ' export function first() {',
-        '-  return 1',
-        '+  return 2',
-        ' }',
-        '@@',
-        ' export function second() {',
-        '+  logCall()',
-        '   return true',
-        ' }',
-        '*** End Patch',
-      ].join('\n'),
-    },
-  ],
+  description: 'Create or update UTF-8 files; use it for file writes.',
+  parameters:
+    'V4A patch enclosed by *** Begin Patch and *** End Patch. Add File content lines start with +. Update File hunks use @@; every hunk line starts with space, +, or -.',
 })
 class ApplyPatchTool extends Tool<string, ToolOutput> {
   public async call(input: string): Promise<ToolOutput> {

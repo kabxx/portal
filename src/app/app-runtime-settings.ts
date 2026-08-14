@@ -1,5 +1,4 @@
 import type { PortalAdvancedConfig } from '../config/portal-config.ts'
-import type { ProjectInstructionLimits } from '../instructions/project-instructions.ts'
 import type { BrowserLaunchOptions } from '../platform/browser-cdp-launcher.ts'
 import type { RunCommandJobManagerOptions } from '../processes/run-command-job-manager.ts'
 import type { ProviderTimingOptions } from '../providers/adapters/adapter-base.ts'
@@ -18,7 +17,6 @@ export interface PortalRuntimeSettings {
   childRuntimeCloseTimeoutMs: number
   runCommand: RunCommandJobManagerOptions
   skillPolicy: SkillPolicy
-  instructionLimits: ProjectInstructionLimits
   hookCommandOutputLimitBytes: number
 }
 
@@ -77,12 +75,6 @@ export function createPortalRuntimeSettings(
       maxResourceFiles: advanced.skillInstall.resourceFileCountLimit,
       maxManifestBytes: kb(advanced.skillInstall.manifestSizeLimitKB),
       maxRedirects: advanced.skillInstall.redirectLimit,
-    },
-    instructionLimits: {
-      codexMaxBytes: kb(advanced.instructions.codexSizeLimitKB),
-      claudeMaxBytes: kb(advanced.instructions.claudeSizeLimitKB),
-      maxFiles: advanced.instructions.fileCountLimit,
-      maxImportDepth: advanced.instructions.importDepthLimit,
     },
     hookCommandOutputLimitBytes: mb(advanced.hooks.commandOutputLimitMB),
   }

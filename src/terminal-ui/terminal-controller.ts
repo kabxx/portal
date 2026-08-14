@@ -2,7 +2,6 @@ import type { CliCommand } from '../cli-commands/core/command-types.ts'
 import type { ThreadHistoryEntry } from '../threads/thread-store.ts'
 import type { ThreadHandle, ThreadManager } from '../threads/thread-manager.ts'
 import type { SkillListResult } from '../skills/skill-library.ts'
-import type { ManualSkillSummary } from '../skills/manual-skill-summary.ts'
 import type { ConversationHistoryMessage } from '../providers/conversation-history.ts'
 import type {
   ToolOutcome,
@@ -15,10 +14,8 @@ import {
   projectStreamingAssistantText,
 } from '../tools/core/tool-registry.ts'
 import { getDefaultShell } from '../platform/platform-defaults.ts'
-import {
-  hasReadyHandshakeToken,
-  SETUP_HANDSHAKE_PROMPT,
-} from '../runtime/setup-handshake.ts'
+import { hasReadyHandshakeToken } from '../runtime/setup-handshake.ts'
+import { isPortalSetupPrompt } from '../runtime/setup-prompt.ts'
 
 export type UiTone =
   | 'info'
@@ -181,17 +178,6 @@ export class TerminalController {
 
   public getThreadManager(): ThreadManager | null {
     return this.threadManager
-  }
-
-  public getActiveManualSkillNames(): readonly string[] {
-    return this.getActiveManualSkills().map(({ name }) => name)
-  }
-
-  public getActiveManualSkills(): readonly ManualSkillSummary[] {
-    const activeThread = this.threadManager?.getActiveThread() ?? null
-    return activeThread !== null && this.activeTimelineKey === activeThread.id
-      ? activeThread.runtime.availableManualSkills
-      : []
   }
 
   public cycleThread(direction: -1 | 1): ThreadHandle | null {
@@ -1181,8 +1167,6 @@ export class TerminalController {
             `provider: ${displayScalar(params.provider, thread.provider)}`,
             `prompt: ${truncatePreview(firstLine(displayScalar(params.prompt, '(missing)')))}`,
           ]
-        case 'load_skill':
-          return [`name: ${displayScalar(params.name, '(missing)')}`]
         default:
           return [`payload: ${truncatePreview(rawPayload, 600)}`]
       }
@@ -1226,10 +1210,6 @@ export class TerminalController {
         lines.push(`conversation: ${result.conversationUrl}`)
       }
       return lines
-    }
-
-    if (toolName === 'load_skill' && typeof result.name === 'string') {
-      return [`Loaded skill: ${result.name}`]
     }
 
     return Object.entries(result)
@@ -1379,7 +1359,7 @@ function isInitialSetupMessage(
   return (
     message?.role === 'user' &&
     (message.text.trimStart().startsWith('# System') ||
-      message.text.trim() === SETUP_HANDSHAKE_PROMPT)
+      isPortalSetupPrompt(message.text))
   )
 }
 

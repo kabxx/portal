@@ -228,36 +228,6 @@ test('ThreadManager submitThreadInput preserves status warnings emitted during s
   assert.deepEqual(turnItems, ['user_text', 'status', 'assistant_text'])
 })
 
-test('ThreadManager forwards manual skill selection without persisting it as a turn item', async () => {
-  const manager = new ThreadManager()
-  const thread = manager.addThread({
-    id: manager.createThreadId(),
-    provider: 'chatgpt',
-    runtime: createFakeRuntime({
-      submitUserInput: async (_input, handlers) => {
-        await handlers?.onManualSkill?.('manual-skill')
-        await handlers?.onAssistantText?.('Ready for the task.')
-        return 'Ready for the task.'
-      },
-    }),
-    createdAt: 1,
-  })
-  const selected: string[] = []
-
-  await manager.submitThreadInput(thread.id, '$manual-skill', {
-    onManualSkill: async (name) => {
-      selected.push(name)
-    },
-  })
-
-  assert.deepEqual(selected, ['manual-skill'])
-  const turn = getRecordedTurn(manager, thread.id, 'turn1')
-  assert.deepEqual(
-    turn.items.map((item) => item.kind),
-    ['user_text', 'assistant_text']
-  )
-})
-
 test('ThreadManager preserves full tool content and optional display text', async () => {
   const manager = new ThreadManager()
   const thread = manager.addThread({
@@ -268,10 +238,10 @@ test('ThreadManager preserves full tool content and optional display text', asyn
         await handlers?.onToolResult?.(
           {
             outcome: 'success',
-            result: { instructions: 'FULL SKILL CONTENT' },
-            displayText: 'Loaded skill: pdf-processing',
+            result: { content: 'FULL TOOL CONTENT' },
+            displayText: 'Concise tool output',
           },
-          { tool: 'load_skill', params: { name: 'pdf-processing' } }
+          { tool: 'future_tool', params: { value: 'test' } }
         )
         return 'done'
       },
@@ -279,17 +249,17 @@ test('ThreadManager preserves full tool content and optional display text', asyn
     createdAt: 1,
   })
 
-  await manager.submitThreadInput(thread.id, 'load the skill')
+  await manager.submitThreadInput(thread.id, 'run the tool')
 
   const turn = getRecordedTurn(manager, thread.id, 'turn1')
   const toolResult = turn.items[1]
   assert.ok(toolResult)
   assert.deepEqual(toolResult, {
     kind: 'tool_result',
-    toolName: 'load_skill',
+    toolName: 'future_tool',
     outcome: 'success',
-    result: { instructions: 'FULL SKILL CONTENT' },
-    displayText: 'Loaded skill: pdf-processing',
+    result: { content: 'FULL TOOL CONTENT' },
+    displayText: 'Concise tool output',
     createdAt: toolResult.createdAt,
   })
 })

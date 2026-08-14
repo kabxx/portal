@@ -108,15 +108,15 @@ portal stores conversation URLs and metadata in its data directory, so
 history. See the [CLI guide](docs/cli.md) for the complete persistence and resume
 behavior.
 
-Use `Ctrl+J` for a reliable multiline input and `Ctrl+C` to cancel the current operation. Input submission remains unavailable while portal is busy. Typing `/` or an active-thread `$` prefix opens a five-row contextual hint bubble; `Up` / `Down` browse it, and `Tab` completes the selected item. `Enter` completes the selected slash-command hint and submits it in one step; ordinary text and `$skill` input submit unchanged. The command index and input controls are documented in the [CLI guide](docs/cli.md).
+Use `Ctrl+J` for a reliable multiline input and `Ctrl+C` to cancel the current operation. Input submission remains unavailable while portal is busy. Typing `/` opens a five-row contextual command hint bubble; `Up` / `Down` browse it, and `Tab` completes the selected item. `Enter` completes the selected slash-command hint and submits it in one step; ordinary text submits unchanged. The command index and input controls are documented in the [CLI guide](docs/cli.md).
 
 ## Extensions
 
-- **Project instructions** load reviewed Codex or Claude Code workspace guidance into new runtimes.
-- **Skills** provide local instruction packages that models can load on demand.
+- **Project instructions** optionally load the startup directory's `AGENTS.md` into new runtimes.
+- **Skills** advertise enabled local instruction packages by name, description, and manifest path.
 - **MCP** connects each runtime to configured stdio or Streamable HTTP servers.
 - **Hooks** observe lifecycle events or allow, deny, and rewrite tool parameters.
-- **Built-in tools** cover images, shell commands, file patches, focused child tasks, Skills, and MCP calls.
+- **Built-in tools** cover images, shell commands, file patches, focused child tasks, and MCP calls.
 
 See the linked guides for configuration and trust boundaries.
 
