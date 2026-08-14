@@ -14,26 +14,26 @@ test('CommandRegistry only registers primary command names', () => {
   assert.equal(registry.find('/h'), null)
 })
 
-test('tokenizeCommandInput preserves quoted headers, JSON, and stdio separators', () => {
+test('tokenizeCommandInput preserves quotes, JSON, and stdio separators', () => {
   assert.deepEqual(
     tokenizeCommandInput(
-      '/mcp add remote https://example.com/mcp --header "Authorization: Bearer ${env:TOKEN}"'
+      '/example add remote https://example.com/service --header "Authorization: Bearer ${env:TOKEN}"'
     ),
     [
-      '/mcp',
+      '/example',
       'add',
       'remote',
-      'https://example.com/mcp',
+      'https://example.com/service',
       '--header',
       'Authorization: Bearer ${env:TOKEN}',
     ]
   )
   assert.deepEqual(
     tokenizeCommandInput(
-      '/mcp prompt attach remote review {"focus":"error handling"}'
+      '/example prompt attach remote review {"focus":"error handling"}'
     ),
     [
-      '/mcp',
+      '/example',
       'prompt',
       'attach',
       'remote',
@@ -41,17 +41,12 @@ test('tokenizeCommandInput preserves quoted headers, JSON, and stdio separators'
       '{"focus":"error handling"}',
     ]
   )
-  assert.deepEqual(tokenizeCommandInput('/mcp add local -- npx -y server'), [
-    '/mcp',
-    'add',
-    'local',
-    '--',
-    'npx',
-    '-y',
-    'server',
-  ])
+  assert.deepEqual(
+    tokenizeCommandInput('/example add local -- npx -y server'),
+    ['/example', 'add', 'local', '--', 'npx', '-y', 'server']
+  )
   assert.throws(
-    () => tokenizeCommandInput('/mcp add "unfinished'),
+    () => tokenizeCommandInput('/example add "unfinished'),
     /Unterminated/
   )
 })

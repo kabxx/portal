@@ -169,6 +169,7 @@ export interface CreateThreadCommand {
   mode: ThreadCreationMode
   source?: ThreadLifecycleSource
   activate?: boolean
+  persistInitialHistory?: boolean
 }
 
 export interface ResumeThreadCommand {
@@ -202,6 +203,7 @@ export class ThreadLifecycleService {
         mode: command.mode,
         source: command.source ?? 'tui',
         activate: command.activate ?? command.source !== 'mcp',
+        persistInitialHistory: command.persistInitialHistory ?? true,
       },
       signal
     )
@@ -420,16 +422,21 @@ export class ThreadLifecycleService {
     createdAt?: number
   }): Promise<string | null> {
     try {
+      const conversationUrl =
+        input.threadId === undefined
+          ? input.conversationUrl
+          : (this.dependencies.threadManager.getThread(input.threadId)?.runtime
+              .conversationUrl ?? input.conversationUrl)
       if (input.threadId !== undefined) {
         this.dependencies.runtimeRegistry.updateConversationIdentity(
           input.threadId,
-          { conversationUrl: input.conversationUrl }
+          { conversationUrl }
         )
       }
-      await this.dependencies.threadStore.touch(input)
+      await this.dependencies.threadStore.touch({ ...input, conversationUrl })
       if (input.title !== null) {
         await this.dependencies.threadStore.setTitleIfEmpty({
-          conversationUrl: input.conversationUrl,
+          conversationUrl,
           title: input.title,
         })
       }
@@ -449,6 +456,7 @@ export class ThreadLifecycleService {
           mode: ThreadCreationMode
           source: ThreadLifecycleSource
           activate: boolean
+          persistInitialHistory: boolean
         }
       | {
           origin: 'resumed'
@@ -676,17 +684,19 @@ export class ThreadLifecycleService {
         throw error
       }
       runtime = null
-      try {
-        await this.dependencies.threadStore.touch({
-          provider,
-          conversationUrl: actualUrl,
-          title: null,
-          createdAt: thread.createdAt,
-        })
-      } catch (error) {
-        warnings.push(
-          `Thread metadata was not persisted: ${error instanceof Error ? error.message : String(error)}`
-        )
+      if (request.origin === 'resumed' || request.persistInitialHistory) {
+        try {
+          await this.dependencies.threadStore.touch({
+            provider,
+            conversationUrl: actualUrl,
+            title: null,
+            createdAt: thread.createdAt,
+          })
+        } catch (error) {
+          warnings.push(
+            `Thread metadata was not persisted: ${error instanceof Error ? error.message : String(error)}`
+          )
+        }
       }
       await this.notify({
         type: 'thread.ready',

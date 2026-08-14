@@ -40,10 +40,13 @@ interface Harness {
   manager: ThreadManager
   operations: ThreadOperationCoordinator
   registry: ThreadRuntimeRegistry<RuntimeCore>
+  store: TestThreadStore
   events: ThreadLifecycleEvent[]
 }
 
 class TestThreadStore extends ThreadStore {
+  public readonly touches: CreateThreadHistoryEntryInput[] = []
+
   public constructor() {
     super(':memory:')
   }
@@ -51,6 +54,7 @@ class TestThreadStore extends ThreadStore {
   public override async touch(
     input: CreateThreadHistoryEntryInput
   ): Promise<ThreadHistoryEntry> {
+    this.touches.push({ ...input })
     return {
       id: 1,
       provider: input.provider,
@@ -115,6 +119,7 @@ function createHarness(options: HarnessOptions = {}): Harness {
     manager,
     operations,
     registry,
+    store,
     events,
   }
 }
@@ -164,6 +169,51 @@ test('clean thread creation emits no warning before ready', async () => {
   assert.deepEqual(
     harness.events.map((event) => event.type),
     ['provision.started', 'thread.ready']
+  )
+})
+
+test('exec creation can defer provisional history until the first task creates a conversation', async () => {
+  const runtimeOptions: {
+    conversationId: string | null
+    conversationUrl: string
+  } = {
+    conversationId: null,
+    conversationUrl: 'https://chatgpt.com/',
+  }
+  const harness = createHarness({
+    runtime: createFakeRuntime(runtimeOptions),
+  })
+
+  const created = await harness.service.create({
+    provider: 'chatgpt',
+    model: null,
+    mode: 'agent',
+    source: 'exec',
+    activate: false,
+    persistInitialHistory: false,
+  })
+
+  assert.equal(created.ok, true)
+  assert.deepEqual(harness.store.touches, [])
+  if (!created.ok) return
+
+  runtimeOptions.conversationId = 'created'
+  runtimeOptions.conversationUrl = 'https://chatgpt.com/c/created'
+  await harness.service.recordActivity({
+    threadId: created.threadId,
+    provider: created.provider,
+    conversationUrl: 'https://chatgpt.com/',
+    title: 'Exec task',
+    createdAt: created.createdAt,
+  })
+
+  assert.deepEqual(
+    harness.store.touches.map(({ conversationUrl }) => conversationUrl),
+    [runtimeOptions.conversationUrl]
+  )
+  assert.equal(
+    harness.registry.getSnapshot(created.threadId)?.conversationUrl,
+    runtimeOptions.conversationUrl
   )
 })
 

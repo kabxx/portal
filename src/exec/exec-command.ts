@@ -1,6 +1,7 @@
 import { Command, CommanderError } from 'commander'
 import { stdin, stderr, stdout } from 'node:process'
 import type { Readable } from 'node:stream'
+import { stripVTControlCharacters } from 'node:util'
 
 import { normalizeProviderId, PROVIDERS } from '../app/app-provider-catalog.ts'
 import {
@@ -60,12 +61,8 @@ export async function runExecCli(
   if (typeof parsed === 'number') return parsed
 
   let timeoutSeconds: number | null
-  let task: string
   try {
     timeoutSeconds = parseExecTimeoutSeconds(parsed.options.timeout)
-    const stdinIsTty = input.isTTY === true
-    const stdinText = stdinIsTty ? '' : await readStream(input)
-    task = resolveExecTask(parsed.prompt, stdinText, stdinIsTty)
   } catch (error) {
     writeError(errorOutput, error)
     return EXEC_EXIT_USAGE
@@ -124,6 +121,11 @@ export async function runExecCli(
   let session: PortalExecSession | null = null
   let exitCode = EXEC_EXIT_SUCCESS
   try {
+    const stdinIsTty = input.isTTY === true
+    const stdinText = stdinIsTty
+      ? ''
+      : await readStream(input, controller.signal)
+    const task = resolveExecTask(parsed.prompt, stdinText, stdinIsTty)
     session = await (dependencies.createSession ?? createPortalExecSession)({
       cwd: dependencies.cwd ?? process.cwd(),
       ...(parsed.options.dataDir === undefined
@@ -150,7 +152,9 @@ export async function runExecCli(
       ? EXEC_EXIT_INTERRUPTED
       : timedOut
         ? EXEC_EXIT_TIMEOUT
-        : EXEC_EXIT_RUNTIME_ERROR
+        : error instanceof ExecUsageError
+          ? EXEC_EXIT_USAGE
+          : EXEC_EXIT_RUNTIME_ERROR
     if (!interrupted) writeError(errorOutput, error)
   } finally {
     if (timer !== null) clearTimeout(timer)
@@ -224,24 +228,42 @@ function parsePort(value: string | undefined): number | undefined {
   return port
 }
 
-async function readStream(stream: Readable): Promise<string> {
+async function readStream(
+  stream: Readable,
+  signal: AbortSignal
+): Promise<string> {
+  signal.throwIfAborted()
   const chunks: Buffer[] = []
-  for await (const chunk of stream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)))
+  const stopReading = () => {
+    const reason =
+      signal.reason instanceof Error
+        ? signal.reason
+        : new Error('Input reading was aborted.')
+    stream.destroy(reason)
   }
-  return Buffer.concat(chunks).toString('utf8')
+  signal.addEventListener('abort', stopReading, { once: true })
+  try {
+    for await (const chunk of stream) {
+      signal.throwIfAborted()
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)))
+    }
+    signal.throwIfAborted()
+    return Buffer.concat(chunks).toString('utf8')
+  } finally {
+    signal.removeEventListener('abort', stopReading)
+  }
 }
 
 function writeProgress(output: TextWriter, event: ExecProgressEvent): void {
   switch (event.type) {
     case 'status':
-      output.write(`${event.message}\n`)
+      output.write(`${stripVTControlCharacters(event.message)}\n`)
       break
     case 'warning':
-      output.write(`warning: ${event.message}\n`)
+      output.write(`warning: ${stripVTControlCharacters(event.message)}\n`)
       break
     case 'tool':
-      output.write(`tool: ${event.name}\n`)
+      output.write(`tool: ${stripVTControlCharacters(event.name)}\n`)
       break
   }
 }
@@ -251,7 +273,7 @@ function writeError(output: TextWriter, error: unknown): void {
     error instanceof ProviderModelSelectionError || error instanceof Error
       ? error.message
       : String(error)
-  output.write(`error: ${message}\n`)
+  output.write(`error: ${stripVTControlCharacters(message)}\n`)
 }
 
 function addProcessSigintListener(listener: () => void): () => void {

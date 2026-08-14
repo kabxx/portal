@@ -99,8 +99,8 @@ test('parseHooksConfig rejects duplicate names and spawn in agent hooks', () => 
   )
 })
 
-test('parseHooksConfig rejects removed outbound MCP tools', () => {
-  for (const tool of ['mcp_search_tool', 'mcp_call_tool']) {
+test('parseHooksConfig rejects removed agent tools', () => {
+  for (const tool of ['load_skill', 'mcp_search_tool', 'mcp_call_tool']) {
     assert.throws(
       () =>
         parseHooksConfig({

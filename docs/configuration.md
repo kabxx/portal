@@ -16,23 +16,29 @@ releases the lock when the owning file descriptor closes, including after a
 process is terminated. Configuration contents are still replaced through a
 temporary file and atomic rename.
 
+Portal 2.0 removes the HTTP API, outbound MCP client configuration, and the
+multi-source project-instruction configuration. During startup it atomically
+removes `listeners.api`, `advanced.api`, empty `mcpServers`, disabled legacy
+`agentInstructions`, and `advanced.instructions`. A non-empty `mcpServers`
+value or an enabled legacy instruction source is rejected without rewriting or
+printing its values; back up the file and choose the supported 2.0 behavior
+explicitly. `listeners.mcp` is retained unchanged.
+
 The configuration document has these top-level sections:
 
 | Section               | Purpose                                                    | Typical effect                                                               |
 | --------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `browser`             | Chromium executable, profile, and CDP port                 | Read at portal startup; command-line options can override it for that run    |
 | `projectInstructions` | Optional working-directory `AGENTS.md`                     | Read once at startup when enabled; disabled by default                       |
-| `listeners`           | API and Portal MCP Server listeners and authentication     | Read when either inbound listener is created                                 |
-| `mcpServers`          | Outbound MCP client server definitions                     | Re-read for MCP commands and new runtimes                                    |
+| `listeners`           | Portal MCP Server listener and authentication              | Read when the inbound listener is created                                    |
 | `skills`              | Registered Skill directories and enabled states            | Re-read for Skill commands and new runtimes                                  |
 | `hooks`               | Lifecycle handlers and global Hook switch                  | `/hook reload`, `/hook enable`, and `/hook disable` update the active policy |
 | `keybindings`         | Terminal input shortcuts                                   | Valid file edits apply automatically; invalid edits keep the last valid set  |
 | `advanced`            | Timeouts, retry limits, output limits, and resource limits | Converted into runtime settings during portal startup                        |
 
 Changes to startup-owned sections (`browser`, `projectInstructions`, `listeners`,
-and `advanced`) require restarting portal. Listener sections do not enable
-their services by themselves; use `/serve api start` or `/serve mcp start`.
-MCP client connections, Skills, and Hooks have the narrower
+and `advanced`) require restarting portal. The listener configuration does not
+start the server by itself; use `/mcp start`. Skills and Hooks have the narrower
 reload and new-runtime behavior described in their dedicated documents.
 Keybindings are watched independently and do not require a restart.
 
@@ -98,27 +104,6 @@ files. Changing the setting or file requires restarting portal. See
 [Project instructions](instructions.md) for file requirements and the security
 boundary.
 
-## HTTP API
-
-```yaml
-listeners:
-  api:
-    host: 127.0.0.1
-    port: 8787
-    token: null
-```
-
-The default listener uses the exact host `127.0.0.1`. On that host, `null` and
-the exact empty string `""` disable authentication. Any other host requires an
-enabled Token or the listener refuses to start. Every other Token string is an
-exact Bearer Token, including whitespace-only values; Portal does not trim it.
-Token strings support the same `${env:VARIABLE_NAME}` placeholders and
-`$${env:VARIABLE_NAME}` literal escape as outbound MCP string values. Portal
-keeps the placeholder in `config.yaml` and resolves it whenever the listener
-starts. A missing variable fails that start; an empty resolved value disables
-authentication and is therefore valid only on exact `127.0.0.1`.
-API routes and authentication behavior are documented in [HTTP API](api.md).
-
 ## Portal MCP Server
 
 ```yaml
@@ -129,24 +114,23 @@ listeners:
     token: null
 ```
 
-This listener is independent from the HTTP API and from the outbound MCP client
-configuration under `mcpServers`. Token values use the same exact semantics as
-the API, including the requirement for an enabled Token on every host other
-than the exact value `127.0.0.1`.
-Environment placeholders use the same start-time behavior as the API listener.
-See [Portal MCP Server](mcp-server.md).
+On exact host `127.0.0.1`, `null` and the exact empty string `""` disable
+authentication. Every other host requires an enabled Token or the listener
+refuses to start. Every other Token string is preserved exactly, including
+whitespace-only values. `${env:VARIABLE_NAME}` placeholders remain unresolved
+on disk and are resolved each time `/mcp start` runs; `$${env:VARIABLE_NAME}`
+escapes a literal placeholder. See [Portal MCP Server](mcp-server.md).
 
-## MCP, Skills, and Hooks
+## Skills and Hooks
 
 These sections have their own configuration formats and lifecycle rules:
 
-- [MCP configuration](mcp.md)
 - [Skills registry](skills.md)
 - [Hooks configuration](hooks.md)
 
-Keep secrets out of the file. Use MCP environment placeholders such as
-`${env:MCP_TOKEN}` and review external Skills and MCP servers before enabling
-them. See [Security](security.md).
+Keep secrets out of the file. Use an environment placeholder such as
+`${env:MCP_TOKEN}` for the MCP listener Token and review external Skills before
+enabling them. See [Security](security.md).
 
 On POSIX systems, Portal sets its managed configuration and lock directories to
 mode `0700` and their files to `0600`, repairing broader existing modes when it
@@ -264,14 +248,6 @@ spawn calls or concurrently active threads.
 | `manifestSizeLimitKB`    |     512 | Maximum `SKILL.md` size                |
 | `redirectLimit`          |       5 | Maximum redirects during download      |
 
-### `advanced.api`
-
-| Field                   | Default | Meaning                               |
-| ----------------------- | ------: | ------------------------------------- |
-| `requestBodyLimitKB`    |     256 | Maximum HTTP request body             |
-| `requestTimeoutSeconds` |       0 | HTTP request timeout; `0` disables it |
-| `sseHeartbeatSeconds`   |      15 | SSE heartbeat interval                |
-
 ### `advanced.hooks`
 
 | Field                  | Default | Meaning                               |
@@ -279,5 +255,5 @@ spawn calls or concurrently active threads.
 | `commandOutputLimitMB` |       1 | Output retained from one command Hook |
 
 Invalid advanced values are rejected rather than silently accepted. For the
-security implications of command, Skill, MCP, and Hook limits, see
+security implications of command, Skill, listener, and Hook limits, see
 [Security](security.md).

@@ -73,10 +73,6 @@ commit, an unregistered managed directory or a temporary removal directory may
 remain under `<data-dir>/`; portal does not automatically recover those crash
 orphans.
 
-The HTTP API accepts the same install inputs through `POST /skills` with
-`{ "source": "...", "registryUrl": "..." }`. Omit `registryUrl` for a local
-path or direct remote source. See [HTTP API](api.md).
-
 ## Registry
 
 The `skills` section of `<data-dir>/config.yaml` is the sole source of truth for which skills exist:
@@ -162,7 +158,7 @@ Skill directory when needed.
 
 ```text
 <data-dir>/
-├── config.yaml                # browser, instructions, API, MCP, Skills, Hooks, and limits
+├── config.yaml                # browser, instructions, MCP listener, Skills, Hooks, and limits
 ├── skills/<name>/             # remotely downloaded managed skills
 └── temp/skill-install/        # temporary download workspace
 ```

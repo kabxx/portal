@@ -58,29 +58,29 @@ Provider parser tests no longer read ignored response captures from `temp/`. The
 
 Focused tests were added for:
 
-- Hook and HTTP API server commands;
+- Hook and Portal MCP Server commands;
 - Hook event subscription and unsubscribe behavior;
-- MCP management, validation, active-session requirements, and attachments;
-- MCP Tool delegation, cancellation options, and service failures;
+- inbound MCP authentication, message operations, cancellation, and service failures;
+- `portal exec` argument/stdin routing, output separation, exit codes, and TUI-free dispatch;
 - repeat attempt boundaries;
 - Skill HTTP redirects, retries, cancellation, credential redaction, limits, and partial-file cleanup;
 - Skill Hub successful downloads, validation, and response boundaries;
 - native config lock contention, timeout, process termination, and atomic writes;
 - Skill staging, lock-time registry rechecks, and add/remove rollback behavior;
-- HTTP API and Portal MCP Server lifecycle serialization and retry behavior;
+- Portal MCP Server lifecycle serialization and retry behavior;
 - browser launch validation before profile creation;
 - spawn input and progress-rendering isolation.
 
 ## Known gaps
 
-| Area                            | Automated coverage                                                                                                                                                  | Remaining risk                                                                                                                                   |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `app.ts` lifecycle              | Minimal composition smoke with temporary config/storage, fake browser/provider boundaries, a local API listener, active thread operation, command job, and shutdown | Real TTY input, provider login waits, and the production browser remain manual because they cross private terminal, account, and browser wiring. |
-| Browser launchers               | Launch arguments, platform defaults, Windows job helpers, and a real Chromium/CDP lifecycle smoke on Windows CI                                                     | Executable discovery, startup failures, and cleanup behavior on Linux, macOS, and other browser installations still require platform checks.     |
-| Provider adapters and history   | Fake-page submit, completion, cancellation, parser, and history fixtures                                                                                            | Upstream DOM and protocol changes are only detectable against real provider pages.                                                               |
-| Runtime and thread cancellation | Runtime abort paths and operation coordinator behavior                                                                                                              | Browser-side stop behavior still depends on each provider page.                                                                                  |
-| MCP                             | Local stdio/HTTP integration, unknown outcomes, resources, prompts, and session ownership                                                                           | Remote MCP implementations and network failures can differ from local fixtures.                                                                  |
-| Terminal UI                     | Controller state and pure rendering helpers                                                                                                                         | Full interactive Ink rendering is not exercised in a real terminal in CI.                                                                        |
+| Area                            | Automated coverage                                                                                                                            | Remaining risk                                                                                                                                   |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `app.ts` lifecycle              | Minimal composition smoke with temporary config/storage, fake browser/provider boundaries, active thread operation, command job, and shutdown | Real TTY input, provider login waits, and the production browser remain manual because they cross private terminal, account, and browser wiring. |
+| Browser launchers               | Launch arguments, platform defaults, Windows job helpers, and a real Chromium/CDP lifecycle smoke on Windows CI                               | Executable discovery, startup failures, and cleanup behavior on Linux, macOS, and other browser installations still require platform checks.     |
+| Provider adapters and history   | Fake-page submit, completion, cancellation, parser, and history fixtures                                                                      | Upstream DOM and protocol changes are only detectable against real provider pages.                                                               |
+| Runtime and thread cancellation | Runtime abort paths and operation coordinator behavior                                                                                        | Browser-side stop behavior still depends on each provider page.                                                                                  |
+| Portal MCP Server               | Real SDK client integration, authentication, message operations, cancellation, and lifecycle serialization                                    | Remote clients, reverse proxies, and network failures can differ from local fixtures.                                                            |
+| Terminal UI                     | Controller state and pure rendering helpers                                                                                                   | Full interactive Ink rendering is not exercised in a real terminal in CI.                                                                        |
 
 ## External smoke checks
 

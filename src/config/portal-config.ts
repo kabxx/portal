@@ -1117,7 +1117,6 @@ function stringifyInitialPortalConfig(config: PortalConfigDocument): string {
       ['runtime', 'Runtime retry, cancellation, and shutdown behavior.'],
       ['command', 'Local command output and process termination limits.'],
       ['skillInstall', 'Skill download, extraction, and file limits.'],
-      ['instructions', 'Project instruction loading limits.'],
       ['hooks', 'Hook command resource limits.'],
     ],
     true

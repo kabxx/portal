@@ -7,6 +7,9 @@ Server. The `listeners.mcp` section configures its listener, authentication,
 and lifecycle. The server shares Portal's in-process browser, runtimes, and
 active threads.
 
+Portal 2.0 provides this inbound server only. Portal runtimes do not connect to
+external MCP servers or expose MCP host tools to web models.
+
 ## Start and stop
 
 The server is disabled by default. Manage it from the TUI:

@@ -2,352 +2,166 @@
 
 [Back to README](../README.md)
 
-portal coordinates three execution environments:
-
-1. an Ink terminal UI;
-2. a local TypeScript/Node.js runtime with filesystem, process, Skill, and MCP access;
-3. a real provider conversation in a Chromium browser.
-
-Provider-specific website behavior stays behind Provider UI components and adapters. The runtime understands tools, threads, cancellation, recovery, and external integrations. Provider UI components own DOM selectors and interactions; adapters expose semantic operations and coordinate navigation, provider protocols, network capture, and conversation history.
+portal coordinates a local Node.js runtime, a real Chromium browser, and one or
+more provider conversations. The same thread and runtime services support the
+interactive TUI, one-shot `portal exec`, spawned child tasks, Hooks, and the
+inbound Portal MCP Server.
 
 ## Component map
 
-| Area              | Main files                               | Responsibility                                                                                                                                                        |
-| ----------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Process entry     | `src/index.ts`, `src/app.ts`, `src/app/` | Parse options, compose services and surface handlers, coordinate cancellation, and shut down                                                                          |
-| Configuration     | `src/config/`                            | Create, validate, comment, lock, and atomically update `<data-dir>/config.yaml`                                                                                       |
-| HTTP API          | `src/api/`                               | Serve authenticated routes, thread operations, and per-thread SSE event streams                                                                                       |
-| MCP Server        | `src/mcp-server/`                        | Expose selected thread operations through an independent Streamable HTTP MCP listener                                                                                 |
-| Browser platform  | `src/platform/`                          | Launch Chromium, connect over CDP, and manage platform-specific process lifetime                                                                                      |
-| Provider adapters | `src/providers/adapters/`                | Implement the semantic Provider contract and coordinate navigation, protocol capture/parsing, history, and Provider UI components                                     |
-| Provider UI       | `src/providers/ui/`                      | Own Provider-local selector candidates, DOM scoping, uniqueness, readiness, interaction, upload, model, capability, and stop behavior                                 |
-| Provider data     | `src/providers/definitions/`             | Typed immutable domain definitions for model keys, model options, and static capability metadata; contains no DOM selectors or UI targets                             |
-| History parsing   | `src/providers/conversation-history.ts`  | Convert eight provider history formats into visible user/assistant messages                                                                                           |
-| Runtime           | `src/runtime/`                           | Build setup prompts, initialize runtimes, execute tool loops, retry, recover, and cancel                                                                              |
-| Threads           | `src/threads/`                           | `ThreadLifecycleService` owns create/resume/send/close admission; registries track runtime identity, selection, and local turns; SQLite persists URL history metadata |
-| Commands          | `src/cli-commands/`                      | Tokenize and dispatch slash commands                                                                                                                                  |
-| Tools             | `src/tools/`                             | Define schemas, render the tool protocol, validate calls, execute tools, and report progress                                                                          |
-| Command processes | `src/processes/`                         | Track command jobs, bound output, and terminate process trees                                                                                                         |
-| Terminal UI       | `src/terminal-ui/`                       | Manage home/thread timelines, live assistant/command bubbles, input history, wrapping, and keys                                                                       |
-| Instructions      | `src/instructions/`                      | Discover optional Codex/Claude files, enforce read limits, and activate path-scoped rules                                                                             |
-| Skills            | `src/skills/`                            | Validate manifests, install sources, maintain the registry, snapshot catalogs, and load content                                                                       |
-| MCP               | `src/mcp/`                               | Parse config, connect per-thread clients, cache tools, call tools, and render attachments                                                                             |
-| Hooks             | `src/hooks/`                             | Load immutable snapshots, run command/model handlers, gate Tool calls, and publish execution events                                                                   |
+| Area          | Main files                                                    | Responsibility                                                                            |
+| ------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Entry points  | `src/index.ts`, `src/cli-entry.ts`, `src/app.ts`, `src/exec/` | Dispatch the TUI or headless command and compose process resources                        |
+| Configuration | `src/config/`                                                 | Validate, migrate, lock, comment, and atomically update `config.yaml`                     |
+| Browser       | `src/platform/`                                               | Launch Chromium, connect over CDP, and own process lifetime                               |
+| Providers     | `src/providers/`                                              | Implement page readiness, submission, response capture, models, capabilities, and history |
+| Runtime       | `src/runtime/`                                                | Render setup prompts, initialize conversations, run the tool loop, retry, and cancel      |
+| Threads       | `src/threads/`                                                | Admit create/resume/send/close operations and persist conversation metadata               |
+| Tools         | `src/tools/`, `src/processes/`                                | Advertise and validate tools, execute them, stream progress, and track command jobs       |
+| Skills        | `src/skills/`                                                 | Install and validate Skill directories and snapshot enabled metadata                      |
+| Instructions  | `src/instructions/`                                           | Optionally snapshot the startup directory's `AGENTS.md`                                   |
+| Hooks         | `src/hooks/`                                                  | Observe lifecycle events and allow, deny, or rewrite tool calls                           |
+| TUI           | `src/terminal-ui/`, `src/cli-commands/`                       | Render timelines, edit input, and dispatch slash commands                                 |
+| MCP Server    | `src/mcp-server/`, `src/app/app-mcp-handlers.ts`              | Expose selected thread and job operations over Streamable HTTP MCP                        |
 
-Pure provider transport decoding lives outside the page adapters. For example, ChatGPT responses are decoded in `src/providers/chatgpt-response-parser.ts`.
+There is no outbound MCP client or general HTTP API in Portal 2.0.
 
-## Startup lifecycle
+## Process composition
 
-`run()` in `src/app.ts` performs top-level orchestration:
+The TUI path in `app.ts`:
 
-The focused modules under `src/app/` support that composition root without
-owning its mutable process state. `app-runtime-settings.ts` converts configuration,
-`app-provider-catalog.ts` owns Provider registration, prompts, aliases, and adapter
-construction, `app-spawn-tool-services.ts` builds recursive Tool services,
-`app-lifecycle.ts` owns reusable shutdown helpers, and
-`app-terminal-lifecycle.ts` owns terminal boundary helpers. `app-api-handlers.ts`,
-`app-mcp-handlers.ts`, and `app-tui-thread-input-handler.ts` adapt the shared thread services to
-their three independent surfaces without merging their send semantics. Startup
-order, browser and server wiring, thread observers, the CLI command context and
-loop, and shared mutable lifecycle state remain in `run()`.
+1. resolves the startup working directory and persistent data directory;
+2. creates or migrates `config.yaml` under a native cross-process lock;
+3. initializes the Skill registry, optional project-instruction snapshot,
+   Hooks, thread store, job manager, and terminal controller;
+4. launches the configured Chromium profile and connects over CDP;
+5. constructs the shared thread lifecycle and runtime factory;
+6. renders Ink and accepts slash commands and thread input;
+7. optionally starts the inbound MCP Server through `/mcp start`;
+8. performs bounded cancellation and closes threads, jobs, browser resources,
+   the MCP Server, SQLite, and Ink during shutdown.
 
-1. Parse the data directory, browser engine, executable path, and remote debugging port.
-2. Keep the current working directory as the workspace and resolve persistent state from `--data-dir`, `PORTAL_DATA_DIR`, or the platform user data directory.
-3. Initialize missing `config.yaml` without overwriting existing user files.
-4. Open `<data-dir>/threads.db` and initialize its schema.
-5. Create `ThreadManager`, the command registry, `TerminalController`, and Ink `TerminalScreen`.
-6. Launch a dedicated Chromium process and connect through Playwright CDP.
-7. Clear startup details and render command help on the home timeline.
-8. Read terminal input until `/exit`, idle `Ctrl+D`, or terminal shutdown.
-9. Close the browser connection, open runtimes, MCP clients, SQLite store, and Ink application with bounded shutdown waits.
+`portal exec` uses a UI-independent composition under `src/exec/`. It does not
+create Ink, a terminal controller, or transcript writer. It creates one inactive
+agent thread, sends an inline setup plus task, writes progress to stderr and the
+final answer to stdout, records the conversation URL, then closes local
+resources. The provider-side conversation remains available for later resume.
 
-On Windows, the launched browser is assigned to a Job Object. Closing the Job Object terminates the browser process tree even when ordinary child-process cleanup is insufficient. Other platforms use the generic Node child-process path.
+## Setup prompt
 
-The browser and portal share one lifecycle. Playwright's browser-level `disconnected` event covers browser process exit, crash, and CDP loss. An unexpected disconnect requests the same controlled shutdown used by `/exit`; portal-initiated browser closure is marked internally and does not trigger a second shutdown. Closing an individual provider page does not end the portal process. Instead, the base adapter reports an unexpected page close to the owning thread, which uses the normal coordinated close path.
+`src/runtime/setup-prompt.ts` is the single renderer for setup documents. The
+full TUI/spawned-agent prompt has this fixed order:
 
-## Thread creation modes
+1. `# Portal Agent`;
+2. `## Tool Protocol`;
+3. `## Tools`;
+4. optional `## Skills`;
+5. optional `## Project Instructions`;
+6. `## Runtime`;
+7. `## Initialization`.
 
-A new thread uses this sequence:
+Every tool entry contains only its name, description, and parameters. The setup
+contains no tool-call examples or provider-specific constraints. Hidden or
+disallowed tools are omitted by the registry.
 
-```mermaid
-sequenceDiagram
-    participant App
-    participant Adapter
-    participant Factory as Runtime factory
-    participant MCP
-    participant Skills
-    participant Web as Provider web page
-    participant Threads
-    participant UI
+The Tool Protocol permits at most one terminal tool block per assistant
+message. JSON tools receive an object payload, freeform tools receive raw text,
+and the next user message carries the Tool Result.
 
-    App->>Lifecycle: thread.create(provider, mode)
-    Lifecycle->>Adapter: create page and restore new conversation
-    Adapter->>Web: navigate, verify login and composer readiness
-    Factory->>MCP: connect enabled servers in parallel
-    Factory->>Skills: snapshot enabled Skill metadata
-    Factory->>Web: optional model selection
-    alt agent mode
-        Factory->>Web: submit full setup prompt
-    else chat mode
-        Factory->>Web: submit minimal setup handshake
-    end
-    Web-->>Factory: response containing READY
-    Lifecycle->>Threads: atomically claim URL and commit runtime
-    Lifecycle->>Threads: register committed thread
-    Lifecycle->>UI: publish ready event and activate when requested
-    App->>UI: render Thread t-N is ready
-```
+TUI agent creation and spawned runtimes submit the full setup and require a
+case-insensitive whole-word `READY` response. Chat creation sends only the
+shared initialization handshake. `portal exec` replaces Initialization with
+`## Task`, so setup and the first task are submitted in one provider message.
+Resume sends no setup because the existing provider conversation already owns
+its context.
 
-Both modes require the response to contain `READY` as a case-insensitive whole
-word. Agent creation sends a full setup prompt composed from:
+## Thread lifecycle
 
-- the shared tool invocation protocol and built-in tool definitions;
-- enabled Skill names, descriptions, and absolute manifest paths, when the catalog is non-empty;
-- enabled always-on project instructions;
-- the current working directory;
-- a setup handshake instruction to reply with `READY`.
+`ThreadLifecycleService` owns create, resume, send, cancel, and close admission
+for every surface. A provision operation reserves the conversation identity,
+creates an adapter and runtime, waits for login when necessary, records the
+conversation URL, and commits the thread only after initialization succeeds.
+Failures clean up partially created adapters, pages, registry claims, and
+pending UI state.
 
-Chat creation sends only the shared setup handshake. It still constructs the
-same local runtime, connects MCP servers, snapshots Skills, registers tools and
-Hooks, and retains project-instruction state. Those capabilities are not
-advertised to the model, but a valid model-generated tool call can still be
-executed, so chat mode is not a sandbox.
+The runtime executes a model response as a tool loop:
 
-MCP host tools are backed by the runtime's `ThreadMcpSession`.
+1. submit the current user or Tool Result text;
+2. capture the provider response;
+3. treat a single complete `<tool name="NAME">PAYLOAD</tool>` at the textual end
+   as a tool request;
+4. validate optional Hook decisions and tool parameters;
+5. execute the tool and send its structured result in the next user message;
+6. stop when the provider produces an ordinary assistant response.
 
-## Resume lifecycle
+Only one operation may own a thread at a time. Different threads may run
+concurrently. Closing a provider tab closes only its bound thread; losing the
+browser connection shuts down the process.
 
-Resume accepts a normalized provider URL or a `#history-id` resolved through `ThreadStore`.
+## Tools and jobs
 
-1. Resolve the URL and reserve its canonical form; reject unsupported or already-open conversations.
-2. Create an adapter directly on the existing provider URL and wait for login/readiness.
-3. Read the current Skills, MCP, and project-instruction configuration.
-4. Build the runtime with `setupMode: 'skip'`; no new setup/catalog turn is sent.
-5. Load the provider's visible remote history before admission. A non-abort history error becomes an incomplete-history warning.
-6. Atomically claim the URL, commit the runtime, and register the thread.
-7. Publish the ready event, activate only for the TUI source, and append the history display event.
-8. Update the SQLite URL record as a best-effort metadata effect.
+The default agent tool set is `attach_image`, `run_command`, `apply_patch`, and
+`spawn`. `ToolRegistry` renders the compact catalog, parses calls, validates
+input, and rejects stale calls to hidden or removed tools.
 
-The resumed web conversation already contains its provider-side context. Sending old messages again would duplicate context, so history hydration is display-only.
+`run_command` jobs are process-local. A cancelled turn detaches its waiter but
+does not automatically terminate the command. The TUI and MCP Server share the
+same job manager; controlled shutdown stops all managed jobs. Output is bounded
+before it is retained or delivered to a provider.
 
-Resume creates one-time page/CDP history capture before navigation. The base adapter waits up to a short bounded interval for matching responses, reads their bodies, restores cache behavior, and releases the capture session. Individual parsers rebuild the provider's current branch and filter setup, tool, reasoning, partial, and control records. DeepSeek can return a nonempty `MERGE` cache delta; its adapter treats only `REPLACE` as complete and repeats a read-only full-history request inside the authenticated page using the original request headers when necessary.
-
-Gemini follows its continuation cursor, Doubao follows `has_more`, and GLM accumulates `messages/batch` pages until the selected chain reaches the root, all under bounded progress and timeout loops. Qwen reads `GET /api/v2/chats/<id>` and establishes completeness only for the current active branch. Kimi reads structured `ListMessages` rows and reports a full 100-message page as incomplete because the page exposes no continuation cursor. ChatGPT, GLM, and Grok do not report complete when an indexed cell, parent/root, active leaf, or visible response body is missing.
-
-A resumed conversation skips the setup handshake. It therefore assumes that the original conversation already contains a compatible portal tool protocol. Current Skill and MCP connections exist locally, but newly configured names are not injected as a new catalog turn. The resume path attaches a freshly read project-instruction snapshot to the resumed `RuntimeCore` without resending its always-on text, so supported later tool calls can still activate target-aware path rules locally.
-
-## Turn and tool lifecycle
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant UI as Terminal UI
-    participant Threads
-    participant Runtime
-    participant Adapter
-    participant Web as Provider web page
-    participant Tool
-
-    User->>UI: submit input
-    UI->>Threads: begin local turn
-    Threads->>Runtime: submitUserInput
-    Runtime->>Adapter: attachText and submit
-    Adapter->>Web: drive the provider UI
-    Web-->>Adapter: streamed response snapshots
-    Adapter-->>UI: live assistant bubble
-    Adapter-->>Runtime: final response
-    alt valid tool block exists
-        Runtime->>UI: commit leading/trailing assistant text
-        Runtime->>Tool: execute validated call
-        Tool-->>UI: optional display-only progress
-        Tool-->>Runtime: full model-facing result plus optional display summary
-        Runtime->>Adapter: submit JSON Tool Result envelope
-        Adapter->>Web: continue same conversation
-    else no tool block
-        Runtime-->>Threads: final assistant item
-        Threads-->>UI: commit final bubble
-    end
-```
-
-The textual protocol allows at most one `<tool name="tool_name">PAYLOAD</tool>` block in each assistant response. The closing `</tool>` must be the final non-whitespace content; otherwise the complete response remains ordinary assistant text. `ToolRegistry` looks up the exact tool name, parses JSON Format payloads as parameter objects, preserves Freeform Format payloads as raw text, and converts output into:
-
-- `outcome`: `success`, `error`, or `unknown`;
-- `result`: the complete JSON-serializable observation sent back to the web model;
-- `displayText`: an optional compact terminal summary.
-
-The runtime sends every result with the same model-facing shape:
-
-```text
-### Tool Result ###
-{
-  "tool": "tool_name",
-  "outcome": "success",
-  "result": {}
-}
-```
-
-Before sending, the runtime measures the complete Tool Result envelope against
-the active provider's composer limit. If the original result is too large, the
-runtime preserves the tool's original `outcome`, keeps the full result in local
-records and hooks, and sends a bounded replacement instead:
-
-```text
-### Tool Result ###
-{
-  "tool": "tool_name",
-  "outcome": "success",
-  "result": null,
-  "delivery": {
-    "status": "not_delivered",
-    "code": "COMPOSER_LIMIT_EXCEEDED",
-    "message": "The original tool result was not delivered because it exceeds the provider composer limit.",
-    "measured": 200000,
-    "limit": 163840,
-    "unit": "utf16_code_units",
-    "source": "verified_fallback",
-    "confidence": "safe_cap"
-  }
-}
-```
-
-`outcome` describes tool execution. `delivery` appears only when the original
-`result` was not included in the model-facing message; it does not replace or
-modify the full local result.
-
-The runtime can perform multiple tool rounds before the local turn completes.
-
-### Live command progress
-
-`run_command` and `spawn` emit display progress. Each progress event carries the runtime-generated `toolCallId`, so `TerminalController` can reject delayed start/output/result events from an older invocation. `run_command` reports a start event and decoded stdout/stderr chunks; `spawn` reports its start while the child runtime is active. The controller keeps one temporary bubble per thread, replaces it with the matching final result using the same timeline entry id, and discards it on cancellation, errors, thread switches, or thread removal. Timer and heartbeat callbacks also verify the current bubble identity before emitting.
-
-Progress is display-only. Reporter errors cannot change command execution or the full structured tool result. Each invocation is registered in the process-local run-command job manager. Cancelling a turn detaches only that turn's waiter, so the job continues draining stdout/stderr and can be inspected with `/job` or stopped with `/job stop <job-id>`. On Windows, command processes use a Job Object where available; POSIX commands use a detached process group. Timeout, explicit stop, and controlled portal shutdown terminate the managed tree. Jobs are not persisted across portal restarts.
-
-## Provider adapter boundary
-
-All adapters implement these core operations:
-
-- restore a new or existing provider page;
-- report login and conversation identity;
-- select a named domain model through the Provider-local UI mapping;
-- attach text, files, and images;
-- submit input and emit streamed/final text;
-- expose supported page capabilities;
-- load resume history;
-- stop generation and close the page.
-
-Provider completion and history formats differ. See [Providers](providers.md) for the current transport and URL matrix.
-
-The base adapter installs fetch/XHR capture before navigation for submit flows. Resume additionally uses page response and CDP Network capture because some provider requests bypass page-level wrappers or arrive after composer readiness. Adapters remain the most volatile layer and should prefer stable, language-independent selectors and protocol completion signals.
-
-## Thread state and timelines
-
-Four process stores and one persistent index serve different purposes:
-
-| Store                        | Lifetime        | Contents                                                                                             |
-| ---------------------------- | --------------- | ---------------------------------------------------------------------------------------------------- |
-| `ThreadRuntimeRegistry`      | Current process | URL reservations/claims, runtime identity, lifecycle state, history quality, and admission snapshots |
-| `ThreadRegistry`             | Current process | Local turn ledger and the runtime/provider handles needed to submit turns                            |
-| `ThreadSelectionController`  | Current process | TUI-only active thread selection; API/MCP admission never changes it                                 |
-| `TerminalController` cache   | Current process | One home timeline plus one rendered timeline per active thread                                       |
-| `ThreadStore` / `threads.db` | Persistent      | Provider, normalized conversation URL, title, created/last-used times                                |
-
-`ThreadLifecycleService` is the only owner of create, resume, send-operation admission, cancellation, and close. Switching a thread only changes the TUI selection; it does not navigate or request remote history again. `detach` clears active selection and returns to the home timeline. Closing the active thread removes its cache and also returns home; closing a background thread keeps the current timeline visible. The same behavior applies when the user closes a provider tab directly. Any active operation is cancelled first, concurrent close requests share one close task, and a provider-page close makes two bounded settlement waits before force-closing the logical thread if the operation remains stuck. Normal user close keeps the URL claim while cancellation is still pending.
-
-Remote resume history is rendered directly into the thread timeline after the runtime has been prepared and before it is admitted. History is not converted into `ThreadRegistry` turns, so local turn counts represent only inputs submitted during the current process. After startup completes, the home timeline receives one in-memory welcome entry; it is cached and restored like other home timeline entries.
-
-The SQLite database is an index for reopening conversations, not a transcript database. The provider website remains the source of conversation content. Portal does not add a second persistent transcript or Tool audit store, nor does it impose an additional in-process timeline window. Active turns and rendered entries can therefore grow for the lifetime of a long-running process; provider history and terminal scrollback remain the recovery and viewing boundaries.
-
-## Cancellation and recovery
-
-Long-running app operations receive an `AbortSignal`.
-
-- Busy `Ctrl+C` aborts the current operation and asks its active adapter/process to stop. A `run_command` process is an exception: the current waiter is cancelled, but the registered job continues until completion, timeout, an explicit TUI/API/Portal MCP job stop, or portal shutdown.
-- Idle `Ctrl+C` with non-empty input clears the input; idle empty `Ctrl+C` does nothing.
-- Idle `Ctrl+D` with empty input requests shutdown.
-- `/exit` requests the same shutdown path.
-
-Provider failures are classified by kind, retryability, and recovery action. Authentication errors retain the adapter page and enter a login-wait loop. Ordinary retryable network/page failures use bounded retries and adapter restore. A response activity timeout is an unknown submit outcome and ends the current operation without replaying the payload, because the original request may already have reached the Provider. Other UI or protocol errors remain visible in the current timeline.
-
-Cancellation is propagated through provider submit, runtime retries, tools, Skill installation, MCP requests, and app operations, except for the detached waiter behavior of `run_command` described above. Shutdown closes job admission and stops all active command jobs before closing providers. It uses bounded close waits so a hanging provider page or transport cannot block process exit indefinitely.
-
-The HTTP API and Portal MCP Server expose the same process-wide active job list
-and stop operation as the TUI. They call the shared `RunCommandJobService`;
-stopping a listener or closing a thread does not implicitly stop detached jobs.
-
-## Spawned runtimes
-
-`spawn` creates a temporary child provider conversation in the existing browser context. It selects the requested provider or defaults to the parent provider, creates the normal Skill snapshot and independent MCP connections, shares the application Project Instructions snapshot, runs the standard setup handshake, executes one focused prompt synchronously, returns JSON containing provider, conversation URL, and output, then closes the child runtime.
-
-Root runtimes carry an internal spawn depth of `0`; each spawned runtime adds
-one. `advanced.runtime.spawnDepthLimit` defaults to `5`, allowing child depths
-`1` through `5`. At the limit, the child setup catalog omits `spawn`, while the
-Tool service also rejects direct or stale calls before it forks instructions,
-creates a Provider adapter or MCP session, or dispatches `spawn.started`.
-
-Spawned conversations are not added to the normal thread list or SQLite history.
+`spawn` creates a temporary child conversation in the existing browser context,
+uses the same Skill and project-instruction snapshots, enforces the configured
+depth limit, runs one task, returns its provider URL and output, and closes the
+child runtime.
 
 ## Skills
 
-The `skills` section of `<data-dir>/config.yaml` is read for every Skill command
-and runtime creation. Agent threads and spawned runtimes include enabled Skill
-names, sanitized descriptions, and absolute `SKILL.md` paths in their full setup
-prompts; manifest bodies and resources are not injected. Chat threads retain
-the snapshot locally without advertising it. Catalog membership and metadata
-are immutable for an active runtime. See [Skills](skills.md).
+The Skill library snapshots each enabled Skill's name, sanitized description,
+and absolute `SKILL.md` path when a runtime is created. Full setup prompts list
+only that metadata; manifest bodies and resource files are not injected. There
+is no `load_skill` tool or per-turn manual Skill activation. Registry changes
+affect new runtimes, not existing snapshots.
 
 ## Project instructions
 
-The `projectInstructions` setting is disabled by default. When enabled, portal
-reads only `<startup-cwd>/AGENTS.md` once at application startup. The immutable
-text joins full agent and spawned setup prompts; chat creation does not send it.
-There is no parent, nested, override, Claude, user-level, import, or tool-target
-discovery. See [Project Instructions](instructions.md).
+Project Instructions are disabled by default. When enabled, the process reads
+only `<startup-cwd>/AGENTS.md`, once, into an immutable snapshot shared by TUI,
+exec, spawned, Hook, and MCP-created runtimes. It does not inspect ancestors,
+nested paths, overrides, Claude files, user-level files, imports, or tool target
+paths. Resume does not resend the snapshot to an existing provider conversation.
 
-## MCP
+## Hooks
 
-The `mcpServers` section of `<data-dir>/config.yaml` configures outbound MCP clients.
-Every new, resumed, or spawned runtime creates a `ThreadMcpSession` and
-independent client transports for enabled valid servers. Failed servers are
-omitted and rendered as Markdown warnings; successful servers continue normally.
-
-Only connected Server and Tool names appear in full agent and spawned setup prompts. Chat and resumed runtimes keep their current connections locally without sending a catalog turn. `mcp_search_tool` reads one exact cached definition, while `mcp_call_tool` dispatches one exact request. Tool list-change notifications refresh the current cache but do not rewrite the setup snapshot. Resource and Prompt commands operate through the active thread session and submit each attachment as its own user turn. See [MCP](mcp.md).
-
-Closing a runtime closes its MCP clients and stdio child processes.
+A turn captures one immutable Hook snapshot. Command, prompt, and agent handlers
+observe typed lifecycle events. `tool.before` handlers may allow, deny, or
+rewrite parameters; rewritten input is validated again before execution. Hook
+model runtimes use the same central setup renderer and only explicitly allowed
+host tools.
 
 ## Portal MCP Server
 
-`src/mcp-server/` is independent from both the HTTP API and the outbound MCP
-client code under `src/mcp/`. `/serve mcp start` creates a stateless Streamable
-HTTP listener with fixed Portal tools. Its handlers call the same in-process
-thread and runtime services used by the TUI; they do not call HTTP API routes.
+`src/mcp-server/` is an inbound integration surface. `/mcp start` creates a
+Streamable HTTP server backed directly by the shared thread lifecycle and job
+manager. `/mcp status`, `/mcp token`, and `/mcp stop` inspect or control it.
+Stopping the server cancels MCP-owned operations and closes transports without
+cancelling unrelated TUI work.
 
-MCP message submissions receive process-local operation ids so clients can
-send, wait, and cancel without holding one request open for the full provider
-turn. The thread operation coordinator prevents concurrent work on one thread
-and uses operation-owned cancellation handles to avoid cancelling later work.
-See [Portal MCP Server](mcp-server.md).
+## Persistence and configuration
 
-The fixed MCP tools also expose process-local `run_command` job listing and
-stopping. These controls are independent from MCP message operation ids because
-a cancelled message can leave its command job running.
+`threads.db` stores provider, URL, title, and timestamps, not transcripts.
+Provider history remains authoritative and is loaded for display during resume.
+Browser login state lives under the configured profile path.
 
-## Local data layout
+Portal 2.0 migrates removed empty API/MCP-client and legacy instruction fields
+under the config lock. Non-empty outbound MCP configuration and enabled legacy
+instruction sources are rejected for explicit user review instead of being
+silently discarded. The inbound `listeners.mcp` configuration is preserved.
 
-```text
-<data-dir>/
-├── profiles/chromium/
-├── threads.db
-├── config.yaml
-├── skills/
-└── temp/skill-install/
-```
+## Cancellation and retry
 
-The npm package installation directory contains code only; changing or
-uninstalling that package does not remove this state. Source development uses
-the repository's ignored `data/` directory because `npm run dev` passes it
-explicitly. The repository's top-level `temp/` directory is separate. It
-contains provider fixtures, probes, screenshots, and other adapter-development
-artifacts and may include sensitive conversation data.
-
-See [Configuration](configuration.md) for the ownership and reload behavior of
-each `config.yaml` section.
+Cancellation propagates through thread operations, adapters, Hooks, tool calls,
+browser startup, and shutdown. Provider errors carry retryability and recovery
+metadata. A timeout after submission is treated as an unknown outcome and is
+not replayed automatically because the provider may already have accepted it.
+Every resource close is bounded so one stalled page or child process cannot
+block the complete shutdown sequence indefinitely.

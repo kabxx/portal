@@ -13,8 +13,8 @@ portal **不会**调用 Provider 的模型 API，也不会绕过账号、订阅�
 - **统一管理八个网页 Provider。** 通过同一套 thread 模型创建、切换和恢复 Provider 会话。
 - **持久浏览器会话。** 专用浏览器 profile 会保留登录状态和账号当前可用的网页能力。
 - **使用本地工具。** 模型可以检查工作区、执行命令、编辑文件、附加图片和委派独立任务。
-- **工作区上下文与扩展。** 项目指令、Skills、MCP Server 和生命周期 Hooks 可以影响每个 runtime。
-- **本地集成接口。** 可选的 HTTP API 和 Portal MCP Server 可以暴露部分 thread 操作。
+- **工作区上下文与扩展。** 可选的项目指令、Skills 和生命周期 Hooks 可以影响每个 runtime。
+- **无 TUI 与 MCP 接口。** `portal exec` 可直接执行一次任务，可选的 Portal MCP Server 可暴露部分 thread 操作。
 
 ## 支持的 Provider
 
@@ -67,8 +67,14 @@ Skills 和专用浏览器 profile 放在平台用户数据目录中。首次运�
 使用 `/help` 查看命令索引。Thread 模式、Resume、输入控制、后台 job 和启动参数
 详见 [CLI 指南](cli.md)；数据目录的默认位置和覆盖方式详见[配置文档](configuration.md#portal-data-directory)。
 
+不启动 Ink，直接执行一次任务：
+
+```bash
+portal exec --provider chatgpt "总结当前仓库。"
+```
+
 > [!WARNING]
-> portal 不是沙箱。本地工具、Skills、Hooks、MCP Server 和 spawn worker 会使用 portal 用户的权限运行，合法的模型工具调用在执行前没有人工确认步骤。处理敏感数据前请阅读[安全说明](security.md)。
+> portal 不是沙箱。本地工具、Skills、Hooks 和 spawn worker 会使用 portal 用户的权限运行，合法的模型工具调用在执行前没有人工确认步骤。处理敏感数据前请阅读[安全说明](security.md)。
 
 ## 工作原理
 
@@ -79,7 +85,7 @@ flowchart LR
     TM --> R[Runtime 与工具循环]
     R <--> A[Provider Adapter]
     A <--> B[Chromium 网页会话]
-    R <--> T[本地工具、Skills、MCP]
+    R <--> T[本地工具、Skills、Hooks]
 ```
 
 每个用户输入都会通过 Provider 网页提交。portal 捕获流式回复并查找可选的 `<tool name="tool_name">PAYLOAD</tool>` 请求，执行需要的本地工具，再把结果回灌到同一个会话，直到模型返回普通回复。
@@ -109,17 +115,17 @@ Provider 当前可见的会话历史。完整的持久化和 Resume 行为请参
 
 - **项目指令**可选择把启动目录中的 `AGENTS.md` 加载到新 runtime。
 - **Skills**通过名称、描述和 manifest 路径公布已启用的本地指令包。
-- **MCP**为每个 runtime 连接配置的 stdio 或 Streamable HTTP Server。
 - **Hooks**观察生命周期事件，或允许、拒绝和重写工具参数。
-- **内置工具**覆盖图片、Shell 命令、文件 Patch、独立子任务、Skills 和 MCP 调用。
+- **内置工具**覆盖图片、Shell 命令、文件 Patch 和独立子任务。
+- **Portal MCP Server**向外部 MCP Client 暴露部分 thread 与 job 操作。
 
 配置方法和信任边界请参阅对应文档。
 
 ## 文档
 
 - **使用 portal：** [CLI](cli.md)、[配置](configuration.md)、[Providers](providers.md)、[项目指令](instructions.md)
-- **扩展 runtime：** [Skills](skills.md)、[MCP Client](mcp.md)、[Hooks](hooks.md)
-- **集成 portal：** [HTTP API](api.md)、[Portal MCP Server](mcp-server.md)
+- **扩展 runtime：** [Skills](skills.md)、[Hooks](hooks.md)
+- **集成 portal：** [Portal MCP Server](mcp-server.md)
 - **内部实现与安全：** [架构](architecture.md)、[安全说明](security.md)、[测试](testing.md)
 - **参与贡献：** [贡献指南](contributing.md)、[Provider 开发](provider-development.md)
 

@@ -20,8 +20,8 @@ test('runExecCli writes only the final answer to stdout', async () => {
   const harness = createHarness(async (task, signal, progress) => {
     assert.equal(task, 'inspect this\n\nadditional context')
     assert.equal(signal.aborted, false)
-    progress({ type: 'status', message: 'Connected.' })
-    progress({ type: 'tool', name: 'run_command' })
+    progress({ type: 'status', message: '\u001b[31mConnected.\u001b[0m' })
+    progress({ type: 'tool', name: '\u001b[32mrun_command\u001b[0m' })
     return 'Final answer.'
   })
   harness.dependencies.input = pipedInput('additional context\n')
@@ -113,6 +113,49 @@ test('runExecCli maps timeout and Ctrl+C to stable exit codes', async () => {
   assert.equal(interrupt, null)
 })
 
+test('runExecCli applies timeout and Ctrl+C while reading piped stdin', async () => {
+  let createdForTimeout = false
+  const timeoutInput = blockingInput()
+  const timeoutHarness = createHarness(async () => 'unused')
+  timeoutHarness.dependencies.input = timeoutInput
+  timeoutHarness.dependencies.createSession = async () => {
+    createdForTimeout = true
+    throw new Error('must not create a session')
+  }
+
+  assert.equal(
+    await runExecCli(
+      ['--provider', 'qwen', '--timeout', '0.01'],
+      timeoutHarness.dependencies
+    ),
+    EXEC_EXIT_TIMEOUT
+  )
+  assert.equal(createdForTimeout, false)
+  assert.equal(timeoutInput.destroyed, true)
+  assert.match(timeoutHarness.stderr.value, /Timed out/)
+
+  let createdForInterrupt = false
+  const interruptInput = blockingInput()
+  const interruptHarness = createHarness(async () => 'unused')
+  interruptHarness.dependencies.input = interruptInput
+  interruptHarness.dependencies.createSession = async () => {
+    createdForInterrupt = true
+    throw new Error('must not create a session')
+  }
+  interruptHarness.dependencies.addSigintListener = (listener) => {
+    queueMicrotask(listener)
+    return () => {}
+  }
+
+  assert.equal(
+    await runExecCli(['--provider', 'deepseek'], interruptHarness.dependencies),
+    EXEC_EXIT_INTERRUPTED
+  )
+  assert.equal(createdForInterrupt, false)
+  assert.equal(interruptInput.destroyed, true)
+  assert.equal(interruptHarness.stderr.value, '')
+})
+
 test('runExecCli rejects empty TTY input without creating a session', async () => {
   let created = false
   const harness = createHarness(async () => 'unused')
@@ -164,6 +207,15 @@ function createHarness(
 
 function pipedInput(value: string): Readable & { isTTY?: boolean } {
   return Object.assign(Readable.from([value]), { isTTY: false })
+}
+
+function blockingInput(): Readable & { isTTY?: boolean } {
+  return Object.assign(
+    new Readable({
+      read() {},
+    }),
+    { isTTY: false }
+  )
 }
 
 async function waitForAbort(signal: AbortSignal): Promise<never> {

@@ -10,7 +10,7 @@ portal automates the normal web product in a real Chromium page. A Provider inte
 
 A first-class Provider is complete only when all applicable paths below work:
 
-- `/providers`, `/thread agent`, `/thread chat`, Spawn, HTTP API, and Portal MCP Server expose the Provider;
+- `/providers`, `/thread agent`, `/thread chat`, `portal exec`, Spawn, and the Portal MCP Server expose the Provider;
 - a signed-in page can create a new agent or chat conversation and complete its setup `READY` handshake;
 - signed-out, restricted, and unexpected page states are classified without leaking raw browser errors;
 - normal turns stream, terminate, cancel, and leave the page reusable;
@@ -89,7 +89,7 @@ sequenceDiagram
     App-->>UI: render messages and warning
 ```
 
-Resume reconnects the current MCP configuration and snapshots current Skills and project instructions, but it does not send a new setup catalog or always-on instruction text into the existing conversation. The project-instruction snapshot remains attached to the resumed runtime, so supported later tool calls can activate target-aware path rules locally and spawned children can receive a forked snapshot. Remote history is shown in the terminal only: it is not submitted to the model again, inserted into runtime turns, or persisted as transcript data.
+Resume snapshots current Skills and the process-wide project instructions, but it does not send a new setup catalog or instruction text into the existing conversation. Spawned children receive the same immutable startup instruction snapshot. Remote history is shown in the terminal only: it is not submitted to the model again, inserted into runtime turns, or persisted as transcript data.
 
 ## 3. Reconnaissance and privacy
 
@@ -137,7 +137,7 @@ Adding the adapter file is only one part of registration. Search for exhaustive 
 | Model argument     | Add the Provider's named models and per-model options to `src/providers/definitions/<id>.ts`; cover mapping and rejected forms in manifest, catalog, and command tests.                                  |
 | Capabilities       | Put only static capability keys, descriptions, and kinds in the Provider definition; keep live discovery and dispatch behavior in the Provider UI component.                                             |
 | User documentation | Update the brief lists in `README.md` and `docs/README.zh-CN.md`, plus the detailed matrix/counts in [Providers](providers.md); other docs only when needed.                                             |
-| Integration tests  | Update Provider lists, command completion, API/MCP listing, and any exhaustive records surfaced by TypeScript or repository search.                                                                      |
+| Integration tests  | Update Provider lists, command completion, MCP listing, and any exhaustive records surfaced by TypeScript or repository search.                                                                          |
 
 Do not add an alias unless it is unambiguous and useful. Canonical conversation URLs must discard unrelated query/hash state and encode the conversation id exactly once.
 
@@ -333,7 +333,7 @@ Use `node:test`, existing fake-page helpers, and sanitized protocol fixtures. Ad
 
 | Area            | Minimum evidence                                                                                                                                                                                             |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Registration    | Provider lists, aliases, Spawn enum, Hooks, model grammar, API/MCP listing, and command completion include the new id.                                                                                       |
+| Registration    | Provider lists, aliases, Spawn enum, Hooks, model grammar, MCP listing, and command completion include the new id.                                                                                           |
 | URL             | Valid and alias URLs canonicalize; wrong scheme/host/path, empty ids, encoded ids, queries, and hashes are handled safely.                                                                                   |
 | Login and Ready | Signed in, signed out, redirect race, restricted/unrecoverable state, missing/duplicate controls, disabled state, and Composer-before-Ready behavior.                                                        |
 | Selectors       | The real scoped locator path is exercised; text/`aria-label` and responsive geometry are not used as hidden test shortcuts.                                                                                  |
@@ -365,16 +365,17 @@ CI does not log in to Provider websites. Use a dedicated profile and record only
 
 1. Create a new signed-in agent thread and complete the full setup `READY` handshake.
 2. Create a chat thread and verify that it sends only the minimal handshake and accepts a case-insensitive whole-word `READY` response.
-3. Verify signed-out/login redirect behavior without sending setup early.
-4. Submit a normal turn; verify request start, monotonic streaming, completion, and a second usable turn.
-5. Exercise a real Tool call and any Provider continuation stream.
-6. Select a model and verify the selected state when the Provider supports it.
-7. Upload file/image content and verify page acknowledgement where safely observable.
-8. List, select/toggle, clear, and re-list capabilities when applicable.
-9. Cancel a live response and verify the page remains usable.
-10. Resume a short and long history; verify current branch, ordering, filtered controls, and incomplete warnings.
-11. Check restricted, rate-limit, or account-tier behavior only when that state already exists and can be tested safely.
-12. Close/detach the thread and exit; verify listeners, pages, browser ownership, and child processes clean up.
+3. Run `portal exec` and verify that setup plus Task is submitted once without Ink or a `READY` roundtrip.
+4. Verify signed-out/login redirect behavior without sending setup early.
+5. Submit a normal turn; verify request start, monotonic streaming, completion, and a second usable turn.
+6. Exercise a real Tool call and any Provider continuation stream.
+7. Select a model and verify the selected state when the Provider supports it.
+8. Upload file/image content and verify page acknowledgement where safely observable.
+9. List, select/toggle, clear, and re-list capabilities when applicable.
+10. Cancel a live response and verify the page remains usable.
+11. Resume a short and long history; verify current branch, ordering, filtered controls, and incomplete warnings.
+12. Check restricted, rate-limit, or account-tier behavior only when that state already exists and can be tested safely.
+13. Close/detach the thread and exit; verify the MCP listener, pages, browser ownership, and child processes clean up.
 
 State any unrun smoke path explicitly in the final report. Unit tests cannot substitute for an upstream DOM/protocol check.
 

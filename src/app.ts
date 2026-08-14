@@ -85,7 +85,7 @@ export {
   transitionLoginWaitWarning,
   type McpForegroundOperation,
 } from './app/app-lifecycle.ts'
-export { GROK_PROVIDER_PROMPT, PROVIDERS } from './app/app-provider-catalog.ts'
+export { PROVIDERS } from './app/app-provider-catalog.ts'
 export {
   createPortalRuntimeSettings,
   runtimeSetupModeForThreadCreation,

@@ -46,7 +46,11 @@ const PROVIDER_IDS = new Set<string>([
   'qwen',
   'kimi',
 ])
-const REMOVED_AGENT_TOOLS = new Set(['mcp_search_tool', 'mcp_call_tool'])
+const REMOVED_AGENT_TOOLS = new Set([
+  'load_skill',
+  'mcp_search_tool',
+  'mcp_call_tool',
+])
 
 export function createDefaultHooksConfig(): HooksConfig {
   return { enabled: false, maxDepth: 1, handlers: [] }

@@ -23,7 +23,7 @@ npm run dev
 
 ## Release and compatibility policy
 
-Release tags identify tested source snapshots and, when applicable, the matching npm package contents. portal does not currently publish a standalone executable. The project prioritizes fast iteration and does not promise that documented CLI commands, configuration, HTTP API, Portal MCP, Provider model keys, or Tool surfaces remain backward-compatible across releases. Breaking changes must be called out in release notes; changes to persistent configuration or data must include migration or explicit upgrade steps.
+Release tags identify tested source snapshots and, when applicable, the matching npm package contents. portal does not currently publish a standalone executable. The project prioritizes fast iteration and does not promise that documented CLI commands, configuration, Portal MCP, Provider model keys, or Tool surfaces remain backward-compatible across releases. Breaking changes must be called out in release notes; changes to persistent configuration or data must include migration or explicit upgrade steps.
 
 Internal modules, Provider DOM and private protocols, and account-dependent capabilities are implementation or upstream details rather than stable contracts.
 
@@ -40,7 +40,7 @@ npm run test:package
 npm run fmt:check
 ```
 
-`lint` applies the same type-aware rules to production code and tests, and fails on warnings. `test:unit` includes deterministic local integration tests such as the MCP stdio and HTTP connection checks. `test:coverage` runs the same suite and reports line, branch, and function coverage for source modules loaded by the tests. It does not replace the manual browser checks below and must not be interpreted as coverage of provider websites or modules that the suite never imports.
+`lint` applies the same type-aware rules to production code and tests, and fails on warnings. `test:unit` includes deterministic local integration tests such as the Portal MCP Server and SDK client checks. `test:coverage` runs the same suite and reports line, branch, and function coverage for source modules loaded by the tests. It does not replace the manual browser checks below and must not be interpreted as coverage of provider websites or modules that the suite never imports.
 
 Browser launcher changes also have a real CDP lifecycle check. Windows CI runs
 it with Playwright's Chromium build; it remains separate from
@@ -79,12 +79,12 @@ Do not include browser profiles, cookies, screenshots, conversation URLs, or pro
 
 ```text
 src/
-├── api/            # HTTP routes and SSE event delivery
 ├── cli-commands/   # slash command infrastructure and implementations
 ├── config/         # portal configuration parsing and atomic updates
+├── exec/           # non-TUI one-shot command and lifecycle composition
 ├── hooks/          # lifecycle handlers, policy, and event dispatch
-├── instructions/   # Codex and Claude Code project instruction loading
-├── mcp/            # configuration, transports, per-thread sessions, rendering
+├── instructions/   # optional startup AGENTS.md snapshot
+├── mcp-server/     # inbound Streamable HTTP MCP listener
 ├── platform/       # browser launch and OS process handling
 ├── processes/      # run_command job tracking and process-tree cleanup
 ├── providers/      # provider adapters and URL utilities
@@ -147,9 +147,14 @@ accepted format or lifecycle changes.
 
 ## MCP changes
 
-MCP changes should preserve per-thread connection ownership, close transports with their runtime, isolate invalid or unavailable servers, redact resolved environment values from errors, and avoid automatically retrying calls whose outcome may be unknown.
+MCP changes apply to the inbound Portal MCP Server. Preserve authentication,
+transport lifecycle serialization, ownership of MCP-created operations, and
+separation from unrelated TUI work. Never print configured or resolved Tokens.
 
-Add focused tests for configuration parsing, environment expansion, CLI mutations, Tool cache refresh, connection isolation, Resources, Prompts, output limits, cancellation, and close behavior. Update [MCP](mcp.md) and [Security](security.md) when configuration fields, content support, or failure semantics change.
+Add focused tests for listener configuration, environment expansion, `/mcp`
+commands, real SDK client integration, message operation cancellation, job
+ownership, and close behavior. Update [Portal MCP Server](mcp-server.md) and
+[Security](security.md) when configuration or failure semantics change.
 
 ## Documentation changes
 
@@ -158,13 +163,12 @@ Document only behavior supported by the current code. Provider selectors and pri
 Keep documentation ownership narrow:
 
 - `configuration.md` owns configuration fields, defaults, and reload timing;
-- `instructions.md`, `skills.md`, `mcp.md`, and `hooks.md` own their feature-specific formats and lifecycles;
-- `api.md` owns HTTP routes and request shapes;
+- `instructions.md`, `skills.md`, `mcp-server.md`, and `hooks.md` own their feature-specific formats and lifecycles;
 - README files provide synchronized entry points and short examples rather than duplicating complete references.
 
 When one behavior crosses these boundaries, update the canonical reference and
 link to it from the other pages. Configuration defaults must be checked against
-`src/config/portal-config.ts`, and API routes against `src/api/api-server.ts`.
+`src/config/portal-config.ts`, and MCP tools against `src/mcp-server/`.
 
 ## Pull request checklist
 

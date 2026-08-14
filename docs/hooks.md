@@ -2,7 +2,7 @@
 
 [Back to README](../README.md)
 
-Hooks run configured handlers at stable thread, turn, tool, and spawn lifecycle points. They are implemented below the terminal and HTTP API surfaces, so the same Hook policy applies regardless of how a turn starts.
+Hooks run configured handlers at stable thread, turn, tool, and spawn lifecycle points. They are implemented below the TUI, `portal exec`, and Portal MCP Server surfaces, so the same Hook policy applies regardless of how a turn starts.
 
 Hooks are disabled by default. Editing `<data-dir>/config.yaml` and enabling Hooks means accepting that configured command, prompt, and agent handlers can run with the current user's permissions and provider accounts.
 
@@ -41,7 +41,7 @@ Command handlers have bounded runtime and output. Cancellation terminates the pr
 
 ### Prompt
 
-A prompt handler creates an isolated child provider runtime for one model response. It has no Tools, Skills, or MCP access. `provider` is optional and otherwise inherits the event provider.
+A prompt handler creates an isolated child provider runtime for one model response. It has no host Tools. `provider` is optional and otherwise inherits the event provider.
 
 ```yaml
 - name: classify-command
@@ -54,7 +54,7 @@ A prompt handler creates an isolated child provider runtime for one model respon
 
 ### Agent
 
-An agent handler creates an isolated multi-turn child runtime. Every Tool must be explicitly listed. `spawn` is forbidden inside agent Hooks; Skills and MCP are available only when their host tools are explicitly allowed.
+An agent handler creates an isolated multi-turn child runtime. Every Tool must be explicitly listed. `spawn` is forbidden inside agent Hooks. Enabled Skill metadata follows the normal runtime snapshot.
 
 ```yaml
 - name: inspect-patch
@@ -69,9 +69,7 @@ An agent handler creates an isolated multi-turn child runtime. Every Tool must b
   timeoutMs: 60000
 ```
 
-Available host tool names are `attach_image`, `run_command`, `apply_patch`,
-`mcp_search_tool`, and `mcp_call_tool`. Availability still depends on the
-runtime's configured MCP connections.
+Available host tool names are `attach_image`, `run_command`, and `apply_patch`.
 
 ## Events
 
@@ -119,4 +117,4 @@ A deny produces a structured `HOOK_BLOCKED` Tool Result and feeds it back to the
 
 `reload` validates the complete config before atomically replacing the global snapshot. If validation fails, the prior snapshot remains active. `enable` and `disable` persist the global switch to `<data-dir>/config.yaml`; active turns continue with their captured snapshot.
 
-The HTTP API does not modify Hook configuration. Thread event streams expose bounded `hook.execution` events with handler, phase, event, duration, and correlation ids, but not handler stdout or stderr.
+Hook configuration is managed through `config.yaml` and the `/hook` commands.

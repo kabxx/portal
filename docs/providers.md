@@ -19,7 +19,7 @@ portal supports eight web AI products through provider-specific adapters. Every 
 | `qwen`      | `chat.qwen.ai`      | Yes            | Yes    | `qwen3.7-plus`, `qwen3.8-max-preview`, `qwen3.7-max`           | Dynamic page actions                      |
 | `kimi`      | `www.kimi.com`      | Yes            | Yes    | `k2.6`, `k3`, `k3-cluster`                                     | `search`                                  |
 
-Model keys and model-specific options are maintained in the typed Provider definitions under `src/providers/definitions/`. Provider-local UI components translate those logical keys into current page interactions. Numeric menu positions and DOM details are internal and are not accepted by the CLI, API, or MCP server.
+Model keys and model-specific options are maintained in the typed Provider definitions under `src/providers/definitions/`. Provider-local UI components translate those logical keys into current page interactions. Numeric menu positions and DOM details are internal and are not accepted by the CLI or MCP Server.
 
 Portal statically imports all eight definitions into one deeply frozen domain snapshot. TypeScript and startup validation check each Provider's exact model, option, and capability metadata. Definitions contain no selector, menu position, or dispatch target. Provider-local UI components own selectors, page ownership, uniqueness, visibility, interaction state, and model/capability dispatch. Account- or experiment-dependent capabilities are still discovered from the live page.
 
@@ -44,11 +44,11 @@ Examples:
 /thread chat gemini 3.6-flash extended
 ```
 
-When the model argument is omitted, portal leaves the provider's current/default selection unchanged. Both creation commands create a page, verify login and composer readiness, connect the current MCP configuration, snapshot enabled Skills, and require a case-insensitive whole-word `READY` token in the handshake response.
+When the model argument is omitted, portal leaves the provider's current/default selection unchanged. Both creation commands create a page, verify login and composer readiness, snapshot enabled Skills, and require a case-insensitive whole-word `READY` token in the handshake response.
 
 `/thread agent` sends the full portal agent setup prompt. `/thread chat` sends
-only the shared setup handshake, without the tool protocol, Skill or MCP
-catalog, working directory, project instructions, or provider-specific prompt.
+only the shared setup handshake, without the tool protocol, Skill catalog,
+working directory, or project instructions.
 The local chat runtime still owns those configured integrations and can execute
 a valid model-generated tool call, so this mode is not a sandbox.
 
@@ -167,9 +167,12 @@ stable, cross-provider confirmation signal. Workflows that depend on the image
 must verify the visible attachment state or ask the model to confirm that image
 content is available before relying on it.
 
-## Provider-specific setup
+## Shared setup
 
-Agent-mode threads and spawned runtimes use the shared full setup prompt. Grok receives an additional Portal tool-boundary Pitfall that directs it to keep native local-resource features separate from matching Portal tools and to treat only a delivered Tool Result as execution evidence. That provider rule remains active after the `READY` handshake. Chat creation sends only the shared handshake and does not include provider-specific setup text.
+Every provider receives the same centrally rendered Tool Protocol and setup
+structure. Portal does not inject provider-specific constraint text. Chat
+creation sends only the shared initialization handshake, while `portal exec`
+sends setup and the first task in one user message without a `READY` roundtrip.
 
 ## Maintenance notes
 

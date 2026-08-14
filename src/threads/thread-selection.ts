@@ -1,6 +1,6 @@
 /**
  * TUI-only selection state. Runtime admission and selection are deliberately
- * separate: an API/MCP create must not change what the terminal is displaying.
+ * separate: a non-TUI create must not change what the terminal is displaying.
  */
 export class ThreadSelectionController {
   private readonly threadIds = new Set<string>()

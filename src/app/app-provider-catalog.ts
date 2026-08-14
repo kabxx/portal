@@ -13,16 +13,6 @@ import { KimiAdapter } from '../providers/adapters/adapter-kimi.ts'
 import { QwenAdapter } from '../providers/adapters/adapter-qwen.ts'
 import type { ProviderId } from '../providers/provider-id.ts'
 
-export const GROK_PROVIDER_PROMPT = [
-  `# Pitfall (Portal Tool Boundary)`,
-  `- READY keeps these rules active for later requests.`,
-  `- For a safe, fully specified action covered by # Tools, use its Portal tool instead of any Grok-native feature.`,
-  `- For that action, respond only with one matching raw tool block using the exact declared name and JSON or Freeform payload.`,
-  `- Never use Grok-native features or permission dialogs to access user-local resources.`,
-  `- Only a later message headed ### Tool Result ### proves execution, success, or failure.`,
-  `- Inspect that result before another call or any completion claim.`,
-].join('\n')
-
 export const PROVIDERS: ProviderId[] = [
   'chatgpt',
   'gemini',
@@ -53,11 +43,6 @@ export function normalizeProviderId(value: string): ProviderId | null {
   }
 
   return aliases[normalized] ?? null
-}
-
-export function getProviderPrompt(provider: ProviderId): string | null {
-  if (provider === 'grok') return GROK_PROVIDER_PROMPT
-  return null
 }
 
 export async function createAdapterForProvider(

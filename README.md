@@ -13,8 +13,8 @@ portal does **not** call provider model APIs or bypass provider accounts, subscr
 - **One terminal workflow for eight web providers.** Create, switch, and resume provider conversations through a shared thread model.
 - **Persistent browser sessions.** A dedicated browser profile keeps login state and account-specific web features.
 - **Local tool use.** Models can inspect a workspace, run commands, edit files, attach images, and delegate focused tasks.
-- **Workspace context and extensions.** Project instructions, Skills, MCP servers, and lifecycle Hooks can shape each runtime.
-- **Local integrations.** Optional HTTP API and Portal MCP Server interfaces expose selected thread operations.
+- **Workspace context and extensions.** Optional project instructions, Skills, and lifecycle Hooks can shape each runtime.
+- **Headless and MCP access.** `portal exec` runs one task without the TUI, while the optional Portal MCP Server exposes selected thread operations.
 
 ## Supported providers
 
@@ -70,8 +70,14 @@ modes, resume, input controls, background jobs, and startup options, and
 [Configuration](docs/configuration.md#portal-data-directory) for data-directory
 defaults and overrides.
 
+Run one task without starting Ink:
+
+```bash
+portal exec --provider chatgpt "Summarize this repository."
+```
+
 > [!WARNING]
-> portal is not a sandbox. Local tools, Skills, Hooks, MCP servers, and spawned workers run with the permissions of the portal user, and valid model-generated tool calls have no human approval gate. Read [Security](docs/security.md) before using portal with sensitive data.
+> portal is not a sandbox. Local tools, Skills, Hooks, and spawned workers run with the permissions of the portal user, and valid model-generated tool calls have no human approval gate. Read [Security](docs/security.md) before using portal with sensitive data.
 
 ## How it works
 
@@ -82,7 +88,7 @@ flowchart LR
     TM --> R[Runtime and tool loop]
     R <--> A[Provider adapter]
     A <--> B[Chromium web conversation]
-    R <--> T[Local tools, Skills, MCP]
+    R <--> T[Local tools, Skills, Hooks]
 ```
 
 For each user turn, portal submits text through the provider website, captures the streamed response, and looks for an optional `<tool name="tool_name">PAYLOAD</tool>` request. It executes requested local tools and returns their results to the same conversation until the model produces a normal response.
@@ -114,17 +120,17 @@ Use `Ctrl+J` for a reliable multiline input and `Ctrl+C` to cancel the current o
 
 - **Project instructions** optionally load the startup directory's `AGENTS.md` into new runtimes.
 - **Skills** advertise enabled local instruction packages by name, description, and manifest path.
-- **MCP** connects each runtime to configured stdio or Streamable HTTP servers.
 - **Hooks** observe lifecycle events or allow, deny, and rewrite tool parameters.
-- **Built-in tools** cover images, shell commands, file patches, focused child tasks, and MCP calls.
+- **Built-in tools** cover images, shell commands, file patches, and focused child tasks.
+- **Portal MCP Server** exposes selected thread and job operations to an external MCP client.
 
 See the linked guides for configuration and trust boundaries.
 
 ## Documentation
 
 - **Using portal:** [CLI](docs/cli.md), [Configuration](docs/configuration.md), [Providers](docs/providers.md), [Project Instructions](docs/instructions.md)
-- **Extending runtimes:** [Skills](docs/skills.md), [MCP client](docs/mcp.md), [Hooks](docs/hooks.md)
-- **Integrating portal:** [HTTP API](docs/api.md), [Portal MCP Server](docs/mcp-server.md)
+- **Extending runtimes:** [Skills](docs/skills.md), [Hooks](docs/hooks.md)
+- **Integrating portal:** [Portal MCP Server](docs/mcp-server.md)
 - **Internals and safety:** [Architecture](docs/architecture.md), [Security](docs/security.md), [Testing](docs/testing.md)
 - **Contributing:** [Contributing guide](docs/contributing.md), [Provider development](docs/provider-development.md)
 

@@ -189,6 +189,13 @@ try {
   assertNoModuleTypeWarning(helpResult)
   const help = helpResult.stdout
   assert.match(help, /--data-dir <path>/)
+  const execHelpResult = runInstalledPortal(portalBin, ['exec', '--help'], {
+    cwd: workspaceDirectory,
+    env: installEnvironment,
+  })
+  assertNoModuleTypeWarning(execHelpResult)
+  assert.match(execHelpResult.stdout, /--provider <provider>/)
+  assert.match(execHelpResult.stdout, /--timeout <seconds>/)
   const invalidOptionResult = runInstalledPortal(
     portalBin,
     ['--portal-invalid-option'],
@@ -385,7 +392,10 @@ function auditPack(pack) {
   for (const required of [
     'LICENSE',
     'README.md',
+    'dist/cli-entry.js',
+    'dist/exec/exec-command.js',
     'dist/index.js',
+    'dist/mcp-server/mcp-server.js',
     'dist/vendor/ink.js',
     'dist/vendor/markdansi.js',
     'package.json',
@@ -404,6 +414,22 @@ function auditPack(pack) {
     ),
     [],
     'tarball must not contain obsolete vendor bundle artifacts'
+  )
+  assert.deepEqual(
+    allowedFiles.filter(
+      (filePath) =>
+        filePath.startsWith('dist/api/') ||
+        filePath.startsWith('dist/mcp/') ||
+        [
+          'dist/cli-commands/commands/command-serve.js',
+          'dist/terminal-ui/skill-hints.js',
+          'dist/tools/builtins/load-skill-tool.js',
+          'dist/tools/builtins/mcp-call-tool.js',
+          'dist/tools/builtins/mcp-search-tool.js',
+        ].includes(filePath)
+    ),
+    [],
+    'tarball must not contain removed Portal 2.0 surfaces'
   )
   assert.deepEqual(
     allowedFiles.filter((filePath) =>

@@ -284,6 +284,7 @@ export class PortalApplicationCore implements PortalExecSession {
         mode: 'agent',
         source: 'exec',
         activate: false,
+        persistInitialHistory: false,
       },
       signal
     )
@@ -336,9 +337,13 @@ function reportLifecycleEvent(
       message: `Waiting for ${event.provider} login...`,
     })
   } else if (event.type === 'thread.ready') {
+    const conversation = resolveConversationUrl(event.conversationUrl)
     onProgress({
       type: 'status',
-      message: `Conversation: ${event.conversationUrl}`,
+      message:
+        conversation === null
+          ? `Connected to ${event.provider}.`
+          : `Conversation: ${conversation.conversationUrl}`,
     })
   }
 }

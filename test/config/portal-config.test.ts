@@ -252,7 +252,7 @@ test('ensurePortalConfig writes advanced last with field comments and section sp
       /\nhooks:[\s\S]+\n\n# Low-frequency runtime tuning and resource limits\.\nadvanced:\n/
     )
     assert.equal(contents.trimEnd().endsWith('commandOutputLimitMB: 1'), true)
-    assert.equal((advancedContents.match(/\n\n {2}# /g) ?? []).length, 6)
+    assert.equal((advancedContents.match(/\n\n {2}# /g) ?? []).length, 5)
     for (const field of advancedFields) {
       assert.match(
         advancedContents,

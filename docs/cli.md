@@ -46,6 +46,31 @@ portal --browser-engine chromium --browser-executable-path "<browser executable 
 
 `browser.executablePath` and `browser.profilePath` accept absolute or relative paths. Relative configured paths resolve from portal's working directory. Run `portal --help` (or `npm run dev -- --help` from source) for every startup option, or see [Configuration](configuration.md#browser) for persistent settings.
 
+## Headless execution
+
+`portal exec` runs one agent task without creating Ink or rendering terminal
+control sequences:
+
+```bash
+portal exec --provider chatgpt "Summarize this repository."
+portal exec --provider gemini --model 3.1-pro "Review the current diff."
+portal exec --provider chatgpt --timeout 120 - < task.txt
+Get-Content task.txt | portal exec --provider chatgpt
+```
+
+The prompt may be supplied as arguments, as stdin with `-`, or solely through
+piped stdin. When arguments and piped stdin are both present, stdin is appended
+as task context. `--option` selects a provider model option. The provider is
+required and is never guessed.
+
+The final assistant response is written to stdout. Connection status, login
+waits, tool names, warnings, and fatal errors are written to stderr. Exit codes
+are `0` for a completed model response, `1` for a runtime failure, `2` for
+invalid input, `124` for the configured hard timeout, and `130` for Ctrl+C.
+Exec creates a normal provider conversation, records its URL in local history,
+then closes the local runtime, jobs, and browser connection. It is not a
+sandbox, and the remote conversation is not deleted.
+
 Upgrade with `npm install --global @kabxx/portal@<version>` and uninstall with
 `npm uninstall --global @kabxx/portal`. Upgrading or uninstalling the package
 does not delete the persistent data directory.
@@ -79,7 +104,7 @@ Resume from a provider URL or local history id:
 `/thread agent` sends the full portal agent setup prompt. `/thread chat` sends only
 the shared setup handshake and accepts a response containing `READY` as a
 case-insensitive whole word. Both commands still construct the local runtime,
-connect configured MCP servers, snapshot Skills, register tools and Hooks, and
+snapshot Skills, register tools and Hooks, and
 persist the provider conversation. Chat mode does not advertise those local
 capabilities to the model, but a valid model-generated tool call can still be
 executed; it is not a sandbox.
@@ -114,16 +139,14 @@ Remote messages loaded by resume are display-only and do not increase the local 
 | `/providers`        | List supported provider ids                          |
 | `/thread ...`       | Create, resume, switch, inspect, detach, and close   |
 | `/skill ...`        | Add, list, enable, disable, and remove Skills        |
-| `/mcp ...`          | Manage MCP servers and attach Resources or Prompts   |
-| `/serve api ...`    | Start and manage the local HTTP API                  |
-| `/serve mcp ...`    | Start and manage the independent Portal MCP Server   |
+| `/mcp ...`          | Start and manage the Portal MCP Server               |
 | `/job`              | List running `run_command` jobs                      |
 | `/job stop ...`     | Stop one running `run_command` job                   |
 | `/hook ...`         | Inspect, reload, enable, or disable lifecycle Hooks  |
 | `/keybinding reset` | Restore and save platform-default terminal shortcuts |
 | `/exit`             | Shut down portal                                     |
 
-The live `/help` output is the source of truth for commands available in the current build. Detailed subcommands and behavior are documented under [Skills](skills.md), [MCP](mcp.md), [HTTP API](api.md), [Portal MCP Server](mcp-server.md), and [Hooks](hooks.md).
+The live `/help` output is the source of truth for commands available in the current build. Detailed behavior is documented under [Skills](skills.md), [Portal MCP Server](mcp-server.md), and [Hooks](hooks.md).
 
 ## Input controls
 
@@ -150,6 +173,6 @@ Cancelling the current turn with `Ctrl+C` detaches that turn's waiter but leaves
 
 ## Browser and shutdown behavior
 
-The dedicated browser and portal share one lifecycle. Closing or crashing the browser process, or losing its CDP connection, triggers portal's controlled shutdown and stops active threads, jobs, API, and MCP services.
+The dedicated browser and portal share one lifecycle. Closing or crashing the browser process, or losing its CDP connection, triggers portal's controlled shutdown and stops active threads, jobs, and the MCP Server.
 
 Closing one provider tab does not exit portal. It cancels any active operation and closes only the thread bound to that page. If that thread was active, the TUI returns home.
