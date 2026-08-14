@@ -9,9 +9,7 @@ export type ExecProgressEvent =
 export interface PortalExecSessionOptions {
   cwd: string
   dataDirectory?: string
-  browserEngine?: string
   browserExecutablePath?: string
-  browserRemoteDebuggingPort?: number
   provider: ProviderId
   model: ResolvedProviderModel | null
   signal: AbortSignal

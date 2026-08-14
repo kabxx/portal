@@ -1,6 +1,6 @@
 # Architecture
 
-[Back to README](../README.md)
+[Back to README](../../README.md)
 
 portal coordinates a local Node.js runtime, a real Chromium browser, and one or
 more provider conversations. The same thread and runtime services support the
@@ -12,7 +12,7 @@ inbound Portal MCP Server.
 | Area          | Main files                                                    | Responsibility                                                                            |
 | ------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | Entry points  | `src/index.ts`, `src/cli-entry.ts`, `src/app.ts`, `src/exec/` | Dispatch the TUI or headless command and compose process resources                        |
-| Configuration | `src/config/`                                                 | Validate, migrate, lock, comment, and atomically update `config.yaml`                     |
+| Configuration | `src/config/`                                                 | Resolve sparse overrides and atomically update `config.yaml`                              |
 | Browser       | `src/platform/`                                               | Launch Chromium, connect over CDP, and own process lifetime                               |
 | Providers     | `src/providers/`                                              | Implement page readiness, submission, response capture, models, capabilities, and history |
 | Runtime       | `src/runtime/`                                                | Render setup prompts, initialize conversations, run the tool loop, retry, and cancel      |
@@ -24,14 +24,14 @@ inbound Portal MCP Server.
 | TUI           | `src/terminal-ui/`, `src/cli-commands/`                       | Render timelines, edit input, and dispatch slash commands                                 |
 | MCP Server    | `src/mcp-server/`, `src/app/app-mcp-handlers.ts`              | Expose selected thread and job operations over Streamable HTTP MCP                        |
 
-There is no outbound MCP client or general HTTP API in Portal 2.0.
+The inbound MCP server is Portal's external automation interface.
 
 ## Process composition
 
 The TUI path in `app.ts`:
 
 1. resolves the startup working directory and persistent data directory;
-2. creates or migrates `config.yaml` under a native cross-process lock;
+2. resolves sparse configuration under a native cross-process lock;
 3. initializes the Skill registry, optional project-instruction snapshot,
    Hooks, thread store, job manager, and terminal controller;
 4. launches the configured Chromium profile and connects over CDP;
@@ -102,7 +102,7 @@ browser connection shuts down the process.
 
 The default agent tool set is `attach_image`, `run_command`, `apply_patch`, and
 `spawn`. `ToolRegistry` renders the compact catalog, parses calls, validates
-input, and rejects stale calls to hidden or removed tools.
+input, and rejects calls to hidden or unavailable tools.
 
 `run_command` jobs are process-local. A cancelled turn detaches its waiter but
 does not automatically terminate the command. The TUI and MCP Server share the
@@ -110,9 +110,9 @@ same job manager; controlled shutdown stops all managed jobs. Output is bounded
 before it is retained or delivered to a provider.
 
 `spawn` creates a temporary child conversation in the existing browser context,
-uses the same Skill and project-instruction snapshots, enforces the configured
-depth limit, runs one task, returns its provider URL and output, and closes the
-child runtime.
+uses the same Skill and project-instruction snapshots, enforces the fixed depth
+limit, runs one task, returns its provider URL and output, and closes the child
+runtime.
 
 ## Skills
 
@@ -150,12 +150,11 @@ cancelling unrelated TUI work.
 
 `threads.db` stores provider, URL, title, and timestamps, not transcripts.
 Provider history remains authoritative and is loaded for display during resume.
-Browser login state lives under the configured profile path.
+Browser login state lives under `<data-dir>/profiles/chromium`. Skill registry
+state lives separately under `<data-dir>/state/skills.json`.
 
-Portal 2.0 migrates removed empty API/MCP-client and legacy instruction fields
-under the config lock. Non-empty outbound MCP configuration and enabled legacy
-instruction sources are rejected for explicit user review instead of being
-silently discarded. The inbound `listeners.mcp` configuration is preserved.
+Portal accepts only the documented sparse configuration. Skill registry state
+is stored separately from user configuration.
 
 ## Cancellation and retry
 

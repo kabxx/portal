@@ -12,9 +12,7 @@ import { createFakeRuntime } from '../helpers/fakes.ts'
 
 function scope(): HookExecutionScope {
   return {
-    snapshot: createHookSnapshot(
-      parseHooksConfig({ enabled: true, maxDepth: 1 })
-    ),
+    snapshot: createHookSnapshot(parseHooksConfig({ enabled: true })),
     cwd: process.cwd(),
     source: 'tui',
     spawnDepth: 0,

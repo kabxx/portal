@@ -7,7 +7,6 @@ import {
   inheritSpawnModelSelection,
   nextSpawnDepth,
 } from '../../src/app/app-spawn-tool-services.ts'
-import { createDefaultAdvancedConfig } from '../../src/config/portal-config.ts'
 import { createPortalRuntimeSettings } from '../../src/app/app-runtime-settings.ts'
 import type { HookDispatcher } from '../../src/hooks/hook-dispatcher.ts'
 import type { ProjectInstructions } from '../../src/instructions/project-instructions.ts'
@@ -39,7 +38,7 @@ test('spawn depth rejection occurs before project, browser, or Hook side effects
       return projectInstructions
     },
   } as unknown as ProjectInstructions
-  const settings = createPortalRuntimeSettings(createDefaultAdvancedConfig())
+  const settings = createPortalRuntimeSettings()
   settings.spawnDepthLimit = 5
   const services = createToolServices({
     // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion

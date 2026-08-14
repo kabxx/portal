@@ -52,7 +52,7 @@ export function createIdempotentAsyncTask(
 export async function closeLateBrowserLaunchAfterShutdown(
   browserLaunch: { close(): Promise<void> } | null,
   shutdown: () => Promise<void>,
-  timeoutMs: number
+  timeoutMs = SHUTDOWN_CLOSE_TIMEOUT_MS
 ): Promise<void> {
   await shutdown()
   if (browserLaunch !== null) {
@@ -62,7 +62,7 @@ export async function closeLateBrowserLaunchAfterShutdown(
 
 export async function stopMcpForegroundOperation(
   operation: McpForegroundOperation,
-  timeoutMs: number
+  timeoutMs = SHUTDOWN_CLOSE_TIMEOUT_MS
 ): Promise<void> {
   operation.controller.abort()
   operation.cancellation ??= Promise.allSettled([

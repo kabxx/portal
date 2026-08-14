@@ -1,13 +1,13 @@
 # Portal MCP Server
 
-[Back to README](../README.md)
+[Back to README](../../README.md)
 
 Portal can expose selected thread operations as a native Streamable HTTP MCP
-Server. The `listeners.mcp` section configures its listener, authentication,
-and lifecycle. The server shares Portal's in-process browser, runtimes, and
-active threads.
+Server. The sparse `mcp` section configures its address, while
+`PORTAL_MCP_TOKEN` configures authentication. The server shares Portal's
+in-process browser, runtimes, and active threads.
 
-Portal 2.0 provides this inbound server only. Portal runtimes do not connect to
+Portal provides an inbound MCP server. Portal runtimes do not connect to
 external MCP servers or expose MCP host tools to web models.
 
 ## Start and stop
@@ -28,38 +28,20 @@ started by the TUI.
 ## Configuration
 
 ```yaml
-listeners:
-  mcp:
-    host: 127.0.0.1
-    port: 8788
-    token: null
+mcp:
+  host: 127.0.0.1
+  port: 8788
 ```
 
-The endpoint is `http://<host>:<port>/mcp`. Authentication depends only on the
-exact `token` value:
+The endpoint is `http://<host>:<port>/mcp`. Authentication depends on the
+process environment variable `PORTAL_MCP_TOKEN`. An unset or empty value
+disables authentication only when `host` is exactly `127.0.0.1`; every other
+host requires a non-empty token or the listener refuses to start. Portal
+captures the address and token at startup, so changing the configuration or
+environment requires restarting Portal. `/mcp token` reports only whether
+authentication is configured and never prints the value.
 
-- `null` and the exact empty string `""` disable authentication;
-- every other string enables Bearer authentication, including whitespace-only
-  strings and strings with leading or trailing whitespace;
-- Portal preserves configured Token strings exactly and does not trim them.
-
-HTTP implementations treat leading and trailing request-header whitespace as
-protocol syntax. A Token containing such whitespace still enables
-authentication and is never rewritten by Portal, but a client or HTTP stack may
-be unable to transmit it losslessly as a Bearer credential.
-
-`null` or `""` is allowed only when `host` is exactly `127.0.0.1`. Every other
-host requires an enabled Token or the listener refuses to start.
-
-Token strings support `${env:VARIABLE_NAME}` placeholders and the
-`$${env:VARIABLE_NAME}` literal escape. Portal keeps the configured placeholder
-on disk and resolves it whenever the listener starts, so stopping and starting
-the listener can pick up a changed process environment without reloading the
-configuration. A missing variable fails before the port is bound. `/mcp token`
-reports only whether authentication is configured and never prints the Token
-value.
-
-The first version targets non-browser MCP clients. Requests containing any
+Portal targets non-browser MCP clients. Requests containing any
 `Origin` header, including `Origin: null`, are rejected. CORS is not enabled.
 
 ## Tools
@@ -86,7 +68,7 @@ and Hooks, so chat mode is not a sandbox.
 
 `portal_create_thread` accepts `provider` plus optional named `model` and
 model-specific `option` keys from [Providers](providers.md). Numeric menu
-positions and the previous combined numeric forms are rejected.
+positions and combined numeric forms are rejected.
 
 `portal_send_message` returns a process-local `operationId` with `running`
 status. Call `portal_wait_message` until it returns `completed`, `failed`, or
@@ -114,4 +96,4 @@ Bearer authentication over plain HTTP does not protect Tokens or conversation
 content from network interception. For non-loopback access, use an SSH tunnel,
 a TLS reverse proxy, or a trusted isolated network. Portal requires a Token on
 every configured host other than the exact value `127.0.0.1`. See
-[Security](security.md).
+[Security](../../SECURITY.md).

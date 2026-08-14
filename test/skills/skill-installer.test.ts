@@ -16,7 +16,6 @@ import os from 'os'
 import path from 'path'
 import { promisify } from 'util'
 import { path7za } from '7zip-bin'
-import { parseYamlRecord } from '../helpers/yaml.ts'
 
 import { SkillLibrary } from '../../src/skills/skill-library.ts'
 import { SkillInstaller } from '../../src/skills/skill-installer.ts'
@@ -195,7 +194,7 @@ test('SkillLibrary downloads only the requested GitHub tree directory and retrie
   const library = new SkillLibrary({
     skillsDirectory: path.join(root, 'data', 'skills'),
     tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
-    registryPath: path.join(root, 'data', 'config.yaml'),
+    registryPath: path.join(root, 'data', 'state', 'skills.json'),
   })
   try {
     const result = await library.add(
@@ -260,7 +259,7 @@ for (const archiveType of ['zip', '7z', 'tar.gz'] as const) {
     const library = new SkillLibrary({
       skillsDirectory: path.join(root, 'data', 'skills'),
       tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
-      registryPath: path.join(root, 'data', 'config.yaml'),
+      registryPath: path.join(root, 'data', 'state', 'skills.json'),
     })
     try {
       const result = await library.add(
@@ -299,7 +298,7 @@ test('SkillLibrary installs every skill in an ordinary archive collection', asyn
   const library = new SkillLibrary({
     skillsDirectory: path.join(root, 'data', 'skills'),
     tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
-    registryPath: path.join(root, 'data', 'config.yaml'),
+    registryPath: path.join(root, 'data', 'state', 'skills.json'),
   })
 
   try {
@@ -342,7 +341,7 @@ test('SkillLibrary rejects an archive collection conflict before moving any skil
   const library = new SkillLibrary({
     skillsDirectory,
     tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
-    registryPath: path.join(root, 'data', 'config.yaml'),
+    registryPath: path.join(root, 'data', 'state', 'skills.json'),
   })
 
   try {
@@ -407,7 +406,7 @@ test('SkillLibrary installs a named skill through a Hub registry protocol', asyn
   const library = new SkillLibrary({
     skillsDirectory: path.join(root, 'data', 'skills'),
     tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
-    registryPath: path.join(root, 'data', 'config.yaml'),
+    registryPath: path.join(root, 'data', 'state', 'skills.json'),
   })
   try {
     const result = await library.add(skillName, {
@@ -460,7 +459,7 @@ test('SkillLibrary installs a directly downloaded SKILL.md', async () => {
   const library = new SkillLibrary({
     skillsDirectory: path.join(root, 'data', 'skills'),
     tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
-    registryPath: path.join(root, 'data', 'config.yaml'),
+    registryPath: path.join(root, 'data', 'state', 'skills.json'),
   })
   try {
     const result = await library.add(
@@ -469,12 +468,16 @@ test('SkillLibrary installs a directly downloaded SKILL.md', async () => {
     const installed = result.skills[0]
     assert.ok(installed)
     assert.equal(installed.name, 'direct-skill')
-    const registry = parseYamlRecord(
-      await readFile(path.join(root, 'data', 'config.yaml'), 'utf8')
-    ).skills
+    const registryDocument: unknown = JSON.parse(
+      await readFile(path.join(root, 'data', 'state', 'skills.json'), 'utf8')
+    )
+    assert.ok(isRecord(registryDocument))
+    assert.equal(registryDocument.version, 1)
+    const registry = registryDocument.skills
+    assert.ok(isRecord(registry))
     assert.deepEqual(registry, {
       'direct-skill': {
-        directory: 'skills/direct-skill',
+        directory: '../skills/direct-skill',
         enabled: true,
       },
     })
@@ -490,6 +493,10 @@ test('SkillLibrary installs a directly downloaded SKILL.md', async () => {
     await rm(root, { recursive: true, force: true })
   }
 })
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
 test('SkillInstaller keeps managed downloads in staging until commit', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-staging-'))

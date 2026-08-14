@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { stringify } from 'yaml'
+import { parse, stringify } from 'yaml'
 
 import {
   createDefaultPortalConfig,
@@ -58,8 +58,19 @@ test('HookCatalog reloads atomically and persists the single global switch', asy
     const enabled = await catalog.setEnabled(false)
     assert.equal(enabled.enabled, false)
     const document = await readFile(configPath, 'utf8')
-    assert.match(document, /enabled: false/)
+    const parsed: unknown = parse(document)
+    assert.ok(isRecord(parsed))
+    assert.ok(isRecord(parsed.hooks))
+    assert.equal(parsed.hooks.enabled, undefined)
+    const beforeNoop = await stat(configPath)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await catalog.setEnabled(false)
+    assert.equal((await stat(configPath)).mtimeMs, beforeNoop.mtimeMs)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}

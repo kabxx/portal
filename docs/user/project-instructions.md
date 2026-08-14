@@ -1,6 +1,6 @@
 # Project Instructions
 
-[Back to README](../README.md)
+[Back to README](../../README.md)
 
 Project Instructions are disabled by default. Enable them with one setting:
 
@@ -42,4 +42,4 @@ When present, the setup prompt contains the file text verbatim under:
 Project instruction text is sent to the web Provider and can influence a model
 that has access to local tools. Review `AGENTS.md` before enabling this feature
 in an untrusted repository, and do not place credentials or unrelated private
-data in it. See [Security](security.md) for the complete tool trust model.
+data in it. See [Security](../../SECURITY.md) for the complete tool trust model.

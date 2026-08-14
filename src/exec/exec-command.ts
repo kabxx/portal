@@ -25,6 +25,7 @@ export const EXEC_EXIT_RUNTIME_ERROR = 1
 export const EXEC_EXIT_USAGE = 2
 export const EXEC_EXIT_TIMEOUT = 124
 export const EXEC_EXIT_INTERRUPTED = 130
+export const MAX_EXEC_STDIN_BYTES = 4 * 1024 * 1024
 
 interface ExecCommandOptions {
   provider?: string
@@ -32,9 +33,7 @@ interface ExecCommandOptions {
   option?: string
   timeout?: string
   dataDir?: string
-  browserEngine?: string
   browserExecutablePath?: string
-  browserRemoteDebuggingPort?: string
 }
 
 interface TextWriter {
@@ -91,16 +90,6 @@ export async function runExecCli(
     return EXEC_EXIT_USAGE
   }
 
-  let browserRemoteDebuggingPort: number | undefined
-  try {
-    browserRemoteDebuggingPort = parsePort(
-      parsed.options.browserRemoteDebuggingPort
-    )
-  } catch (error) {
-    writeError(errorOutput, error)
-    return EXEC_EXIT_USAGE
-  }
-
   const controller = new AbortController()
   let interrupted = false
   let timedOut = false
@@ -131,15 +120,9 @@ export async function runExecCli(
       ...(parsed.options.dataDir === undefined
         ? {}
         : { dataDirectory: parsed.options.dataDir }),
-      ...(parsed.options.browserEngine === undefined
-        ? {}
-        : { browserEngine: parsed.options.browserEngine }),
       ...(parsed.options.browserExecutablePath === undefined
         ? {}
         : { browserExecutablePath: parsed.options.browserExecutablePath }),
-      ...(browserRemoteDebuggingPort === undefined
-        ? {}
-        : { browserRemoteDebuggingPort }),
       provider,
       model,
       signal: controller.signal,
@@ -193,12 +176,7 @@ function parseExecArguments(
     .option('--option <key>', 'provider model option')
     .option('--timeout <seconds>', 'hard timeout for the complete command')
     .option('--data-dir <path>', 'Portal data directory')
-    .option('--browser-engine <engine>', 'browser automation engine')
     .option('--browser-executable-path <path>', 'browser executable path')
-    .option(
-      '--browser-remote-debugging-port <port>',
-      'browser remote debugging port'
-    )
     .action((value: string[] | undefined) => {
       prompt = value ?? []
     })
@@ -217,23 +195,13 @@ function parseExecArguments(
   return { prompt, options: program.opts<ExecCommandOptions>() }
 }
 
-function parsePort(value: string | undefined): number | undefined {
-  if (value === undefined) return undefined
-  const port = Number(value)
-  if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) {
-    throw new ExecUsageError(
-      '--browser-remote-debugging-port must be an integer from 0 to 65535.'
-    )
-  }
-  return port
-}
-
 async function readStream(
   stream: Readable,
   signal: AbortSignal
 ): Promise<string> {
   signal.throwIfAborted()
   const chunks: Buffer[] = []
+  let totalBytes = 0
   const stopReading = () => {
     const reason =
       signal.reason instanceof Error
@@ -245,7 +213,15 @@ async function readStream(
   try {
     for await (const chunk of stream) {
       signal.throwIfAborted()
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)))
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
+      totalBytes += buffer.length
+      if (totalBytes > MAX_EXEC_STDIN_BYTES) {
+        stream.destroy()
+        throw new ExecUsageError(
+          `Piped stdin exceeds the ${MAX_EXEC_STDIN_BYTES}-byte limit.`
+        )
+      }
+      chunks.push(buffer)
     }
     signal.throwIfAborted()
     return Buffer.concat(chunks).toString('utf8')

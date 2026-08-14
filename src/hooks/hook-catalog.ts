@@ -19,9 +19,9 @@ export class HookCatalog {
   }
 
   public static async create(configPath: string): Promise<HookCatalog> {
-    const config = await readPortalConfig(configPath)
-    if (config === null)
-      throw new Error(`Portal config does not exist: ${configPath}`)
+    const config =
+      (await readPortalConfig(configPath)) ??
+      createDefaultPortalConfig(path.dirname(configPath))
     return new HookCatalog(configPath, createHookSnapshot(config.hooks))
   }
 
@@ -47,9 +47,9 @@ export class HookCatalog {
   }
 
   public async reload(): Promise<HookSnapshot> {
-    const config = await readPortalConfig(this.configPath)
-    if (config === null)
-      throw new Error(`Portal config does not exist: ${this.configPath}`)
+    const config =
+      (await readPortalConfig(this.configPath)) ??
+      createDefaultPortalConfig(path.dirname(this.configPath))
     const next = createHookSnapshot(config.hooks)
     this.current = next
     return next

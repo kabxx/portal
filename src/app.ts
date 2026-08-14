@@ -32,7 +32,6 @@ import { SkillLibrary } from './skills/skill-library.ts'
 import {
   createDefaultPortalConfig,
   ensurePortalConfig,
-  readPortalConfig,
 } from './config/portal-config.ts'
 import { loadProjectInstructions } from './instructions/project-instructions.ts'
 import { createHookSnapshot } from './hooks/hook-config.ts'
@@ -40,7 +39,10 @@ import { HookCatalog } from './hooks/hook-catalog.ts'
 import { HookDispatcher } from './hooks/hook-dispatcher.ts'
 import { HookEventBus } from './hooks/hook-event-sink.ts'
 import { ChildRuntimeFactory } from './runtime/child-runtime-factory.ts'
-import { PortalMcpServer } from './mcp-server/mcp-server.ts'
+import {
+  PortalMcpServer,
+  resolvePortalMcpToken,
+} from './mcp-server/mcp-server.ts'
 import { McpMessageOperationStore } from './mcp-server/mcp-message-operations.ts'
 import {
   ThreadLifecycleService,
@@ -118,9 +120,7 @@ function readPortalVersion(): string {
 }
 
 interface Options {
-  browserEngine?: string
   browserExecutablePath?: string
-  browserRemoteDebuggingPort?: string
   dataDir?: string
 }
 
@@ -141,20 +141,21 @@ function buildProgram() {
     )
     .version(PORTAL_VERSION)
     .option(
-      '--browser-engine <engine>',
-      'browser automation engine (currently only chromium)'
-    )
-    .option(
       '--browser-executable-path <path>',
       'path to the browser executable used when launching a browser for CDP'
     )
     .option(
-      '--browser-remote-debugging-port <port>',
-      'remote debugging port used when launching the browser and connecting over CDP'
-    )
-    .option(
       '--data-dir <path>',
       'directory for config, history, skills, and the browser profile'
+    )
+    .addHelpText(
+      'after',
+      [
+        '',
+        'Commands:',
+        '  exec [options] [task]  Run one agent task without starting the TUI',
+        '  config [options]       Print the configuration file path',
+      ].join('\n')
     )
 }
 
@@ -180,22 +181,15 @@ export async function run(
   })
   const configPath = path.join(dataDirectory, 'config.yaml')
   const defaultPortalConfig = createDefaultPortalConfig(dataDirectory)
-  const existingPortalConfig = await readPortalConfig(configPath)
-  const settings = createPortalRuntimeSettings(
-    (existingPortalConfig ?? defaultPortalConfig).advanced
-  )
+  const settings = createPortalRuntimeSettings()
+  const skillRegistryPath = path.join(dataDirectory, 'state', 'skills.json')
+  const portalConfig = await ensurePortalConfig(configPath, defaultPortalConfig)
   const skillLibrary = new SkillLibrary({
     skillsDirectory: path.join(dataDirectory, 'skills'),
     tempDirectory: path.join(dataDirectory, 'temp', 'skill-install'),
-    registryPath: configPath,
-    policy: settings.skillPolicy,
+    registryPath: skillRegistryPath,
   })
   await skillLibrary.initialize()
-  const portalConfig = await ensurePortalConfig(
-    configPath,
-    defaultPortalConfig,
-    { rewriteWithComments: existingPortalConfig === null }
-  )
   const projectInstructions = await loadProjectInstructions({
     cwd,
     enabled: portalConfig.projectInstructions,
@@ -205,42 +199,21 @@ export async function run(
     createHookSnapshot(portalConfig.hooks)
   )
   const hookEvents = new HookEventBus()
-  const hookDispatcher = new HookDispatcher(
-    null,
-    hookEvents,
-    settings.hookCommandOutputLimitBytes
-  )
-  const browserEngine = options.browserEngine ?? portalConfig.browser.engine
-  if (browserEngine !== 'chromium') {
-    throw new Error(`Unsupported browser engine: ${browserEngine}`)
-  }
+  const hookDispatcher = new HookDispatcher(null, hookEvents)
+  const browserEngine = 'chromium'
   const browserExecutablePath = path.resolve(
     options.browserExecutablePath ?? portalConfig.browser.executablePath
   )
-  const browserRemoteDebuggingPort =
-    options.browserRemoteDebuggingPort === undefined
-      ? portalConfig.browser.remoteDebuggingPort
-      : Number(options.browserRemoteDebuggingPort)
-  if (
-    !Number.isSafeInteger(browserRemoteDebuggingPort) ||
-    browserRemoteDebuggingPort < 0 ||
-    browserRemoteDebuggingPort > 65_535
-  ) {
-    throw new Error(
-      `Invalid browser remote debugging port: ${browserRemoteDebuggingPort}`
-    )
-  }
+  const browserRemoteDebuggingPort = 0
   const browserProfileDir = path.resolve(portalConfig.browser.profilePath)
   const threadStore = await createThreadStore(
     path.join(dataDirectory, 'threads.db')
   )
   const threadManager = new ThreadManager(hookCatalog, hookDispatcher, cwd)
-  const threadOperations = new ThreadOperationCoordinator(
-    settings.cancelWaitTimeoutMs
-  )
+  const threadOperations = new ThreadOperationCoordinator()
   const mcpMessageOperations = new McpMessageOperationStore()
   const mcpForegroundOperations = new Set<McpForegroundOperation>()
-  const runCommandJobs = new RunCommandJobManager(settings.runCommand)
+  const runCommandJobs = new RunCommandJobManager()
   const commandRegistry = new CommandRegistry(DEFAULT_COMMANDS)
   const ui = dependencies.terminalController ?? new TerminalController()
   ui.bindThreadManager(threadManager)
@@ -286,7 +259,7 @@ export async function run(
           async () => await foregroundOperation.stopTarget?.stopGeneration()
         )
         await Promise.allSettled([stopGeneration, foregroundOperation.done])
-      }, settings.shutdownCloseTimeoutMs)
+      })
     }
     if (lifecycleForShutdown === null) {
       await threadOperations.cancelAll()
@@ -303,16 +276,13 @@ export async function run(
         } else {
           await lifecycleForShutdown.close(thread.id, 'shutdown')
         }
-      }, settings.shutdownCloseTimeoutMs)
+      })
     }
 
     if (browserLaunch !== null) {
       const activeBrowserLaunch = browserLaunch
       browserLaunch = null
-      await closeWithTimeout(
-        async () => await activeBrowserLaunch.close(),
-        settings.shutdownCloseTimeoutMs
-      )
+      await closeWithTimeout(async () => await activeBrowserLaunch.close())
     }
 
     threadStore.close()
@@ -385,10 +355,7 @@ export async function run(
           .values()
           .next().value
         if (mcpForegroundOperation !== undefined) {
-          void stopMcpForegroundOperation(
-            mcpForegroundOperation,
-            settings.shutdownCloseTimeoutMs
-          )
+          void stopMcpForegroundOperation(mcpForegroundOperation)
           return
         }
         if (
@@ -447,7 +414,7 @@ export async function run(
         browserExecutablePath,
         browserRemoteDebuggingPort,
         browserProfileDir,
-        { ...settings.browserLaunch, signal: startupController.signal }
+        { signal: startupController.signal }
       )
       browserStartupPromise = startupPromise
       try {
@@ -503,11 +470,7 @@ export async function run(
     }
     if (exitRequested) {
       const lateBrowserLaunch = browserLaunch
-      await closeLateBrowserLaunchAfterShutdown(
-        lateBrowserLaunch,
-        shutdown,
-        settings.shutdownCloseTimeoutMs
-      )
+      await closeLateBrowserLaunchAfterShutdown(lateBrowserLaunch, shutdown)
       return
     }
     const context = browserLaunch.context
@@ -587,17 +550,10 @@ export async function run(
       threadStore,
       runtimeRegistry,
       browserProfileDir,
-      initializationAttemptLimit: settings.initializationAttemptLimit,
       resolveConversationUrl,
       projectInstructions,
       createAdapter: async ({ provider, conversationUrl, signal }) =>
-        await createProviderAdapter(
-          context,
-          provider,
-          conversationUrl,
-          signal,
-          settings.providerTimings
-        ),
+        await createProviderAdapter(context, provider, conversationUrl, signal),
       createRuntime: async ({
         adapter,
         provider,
@@ -616,7 +572,6 @@ export async function run(
           projectInstructions,
           hookDispatcher,
           advertiseSpawnTool: settings.spawnDepthLimit > 0,
-          requestAttemptLimit: settings.requestAttemptLimit,
           workingDirectory: cwd,
           toolServices: createToolServices({
             context,
@@ -655,57 +610,51 @@ export async function run(
     )
 
     hookDispatcher.setModelExecutor(
-      new ChildRuntimeFactory(
-        'chatgpt',
-        async (request) => {
-          const adapter = await createProviderAdapter(
-            context,
-            request.provider,
-            null,
-            request.signal,
-            settings.providerTimings
-          )
-          let runtime: RuntimeCore | null = null
-          try {
-            runtime = await createRuntime(adapter, {
+      new ChildRuntimeFactory('chatgpt', async (request) => {
+        const adapter = await createProviderAdapter(
+          context,
+          request.provider,
+          null,
+          request.signal
+        )
+        let runtime: RuntimeCore | null = null
+        try {
+          runtime = await createRuntime(adapter, {
+            model: null,
+            setupMode: 'full',
+            skillLibrary,
+            projectInstructions,
+            hookDispatcher,
+            workingDirectory: cwd,
+            allowedTools: request.allowedTools,
+            toolServices: createToolServices({
+              context,
+              provider: request.provider,
               model: null,
-              setupMode: 'full',
               skillLibrary,
               projectInstructions,
+              runCommandJobs,
               hookDispatcher,
-              requestAttemptLimit: settings.requestAttemptLimit,
+              settings,
+              currentSpawnDepth: request.executionScope.spawnDepth,
               workingDirectory: cwd,
-              allowedTools: request.allowedTools,
-              toolServices: createToolServices({
-                context,
-                provider: request.provider,
-                model: null,
-                skillLibrary,
-                projectInstructions,
-                runCommandJobs,
-                hookDispatcher,
-                settings,
-                currentSpawnDepth: request.executionScope.spawnDepth,
-                workingDirectory: cwd,
-              }),
-              signal: request.signal,
-            })
-            const childRuntime = runtime
-            return {
-              runtime: childRuntime,
-              close: async () => await childRuntime.close(),
-            }
-          } catch (error) {
-            if (runtime !== null) {
-              await runtime.close().catch(() => {})
-            } else {
-              await adapter.close().catch(() => {})
-            }
-            throw error
+            }),
+            signal: request.signal,
+          })
+          const childRuntime = runtime
+          return {
+            runtime: childRuntime,
+            close: async () => await childRuntime.close(),
           }
-        },
-        settings.childRuntimeCloseTimeoutMs
-      )
+        } catch (error) {
+          if (runtime !== null) {
+            await runtime.close().catch(() => {})
+          } else {
+            await adapter.close().catch(() => {})
+          }
+          throw error
+        }
+      })
     )
 
     ui.setBrowserConnected(true)
@@ -725,26 +674,20 @@ export async function run(
       messageOperations: mcpMessageOperations,
       runCommandJobs,
       foregroundOperations: mcpForegroundOperations,
-      shutdownCloseTimeoutMs: settings.shutdownCloseTimeoutMs,
       isForegroundOperationActive: () => currentOperation !== null,
       withCancellableOperation,
     })
 
     mcpServer = new PortalMcpServer({
-      host: portalConfig.listeners.mcp.host,
-      port: portalConfig.listeners.mcp.port,
-      token: portalConfig.listeners.mcp.token,
+      host: portalConfig.mcp.host,
+      port: portalConfig.mcp.port,
+      token: resolvePortalMcpToken(),
       handlers: mcpHandlers,
-      closeTimeoutMs: settings.shutdownCloseTimeoutMs,
       onStop: async () => {
         const foregroundOperations = [...mcpForegroundOperations]
         await Promise.all(
           foregroundOperations.map(
-            async (operation) =>
-              await stopMcpForegroundOperation(
-                operation,
-                settings.shutdownCloseTimeoutMs
-              )
+            async (operation) => await stopMcpForegroundOperation(operation)
           )
         )
         await mcpMessageOperations.stopAll()

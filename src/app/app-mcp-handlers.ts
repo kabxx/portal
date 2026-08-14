@@ -33,7 +33,6 @@ export interface McpHandlerDependencies {
   messageOperations: McpMessageOperationStore
   runCommandJobs: Pick<RunCommandJobService, 'list' | 'stop'>
   foregroundOperations: Set<McpForegroundOperation>
-  shutdownCloseTimeoutMs: number
   isForegroundOperationActive: () => boolean
   withCancellableOperation: <T>(
     stopTarget: StopTarget | null,
@@ -52,7 +51,6 @@ export function createMcpHandlers({
   messageOperations,
   runCommandJobs,
   foregroundOperations,
-  shutdownCloseTimeoutMs,
   isForegroundOperationActive,
   withCancellableOperation,
 }: McpHandlerDependencies): PortalMcpHandlers {
@@ -98,7 +96,7 @@ export function createMcpHandlers({
     }
     foregroundOperations.add(operation)
     const stopAfterRequestAbort = () => {
-      void stopMcpForegroundOperation(operation, shutdownCloseTimeoutMs)
+      void stopMcpForegroundOperation(operation)
     }
     requestSignal.addEventListener('abort', stopAfterRequestAbort, {
       once: true,

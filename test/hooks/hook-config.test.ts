@@ -11,7 +11,6 @@ import {
 test('parseHooksConfig accepts command, prompt, and agent handlers', () => {
   const config = parseHooksConfig({
     enabled: true,
-    maxDepth: 2,
     handlers: [
       {
         name: 'protect-command',
@@ -39,7 +38,7 @@ test('parseHooksConfig accepts command, prompt, and agent handlers', () => {
   })
 
   assert.equal(config.enabled, true)
-  assert.equal(config.maxDepth, 2)
+  assert.equal(config.maxDepth, 1)
   assert.equal(config.handlers[0]?.onError, 'deny')
   assert.equal(config.handlers[1]?.onError, 'continue')
   assert.deepEqual(config.handlers[1]?.match, { provider: 'qwen' })
@@ -99,34 +98,11 @@ test('parseHooksConfig rejects duplicate names and spawn in agent hooks', () => 
   )
 })
 
-test('parseHooksConfig rejects removed agent tools', () => {
-  for (const tool of ['load_skill', 'mcp_search_tool', 'mcp_call_tool']) {
-    assert.throws(
-      () =>
-        parseHooksConfig({
-          handlers: [
-            {
-              name: 'legacy-mcp-agent',
-              type: 'agent',
-              events: ['tool.before'],
-              prompt: 'inspect',
-              tools: [tool],
-            },
-          ],
-        }),
-      new RegExp(`removed Portal 2\\.0 tool: ${tool}`)
-    )
-  }
-})
-
-test('parseHooksConfig rejects invalid integer and enum fields', () => {
-  for (const maxDepth of ['1', -1, 9, 1.5]) {
-    assert.throws(
-      () => parseHooksConfig({ maxDepth }),
-      /hooks\.maxDepth must be an integer from 0 to 8/
-    )
-  }
-
+test('parseHooksConfig rejects unsupported and invalid enum fields', () => {
+  assert.throws(
+    () => parseHooksConfig({ maxDepth: 1 }),
+    /Unsupported hooks fields: maxDepth/
+  )
   for (const timeoutMs of ['5000', 0, 300_001, 1.5]) {
     assert.throws(
       () =>

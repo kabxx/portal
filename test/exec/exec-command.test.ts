@@ -8,6 +8,7 @@ import {
   EXEC_EXIT_SUCCESS,
   EXEC_EXIT_TIMEOUT,
   EXEC_EXIT_USAGE,
+  MAX_EXEC_STDIN_BYTES,
   runExecCli,
   type ExecCliDependencies,
 } from '../../src/exec/exec-command.ts'
@@ -172,6 +173,25 @@ test('runExecCli rejects empty TTY input without creating a session', async () =
   assert.equal(created, false)
 })
 
+test('runExecCli rejects piped stdin that exceeds its byte budget', async () => {
+  let created = false
+  const harness = createHarness(async () => 'unused')
+  harness.dependencies.input = pipedInput(
+    Buffer.alloc(MAX_EXEC_STDIN_BYTES + 1, 'x')
+  )
+  harness.dependencies.createSession = async () => {
+    created = true
+    throw new Error('must not run')
+  }
+
+  assert.equal(
+    await runExecCli(['--provider', 'kimi'], harness.dependencies),
+    EXEC_EXIT_USAGE
+  )
+  assert.equal(created, false)
+  assert.match(harness.stderr.value, /stdin exceeds/)
+})
+
 function createHarness(
   run: (
     task: string,
@@ -205,7 +225,7 @@ function createHarness(
   return { dependencies, stdout, stderr, closeCalls: () => closes }
 }
 
-function pipedInput(value: string): Readable & { isTTY?: boolean } {
+function pipedInput(value: string | Buffer): Readable & { isTTY?: boolean } {
   return Object.assign(Readable.from([value]), { isTTY: false })
 }
 

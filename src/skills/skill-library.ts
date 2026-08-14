@@ -21,7 +21,6 @@ import {
   type SkillRegistryData,
   type SkillRegistryEntry,
   type SkillRegistryTransaction,
-  updateSkillRegistry,
   withSkillRegistryTransaction,
 } from './skill-registry.ts'
 
@@ -160,7 +159,7 @@ export class SkillLibrary {
         throw combineSkillErrors(commitError, cleanupError)
       }
       warnings.push(
-        `Skills were committed, but config lock cleanup failed: ${getErrorMessage(commitError)}`
+        `Skills were committed, but registry lock cleanup failed: ${getErrorMessage(commitError)}`
       )
     }
     if (cleanupError !== null) {
@@ -290,15 +289,20 @@ export class SkillLibrary {
 
   private async setEnabled(name: string, enabled: boolean): Promise<boolean> {
     validateSkillName(name)
-    return await updateSkillRegistry(this.options.registryPath, (registry) => {
-      assertSkillRegistryWritable(registry)
-      const entry = registry.entries.get(name)
-      if (entry === undefined) {
-        return false
+    return await withSkillRegistryTransaction(
+      this.options.registryPath,
+      async (transaction) => {
+        assertSkillRegistryWritable(transaction.registry)
+        const entry = transaction.registry.entries.get(name)
+        if (entry === undefined || entry.enabled === enabled) {
+          transaction.noChange()
+          return entry !== undefined
+        }
+        transaction.registry.entries.set(name, { ...entry, enabled })
+        await transaction.commit()
+        return true
       }
-      registry.entries.set(name, { ...entry, enabled })
-      return true
-    })
+    )
   }
 
   private async loadRegistry(): Promise<SkillRegistryData> {
@@ -542,7 +546,7 @@ export async function finalizeCommittedSkillRemoval(
   const warnings: string[] = []
   if (transactionError !== null) {
     warnings.push(
-      `Skill "${name}" was removed, but config lock cleanup failed: ${getErrorMessage(transactionError)}`
+      `Skill "${name}" was removed, but registry lock cleanup failed: ${getErrorMessage(transactionError)}`
     )
   }
   if (cleanupError !== null) {
@@ -566,7 +570,7 @@ function assertSkillRegistryWritable(registry: SkillRegistryData): void {
   if (registry.issues.length > 0) {
     throw new Error(
       [
-        'Skill registry contains invalid entries. Fix config.yaml before modifying it.',
+        'Skill registry contains invalid entries. Fix the private Skill registry before modifying it.',
         ...registry.issues.map(({ name, message }) => `- ${name}: ${message}`),
       ].join('\n')
     )

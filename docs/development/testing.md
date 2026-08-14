@@ -1,5 +1,7 @@
 # Testing
 
+[Back to README](../../README.md)
+
 portal uses `node:test` for unit tests and deterministic local integration tests. The default suite does not open provider websites or use provider accounts.
 
 ## Commands
@@ -44,33 +46,6 @@ versions against `package.json`, and exercises both compiled facades. Start
 release builds from `npm ci`; dependency upgrades must update the exact versions
 and lockfile integrity together.
 
-## 2026-07-17 audit
-
-The source inventory contains 96 TypeScript or TSX files. `provider-id.ts` is type-only, and the process entry point `index.ts` is intentionally not imported by the test process. Other modules only appear in the coverage report when an application or test entry point loads them, so the console report does not replace this static inventory.
-
-The audited Node 24.13.0 run in a clean dedicated worktree contained 691 tests: 690 passed, 1 was skipped by a platform condition, and none failed. The loaded source baseline was 90.78% lines, 80.57% branches, and 81.99% functions. CI runs the same coverage command on Node 24, so compare trends within the same Node and operating-system environment rather than treating small cross-environment changes as regressions.
-
-On the audited Windows machine, `npm test` completed in about 11 seconds. The ChatGPT submit test file fell from about 41.4 seconds to 2.8 seconds by using short test-only timing overrides and controlled response events; production settle timing remains 1,000 ms. Doubao and GLM submit tests no longer keep the process alive for their default 30-second request-start grace timers.
-
-The audit removed migration-only checks that only proved deleted command names, configuration fields, and prompt wording were absent. It retained negative tests for current contracts such as invalid input, cancellation, cleanup, incomplete provider responses, path and size limits, and secret redaction. The generic configuration test still verifies that unsupported fields do not cause an existing file to be rewritten.
-
-Provider parser tests no longer read ignored response captures from `temp/`. The retained sanitized samples cover the same Doubao creation snapshot, Gemini framed image replacement, and ChatGPT current-node JSON behavior without private conversation data or machine-dependent skips.
-
-Focused tests were added for:
-
-- Hook and Portal MCP Server commands;
-- Hook event subscription and unsubscribe behavior;
-- inbound MCP authentication, message operations, cancellation, and service failures;
-- `portal exec` argument/stdin routing, output separation, exit codes, and TUI-free dispatch;
-- repeat attempt boundaries;
-- Skill HTTP redirects, retries, cancellation, credential redaction, limits, and partial-file cleanup;
-- Skill Hub successful downloads, validation, and response boundaries;
-- native config lock contention, timeout, process termination, and atomic writes;
-- Skill staging, lock-time registry rechecks, and add/remove rollback behavior;
-- Portal MCP Server lifecycle serialization and retry behavior;
-- browser launch validation before profile creation;
-- spawn input and progress-rendering isolation.
-
 ## Known gaps
 
 | Area                            | Automated coverage                                                                                                                            | Remaining risk                                                                                                                                   |
@@ -90,12 +65,12 @@ Chromium executable without changing Portal's normal browser arguments. The
 test does not open a Provider website or exercise the full TUI lifecycle.
 The deterministic app composition smoke separately runs the top-level startup
 and shutdown wiring with temporary local state and injected browser, provider,
-runtime, and Ink boundaries. It starts a real local API listener, creates and
-cancels a thread operation, and verifies that a real command job and local
-resources close during shutdown; it is not a real terminal or provider test.
+runtime, and Ink boundaries. It creates and cancels a thread operation, then
+verifies that a real command job and local resources close during shutdown; it
+is not a real terminal or provider test.
 Real provider checks stay outside `npm test` and ordinary public CI because they
 require private login state, network access, provider-specific accounts, and
 careful handling of captured output. A private runner can perform those checks,
 but they are not a deterministic replacement for unit tests. Run the manual
-browser checklist in [Contributing](contributing.md) after changing provider
+browser checklist in [Contributing](../../CONTRIBUTING.md) after changing provider
 selectors, runtime lifecycle, uploads, capabilities, or cancellation.

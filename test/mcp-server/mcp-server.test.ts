@@ -5,7 +5,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 
-import { PortalMcpServer } from '../../src/mcp-server/mcp-server.ts'
+import {
+  PortalMcpServer,
+  resolvePortalMcpToken,
+} from '../../src/mcp-server/mcp-server.ts'
 import type {
   PortalMcpHandlers,
   PortalMcpMessageOperation,
@@ -22,6 +25,15 @@ const thread: PortalMcpThreadSummary = {
   createdAt: 1,
   updatedAt: 2,
 }
+
+test('Portal MCP token comes only from the environment and is preserved', () => {
+  assert.equal(resolvePortalMcpToken({}), null)
+  assert.equal(resolvePortalMcpToken({ PORTAL_MCP_TOKEN: '' }), null)
+  assert.equal(
+    resolvePortalMcpToken({ PORTAL_MCP_TOKEN: '  exact secret  ' }),
+    '  exact secret  '
+  )
+})
 
 function createHandlers(calls: string[] = []): PortalMcpHandlers {
   const operation: PortalMcpMessageOperation = {

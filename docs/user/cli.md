@@ -1,6 +1,6 @@
 # CLI
 
-[README](../README.md) | [Configuration](configuration.md) | [Providers](providers.md) | [Architecture](architecture.md)
+[README](../../README.md) | [Configuration](configuration.md) | [Providers](providers.md) | [Architecture](../development/architecture.md)
 
 portal opens on the command help screen. Run `/help` at any time to list the available top-level commands. Top-level commands and first-level subcommands support unique-prefix completion with `Tab`. Typing `/` opens a contextual command hint bubble below the input. Each hint list shows at most five rows, `Up` / `Down` browse with wraparound, and `Tab` completes the selected item. `Enter` completes the selected slash-command hint and submits it in one step; ordinary text submits unchanged.
 
@@ -38,13 +38,18 @@ precedence. Relative values resolve from the working directory; an absolute
 environment value is safer when portal is started in different workspaces.
 `npm run dev` explicitly uses the clone's `data/` directory.
 
-The only supported browser engine is `chromium`. portal checks common Edge, Chrome, Chromium, Brave, Vivaldi, Opera, Opera GX, and Arc locations where those browsers are available. Override the detected executable or remote debugging port when needed:
+The only supported browser engine is Chromium. Portal checks common Edge,
+Chrome, Chromium, Brave, Vivaldi, Opera, Opera GX, and Arc locations where those
+browsers are available. Override only the detected executable when needed:
 
 ```bash
-portal --browser-engine chromium --browser-executable-path "<browser executable path>" --browser-remote-debugging-port 9222
+portal --browser-executable-path "<browser executable path>"
 ```
 
-`browser.executablePath` and `browser.profilePath` accept absolute or relative paths. Relative configured paths resolve from portal's working directory. Run `portal --help` (or `npm run dev -- --help` from source) for every startup option, or see [Configuration](configuration.md#browser) for persistent settings.
+Run `portal config` to print the optional configuration path without opening the
+browser or TUI. `browser.executablePath` accepts an absolute or relative path;
+relative values resolve from Portal's startup directory. See
+[Configuration](configuration.md#browser) for persistent settings.
 
 ## Headless execution
 
@@ -60,8 +65,8 @@ Get-Content task.txt | portal exec --provider chatgpt
 
 The prompt may be supplied as arguments, as stdin with `-`, or solely through
 piped stdin. When arguments and piped stdin are both present, stdin is appended
-as task context. `--option` selects a provider model option. The provider is
-required and is never guessed.
+as task context. Piped stdin is limited to 4 MiB. `--option` selects a provider
+model option. The provider is required and is never guessed.
 
 The final assistant response is written to stdout. Connection status, login
 waits, tool names, warnings, and fatal errors are written to stderr. Exit codes
@@ -163,7 +168,9 @@ The live `/help` output is the source of truth for commands available in the cur
 | `Ctrl+C`                                                | Cancel busy work; while idle with input, clear that input    |
 | `Ctrl+D`                                                | Exit while idle and the input is empty                       |
 
-Input submission is disabled while portal is busy. Edit the complete `keybindings` table in `<data-dir>/config.yaml` to change shortcuts; valid saves apply automatically. See [Configuration](configuration.md#keybindings).
+Input submission is disabled while Portal is busy. Add only the actions that
+differ from platform defaults under `keybindings`; valid saves apply
+automatically. See [Configuration](configuration.md#keybindings).
 
 ## Background jobs
 

@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   ExecUsageError,
+  MAX_EXEC_TIMEOUT_SECONDS,
   parseExecTimeoutSeconds,
   resolveExecTask,
 } from '../../src/exec/exec-input.ts'
@@ -36,7 +37,15 @@ test('resolveExecTask rejects empty interactive input', () => {
 test('parseExecTimeoutSeconds accepts positive values only', () => {
   assert.equal(parseExecTimeoutSeconds(undefined), null)
   assert.equal(parseExecTimeoutSeconds('1.5'), 1.5)
+  assert.equal(
+    parseExecTimeoutSeconds(String(MAX_EXEC_TIMEOUT_SECONDS)),
+    MAX_EXEC_TIMEOUT_SECONDS
+  )
   for (const value of ['0', '-1', 'NaN', 'Infinity']) {
     assert.throws(() => parseExecTimeoutSeconds(value), ExecUsageError)
   }
+  assert.throws(
+    () => parseExecTimeoutSeconds(String(MAX_EXEC_TIMEOUT_SECONDS + 0.001)),
+    ExecUsageError
+  )
 })

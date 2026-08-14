@@ -171,13 +171,7 @@ async function runSpawnTask({
         signal
       )
     }
-    adapter = await createAdapterForProvider(
-      context,
-      provider,
-      null,
-      signal,
-      settings.providerTimings
-    )
+    adapter = await createAdapterForProvider(context, provider, null, signal)
     runtime = await createRuntimeFromAdapter(adapter, {
       model,
       setupMode: 'full',
@@ -185,7 +179,6 @@ async function runSpawnTask({
       projectInstructions,
       hookDispatcher,
       advertiseSpawnTool: currentSpawnDepth < settings.spawnDepthLimit,
-      requestAttemptLimit: settings.requestAttemptLimit,
       workingDirectory,
       toolServices: createToolServices({
         context,

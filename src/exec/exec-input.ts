@@ -5,6 +5,8 @@ export class ExecUsageError extends Error {
   }
 }
 
+export const MAX_EXEC_TIMEOUT_SECONDS = 2_147_483_647 / 1000
+
 export function resolveExecTask(
   promptArguments: readonly string[],
   stdinText: string,
@@ -36,8 +38,14 @@ export function parseExecTimeoutSeconds(
 ): number | null {
   if (value === undefined) return null
   const seconds = Number(value)
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    throw new ExecUsageError('--timeout must be a positive number of seconds.')
+  if (
+    !Number.isFinite(seconds) ||
+    seconds <= 0 ||
+    seconds > MAX_EXEC_TIMEOUT_SECONDS
+  ) {
+    throw new ExecUsageError(
+      `--timeout must be greater than 0 and at most ${MAX_EXEC_TIMEOUT_SECONDS} seconds.`
+    )
   }
   return seconds
 }

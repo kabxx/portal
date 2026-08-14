@@ -13,7 +13,6 @@ import {
 import {
   createDefaultPortalConfig,
   ensurePortalConfig,
-  readPortalConfig,
 } from '../config/portal-config.ts'
 import { HookCatalog } from '../hooks/hook-catalog.ts'
 import { createHookSnapshot } from '../hooks/hook-config.ts'
@@ -59,6 +58,12 @@ export async function createPortalExecSession(
   return await PortalApplicationCore.open(options)
 }
 
+export interface PortalApplicationCoreDependencies {
+  launchBrowser?: typeof launchBrowser
+  createProviderAdapter?: typeof createAdapterForProvider
+  createRuntime?: typeof createRuntimeFromAdapter
+}
+
 /** UI-independent application composition used by one-shot execution. */
 export class PortalApplicationCore implements PortalExecSession {
   private threadId: string | null = null
@@ -75,8 +80,13 @@ export class PortalApplicationCore implements PortalExecSession {
   ) {}
 
   public static async open(
-    options: PortalExecSessionOptions
+    options: PortalExecSessionOptions,
+    dependencies: PortalApplicationCoreDependencies = {}
   ): Promise<PortalApplicationCore> {
+    const launchBrowserImpl = dependencies.launchBrowser ?? launchBrowser
+    const createProviderAdapter =
+      dependencies.createProviderAdapter ?? createAdapterForProvider
+    const createRuntime = dependencies.createRuntime ?? createRuntimeFromAdapter
     throwIfAborted(options.signal)
     const dataDirectory = resolvePortalDataDirectory({
       cwd: options.cwd,
@@ -86,20 +96,15 @@ export class PortalApplicationCore implements PortalExecSession {
     })
     const configPath = path.join(dataDirectory, 'config.yaml')
     const defaults = createDefaultPortalConfig(dataDirectory)
-    const existing = await readPortalConfig(configPath)
-    const settings = createPortalRuntimeSettings(
-      (existing ?? defaults).advanced
-    )
+    const settings = createPortalRuntimeSettings()
+    const skillRegistryPath = path.join(dataDirectory, 'state', 'skills.json')
+    const portalConfig = await ensurePortalConfig(configPath, defaults)
     const skillLibrary = new SkillLibrary({
       skillsDirectory: path.join(dataDirectory, 'skills'),
       tempDirectory: path.join(dataDirectory, 'temp', 'skill-install'),
-      registryPath: configPath,
-      policy: settings.skillPolicy,
+      registryPath: skillRegistryPath,
     })
     await skillLibrary.initialize()
-    const portalConfig = await ensurePortalConfig(configPath, defaults, {
-      rewriteWithComments: existing === null,
-    })
     const projectInstructions = await loadProjectInstructions({
       cwd: options.cwd,
       enabled: portalConfig.projectInstructions,
@@ -108,21 +113,12 @@ export class PortalApplicationCore implements PortalExecSession {
       configPath,
       createHookSnapshot(portalConfig.hooks)
     )
-    const hookDispatcher = new HookDispatcher(
-      null,
-      new HookEventBus(),
-      settings.hookCommandOutputLimitBytes
-    )
-    const browserEngine = options.browserEngine ?? portalConfig.browser.engine
-    if (browserEngine !== 'chromium') {
-      throw new Error(`Unsupported browser engine: ${browserEngine}`)
-    }
+    const hookDispatcher = new HookDispatcher(null, new HookEventBus())
+    const browserEngine = 'chromium'
     const browserExecutablePath = path.resolve(
       options.browserExecutablePath ?? portalConfig.browser.executablePath
     )
-    const browserRemoteDebuggingPort =
-      options.browserRemoteDebuggingPort ??
-      portalConfig.browser.remoteDebuggingPort
+    const browserRemoteDebuggingPort = 0
     const browserProfileDir = path.resolve(portalConfig.browser.profilePath)
     const threadStore = await createThreadStore(
       path.join(dataDirectory, 'threads.db')
@@ -133,12 +129,12 @@ export class PortalApplicationCore implements PortalExecSession {
     })
     let browserLaunch: Awaited<ReturnType<typeof launchBrowser>>
     try {
-      browserLaunch = await launchBrowser(
+      browserLaunch = await launchBrowserImpl(
         browserEngine,
         browserExecutablePath,
         browserRemoteDebuggingPort,
         browserProfileDir,
-        { ...settings.browserLaunch, signal: options.signal }
+        { signal: options.signal }
       )
     } catch (error) {
       threadStore.close()
@@ -149,11 +145,9 @@ export class PortalApplicationCore implements PortalExecSession {
       hookDispatcher,
       options.cwd
     )
-    const threadOperations = new ThreadOperationCoordinator(
-      settings.cancelWaitTimeoutMs
-    )
+    const threadOperations = new ThreadOperationCoordinator()
     const runtimeRegistry = new ThreadRuntimeRegistry<RuntimeCore>()
-    const runCommandJobs = new RunCommandJobManager(settings.runCommand)
+    const runCommandJobs = new RunCommandJobManager()
     const context = browserLaunch.context
 
     const lifecycle = new ThreadLifecycleService({
@@ -162,17 +156,10 @@ export class PortalApplicationCore implements PortalExecSession {
       threadStore,
       runtimeRegistry,
       browserProfileDir,
-      initializationAttemptLimit: settings.initializationAttemptLimit,
       resolveConversationUrl,
       projectInstructions,
       createAdapter: async ({ provider, conversationUrl, signal }) =>
-        await createAdapterForProvider(
-          context,
-          provider,
-          conversationUrl,
-          signal,
-          settings.providerTimings
-        ),
+        await createProviderAdapter(context, provider, conversationUrl, signal),
       createRuntime: async ({
         adapter,
         provider,
@@ -180,14 +167,13 @@ export class PortalApplicationCore implements PortalExecSession {
         projectInstructions,
         signal,
       }) =>
-        await createRuntimeFromAdapter(adapter, {
+        await createRuntime(adapter, {
           model,
           setupMode: 'inline',
           skillLibrary,
           projectInstructions,
           hookDispatcher,
           advertiseSpawnTool: settings.spawnDepthLimit > 0,
-          requestAttemptLimit: settings.requestAttemptLimit,
           workingDirectory: options.cwd,
           toolServices: createToolServices({
             context,
@@ -222,6 +208,8 @@ export class PortalApplicationCore implements PortalExecSession {
       runCommandJobs,
       settings,
       workingDirectory: options.cwd,
+      createProviderAdapter,
+      createRuntime,
     })
 
     const holder: { core: PortalApplicationCore | null } = { core: null }
@@ -234,14 +222,10 @@ export class PortalApplicationCore implements PortalExecSession {
       for (const thread of threadManager.listThreads()) {
         await closeWithTimeout(
           async () =>
-            await lifecycle.close(thread.id, 'shutdown').then(() => {}),
-          settings.shutdownCloseTimeoutMs
+            await lifecycle.close(thread.id, 'shutdown').then(() => {})
         )
       }
-      await closeWithTimeout(
-        async () => await browserLaunch.close(),
-        settings.shutdownCloseTimeoutMs
-      )
+      await closeWithTimeout(async () => await browserLaunch.close())
       threadStore.close()
     })
     const core = new PortalApplicationCore(
@@ -356,6 +340,8 @@ function configureHookModelExecutor({
   runCommandJobs,
   settings,
   workingDirectory,
+  createProviderAdapter,
+  createRuntime,
 }: {
   hookDispatcher: HookDispatcher
   context: Parameters<typeof createToolServices>[0]['context']
@@ -364,55 +350,51 @@ function configureHookModelExecutor({
   runCommandJobs: RunCommandJobManager
   settings: PortalRuntimeSettings
   workingDirectory: string
+  createProviderAdapter: typeof createAdapterForProvider
+  createRuntime: typeof createRuntimeFromAdapter
 }): void {
   hookDispatcher.setModelExecutor(
-    new ChildRuntimeFactory(
-      'chatgpt',
-      async (request) => {
-        const adapter = await createAdapterForProvider(
-          context,
-          request.provider,
-          null,
-          request.signal,
-          settings.providerTimings
-        )
-        let runtime: RuntimeCore | null = null
-        try {
-          runtime = await createRuntimeFromAdapter(adapter, {
+    new ChildRuntimeFactory('chatgpt', async (request) => {
+      const adapter = await createProviderAdapter(
+        context,
+        request.provider,
+        null,
+        request.signal
+      )
+      let runtime: RuntimeCore | null = null
+      try {
+        runtime = await createRuntime(adapter, {
+          model: null,
+          setupMode: 'full',
+          skillLibrary,
+          projectInstructions,
+          hookDispatcher,
+          workingDirectory,
+          allowedTools: request.allowedTools,
+          toolServices: createToolServices({
+            context,
+            provider: request.provider,
             model: null,
-            setupMode: 'full',
             skillLibrary,
             projectInstructions,
+            runCommandJobs,
             hookDispatcher,
-            requestAttemptLimit: settings.requestAttemptLimit,
+            settings,
+            currentSpawnDepth: request.executionScope.spawnDepth,
             workingDirectory,
-            allowedTools: request.allowedTools,
-            toolServices: createToolServices({
-              context,
-              provider: request.provider,
-              model: null,
-              skillLibrary,
-              projectInstructions,
-              runCommandJobs,
-              hookDispatcher,
-              settings,
-              currentSpawnDepth: request.executionScope.spawnDepth,
-              workingDirectory,
-            }),
-            signal: request.signal,
-          })
-          const childRuntime = runtime
-          return {
-            runtime: childRuntime,
-            close: async () => await childRuntime.close(),
-          }
-        } catch (error) {
-          if (runtime !== null) await runtime.close().catch(() => {})
-          else await adapter.close().catch(() => {})
-          throw error
+          }),
+          signal: request.signal,
+        })
+        const childRuntime = runtime
+        return {
+          runtime: childRuntime,
+          close: async () => await childRuntime.close(),
         }
-      },
-      settings.childRuntimeCloseTimeoutMs
-    )
+      } catch (error) {
+        if (runtime !== null) await runtime.close().catch(() => {})
+        else await adapter.close().catch(() => {})
+        throw error
+      }
+    })
   )
 }

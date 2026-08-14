@@ -19,7 +19,7 @@ export class HookConfigError extends Error {
   }
 }
 
-const HOOK_FIELDS = new Set(['enabled', 'maxDepth', 'handlers'])
+const HOOK_FIELDS = new Set(['enabled', 'handlers'])
 const HANDLER_FIELDS = new Set([
   'name',
   'enabled',
@@ -46,12 +46,6 @@ const PROVIDER_IDS = new Set<string>([
   'qwen',
   'kimi',
 ])
-const REMOVED_AGENT_TOOLS = new Set([
-  'load_skill',
-  'mcp_search_tool',
-  'mcp_call_tool',
-])
-
 export function createDefaultHooksConfig(): HooksConfig {
   return { enabled: false, maxDepth: 1, handlers: [] }
 }
@@ -68,10 +62,6 @@ export function parseHooksConfig(value: unknown): HooksConfig {
   if (typeof enabled !== 'boolean') {
     throw new HookConfigError('hooks.enabled must be a boolean')
   }
-  const maxDepth = value.maxDepth ?? 1
-  if (!isSafeInteger(maxDepth) || maxDepth < 0 || maxDepth > 8) {
-    throw new HookConfigError('hooks.maxDepth must be an integer from 0 to 8')
-  }
   const rawHandlers = value.handlers ?? []
   if (!Array.isArray(rawHandlers)) {
     throw new HookConfigError('hooks.handlers must be an array')
@@ -86,7 +76,7 @@ export function parseHooksConfig(value: unknown): HooksConfig {
     }
     names.add(handler.name)
   }
-  return { enabled, maxDepth, handlers }
+  return { enabled, maxDepth: 1, handlers }
 }
 
 export function createHookSnapshot(config: HooksConfig): HookSnapshot {
@@ -179,12 +169,6 @@ function parseHandler(value: unknown, label: string): HookHandler {
   }
   if (tools.includes('spawn')) {
     throw new HookConfigError(`${label}.tools cannot include spawn`)
-  }
-  const removedTool = tools.find((tool) => REMOVED_AGENT_TOOLS.has(tool))
-  if (removedTool !== undefined) {
-    throw new HookConfigError(
-      `${label}.tools includes removed Portal 2.0 tool: ${removedTool}`
-    )
   }
   const maxTurns = value.maxTurns ?? 8
   if (!isSafeInteger(maxTurns) || maxTurns < 1 || maxTurns > 32) {

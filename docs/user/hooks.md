@@ -1,6 +1,6 @@
 # Hooks
 
-[Back to README](../README.md)
+[Back to README](../../README.md)
 
 Hooks run configured handlers at stable thread, turn, tool, and spawn lifecycle points. They are implemented below the TUI, `portal exec`, and Portal MCP Server surfaces, so the same Hook policy applies regardless of how a turn starts.
 
@@ -11,7 +11,6 @@ Hooks are disabled by default. Editing `<data-dir>/config.yaml` and enabling Hoo
 ```yaml
 hooks:
   enabled: true
-  maxDepth: 1
   handlers:
     - name: protect-commands
       enabled: true
@@ -29,7 +28,9 @@ hooks:
 
 `hooks.enabled` is the single global switch. Each handler also has an optional `enabled` switch. A turn captures one immutable Hook snapshot when it starts; config changes affect later turns, while child `spawn` calls inherit the parent turn's snapshot.
 
-`maxDepth` limits Hook-triggered model handlers. The default is `1`: an agent Hook can trigger another matching Hook, but the next nested level is skipped. A handler never triggers itself recursively.
+Hook-triggered model handlers have a fixed nesting limit of one child level. An
+agent Hook can trigger another matching Hook, but the next nested level is
+skipped. A handler never triggers itself recursively.
 
 ## Handler types
 
@@ -37,7 +38,7 @@ hooks:
 
 A command handler launches the configured argv directly with `shell: false`. It receives one Hook event envelope as JSON on stdin and must write one JSON object to stdout. Relative command paths resolve from portal's current working directory.
 
-Command handlers have bounded runtime and output. Cancellation terminates the process tree; Windows uses a Job Object and POSIX systems use process groups. stderr is used only for local error details and is not sent through the API event stream.
+Command handlers have bounded runtime and output. Cancellation terminates the process tree; Windows uses a Job Object and POSIX systems use process groups. stderr is used only for local error details and is not part of the handler's JSON result.
 
 ### Prompt
 

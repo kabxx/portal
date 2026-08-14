@@ -1,6 +1,6 @@
 # Provider Development
 
-[Providers](providers.md) | [Architecture](architecture.md) | [Testing](testing.md) | [Security](security.md) | [Contributing](contributing.md)
+[Providers](../user/providers.md) | [Architecture](architecture.md) | [Testing](testing.md) | [Security](../../SECURITY.md) | [Contributing](../../CONTRIBUTING.md)
 
 This guide is the implementation and review checklist for adding a web AI Provider to portal. It documents the current repository contracts; it does not make private Provider routes, DOM structures, or protocols stable.
 
@@ -118,7 +118,8 @@ Check the states that are safely available: signed in and signed out, new and ex
 - Keep raw captures, screenshots, probes, and temporary fixtures under ignored `temp/` paths.
 - Convert a required fixture into the smallest sanitized sample that still proves the parser behavior.
 - Never commit cookies, authentication headers, browser profiles, private conversation URLs, user prompts, or raw personal transcripts.
-- Treat Provider pages and responses as untrusted input. Review the trust boundary in [Security](security.md).
+- Treat Provider pages and responses as untrusted input. Review the trust
+  boundary in [Security](../../SECURITY.md).
 - Check the Provider's current automation terms and account policies before relying on the integration.
 
 ## 4. Registration checklist
@@ -136,7 +137,7 @@ Adding the adapter file is only one part of registration. Search for exhaustive 
 | Spawn              | Update the Provider list in the `spawn` description and input-schema enum in `src/tools/builtins/spawn-tool.ts`; update `test/tools/builtins/spawn-tool.test.ts`.                                        |
 | Model argument     | Add the Provider's named models and per-model options to `src/providers/definitions/<id>.ts`; cover mapping and rejected forms in manifest, catalog, and command tests.                                  |
 | Capabilities       | Put only static capability keys, descriptions, and kinds in the Provider definition; keep live discovery and dispatch behavior in the Provider UI component.                                             |
-| User documentation | Update the brief lists in `README.md` and `docs/README.zh-CN.md`, plus the detailed matrix/counts in [Providers](providers.md); other docs only when needed.                                             |
+| User documentation | Keep root `README.md` and `README.zh-CN.md` synchronized, and update the detailed matrix in [Providers](../user/providers.md).                                                                           |
 | Integration tests  | Update Provider lists, command completion, MCP listing, and any exhaustive records surfaced by TypeScript or repository search.                                                                          |
 
 Do not add an alias unless it is unambiguous and useful. Canonical conversation URLs must discard unrelated query/hash state and encode the conversation id exactly once.
@@ -381,7 +382,7 @@ State any unrun smoke path explicitly in the final report. Unit tests cannot sub
 
 ## 9. Repository workflow and final checklist
 
-The repository [AGENTS.md](../AGENTS.md) is authoritative. Provider work follows these gates:
+The repository [AGENTS.md](../../AGENTS.md) is authoritative. Provider work follows these gates:
 
 1. Clarify scope, supported behavior, constraints, and acceptance criteria.
 2. Read relevant documentation, code, tests, branch state, and current worktrees.

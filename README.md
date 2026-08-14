@@ -2,29 +2,31 @@
 
 **Turn web AI products into local, tool-using terminal agents.**
 
-[简体中文](docs/README.zh-CN.md)
+[简体中文](README.zh-CN.md)
 
-portal launches a real Chromium-based browser and drives supported AI products through their normal websites. The web model can request local tools, receive their results, and continue in the same provider conversation.
+Portal launches a real Chromium-based browser and drives supported AI products
+through their normal websites. The web model can request local tools, receive
+their results, and continue in the same provider conversation. Portal does not
+call provider model APIs or bypass provider accounts, subscriptions, usage
+limits, or terms.
 
-portal does **not** call provider model APIs or bypass provider accounts, subscriptions, usage limits, or terms.
+Portal supports ChatGPT, Gemini, DeepSeek, Doubao, Grok, GLM, Qwen, and Kimi.
+Available models and page capabilities depend on the current account, region,
+subscription, and provider UI.
 
-## Core capabilities
+## Capabilities
 
-- **One terminal workflow for eight web providers.** Create, switch, and resume provider conversations through a shared thread model.
-- **Persistent browser sessions.** A dedicated browser profile keeps login state and account-specific web features.
-- **Local tool use.** Models can inspect a workspace, run commands, edit files, attach images, and delegate focused tasks.
-- **Workspace context and extensions.** Optional project instructions, Skills, and lifecycle Hooks can shape each runtime.
-- **Headless and MCP access.** `portal exec` runs one task without the TUI, while the optional Portal MCP Server exposes selected thread operations.
-
-## Supported providers
-
-portal supports ChatGPT, Gemini, DeepSeek, Doubao, Grok, GLM, Qwen, and Kimi through their web interfaces.
-
-Model, upload, and page capability availability depends on the current account, region, subscription, and provider UI. See [Providers](docs/providers.md) for supported URLs, model syntax, capabilities, response capture, and history behavior.
+- One terminal workflow for eight web providers
+- Persistent browser login and conversation history
+- Local commands, file patches, images, and focused child tasks
+- Optional Skills, Hooks, and working-directory project instructions
+- Headless one-task execution with `portal exec`
+- An optional inbound Portal MCP Server
 
 ## Requirements
 
-- Node.js 24 or newer. On Windows, use Node.js 24.15.0 for compatibility with [nodejs/node#63638](https://github.com/nodejs/node/issues/63638).
+- Node.js 24 or newer; Windows currently uses Node.js 24.15.0 for compatibility
+  with [nodejs/node#63638](https://github.com/nodejs/node/issues/63638)
 - npm; Git is also required when installing from source
 - Google Chrome or another supported Chromium-based browser
 - A valid account for each provider you use
@@ -33,120 +35,55 @@ Windows, macOS, and Linux are supported launch environments.
 
 ## Quick start
 
-Install portal globally and start it in the workspace you want it to use:
+Install Portal globally and start it in the workspace it should use:
 
 ```bash
 npm install --global @kabxx/portal@latest
 portal
 ```
 
-For a one-off run without a global install:
-
-```bash
-npx @kabxx/portal@latest
-```
-
-To run from source instead:
-
-```bash
-git clone https://github.com/kabxx/portal.git
-cd portal
-npm ci
-npm run dev
-```
-
-The current directory is portal's workspace. The npm CLI keeps configuration,
-thread metadata, Skills, and its dedicated browser profile in the platform user
-data directory. On first run, complete provider login in the browser when
-needed, create a thread, and enter a normal task:
+Create an agent thread, then enter a normal task:
 
 ```text
 /thread agent chatgpt
 Summarize this repository and identify its highest-risk module.
 ```
 
-Use `/help` for the command index. See the [CLI guide](docs/cli.md) for thread
-modes, resume, input controls, background jobs, and startup options, and
-[Configuration](docs/configuration.md#portal-data-directory) for data-directory
-defaults and overrides.
-
-Run one task without starting Ink:
+Run one task without starting the TUI:
 
 ```bash
 portal exec --provider chatgpt "Summarize this repository."
 ```
 
+Run `portal config` to print the optional configuration file path. Use `/help`
+inside the TUI for the live command index.
+
 > [!WARNING]
-> portal is not a sandbox. Local tools, Skills, Hooks, and spawned workers run with the permissions of the portal user, and valid model-generated tool calls have no human approval gate. Read [Security](docs/security.md) before using portal with sensitive data.
-
-## How it works
-
-```mermaid
-flowchart LR
-    U[User] --> UI[Ink terminal UI]
-    UI --> TM[Thread manager]
-    TM --> R[Runtime and tool loop]
-    R <--> A[Provider adapter]
-    A <--> B[Chromium web conversation]
-    R <--> T[Local tools, Skills, Hooks]
-```
-
-For each user turn, portal submits text through the provider website, captures the streamed response, and looks for an optional `<tool name="tool_name">PAYLOAD</tool>` request. It executes requested local tools and returns their results to the same conversation until the model produces a normal response.
-
-See [Architecture](docs/architecture.md) for the runtime, thread, resume, and shutdown lifecycles.
-
-## Using portal
-
-Common thread operations:
-
-```text
-/providers
-/thread agent gemini
-/thread list
-/thread switch t-1
-/thread history
-/thread resume #1
-/thread close
-```
-
-portal stores conversation URLs and metadata in its data directory, so
-`/thread resume` can reopen the provider's currently visible conversation
-history. See the [CLI guide](docs/cli.md) for the complete persistence and resume
-behavior.
-
-Use `Ctrl+J` for a reliable multiline input and `Ctrl+C` to cancel the current operation. Input submission remains unavailable while portal is busy. Typing `/` opens a five-row contextual command hint bubble; `Up` / `Down` browse it, and `Tab` completes the selected item. `Enter` completes the selected slash-command hint and submits it in one step; ordinary text submits unchanged. The command index and input controls are documented in the [CLI guide](docs/cli.md).
-
-## Extensions
-
-- **Project instructions** optionally load the startup directory's `AGENTS.md` into new runtimes.
-- **Skills** advertise enabled local instruction packages by name, description, and manifest path.
-- **Hooks** observe lifecycle events or allow, deny, and rewrite tool parameters.
-- **Built-in tools** cover images, shell commands, file patches, and focused child tasks.
-- **Portal MCP Server** exposes selected thread and job operations to an external MCP client.
-
-See the linked guides for configuration and trust boundaries.
+> Portal is not a sandbox. Local tools, Skills, Hooks, and spawned workers use
+> the permissions of the Portal user, and valid model-generated tool calls do
+> not have a human approval gate. Read [Security](SECURITY.md) before using
+> Portal with sensitive data.
 
 ## Documentation
 
-- **Using portal:** [CLI](docs/cli.md), [Configuration](docs/configuration.md), [Providers](docs/providers.md), [Project Instructions](docs/instructions.md)
-- **Extending runtimes:** [Skills](docs/skills.md), [Hooks](docs/hooks.md)
-- **Integrating portal:** [Portal MCP Server](docs/mcp-server.md)
-- **Internals and safety:** [Architecture](docs/architecture.md), [Security](docs/security.md), [Testing](docs/testing.md)
-- **Contributing:** [Contributing guide](docs/contributing.md), [Provider development](docs/provider-development.md)
-
-## Release quality
-
-Each release is built and audited as one npm tarball, then installed and tested
-from that same artifact on Windows, Linux, and macOS. Windows CI also exercises
-the Chromium launcher lifecycle with Playwright and a temporary browser profile.
-The [Providers guide](docs/providers.md) maintains the supported URLs, model
-syntax, capabilities, response capture, and history behavior for each web
-product.
+- **User guides:** [CLI](docs/user/cli.md),
+  [Configuration](docs/user/configuration.md),
+  [Providers](docs/user/providers.md),
+  [Skills](docs/user/skills.md), [Hooks](docs/user/hooks.md),
+  [Project Instructions](docs/user/project-instructions.md),
+  [Portal MCP Server](docs/user/mcp-server.md)
+- **Development:** [Architecture](docs/development/architecture.md),
+  [Provider Development](docs/development/provider-development.md),
+  [Testing](docs/development/testing.md)
+- **Project:** [Contributing](CONTRIBUTING.md), [Security](SECURITY.md)
 
 ## License
 
-portal is available under the [MIT License](LICENSE).
+Portal is available under the [MIT License](LICENSE).
 
 ## Disclaimer
 
-portal is an independent project and is not affiliated with, endorsed by, or sponsored by OpenAI, Anthropic, Google, DeepSeek, ByteDance, xAI, Zhipu AI, Moonshot AI, or the supported web products. Users are responsible for complying with provider terms and applicable law.
+Portal is an independent project and is not affiliated with, endorsed by, or
+sponsored by OpenAI, Anthropic, Google, DeepSeek, ByteDance, xAI, Zhipu AI,
+Moonshot AI, or the supported web products. Users are responsible for complying
+with provider terms and applicable law.

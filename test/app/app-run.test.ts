@@ -68,13 +68,21 @@ test(
       cwd,
       terminalController: ui,
       renderTerminal: () => inkApp,
-      launchBrowser: async () => ({
-        context: browserContext,
-        disconnected: browserDisconnected.promise,
-        close: async () => {
-          browserCloseCount += 1
-        },
-      }),
+      launchBrowser: async (engine, _executablePath, port, profilePath) => {
+        assert.equal(engine, 'chromium')
+        assert.equal(port, 0)
+        assert.equal(
+          profilePath,
+          path.join(dataDirectory, 'profiles', 'chromium')
+        )
+        return {
+          context: browserContext,
+          disconnected: browserDisconnected.promise,
+          close: async () => {
+            browserCloseCount += 1
+          },
+        }
+      },
       createProviderAdapter: async () => adapter,
       createRuntime: async (runtimeAdapter, options) => {
         assert.equal(runtimeAdapter, adapter)

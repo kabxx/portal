@@ -23,6 +23,13 @@ export interface PortalMcpServerOptions {
   environment?: NodeJS.ProcessEnv
 }
 
+export function resolvePortalMcpToken(
+  environment: NodeJS.ProcessEnv = process.env
+): string | null {
+  const token = environment.PORTAL_MCP_TOKEN
+  return token === undefined || token === '' ? null : token
+}
+
 interface ActiveRequest {
   controller: AbortController
   server: McpServer

@@ -1,6 +1,6 @@
 # Security
 
-[Back to README](../README.md)
+[Back to README](README.md)
 
 portal intentionally connects an untrusted web model to powerful operations on the local machine. Treat it as a local code-execution agent, not as a sandboxed chat client.
 
@@ -38,7 +38,8 @@ instructions.
 - portal does not confine tools to the repository or current working directory.
 - `apply_patch` limits operations to regular UTF-8 files and refuses move/delete operations, but those checks are not a filesystem sandbox.
 - `run_command` output is bounded, but command side effects are not. A call without `timeoutMs` has no tool-level timeout.
-- Spawn recursion is bounded by `advanced.runtime.spawnDepthLimit`, which defaults to five child levels. The limit does not bound sequential sibling tasks, concurrent root threads, or other Tool calls.
+- Spawn recursion is bounded to three child levels. The limit does not bound
+  sequential sibling tasks, concurrent root threads, or other Tool calls.
 - Cancelling a turn with Ctrl+C does not stop its `run_command` process. Inspect active jobs with `/job` and stop a specific job with `/job stop <job-id>`; controlled portal shutdown stops all managed jobs.
 - `/job` displays a sanitized command summary and working directory. Avoid putting credentials directly in command arguments.
 - Job tracking is process-local and is not persisted. A forcibly terminated portal process, or a command that deliberately escapes its process group or Windows Job Object, may leave descendants running.
@@ -56,12 +57,16 @@ instructions.
 - Stop the current operation with Ctrl+C if model behavior becomes unexpected.
 - Review the startup directory's `AGENTS.md` before enabling project instructions.
 - Review a skill's `SKILL.md` and resources before registering, downloading, or enabling it.
-- Prefer environment placeholders over literal secrets in the Portal MCP Server listener configuration.
+- Keep the Portal MCP token in `PORTAL_MCP_TOKEN`, not in configuration.
 - Keep the Portal MCP Server listener on loopback unless remote access is intentional; use a tunnel or TLS proxy when crossing an untrusted network.
 
 ## Browser and account data
 
-The dedicated browser profile lives at `browser.profilePath` from `<data-dir>/config.yaml`. Browser path fields accept absolute or relative values: generated defaults are absolute, while configured relative values resolve from portal's working directory. The profile can contain login cookies, local storage, and other account state. An npm-installed CLI stores it outside the workspace by default; source development uses the repository's ignored `data/` directory. Both locations still contain sensitive local data.
+The dedicated browser profile lives at `<data-dir>/profiles/chromium`. It can
+contain login cookies, local storage, and other account state. An npm-installed
+CLI stores it outside the workspace by default; source development uses the
+repository's ignored `data/` directory. Both locations still contain sensitive
+local data.
 
 `<data-dir>/threads.db` stores provider conversation URLs and metadata. Those URLs may expose private conversation identifiers when combined with an authenticated browser session. It does not store transcripts or a persistent local Tool audit trail. The provider website remains the source of conversation content; local turns and rendered timelines live only for the current process and can grow with a long-running session.
 
@@ -91,7 +96,7 @@ send additional content to external systems. The regular-file, symlink, UTF-8,
 and size checks limit what portal reads, but they do not make the instructions
 safe. Keep secrets out of the file and leave the feature disabled for
 repositories you have not reviewed. See
-[Project Instructions](instructions.md).
+[Project Instructions](docs/user/project-instructions.md).
 
 ## Skill installation
 
@@ -110,14 +115,10 @@ Treat remote skill installation like downloading code. Inspect the source and pr
 ## Portal MCP Server
 
 The Portal MCP Server exposes selected thread and job operations to an external
-MCP client. Its `host`, `port`, and `token` settings live under
-`listeners.mcp`. `null` and the exact empty string disable authentication only
-when `host` is exactly `127.0.0.1`; every other host requires an enabled Token
-or the listener refuses to start. Every other Token string is preserved
-exactly, including whitespace-only values.
-Token strings may contain `${env:VARIABLE_NAME}` placeholders. They remain
-unexpanded in the configuration file and are resolved for each `/mcp start`;
-a missing variable fails before the listener binds.
+MCP client. Its `host` and `port` live under `mcp`; authentication uses only
+`PORTAL_MCP_TOKEN`. An unset or empty token disables authentication only when
+`host` is exactly `127.0.0.1`; every other host requires a non-empty token or
+the listener refuses to start.
 
 Portal MCP Server access can send instructions
 to a logged-in provider conversation, whose model can invoke local Portal

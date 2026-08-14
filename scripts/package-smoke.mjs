@@ -189,6 +189,9 @@ try {
   assertNoModuleTypeWarning(helpResult)
   const help = helpResult.stdout
   assert.match(help, /--data-dir <path>/)
+  assert.match(help, /^Commands:\r?$/m)
+  assert.match(help, /^ {2}exec \[options\] \[task\] {2}/m)
+  assert.match(help, /^ {2}config \[options\] {7}/m)
   const execHelpResult = runInstalledPortal(portalBin, ['exec', '--help'], {
     cwd: workspaceDirectory,
     env: installEnvironment,
@@ -196,6 +199,23 @@ try {
   assertNoModuleTypeWarning(execHelpResult)
   assert.match(execHelpResult.stdout, /--provider <provider>/)
   assert.match(execHelpResult.stdout, /--timeout <seconds>/)
+  const configDataDirectory = path.join(workspaceDirectory, 'config-probe')
+  const configResult = runInstalledPortal(
+    portalBin,
+    ['config', '--data-dir', configDataDirectory],
+    { cwd: workspaceDirectory, env: installEnvironment }
+  )
+  assertNoModuleTypeWarning(configResult)
+  assert.equal(
+    configResult.stdout,
+    `${path.join(configDataDirectory, 'config.yaml')}\n`
+  )
+  assert.equal(configResult.stderr, '')
+  assert.equal(
+    await pathExists(configDataDirectory),
+    false,
+    'portal config must not create the selected data directory'
+  )
   const invalidOptionResult = runInstalledPortal(
     portalBin,
     ['--portal-invalid-option'],
@@ -387,11 +407,13 @@ function auditPack(pack) {
   assert.equal(pack.name, '@kabxx/portal')
   assert.equal(pack.version, packageMetadata.version)
   assert.deepEqual(pack.bundled ?? [], [])
+  assert.equal(pack.entryCount, 143)
 
   const allowedFiles = pack.files.map(({ path: filePath }) => filePath)
   for (const required of [
     'LICENSE',
     'README.md',
+    'README.zh-CN.md',
     'dist/cli-entry.js',
     'dist/exec/exec-command.js',
     'dist/index.js',
@@ -405,6 +427,16 @@ function auditPack(pack) {
       `missing package file: ${required}`
     )
   }
+  assert.deepEqual(
+    allowedFiles.filter(
+      (filePath) =>
+        filePath === 'CONTRIBUTING.md' ||
+        filePath === 'SECURITY.md' ||
+        filePath.startsWith('docs/')
+    ),
+    [],
+    'tarball must not contain contributor, security, or docs files'
+  )
   assert.deepEqual(
     allowedFiles.filter(
       (filePath) =>
@@ -429,7 +461,7 @@ function auditPack(pack) {
         ].includes(filePath)
     ),
     [],
-    'tarball must not contain removed Portal 2.0 surfaces'
+    'tarball must not contain unavailable package surfaces'
   )
   assert.deepEqual(
     allowedFiles.filter((filePath) =>
@@ -449,6 +481,7 @@ function isAllowedPackagePath(filePath) {
   return (
     filePath === 'LICENSE' ||
     filePath === 'README.md' ||
+    filePath === 'README.zh-CN.md' ||
     filePath === 'package.json' ||
     filePath.startsWith('dist/')
   )

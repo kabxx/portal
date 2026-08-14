@@ -1,8 +1,9 @@
 # Providers
 
-[Back to README](../README.md)
+[Back to README](../../README.md)
 
-Adding or maintaining an integration? Follow the end-to-end [Provider Development](provider-development.md) guide.
+Adding or maintaining an integration? Follow the end-to-end
+[Provider Development](../development/provider-development.md) guide.
 
 portal supports eight web AI products through provider-specific adapters. Every adapter drives the normal website in a real Chromium page; portal does not call provider model APIs.
 
@@ -174,13 +175,6 @@ structure. Portal does not inject provider-specific constraint text. Chat
 creation sends only the shared initialization handshake, while `portal exec`
 sends setup and the first task in one user message without a `READY` roundtrip.
 
-## Maintenance notes
-
-- Prefer stable, language-independent selectors such as test ids, roles, data attributes, and protocol events.
-- Keep login detection, composer readiness, request start, streaming, completion, and history parsing separate.
-- Do not replace browser automation with provider model APIs.
-- Add focused parser/fake-page tests for each reproduced provider failure.
-- Verify real browser behavior when selectors or private response formats change.
-- Never commit browser profiles, authentication headers, private conversation URLs, or raw personal conversation captures.
-
-See [Provider Development](provider-development.md) for the integration workflow, [Contributing](contributing.md) for the repository change checklist, and [Security](security.md) for the browser/account trust boundary.
+Maintenance rules, selector guidance, test requirements, and the real-profile
+smoke checklist live in
+[Provider Development](../development/provider-development.md).

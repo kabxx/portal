@@ -7,13 +7,11 @@ import {
   readFile,
   readdir,
   rm,
+  stat,
   writeFile,
 } from 'fs/promises'
 import os from 'os'
 import path from 'path'
-import { stringify as stringifyYaml } from 'yaml'
-
-import { createDefaultPortalConfig } from '../../src/config/portal-config.ts'
 import {
   commitManagedSkillRemoval,
   commitPreparedSkillBatch,
@@ -22,7 +20,6 @@ import {
 } from '../../src/skills/skill-library.ts'
 import { DEFAULT_SKILL_POLICY } from '../../src/skills/skill-policy.ts'
 import { createTestSkill } from '../helpers/skills.ts'
-import { parseYamlRecord } from '../helpers/yaml.ts'
 
 interface SkillRegistryDocumentEntry {
   name: string
@@ -32,6 +29,12 @@ interface SkillRegistryDocumentEntry {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function parseJsonRecord(contents: string): Record<string, unknown> {
+  const value: unknown = JSON.parse(contents)
+  if (!isRecord(value)) throw new Error('Expected a JSON object.')
+  return value
 }
 
 function parseSkillRegistryEntries(
@@ -55,24 +58,25 @@ function parseSkillRegistryEntries(
   })
 }
 
-function defaultConfig() {
-  return createDefaultPortalConfig(path.resolve('data'), {
-    engine: 'chromium',
-    executablePath: path.resolve('test-browser'),
-    profilePath: path.resolve('test-profile'),
-    remoteDebuggingPort: 9222,
-  })
-}
-
 async function writeSkillConfig(
   pathname: string,
   entries: readonly SkillRegistryDocumentEntry[]
 ): Promise<void> {
-  const config = defaultConfig()
-  config.skills = Object.fromEntries(
-    entries.map(({ name, ...entry }) => [name, entry])
+  await mkdir(path.dirname(pathname), { recursive: true })
+  await writeFile(
+    pathname,
+    `${JSON.stringify(
+      {
+        version: 1,
+        skills: Object.fromEntries(
+          entries.map(({ name, ...entry }) => [name, entry])
+        ),
+      },
+      null,
+      2
+    )}\n`,
+    'utf8'
   )
-  await writeFile(pathname, stringifyYaml(config), 'utf8')
 }
 
 test('SkillLibrary installs, catalogs, disables, enables, and removes skills', async () => {
@@ -85,8 +89,9 @@ test('SkillLibrary installs, catalogs, disables, enables, and removes skills', a
   const library = new SkillLibrary({
     skillsDirectory: path.join(root, 'data', 'skills'),
     tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
-    registryPath: path.join(root, 'data', 'config.yaml'),
+    registryPath: path.join(root, 'data', 'state', 'skills.json'),
   })
+  const registryPath = path.join(root, 'data', 'state', 'skills.json')
 
   try {
     const { skills } = await library.add(source)
@@ -98,8 +103,8 @@ test('SkillLibrary installs, catalogs, disables, enables, and removes skills', a
       await readFile(path.join(installed.directory, 'SKILL.md'), 'utf8'),
       /SECRET BODY/
     )
-    const registryDocument = parseYamlRecord(
-      await readFile(path.join(root, 'data', 'config.yaml'), 'utf8')
+    const registryDocument = parseJsonRecord(
+      await readFile(path.join(root, 'data', 'state', 'skills.json'), 'utf8')
     ).skills
     assert.deepEqual(registryDocument, {
       'test-skill': {
@@ -149,6 +154,10 @@ test('SkillLibrary installs, catalogs, disables, enables, and removes skills', a
     )
 
     assert.equal(await library.disable('test-skill'), true)
+    const disabledState = await stat(registryPath)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(await library.disable('test-skill'), true)
+    assert.equal((await stat(registryPath)).mtimeMs, disabledState.mtimeMs)
     assert.deepEqual(enabledCatalog.names, ['test-skill'])
     const disabledCatalog = await library.createCatalogSnapshot()
     assert.equal(disabledCatalog.size, 0)
@@ -180,7 +189,7 @@ test('SkillLibrary registers a recursive local skill collection in place', async
   const library = new SkillLibrary({
     skillsDirectory: path.join(root, 'data', 'skills'),
     tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
-    registryPath: path.join(root, 'data', 'config.yaml'),
+    registryPath: path.join(root, 'data', 'state', 'skills.json'),
   })
 
   try {
@@ -216,7 +225,7 @@ test('SkillLibrary treats a source root with SKILL.md as one skill', async () =>
   const library = new SkillLibrary({
     skillsDirectory: path.join(root, 'data', 'skills'),
     tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
-    registryPath: path.join(root, 'data', 'config.yaml'),
+    registryPath: path.join(root, 'data', 'state', 'skills.json'),
   })
 
   try {
@@ -244,7 +253,7 @@ test('SkillLibrary rejects an invalid local collection without registering part 
   const library = new SkillLibrary({
     skillsDirectory: path.join(root, 'data', 'skills'),
     tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
-    registryPath: path.join(root, 'data', 'config.yaml'),
+    registryPath: path.join(root, 'data', 'state', 'skills.json'),
   })
 
   try {
@@ -264,7 +273,7 @@ test('SkillLibrary rejects duplicate names across a skill collection', async () 
   const library = new SkillLibrary({
     skillsDirectory: path.join(root, 'data', 'skills'),
     tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
-    registryPath: path.join(root, 'data', 'config.yaml'),
+    registryPath: path.join(root, 'data', 'state', 'skills.json'),
   })
 
   try {
@@ -323,7 +332,7 @@ test('commitPreparedSkillBatch renames staging before committing the registry', 
   }
 })
 
-test('commitPreparedSkillBatch restores staging when config commit fails', async () => {
+test('commitPreparedSkillBatch restores staging when registry commit fails', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-rollback-'))
   const staged = await createTestSkill(path.join(root, 'staging'), 'rollback')
   const finalDirectory = path.join(root, 'skills', 'rollback')
@@ -446,7 +455,7 @@ test('commitPreparedSkillBatch rechecks registry names before moving staging', a
   }
 })
 
-test('commitManagedSkillRemoval restores the directory when config commit fails', async () => {
+test('commitManagedSkillRemoval restores the directory when registry commit fails', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-remove-'))
   const managedDirectory = await createTestSkill(
     path.join(root, 'skills'),
@@ -507,7 +516,7 @@ test('SkillLibrary applies the configured resource file limit', async () => {
   const library = new SkillLibrary({
     skillsDirectory: path.join(root, 'data', 'skills'),
     tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
-    registryPath: path.join(root, 'data', 'config.yaml'),
+    registryPath: path.join(root, 'data', 'state', 'skills.json'),
     policy: { ...DEFAULT_SKILL_POLICY, maxResourceFiles: 0 },
   })
 
@@ -521,7 +530,7 @@ test('SkillLibrary applies the configured resource file limit', async () => {
   }
 })
 
-test('SkillLibrary preserves concurrent mutations in the Skill section', async () => {
+test('SkillLibrary preserves concurrent Skill registry mutations', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-concurrent-'))
   const sourceParent = path.join(root, 'sources')
   const alpha = await createTestSkill(sourceParent, 'alpha-skill')
@@ -529,7 +538,7 @@ test('SkillLibrary preserves concurrent mutations in the Skill section', async (
   const library = new SkillLibrary({
     skillsDirectory: path.join(root, 'data', 'skills'),
     tempDirectory: path.join(root, 'data', 'temp', 'skill-install'),
-    registryPath: path.join(root, 'data', 'config.yaml'),
+    registryPath: path.join(root, 'data', 'state', 'skills.json'),
   })
 
   try {
@@ -547,7 +556,7 @@ test('SkillLibrary preserves concurrent mutations in the Skill section', async (
 test('SkillLibrary initializes a missing registry without overwriting it later', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-initialize-'))
   const dataDirectory = path.join(root, 'data')
-  const registryPath = path.join(dataDirectory, 'config.yaml')
+  const registryPath = path.join(dataDirectory, 'state', 'skills.json')
   const library = new SkillLibrary({
     skillsDirectory: path.join(dataDirectory, 'skills'),
     tempDirectory: path.join(dataDirectory, 'temp', 'skill-install'),
@@ -557,7 +566,7 @@ test('SkillLibrary initializes a missing registry without overwriting it later',
   try {
     await library.initialize()
     assert.deepEqual(
-      parseYamlRecord(await readFile(registryPath, 'utf8')).skills,
+      parseJsonRecord(await readFile(registryPath, 'utf8')).skills,
       {}
     )
 
@@ -580,7 +589,7 @@ test('SkillLibrary bootstraps existing managed skills as enabled', async () => {
   const library = new SkillLibrary({
     skillsDirectory,
     tempDirectory: path.join(dataDirectory, 'temp', 'skill-install'),
-    registryPath: path.join(dataDirectory, 'config.yaml'),
+    registryPath: path.join(dataDirectory, 'state', 'skills.json'),
   })
 
   try {
@@ -592,12 +601,12 @@ test('SkillLibrary bootstraps existing managed skills as enabled', async () => {
       })),
       [{ name: 'managed-skill', enabled: true }]
     )
-    const registry = parseYamlRecord(
-      await readFile(path.join(dataDirectory, 'config.yaml'), 'utf8')
+    const registry = parseJsonRecord(
+      await readFile(path.join(dataDirectory, 'state', 'skills.json'), 'utf8')
     ).skills
     assert.deepEqual(registry, {
       'managed-skill': {
-        directory: 'skills/managed-skill',
+        directory: '../skills/managed-skill',
         enabled: true,
       },
     })
@@ -618,8 +627,8 @@ test('SkillLibrary reloads manual registry edits and isolates invalid entries', 
     path.join(root, 'external'),
     'manual-skill'
   )
-  const registryPath = path.join(dataDirectory, 'config.yaml')
-  await mkdir(dataDirectory, { recursive: true })
+  const registryPath = path.join(dataDirectory, 'state', 'skills.json')
+  await mkdir(path.dirname(registryPath), { recursive: true })
   await writeSkillConfig(registryPath, [
     {
       name: 'manual-skill',
@@ -651,7 +660,7 @@ test('SkillLibrary reloads manual registry edits and isolates invalid entries', 
     assert.equal(listed.issues.length, 1)
     assert.match(listed.issues[0]?.message ?? '', /Missing SKILL\.md/)
 
-    const config = parseYamlRecord(await readFile(registryPath, 'utf8'))
+    const config = parseJsonRecord(await readFile(registryPath, 'utf8'))
     const document = parseSkillRegistryEntries(config.skills)
     const manualSkill = document.find(({ name }) => name === 'manual-skill')
     assert.ok(manualSkill)
@@ -673,9 +682,9 @@ test('SkillLibrary reloads manual registry edits and isolates invalid entries', 
 test('SkillLibrary never overwrites malformed registries', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-invalid-'))
   const dataDirectory = path.join(root, 'data')
-  const registryPath = path.join(dataDirectory, 'config.yaml')
+  const registryPath = path.join(dataDirectory, 'state', 'skills.json')
   const source = await createTestSkill(path.join(root, 'external'), 'new-skill')
-  await mkdir(dataDirectory, { recursive: true })
+  await mkdir(path.dirname(registryPath), { recursive: true })
   await writeFile(registryPath, 'browser: [', 'utf8')
   const library = new SkillLibrary({
     skillsDirectory: path.join(dataDirectory, 'skills'),
@@ -687,9 +696,9 @@ test('SkillLibrary never overwrites malformed registries', async () => {
     const listed = await library.list()
     assert.equal(listed.skills.length, 0)
     assert.equal(listed.issues[0]?.directory, registryPath)
-    assert.match(listed.issues[0]?.message ?? '', /Invalid YAML/)
-    await assert.rejects(library.add(source), /Invalid YAML/)
-    await assert.rejects(library.createCatalogSnapshot(), /Invalid YAML/)
+    assert.match(listed.issues[0]?.message ?? '', /Invalid JSON/)
+    await assert.rejects(library.add(source), /Invalid JSON/)
+    await assert.rejects(library.createCatalogSnapshot(), /Invalid JSON/)
     assert.equal(await readFile(registryPath, 'utf8'), 'browser: [')
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -699,7 +708,7 @@ test('SkillLibrary never overwrites malformed registries', async () => {
 test('SkillLibrary isolates invalid registry entries and refuses lossy writes', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-invalid-'))
   const dataDirectory = path.join(root, 'data')
-  const registryPath = path.join(dataDirectory, 'config.yaml')
+  const registryPath = path.join(dataDirectory, 'state', 'skills.json')
   const validDirectory = await createTestSkill(
     path.join(root, 'external'),
     'valid-skill'

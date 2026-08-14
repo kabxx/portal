@@ -1,189 +1,210 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
-import os from 'os'
-import path from 'path'
-import { stringify as stringifyYaml } from 'yaml'
-import { createDefaultPortalConfig } from '../../src/config/portal-config.ts'
+import test from 'node:test'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
 import {
   ensureSkillRegistry,
   readSkillRegistry,
   SkillRegistryError,
+  updateSkillRegistry,
   writeSkillRegistry,
 } from '../../src/skills/skill-registry.ts'
-import { parseYamlRecord } from '../helpers/yaml.ts'
 
-function defaultConfig() {
-  return createDefaultPortalConfig(path.resolve('data'), {
-    engine: 'chromium',
-    executablePath: path.resolve('test-browser'),
-    profilePath: path.resolve('test-profile'),
-    remoteDebuggingPort: 9222,
-  })
-}
-
-async function writeConfig(pathname: string, skills: unknown): Promise<void> {
-  const config = { ...defaultConfig(), skills }
-  await writeFile(pathname, stringifyYaml(config), 'utf8')
-}
-
-test('skill registry persists deterministic user-editable YAML', async () => {
+test('Skill registry persists deterministic versioned JSON', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-registry-'))
-  const registryPath = path.join(root, 'data', 'config.yaml')
-
+  const registryPath = path.join(root, 'state', 'skills.json')
   try {
     await writeSkillRegistry(
       registryPath,
       new Map([
-        ['zeta-skill', { directory: 'D:/skills/zeta-skill', enabled: false }],
-        ['alpha-skill', { directory: 'skills/alpha-skill', enabled: true }],
+        ['zeta-skill', { directory: '../skills/zeta', enabled: false }],
+        ['alpha-skill', { directory: '../skills/alpha', enabled: true }],
       ])
     )
-
-    const contents = await readFile(registryPath, 'utf8')
-    assert.ok(contents.indexOf('alpha-skill') < contents.indexOf('zeta-skill'))
-    assert.deepEqual(parseYamlRecord(contents).skills, {
-      'alpha-skill': {
-        directory: 'skills/alpha-skill',
-        enabled: true,
-      },
-      'zeta-skill': {
-        directory: 'D:/skills/zeta-skill',
-        enabled: false,
-      },
-    })
-
-    const reopened = await readSkillRegistry(registryPath)
-    assert.ok(reopened)
+    const raw = parseJsonRecord(await readFile(registryPath, 'utf8'))
+    assert.equal(raw.version, 1)
+    assert.deepEqual(Object.keys(raw.skills), ['alpha-skill', 'zeta-skill'])
     assert.deepEqual(
-      [...reopened.entries],
-      [
-        ['alpha-skill', { directory: 'skills/alpha-skill', enabled: true }],
-        ['zeta-skill', { directory: 'D:/skills/zeta-skill', enabled: false }],
-      ]
-    )
-    assert.deepEqual(reopened.issues, [])
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
-test('skill registry bootstrap preserves a config created after its scan', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-bootstrap-'))
-  const registryPath = path.join(root, 'config.yaml')
-  const concurrentSkills = {
-    'concurrent-skill': {
-      directory: 'skills/concurrent-skill',
-      enabled: true,
-    },
-  }
-
-  try {
-    await writeConfig(registryPath, concurrentSkills)
-    const result = await ensureSkillRegistry(
-      registryPath,
-      new Map([
-        ['stale-scan', { directory: 'skills/stale-scan', enabled: true }],
-      ])
-    )
-
-    assert.deepEqual(
-      [...result.entries],
-      [
-        [
-          'concurrent-skill',
-          { directory: 'skills/concurrent-skill', enabled: true },
-        ],
-      ]
-    )
-    assert.deepEqual(
-      parseYamlRecord(await readFile(registryPath, 'utf8')).skills,
-      concurrentSkills
+      [...(await readSkillRegistry(registryPath))!.entries.keys()],
+      ['alpha-skill', 'zeta-skill']
     )
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
 
-test('skill registry rejects whole-file errors and isolates invalid entries', async () => {
+test('Skill registry creates only on ensure and updates atomically', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-registry-'))
-  const registryPath = path.join(root, 'config.yaml')
-
+  const registryPath = path.join(root, 'state', 'skills.json')
   try {
-    await writeFile(registryPath, '{ invalid json', 'utf8')
-    await assert.rejects(readSkillRegistry(registryPath), SkillRegistryError)
+    assert.equal(await readSkillRegistry(registryPath), null)
+    await ensureSkillRegistry(registryPath, new Map())
+    await updateSkillRegistry(registryPath, (registry) => {
+      registry.entries.set('example', {
+        directory: '../skills/example',
+        enabled: true,
+      })
+    })
+    assert.equal(
+      (await readSkillRegistry(registryPath))?.entries.get('example')?.enabled,
+      true
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
-    await writeConfig(registryPath, [])
+test('Skill registry rejects invalid document versions and isolates bad entries', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-registry-'))
+  const registryPath = path.join(root, 'skills.json')
+  try {
+    await writeFile(registryPath, '{"version":2,"skills":{}}', 'utf8')
     await assert.rejects(
       readSkillRegistry(registryPath),
-      /skills must be an object keyed by name/
+      /Unsupported Skill registry version/
     )
-
-    await writeConfig(registryPath, {
-      'valid-skill': {
-        directory: 'D:/skills/valid-skill',
-        enabled: true,
-      },
-      'broken-skill': {
-        directory: 'D:/skills/broken-skill',
-        enabled: 'yes',
-      },
-      'annotated-skill': {
-        directory: 'D:/skills/annotated-skill',
-        enabled: true,
-        comment: 'unsupported',
-      },
-      'Invalid Name': {
-        directory: 'D:/skills/invalid-name',
-        enabled: true,
-      },
-    })
+    await writeFile(
+      registryPath,
+      JSON.stringify({
+        version: 1,
+        skills: {
+          valid: { directory: 'valid', enabled: true },
+          broken: { directory: 'broken', enabled: 'yes' },
+        },
+      }),
+      'utf8'
+    )
     const parsed = await readSkillRegistry(registryPath)
-    assert.ok(parsed)
-    assert.deepEqual([...parsed.entries.keys()], ['valid-skill'])
-    assert.deepEqual(parsed.issues, [
-      {
-        name: 'broken-skill',
-        message: 'Entry requires a boolean enabled value',
-      },
-      {
-        name: 'annotated-skill',
-        message: 'Unsupported entry fields: comment',
-      },
-      {
-        name: 'Invalid Name',
-        message:
-          'Invalid skill name "Invalid Name". Use 1-64 lowercase letters, numbers, and single hyphens.',
-      },
-    ])
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
-test('skill registry rejects duplicate YAML keys as a whole-file error', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-registry-'))
-  const registryPath = path.join(root, 'config.yaml')
-
-  try {
-    const contents = stringifyYaml(defaultConfig()).replace(
-      'skills: {}',
-      [
-        'skills:',
-        '  duplicate-skill:',
-        '    directory: D:/skills/first',
-        '    enabled: true',
-        '  duplicate-skill:',
-        '    directory: D:/skills/second',
-        '    enabled: false',
-      ].join('\n')
+    assert.deepEqual([...parsed!.entries.keys()], ['valid'])
+    assert.deepEqual(
+      parsed!.issues.map(({ name }) => name),
+      ['broken']
     )
-    await writeFile(registryPath, contents, 'utf8')
-
-    await assert.rejects(readSkillRegistry(registryPath), /Invalid YAML/)
-    assert.equal(await readFile(registryPath, 'utf8'), contents)
+    await writeFile(registryPath, '{', 'utf8')
+    await assert.rejects(readSkillRegistry(registryPath), SkillRegistryError)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('Skill registry rejects directory and symbolic-link paths', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-file-'))
+  const directoryPath = path.join(root, 'directory.json')
+  const targetPath = path.join(root, 'target.json')
+  const linkPath = path.join(root, 'link.json')
+  try {
+    await mkdir(directoryPath)
+    await assert.rejects(
+      readSkillRegistry(directoryPath),
+      /Skill registry path must be a regular file/
+    )
+
+    const contents = '{"version":1,"skills":{}}\n'
+    await writeFile(targetPath, contents, 'utf8')
+    try {
+      await symlink(targetPath, linkPath, 'file')
+    } catch (error) {
+      if (isPermissionError(error)) {
+        t.diagnostic('File symlinks are unavailable in this environment')
+        return
+      }
+      throw error
+    }
+    await assert.rejects(
+      writeSkillRegistry(linkPath, new Map()),
+      /Skill registry path must be a regular file/
+    )
+    assert.equal(await readFile(targetPath, 'utf8'), contents)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('Skill registry rejects symbolic-link lock directories', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-lock-dir-'))
+  const registryPath = path.join(root, 'state', 'skills.json')
+  const lockDirectory = path.join(root, 'state', '.locks')
+  const externalDirectory = path.join(root, 'external-locks')
+  try {
+    await mkdir(path.dirname(lockDirectory), { recursive: true })
+    await mkdir(externalDirectory)
+    await symlink(
+      externalDirectory,
+      lockDirectory,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    await assert.rejects(
+      writeSkillRegistry(registryPath, new Map()),
+      /Skill lock directory path must be a regular directory/
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('Skill registry rejects symbolic-link lock files without changing their targets', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-skill-lock-file-'))
+  const registryPath = path.join(root, 'state', 'skills.json')
+  const lockDirectory = path.join(root, 'state', '.locks')
+  const lockPath = path.join(lockDirectory, 'skills.lock')
+  const targetPath = path.join(root, 'external.lock')
+  try {
+    await mkdir(lockDirectory, { recursive: true })
+    await writeFile(targetPath, 'external lock target', 'utf8')
+    const before = await stat(targetPath)
+    try {
+      await symlink(targetPath, lockPath, 'file')
+    } catch (error) {
+      if (isPermissionError(error)) {
+        t.diagnostic('File symlinks are unavailable in this environment')
+        return
+      }
+      throw error
+    }
+    await assert.rejects(
+      writeSkillRegistry(registryPath, new Map()),
+      /Skill lock path must be a regular file/
+    )
+    assert.equal(await readFile(targetPath, 'utf8'), 'external lock target')
+    assert.equal((await stat(targetPath)).mode, before.mode)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+function parseJsonRecord(contents: string): {
+  version: number
+  skills: Record<string, unknown>
+} {
+  const value: unknown = JSON.parse(contents)
+  if (
+    !isRecord(value) ||
+    typeof value.version !== 'number' ||
+    !isRecord(value.skills)
+  ) {
+    throw new Error('Expected a versioned Skill registry object.')
+  }
+  return { version: value.version, skills: value.skills }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isPermissionError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    (error.code === 'EPERM' || error.code === 'EACCES')
+  )
+}

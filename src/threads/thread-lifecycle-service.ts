@@ -106,7 +106,7 @@ export interface ThreadLifecycleDependencies {
   threadStore: ThreadStore
   runtimeRegistry: ThreadRuntimeRegistry<RuntimeCore>
   browserProfileDir: string
-  initializationAttemptLimit: number
+  initializationAttemptLimit?: number
   resolveConversationUrl(
     value: string
   ): { provider: ProviderId; conversationUrl: string } | null
@@ -587,7 +587,7 @@ export class ThreadLifecycleService {
         waitForLogin: async () =>
           await this.dependencies.waitForLogin(signal ?? NEVER_ABORTED_SIGNAL),
         signal,
-        maxRetryAttempts: this.dependencies.initializationAttemptLimit,
+        maxRetryAttempts: this.dependencies.initializationAttemptLimit ?? 3,
       })
       throwIfAborted(signal)
       if (runtime === null) {
