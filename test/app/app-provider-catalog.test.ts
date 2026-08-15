@@ -4,7 +4,7 @@ import test from 'node:test'
 import {
   PROVIDERS,
   normalizeProviderId,
-} from '../../src/app/app-provider-catalog.ts'
+} from '../../src/providers/provider-catalog.ts'
 
 test('provider registry includes every supported provider', () => {
   assert.deepEqual(PROVIDERS, [

@@ -36,6 +36,22 @@ interface ActiveRequest {
   transport: StreamableHTTPServerTransport
 }
 
+export class PortalMcpStopTimeoutError extends Error {
+  public constructor(public readonly timeoutMs: number) {
+    super(`Timed out after ${timeoutMs}ms while stopping Portal MCP resources.`)
+    this.name = 'PortalMcpStopTimeoutError'
+  }
+}
+
+export class PortalMcpListenerCloseTimeoutError extends Error {
+  public constructor(public readonly timeoutMs: number) {
+    super(
+      `Timed out after ${timeoutMs}ms while closing the Portal MCP listener.`
+    )
+    this.name = 'PortalMcpListenerCloseTimeoutError'
+  }
+}
+
 export class PortalMcpServer {
   private fastify: FastifyInstance | null = null
   private readonly activeRequests = new Set<ActiveRequest>()
@@ -96,21 +112,34 @@ export class PortalMcpServer {
       this.stopping = true
       const fastify = this.fastify
       const closeTimeoutMs = this.options.closeTimeoutMs ?? 3_000
+      const closeDeadline = Date.now() + closeTimeoutMs
       try {
         for (const request of this.activeRequests) {
           request.controller.abort()
         }
-        await settleWithin(
-          Promise.allSettled([
-            Promise.resolve().then(async () => await this.options.onStop?.()),
+        const errors: unknown[] = []
+        await collectStopErrors(
+          errors,
+          [
+            async () => await this.options.onStop?.(),
             ...[...this.activeRequests].flatMap((request) => [
-              request.transport.close(),
-              request.server.close(),
+              async () => await request.transport.close(),
+              async () => await request.server.close(),
             ]),
-          ]).then(() => {}),
-          closeTimeoutMs
+          ],
+          remainingTime(closeDeadline)
         )
-        await closeFastify(fastify, closeTimeoutMs)
+        try {
+          await closeFastify(fastify, remainingTime(closeDeadline))
+        } catch (error) {
+          errors.push(error)
+        }
+        if (errors.length > 0) {
+          throw new AggregateError(
+            errors,
+            'Portal MCP Server failed to stop cleanly.'
+          )
+        }
       } finally {
         this.activeRequests.clear()
         this.fastify = null
@@ -305,8 +334,19 @@ async function closeFastify(
       }),
     ])
     if (!completed) {
-      fastify.server.closeAllConnections()
-      void closed.catch(() => {})
+      const timeoutError = new PortalMcpListenerCloseTimeoutError(timeoutMs)
+      try {
+        fastify.server.closeAllConnections()
+      } catch (error) {
+        throw new AggregateError(
+          [timeoutError, error],
+          'Portal MCP listener timed out and forced connection cleanup failed.',
+          { cause: error }
+        )
+      } finally {
+        void closed.catch(() => {})
+      }
+      throw timeoutError
     }
   } finally {
     if (timer !== null) {
@@ -315,16 +355,19 @@ async function closeFastify(
   }
 }
 
-async function settleWithin(
-  promise: Promise<void>,
+async function settleWithin<T>(
+  promise: Promise<T>,
   timeoutMs: number
-): Promise<void> {
+): Promise<
+  | { readonly completed: true; readonly value: T }
+  | { readonly completed: false }
+> {
   let timer: ReturnType<typeof setTimeout> | null = null
   try {
-    await Promise.race([
-      promise,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, timeoutMs)
+    return await Promise.race([
+      promise.then((value) => ({ completed: true as const, value })),
+      new Promise<{ readonly completed: false }>((resolve) => {
+        timer = setTimeout(() => resolve({ completed: false }), timeoutMs)
       }),
     ])
   } finally {
@@ -333,4 +376,26 @@ async function settleWithin(
     }
     void promise.catch(() => {})
   }
+}
+
+async function collectStopErrors(
+  errors: unknown[],
+  operations: readonly (() => unknown)[],
+  timeoutMs: number
+): Promise<void> {
+  const tracked = operations.map(async (operation) => {
+    try {
+      await Promise.resolve().then(operation)
+    } catch (error) {
+      errors.push(error)
+    }
+  })
+  const result = await settleWithin(Promise.all(tracked), timeoutMs)
+  if (!result.completed) {
+    errors.push(new PortalMcpStopTimeoutError(timeoutMs))
+  }
+}
+
+function remainingTime(deadline: number): number {
+  return Math.max(0, deadline - Date.now())
 }

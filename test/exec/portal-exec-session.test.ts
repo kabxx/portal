@@ -89,6 +89,10 @@ test(
       assert.ok(startedJob !== undefined)
       await core.close()
       await core.close()
+      await assert.rejects(
+        core.run('after close', new AbortController().signal),
+        /services are unavailable/
+      )
 
       assert.equal((await startedJob.wait()).terminationReason, 'shutdown')
       assert.equal(runtimeCloseCount, 1)

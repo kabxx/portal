@@ -1,15 +1,15 @@
-import { run, type PortalRunDependencies } from './app.ts'
-import {
+import type { PortalRunDependencies, run as runTui } from './app.ts'
+import type {
+  ConfigCliDependencies,
   runConfigCli,
-  type ConfigCliDependencies,
 } from './config/config-command.ts'
-import { runExecCli, type ExecCliDependencies } from './exec/exec-command.ts'
+import type { ExecCliDependencies, runExecCli } from './exec/exec-command.ts'
 
 export interface PortalCliDependencies {
   tui?: PortalRunDependencies
   exec?: ExecCliDependencies
   config?: ConfigCliDependencies
-  runTui?: typeof run
+  runTui?: typeof runTui
   runExec?: typeof runExecCli
   runConfig?: typeof runConfigCli
 }
@@ -19,17 +19,18 @@ export async function runPortalCli(
   dependencies: PortalCliDependencies = {}
 ): Promise<number> {
   if (argv[2] === 'exec') {
-    return await (dependencies.runExec ?? runExecCli)(
-      argv.slice(3),
-      dependencies.exec
-    )
+    const runExec =
+      dependencies.runExec ??
+      (await import('./exec/exec-command.ts')).runExecCli
+    return await runExec(argv.slice(3), dependencies.exec)
   }
   if (argv[2] === 'config') {
-    return await (dependencies.runConfig ?? runConfigCli)(
-      argv.slice(3),
-      dependencies.config
-    )
+    const runConfig =
+      dependencies.runConfig ??
+      (await import('./config/config-command.ts')).runConfigCli
+    return await runConfig(argv.slice(3), dependencies.config)
   }
-  await (dependencies.runTui ?? run)(argv, dependencies.tui)
+  const run = dependencies.runTui ?? (await import('./app.ts')).run
+  await run(argv, dependencies.tui)
   return typeof process.exitCode === 'number' ? process.exitCode : 0
 }

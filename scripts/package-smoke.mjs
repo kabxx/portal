@@ -407,7 +407,7 @@ function auditPack(pack) {
   assert.equal(pack.name, '@kabxx/portal')
   assert.equal(pack.version, packageMetadata.version)
   assert.deepEqual(pack.bundled ?? [], [])
-  assert.equal(pack.entryCount, 143)
+  assert.equal(pack.entryCount, 137)
 
   const allowedFiles = pack.files.map(({ path: filePath }) => filePath)
   for (const required of [
@@ -416,6 +416,7 @@ function auditPack(pack) {
     'README.zh-CN.md',
     'dist/cli-entry.js',
     'dist/exec/exec-command.js',
+    'dist/host/portal-host.js',
     'dist/index.js',
     'dist/mcp-server/mcp-server.js',
     'dist/vendor/ink.js',

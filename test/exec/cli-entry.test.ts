@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import path from 'node:path'
 import test from 'node:test'
 
 import { runPortalCli } from '../../src/cli-entry.ts'
@@ -46,4 +48,13 @@ test('runPortalCli dispatches config without starting exec or the TUI', async ()
   assert.equal(tuiCalls, 0)
   assert.equal(execCalls, 0)
   assert.deepEqual(configArguments, [])
+})
+
+test('the exec module graph does not load the TUI surface', () => {
+  const fixture = path.resolve('test/fixtures/exec-without-tui.mjs')
+  const result = spawnSync(process.execPath, ['--import', 'tsx', fixture], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  })
+  assert.equal(result.status, 0, result.stderr || result.stdout)
 })

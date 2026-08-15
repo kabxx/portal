@@ -7,6 +7,7 @@ import {
   ProviderAdapterError,
 } from '../../src/providers/adapters/adapter-base.ts'
 import { PortalAbortError } from '../../src/runtime/runtime-cancellation.ts'
+import { createRuntimeFromAdapter } from '../../src/runtime/runtime-factory.ts'
 import { initializeRuntimeWithLoginWait } from '../../src/runtime/runtime-initializer.ts'
 import {
   createBrowserContextStub,
@@ -194,6 +195,129 @@ test('initializeRuntimeWithLoginWait propagates abort without recovery warnings'
   )
 
   assert.equal(warningCalls, 0)
+})
+
+test('initializeRuntimeWithLoginWait closes an adapter that arrives after cancellation', async () => {
+  const controller = new AbortController()
+  const adapterRequested = Promise.withResolvers<void>()
+  const adapterDeferred = Promise.withResolvers<ProviderAdapter>()
+  const adapter = new FakeAdapter()
+  let createRuntimeCalls = 0
+
+  const initializing = initializeRuntimeWithLoginWait({
+    provider: 'chatgpt',
+    browserProfileDir: 'C:\\profiles\\chrome',
+    threadId: 't-1',
+    createAdapter: async () => {
+      adapterRequested.resolve()
+      return await adapterDeferred.promise
+    },
+    createRuntime: async () => {
+      createRuntimeCalls += 1
+      return createFakeRuntime()
+    },
+    onWarning: async () => {},
+    onLoginWait: async () => {},
+    waitForLogin: async () => {},
+    signal: controller.signal,
+  })
+
+  await adapterRequested.promise
+  controller.abort(new PortalAbortError('cancel adapter creation'))
+  adapterDeferred.resolve(adapter)
+
+  await assert.rejects(initializing, PortalAbortError)
+  assert.equal(createRuntimeCalls, 0)
+  assert.equal(adapter.closeCalls, 1)
+})
+
+test('initializeRuntimeWithLoginWait preserves cancellation and adapter cleanup errors', async () => {
+  const adapter = new FakeAdapter()
+  adapter.close = async () => {
+    adapter.closeCalls += 1
+    throw new Error('adapter close failed')
+  }
+
+  await assert.rejects(
+    initializeRuntimeWithLoginWait({
+      provider: 'chatgpt',
+      browserProfileDir: 'C:\\profiles\\chrome',
+      threadId: 't-1',
+      createAdapter: async () => adapter,
+      createRuntime: async () => {
+        throw new PortalAbortError('cancel runtime creation')
+      },
+      onWarning: async () => {},
+      onLoginWait: async () => {},
+      waitForLogin: async () => {},
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof AggregateError)
+      assert.ok(error.errors[0] instanceof PortalAbortError)
+      assert.match(String(error.errors[1]), /adapter close failed/)
+      return true
+    }
+  )
+  assert.equal(adapter.closeCalls, 1)
+})
+
+test('initializeRuntimeWithLoginWait closes a real factory adapter exactly once after failure', async () => {
+  const adapter = new FakeAdapter()
+  adapter.loggedIn = true
+  adapter.changeModel = async () => {
+    throw new Error('model selection failed')
+  }
+
+  await assert.rejects(
+    initializeRuntimeWithLoginWait({
+      provider: 'chatgpt',
+      browserProfileDir: 'C:\\profiles\\chrome',
+      threadId: 't-1',
+      createAdapter: async () => adapter,
+      createRuntime: async (currentAdapter) =>
+        await createRuntimeFromAdapter(currentAdapter, {
+          model: { key: 'gpt-test', option: null },
+          setupMode: 'skip',
+        }),
+      onWarning: async () => {},
+      onLoginWait: async () => {},
+      waitForLogin: async () => {},
+      maxRetryAttempts: 1,
+    }),
+    /model selection failed/
+  )
+  assert.equal(adapter.closeCalls, 1)
+})
+
+test('initializeRuntimeWithLoginWait closes a real factory adapter exactly once after abort', async () => {
+  const controller = new AbortController()
+  const adapter = new FakeAdapter()
+  adapter.loggedIn = true
+  adapter.submit = async () => {
+    controller.abort(new PortalAbortError('cancel real runtime setup'))
+    throw controller.signal.reason
+  }
+
+  await assert.rejects(
+    initializeRuntimeWithLoginWait({
+      provider: 'chatgpt',
+      browserProfileDir: 'C:\\profiles\\chrome',
+      threadId: 't-1',
+      createAdapter: async () => adapter,
+      createRuntime: async (currentAdapter) =>
+        await createRuntimeFromAdapter(currentAdapter, {
+          model: null,
+          signal: controller.signal,
+        }),
+      onWarning: async () => {},
+      onLoginWait: async () => {},
+      waitForLogin: async () => {},
+      signal: controller.signal,
+    }),
+    PortalAbortError
+  )
+
+  assert.equal(adapter.closeCalls, 1)
 })
 
 test('initializeRuntimeWithLoginWait passes abort signal to pending adapter restore', async () => {

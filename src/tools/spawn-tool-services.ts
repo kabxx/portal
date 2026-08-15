@@ -8,15 +8,12 @@ import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
 import type { RuntimeCore } from '../runtime/runtime-core.ts'
 import { createRuntimeFromAdapter } from '../runtime/runtime-factory.ts'
 import type { SkillLibrary } from '../skills/skill-library.ts'
-import type {
-  SpawnTaskResult,
-  ToolServices,
-} from '../tools/core/tool-definition.ts'
+import type { SpawnTaskResult, ToolServices } from './core/tool-definition.ts'
 import {
   createAdapterForProvider,
   normalizeProviderId,
-} from './app-provider-catalog.ts'
-import type { PortalRuntimeSettings } from './app-runtime-settings.ts'
+} from '../providers/provider-catalog.ts'
+import type { PortalRuntimeSettings } from '../runtime/runtime-settings.ts'
 
 export function inheritSpawnModelSelection(
   parentProvider: ProviderId,

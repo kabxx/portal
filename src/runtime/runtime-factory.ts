@@ -33,12 +33,12 @@ const DEFAULT_TOOLS = [
   SpawnTool,
 ]
 
+/** The caller owns the adapter until this function returns a RuntimeCore. */
 export async function createRuntimeFromAdapter(
   adapter: ProviderAdapter,
   options: RuntimeFactoryOptions = { model: null }
 ): Promise<RuntimeCore> {
   const { signal } = options
-
   try {
     const skillCatalog = await options.skillLibrary?.createCatalogSnapshot()
     const availableTools = [...DEFAULT_TOOLS]
@@ -92,9 +92,7 @@ export async function createRuntimeFromAdapter(
   } catch (error) {
     if (isProviderAdapterError(error) && error.kind === 'auth') {
       error.adapter = adapter
-      throw error
     }
-    await adapter.close().catch(() => {})
     throw error
   }
 }

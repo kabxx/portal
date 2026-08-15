@@ -6,7 +6,9 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 
 import {
+  PortalMcpListenerCloseTimeoutError,
   PortalMcpServer,
+  PortalMcpStopTimeoutError,
   resolvePortalMcpToken,
 } from '../../src/mcp-server/mcp-server.ts'
 import type {
@@ -467,6 +469,9 @@ test('PortalMcpServer bounds stop when a request handler ignores cancellation', 
     token: null,
     handlers,
     closeTimeoutMs: 10,
+    onStop: async () => {
+      throw new Error('foreground cleanup failed')
+    },
   })
   await server.start()
   const client = await connectClient(server.address()!)
@@ -476,9 +481,33 @@ test('PortalMcpServer bounds stop when a request handler ignores cancellation', 
   })
 
   await requestEntered.promise
+  const stoppedAddress = new URL(server.address()!)
   const startedAt = Date.now()
-  await server.stop()
+  await assert.rejects(server.stop(), (error: unknown) => {
+    assert.ok(error instanceof AggregateError)
+    assert.ok(
+      error.errors.some(
+        (candidate) => candidate instanceof PortalMcpListenerCloseTimeoutError
+      )
+    )
+    assert.ok(
+      error.errors.some((candidate) =>
+        String(candidate).includes('foreground cleanup failed')
+      )
+    )
+    return true
+  })
   assert.ok(Date.now() - startedAt < 500)
+  assert.equal(server.status().running, false)
+
+  const replacement = new PortalMcpServer({
+    host: stoppedAddress.hostname,
+    port: Number(stoppedAddress.port),
+    token: null,
+    handlers: createHandlers(),
+  })
+  await replacement.start()
+  await replacement.stop()
 
   await call.catch(() => {})
   await client.close().catch(() => {})
@@ -502,6 +531,53 @@ test('PortalMcpServer can restart and runs its stop callback', async () => {
   await server.stop()
 
   assert.equal(stops, 2)
+})
+
+test('PortalMcpServer reports stop callback failures after closing its listener', async () => {
+  const server = new PortalMcpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: null,
+    handlers: createHandlers(),
+    onStop: async () => {
+      throw new Error('surface cleanup failed')
+    },
+  })
+
+  await server.start()
+  await assert.rejects(server.stop(), (error: unknown) => {
+    assert.ok(error instanceof AggregateError)
+    assert.match(String(error.errors[0]), /surface cleanup failed/)
+    return true
+  })
+  assert.deepEqual(server.status(), {
+    running: false,
+    address: null,
+    auth: false,
+  })
+})
+
+test('PortalMcpServer reports a bounded stop callback timeout', async () => {
+  const server = new PortalMcpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: null,
+    handlers: createHandlers(),
+    closeTimeoutMs: 10,
+    onStop: async () => await new Promise(() => {}),
+  })
+
+  await server.start()
+  await assert.rejects(server.stop(), (error: unknown) => {
+    assert.ok(error instanceof AggregateError)
+    assert.ok(
+      error.errors.some(
+        (candidate) => candidate instanceof PortalMcpStopTimeoutError
+      )
+    )
+    return true
+  })
+  assert.equal(server.status().running, false)
 })
 
 test('PortalMcpServer serializes concurrent lifecycle operations', async () => {

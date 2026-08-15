@@ -2,16 +2,16 @@ import type { BrowserContext } from 'playwright'
 import {
   type ProviderAdapter,
   type ProviderTimingOptions,
-} from '../providers/adapters/adapter-base.ts'
-import { ChatGPTAdapter } from '../providers/adapters/adapter-chatgpt.ts'
-import { DeepSeekAdapter } from '../providers/adapters/adapter-deepseek.ts'
-import { DoubaoAdapter } from '../providers/adapters/adapter-doubao.ts'
-import { GeminiAdapter } from '../providers/adapters/adapter-gemini.ts'
-import { GlmAdapter } from '../providers/adapters/adapter-glm.ts'
-import { GrokAdapter } from '../providers/adapters/adapter-grok.ts'
-import { KimiAdapter } from '../providers/adapters/adapter-kimi.ts'
-import { QwenAdapter } from '../providers/adapters/adapter-qwen.ts'
-import type { ProviderId } from '../providers/provider-id.ts'
+} from './adapters/adapter-base.ts'
+import { ChatGPTAdapter } from './adapters/adapter-chatgpt.ts'
+import { DeepSeekAdapter } from './adapters/adapter-deepseek.ts'
+import { DoubaoAdapter } from './adapters/adapter-doubao.ts'
+import { GeminiAdapter } from './adapters/adapter-gemini.ts'
+import { GlmAdapter } from './adapters/adapter-glm.ts'
+import { GrokAdapter } from './adapters/adapter-grok.ts'
+import { KimiAdapter } from './adapters/adapter-kimi.ts'
+import { QwenAdapter } from './adapters/adapter-qwen.ts'
+import type { ProviderId } from './provider-id.ts'
 
 export const PROVIDERS: ProviderId[] = [
   'chatgpt',

@@ -2,9 +2,13 @@ import type { ProjectInstructions } from '../instructions/project-instructions.t
 import type { ProviderAdapter } from '../providers/adapters/adapter-base.ts'
 import type { ProviderId } from '../providers/provider-id.ts'
 import type { ResolvedProviderModel } from '../providers/provider-model-catalog.ts'
-import { initializeRuntimeWithLoginWait } from '../runtime/runtime-initializer.ts'
+import {
+  initializeRuntimeWithLoginWait,
+  RuntimeInitializationCleanupError,
+} from '../runtime/runtime-initializer.ts'
 import {
   isAbortError,
+  PortalAbortError,
   throwIfAborted,
 } from '../runtime/runtime-cancellation.ts'
 import type { RuntimeCore } from '../runtime/runtime-core.ts'
@@ -31,8 +35,6 @@ import {
   ConversationReservationError,
   type ThreadRuntimeRegistry,
 } from './thread-runtime-registry.ts'
-
-const NEVER_ABORTED_SIGNAL = new AbortController().signal
 
 export type ThreadLifecycleStage =
   | 'resolving'
@@ -137,12 +139,25 @@ export type ThreadLifecycleFailureCode =
   | 'cancelled'
   | 'not_found'
   | 'busy'
+  | 'closing'
 
 export interface ThreadLifecycleFailure {
   code: ThreadLifecycleFailureCode
   stage: ThreadLifecycleStage
   message: string
   threadId?: string
+}
+
+export class ThreadProvisionCleanupError extends Error {
+  public constructor(
+    public readonly threadId: string,
+    cause: unknown
+  ) {
+    super(`Failed to clean up provisioning resources for ${threadId}.`, {
+      cause,
+    })
+    this.name = 'ThreadProvisionCleanupError'
+  }
 }
 
 export interface ThreadLifecycleResult {
@@ -186,6 +201,9 @@ export interface CloseThreadResult {
 
 export class ThreadLifecycleService {
   private readonly activeOperations = new Map<string, ThreadOperationHandle>()
+  private readonly activeProvisions = new Set<Promise<ProvisionResult>>()
+  private readonly shutdownController = new AbortController()
+  private acceptingOperations = true
 
   public constructor(
     private readonly dependencies: ThreadLifecycleDependencies
@@ -195,7 +213,7 @@ export class ThreadLifecycleService {
     command: CreateThreadCommand,
     signal?: AbortSignal
   ): Promise<ProvisionResult> {
-    return await this.provision(
+    return await this.startProvision(
       {
         origin: 'new',
         provider: command.provider,
@@ -213,7 +231,7 @@ export class ThreadLifecycleService {
     command: ResumeThreadCommand,
     signal?: AbortSignal
   ): Promise<ProvisionResult> {
-    return await this.provision(
+    return await this.startProvision(
       {
         origin: 'resumed',
         conversationUrl: command.conversationUrl,
@@ -329,6 +347,9 @@ export class ThreadLifecycleService {
     runner: (context: ThreadOperationContext) => Promise<void>,
     stopTarget?: OperationStopTarget | null
   ): StartThreadOperationResult {
+    if (!this.acceptingOperations) {
+      return { accepted: false, reason: 'closing' }
+    }
     const thread = this.dependencies.threadManager.getThread(threadId)
     if (thread === null) {
       return { accepted: false, reason: 'not_found' }
@@ -391,6 +412,32 @@ export class ThreadLifecycleService {
     )
   }
 
+  public beginShutdown(
+    reason: unknown = new PortalAbortError('Thread lifecycle is shutting down.')
+  ): void {
+    if (!this.acceptingOperations) {
+      return
+    }
+    this.acceptingOperations = false
+    this.shutdownController.abort(reason)
+  }
+
+  public async waitForProvisioning(): Promise<void> {
+    const outcomes = await Promise.allSettled([...this.activeProvisions])
+    const errors: unknown[] = []
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') {
+        errors.push(outcome.reason as unknown)
+      }
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(
+        errors,
+        'One or more Thread provisioning operations failed during shutdown.'
+      )
+    }
+  }
+
   public async send(
     threadId: string,
     input: string,
@@ -414,6 +461,9 @@ export class ThreadLifecycleService {
     title: string | null
     createdAt?: number
   }): Promise<string | null> {
+    if (!this.acceptingOperations) {
+      return 'Thread lifecycle is shutting down.'
+    }
     try {
       const conversationUrl =
         input.threadId === undefined
@@ -440,7 +490,7 @@ export class ThreadLifecycleService {
     }
   }
 
-  private async provision(
+  private startProvision(
     request:
       | {
           origin: 'new'
@@ -459,6 +509,48 @@ export class ThreadLifecycleService {
         },
     signal?: AbortSignal
   ): Promise<ProvisionResult> {
+    if (!this.acceptingOperations) {
+      return Promise.resolve({
+        ok: false,
+        failure: {
+          code: 'closing',
+          stage: 'resolving',
+          message: 'Thread lifecycle is shutting down.',
+        },
+      })
+    }
+
+    const provisionSignal =
+      signal === undefined
+        ? this.shutdownController.signal
+        : AbortSignal.any([signal, this.shutdownController.signal])
+    const provision = this.provision(request, provisionSignal)
+    const trackedProvision = provision.finally(() => {
+      this.activeProvisions.delete(trackedProvision)
+    })
+    this.activeProvisions.add(trackedProvision)
+    return trackedProvision
+  }
+
+  private async provision(
+    request:
+      | {
+          origin: 'new'
+          provider: ProviderId
+          model: ResolvedProviderModel | null
+          mode: ThreadCreationMode
+          source: ThreadLifecycleSource
+          activate: boolean
+          persistInitialHistory: boolean
+        }
+      | {
+          origin: 'resumed'
+          conversationUrl: string
+          source: ThreadLifecycleSource
+          activate: boolean
+        },
+    signal: AbortSignal
+  ): Promise<ProvisionResult> {
     const threadId = this.dependencies.runtimeRegistry.createThreadId()
     const warnings: string[] = []
     let provider: ProviderId | null = null
@@ -474,277 +566,325 @@ export class ThreadLifecycleService {
       stage: 'resolving',
     })
 
-    try {
-      throwIfAborted(signal)
-      let conversationUrl: string | null = null
-      if (request.origin === 'resumed') {
-        const resolved = this.dependencies.resolveConversationUrl(
-          request.conversationUrl
-        )
-        if (resolved === null) {
+    const outcome = await settleProvision(
+      (async (): Promise<ProvisionResult> => {
+        try {
+          throwIfAborted(signal)
+          let conversationUrl: string | null = null
+          if (request.origin === 'resumed') {
+            const resolved = this.dependencies.resolveConversationUrl(
+              request.conversationUrl
+            )
+            if (resolved === null) {
+              return await this.failure(
+                threadId,
+                'invalid_conversation',
+                'resolving',
+                `Unsupported conversation URL: ${request.conversationUrl}`,
+                request.source
+              )
+            }
+            provider = resolved.provider
+            conversationUrl = resolved.conversationUrl
+            try {
+              this.dependencies.runtimeRegistry.reserveConversationUrl(
+                threadId,
+                conversationUrl
+              )
+            } catch (error) {
+              if (error instanceof ConversationAlreadyClaimedError) {
+                return await this.failure(
+                  threadId,
+                  'conversation_already_open',
+                  'resolving',
+                  error.message,
+                  request.source,
+                  error.threadId
+                )
+              }
+              if (error instanceof ConversationReservationError) {
+                return await this.failure(
+                  threadId,
+                  'conversation_already_open',
+                  'resolving',
+                  error.message,
+                  request.source,
+                  error.ownerId
+                )
+              }
+              throw error
+            }
+            reservedUrl = conversationUrl
+          } else {
+            provider = request.provider
+          }
+
+          stage = 'preparing'
+          const projectInstructions = this.dependencies.projectInstructions
+          throwIfAborted(signal)
+
+          let loginWarningSent = false
+          stage = 'building_runtime'
+          runtime = await initializeRuntimeWithLoginWait({
+            provider,
+            browserProfileDir: this.dependencies.browserProfileDir,
+            threadId,
+            createAdapter: async () => {
+              throwIfAborted(signal)
+              return await this.dependencies.createAdapter({
+                provider: provider!,
+                conversationUrl,
+                threadId,
+                signal,
+              })
+            },
+            createRuntime: async (adapter) => {
+              throwIfAborted(signal)
+              return await this.dependencies.createRuntime({
+                adapter,
+                provider: provider!,
+                model: request.origin === 'new' ? request.model : null,
+                mode: request.origin === 'new' ? request.mode : 'resume',
+                projectInstructions,
+                signal,
+              })
+            },
+            onWarning: async (plan) => {
+              if (plan.requiresLogin && loginWarningSent) {
+                return
+              }
+              if (plan.requiresLogin) {
+                loginWarningSent = true
+              }
+              await this.notify({
+                type: 'provision.warning',
+                threadId,
+                source: request.source,
+                title: plan.title,
+                lines: plan.lines,
+              })
+            },
+            onLoginWait: async () => {
+              if (!loginWarningSent) {
+                loginWarningSent = true
+                await this.notify({
+                  type: 'provision.login_wait',
+                  threadId,
+                  source: request.source,
+                  provider: provider!,
+                })
+              }
+            },
+            waitForLogin: async () =>
+              await this.dependencies.waitForLogin(signal),
+            signal,
+            maxRetryAttempts: this.dependencies.initializationAttemptLimit ?? 3,
+          })
+          throwIfAborted(signal)
+          if (runtime === null) {
+            return await this.failure(
+              threadId,
+              'provider_failure',
+              'preparing',
+              `Could not prepare ${provider} runtime.`,
+              request.source
+            )
+          }
+
+          if (request.origin === 'resumed') {
+            stage = 'loading_history'
+            try {
+              history = await runtime.loadHistory({ signal })
+            } catch (error) {
+              if (isAbortError(error)) {
+                throw error
+              }
+              const message = `Could not load remote conversation history: ${error instanceof Error ? error.message : String(error)}`
+              history = {
+                messages: [],
+                complete: false,
+                warning: message,
+              }
+              warnings.push(message)
+            }
+          }
+
+          throwIfAborted(signal)
+
+          const actualUrl = runtime.conversationUrl
+          stage = 'committing'
+          let snapshot
+          try {
+            snapshot = this.dependencies.runtimeRegistry.commitPrepared({
+              id: threadId,
+              reservationOwnerId: threadId,
+              provider,
+              runtime,
+              origin: request.origin === 'resumed' ? 'resumed' : 'new',
+              source: request.source,
+              conversationId: runtime.conversationId,
+              conversationUrl: actualUrl,
+              history:
+                history === null
+                  ? { status: 'not_loaded' }
+                  : history.warning === null
+                    ? { status: 'complete' }
+                    : {
+                        status: 'incomplete',
+                        reasonCode: 'provider_warning',
+                        message: history.warning,
+                      },
+              createdAt: Date.now(),
+            })
+          } catch (error) {
+            if (error instanceof ConversationAlreadyClaimedError) {
+              return await this.failure(
+                threadId,
+                'conversation_already_open',
+                'committing',
+                error.message,
+                request.source,
+                error.threadId
+              )
+            }
+            if (error instanceof ConversationReservationError) {
+              return await this.failure(
+                threadId,
+                'conversation_already_open',
+                'committing',
+                error.message,
+                request.source,
+                error.ownerId
+              )
+            }
+            throw error
+          }
+
+          let thread: ThreadHandle
+          try {
+            thread = this.dependencies.threadManager.addThread({
+              id: threadId,
+              provider,
+              runtime,
+              createdAt: snapshot.createdAt,
+              origin: request.origin === 'resumed' ? 'resumed' : 'new',
+              activate: request.activate,
+            })
+          } catch (error) {
+            this.dependencies.runtimeRegistry.setState(threadId, 'closing')
+            this.dependencies.runtimeRegistry.remove(threadId)
+            throw error
+          }
+          runtime = null
+          if (request.origin === 'resumed' || request.persistInitialHistory) {
+            try {
+              await this.dependencies.threadStore.touch({
+                provider,
+                conversationUrl: actualUrl,
+                title: null,
+                createdAt: thread.createdAt,
+              })
+            } catch (error) {
+              warnings.push(
+                `Thread metadata was not persisted: ${error instanceof Error ? error.message : String(error)}`
+              )
+            }
+          }
+          await this.notify({
+            type: 'thread.ready',
+            threadId,
+            source: request.source,
+            origin: request.origin === 'resumed' ? 'resumed' : 'new',
+            provider,
+            conversationUrl: actualUrl,
+          })
+          if (history !== null) {
+            await this.notify({
+              type: 'thread.history',
+              threadId,
+              source: request.source,
+              history,
+            })
+          }
+          return {
+            ok: true,
+            threadId,
+            provider,
+            conversationUrl: actualUrl,
+            createdAt: thread.createdAt,
+            history,
+            warnings,
+          }
+        } catch (error) {
+          if (error instanceof RuntimeInitializationCleanupError) {
+            throw error
+          }
+          if (isAbortError(error)) {
+            return await this.failure(
+              threadId,
+              'cancelled',
+              'preparing',
+              'Thread provisioning was cancelled.',
+              request.source
+            )
+          }
           return await this.failure(
             threadId,
-            'invalid_conversation',
-            'resolving',
-            `Unsupported conversation URL: ${request.conversationUrl}`,
+            request.origin === 'resumed' && stage === 'loading_history'
+              ? 'history_failure'
+              : 'provider_failure',
+            stage,
+            error instanceof Error ? error.message : String(error),
             request.source
           )
         }
-        provider = resolved.provider
-        conversationUrl = resolved.conversationUrl
-        try {
-          this.dependencies.runtimeRegistry.reserveConversationUrl(
-            threadId,
-            conversationUrl
-          )
-        } catch (error) {
-          if (error instanceof ConversationAlreadyClaimedError) {
-            return await this.failure(
-              threadId,
-              'conversation_already_open',
-              'resolving',
-              error.message,
-              request.source,
-              error.threadId
-            )
-          }
-          if (error instanceof ConversationReservationError) {
-            return await this.failure(
-              threadId,
-              'conversation_already_open',
-              'resolving',
-              error.message,
-              request.source,
-              error.ownerId
-            )
-          }
-          throw error
-        }
-        reservedUrl = conversationUrl
-      } else {
-        provider = request.provider
-      }
+      })()
+    )
 
-      stage = 'preparing'
-      const projectInstructions = this.dependencies.projectInstructions
-      throwIfAborted(signal)
-
-      let loginWarningSent = false
-      stage = 'building_runtime'
-      runtime = await initializeRuntimeWithLoginWait({
-        provider,
-        browserProfileDir: this.dependencies.browserProfileDir,
-        threadId,
-        createAdapter: async () =>
-          await this.dependencies.createAdapter({
-            provider: provider!,
-            conversationUrl,
-            threadId,
-            signal: signal ?? NEVER_ABORTED_SIGNAL,
-          }),
-        createRuntime: async (adapter) =>
-          await this.dependencies.createRuntime({
-            adapter,
-            provider: provider!,
-            model: request.origin === 'new' ? request.model : null,
-            mode: request.origin === 'new' ? request.mode : 'resume',
-            projectInstructions,
-            signal: signal ?? NEVER_ABORTED_SIGNAL,
-          }),
-        onWarning: async (plan) => {
-          if (plan.requiresLogin && loginWarningSent) {
-            return
-          }
-          if (plan.requiresLogin) {
-            loginWarningSent = true
-          }
-          await this.notify({
-            type: 'provision.warning',
-            threadId,
-            source: request.source,
-            title: plan.title,
-            lines: plan.lines,
-          })
-        },
-        onLoginWait: async () => {
-          if (!loginWarningSent) {
-            loginWarningSent = true
-            await this.notify({
-              type: 'provision.login_wait',
-              threadId,
-              source: request.source,
-              provider: provider!,
-            })
-          }
-        },
-        waitForLogin: async () =>
-          await this.dependencies.waitForLogin(signal ?? NEVER_ABORTED_SIGNAL),
-        signal,
-        maxRetryAttempts: this.dependencies.initializationAttemptLimit ?? 3,
-      })
-      throwIfAborted(signal)
-      if (runtime === null) {
-        return await this.failure(
-          threadId,
-          'provider_failure',
-          'preparing',
-          `Could not prepare ${provider} runtime.`,
-          request.source
-        )
-      }
-
-      if (request.origin === 'resumed') {
-        stage = 'loading_history'
-        try {
-          history = await runtime.loadHistory({ signal })
-        } catch (error) {
-          if (isAbortError(error)) {
-            throw error
-          }
-          const message = `Could not load remote conversation history: ${error instanceof Error ? error.message : String(error)}`
-          history = {
-            messages: [],
-            complete: false,
-            warning: message,
-          }
-          warnings.push(message)
-        }
-      }
-
-      const actualUrl = runtime.conversationUrl
-      stage = 'committing'
-      let snapshot
+    const cleanupErrors: unknown[] = []
+    if (runtime !== null) {
       try {
-        snapshot = this.dependencies.runtimeRegistry.commitPrepared({
-          id: threadId,
-          reservationOwnerId: threadId,
-          provider,
-          runtime,
-          origin: request.origin === 'resumed' ? 'resumed' : 'new',
-          source: request.source,
-          conversationId: runtime.conversationId,
-          conversationUrl: actualUrl,
-          history:
-            history === null
-              ? { status: 'not_loaded' }
-              : history.warning === null
-                ? { status: 'complete' }
-                : {
-                    status: 'incomplete',
-                    reasonCode: 'provider_warning',
-                    message: history.warning,
-                  },
-          createdAt: Date.now(),
-        })
+        await closeProvisionRuntime(runtime)
       } catch (error) {
-        if (error instanceof ConversationAlreadyClaimedError) {
-          return await this.failure(
-            threadId,
-            'conversation_already_open',
-            'committing',
-            error.message,
-            request.source,
-            error.threadId
-          )
-        }
-        if (error instanceof ConversationReservationError) {
-          return await this.failure(
-            threadId,
-            'conversation_already_open',
-            'committing',
-            error.message,
-            request.source,
-            error.ownerId
-          )
-        }
-        throw error
+        cleanupErrors.push(error)
       }
-
-      let thread: ThreadHandle
+    }
+    if (reservedUrl !== null) {
       try {
-        thread = this.dependencies.threadManager.addThread({
-          id: threadId,
-          provider,
-          runtime,
-          createdAt: snapshot.createdAt,
-          origin: request.origin === 'resumed' ? 'resumed' : 'new',
-          activate: request.activate,
-        })
-      } catch (error) {
-        this.dependencies.runtimeRegistry.setState(threadId, 'closing')
-        this.dependencies.runtimeRegistry.remove(threadId)
-        throw error
-      }
-      runtime = null
-      if (request.origin === 'resumed' || request.persistInitialHistory) {
-        try {
-          await this.dependencies.threadStore.touch({
-            provider,
-            conversationUrl: actualUrl,
-            title: null,
-            createdAt: thread.createdAt,
-          })
-        } catch (error) {
-          warnings.push(
-            `Thread metadata was not persisted: ${error instanceof Error ? error.message : String(error)}`
-          )
-        }
-      }
-      await this.notify({
-        type: 'thread.ready',
-        threadId,
-        source: request.source,
-        origin: request.origin === 'resumed' ? 'resumed' : 'new',
-        provider,
-        conversationUrl: actualUrl,
-      })
-      if (history !== null) {
-        await this.notify({
-          type: 'thread.history',
-          threadId,
-          source: request.source,
-          history,
-        })
-      }
-      return {
-        ok: true,
-        threadId,
-        provider,
-        conversationUrl: actualUrl,
-        createdAt: thread.createdAt,
-        history,
-        warnings,
-      }
-    } catch (error) {
-      if (isAbortError(error)) {
-        return await this.failure(
-          threadId,
-          'cancelled',
-          'preparing',
-          'Thread provisioning was cancelled.',
-          request.source
-        )
-      }
-      return await this.failure(
-        threadId,
-        request.origin === 'resumed' && stage === 'loading_history'
-          ? 'history_failure'
-          : 'provider_failure',
-        stage,
-        error instanceof Error ? error.message : String(error),
-        request.source
-      )
-    } finally {
-      if (runtime !== null) {
-        await runtime.close().catch(() => {})
-      }
-      if (reservedUrl !== null) {
         this.dependencies.runtimeRegistry.releaseConversationUrl(
           threadId,
           reservedUrl
         )
+      } catch (error) {
+        cleanupErrors.push(error)
       }
     }
+    const cleanupError =
+      cleanupErrors.length === 0
+        ? null
+        : new ThreadProvisionCleanupError(
+            threadId,
+            cleanupErrors.length === 1
+              ? cleanupErrors[0]
+              : new AggregateError(
+                  cleanupErrors,
+                  `Multiple provisioning resources for ${threadId} failed cleanup.`
+                )
+          )
+    if (outcome.status === 'rejected') {
+      if (cleanupError !== null) {
+        throw new AggregateError(
+          [outcome.reason, cleanupError],
+          `Thread provisioning and cleanup both failed for ${threadId}.`,
+          { cause: outcome.reason }
+        )
+      }
+      throw outcome.reason
+    }
+    if (cleanupError !== null) {
+      throw cleanupError
+    }
+    return outcome.value
   }
 
   private async notify(event: ThreadLifecycleEvent): Promise<void> {
@@ -841,4 +981,22 @@ export class ThreadLifecycleService {
       },
     }
   }
+}
+
+type ProvisionOutcome =
+  | { readonly status: 'fulfilled'; readonly value: ProvisionResult }
+  | { readonly status: 'rejected'; readonly reason: unknown }
+
+async function settleProvision(
+  operation: Promise<ProvisionResult>
+): Promise<ProvisionOutcome> {
+  try {
+    return { status: 'fulfilled', value: await operation }
+  } catch (reason) {
+    return { status: 'rejected', reason }
+  }
+}
+
+async function closeProvisionRuntime(runtime: RuntimeCore): Promise<void> {
+  await runtime.close()
 }

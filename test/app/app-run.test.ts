@@ -11,6 +11,10 @@ import {
   ensurePortalConfig,
 } from '../../src/config/portal-config.ts'
 import { createDeferred } from '../../src/providers/adapters/adapter-base.ts'
+import {
+  PortalMcpServer,
+  type PortalMcpServerOptions,
+} from '../../src/mcp-server/mcp-server.ts'
 import type {
   RunCommandInput,
   RunCommandJobHandle,
@@ -157,6 +161,108 @@ test(
     assert.equal(existsSync(cwd), false)
   }
 )
+
+test('run rolls back the prepared host when the TUI surface fails', async () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-app-surface-fail-'))
+  const dataDirectory = path.join(cwd, 'portal-state')
+  let browserLaunchCount = 0
+  try {
+    await assert.rejects(
+      run([process.execPath, 'portal', '--data-dir', dataDirectory], {
+        cwd,
+        terminalController: new TerminalController(),
+        renderTerminal: () => {
+          throw new Error('render failed')
+        },
+        launchBrowser: async () => {
+          browserLaunchCount += 1
+          throw new Error('browser should not launch')
+        },
+      }),
+      /render failed/
+    )
+    assert.equal(browserLaunchCount, 0)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('run stops an active MCP surface before exiting through /exit', async () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-app-mcp-exit-'))
+  const dataDirectory = path.join(cwd, 'portal-state')
+  const ui = new TerminalController()
+  let mcpStartCount = 0
+  let mcpStopCount = 0
+  let browserCloseCount = 0
+  let terminalUnmountCount = 0
+  class TestPortalMcpServer extends PortalMcpServer {
+    public constructor(private readonly testOptions: PortalMcpServerOptions) {
+      super(testOptions)
+    }
+
+    public override async start(): Promise<void> {
+      mcpStartCount += 1
+    }
+
+    public override async stop(): Promise<void> {
+      mcpStopCount += 1
+      await this.testOptions.onStop?.()
+    }
+
+    public override status() {
+      return {
+        running: mcpStartCount > mcpStopCount,
+        address: null,
+        auth: false,
+      }
+    }
+  }
+  const inkApp = {
+    rerender: () => {},
+    unmount: () => {
+      terminalUnmountCount += 1
+    },
+    waitUntilExit: async () => await new Promise<never>(() => {}),
+    waitUntilRenderFlush: async () => {},
+    cleanup: () => {},
+    clear: () => {},
+  }
+  try {
+    const runPromise = run(
+      [process.execPath, 'portal', '--data-dir', dataDirectory],
+      {
+        cwd,
+        terminalController: ui,
+        renderTerminal: () => inkApp,
+        launchBrowser: async () => ({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+          context: { isClosed: () => false } as unknown as BrowserContext,
+          disconnected: new Promise(() => {}),
+          close: async () => {
+            browserCloseCount += 1
+          },
+        }),
+        createMcpServer: (options: PortalMcpServerOptions) =>
+          new TestPortalMcpServer(options),
+      }
+    )
+
+    await waitFor(() => ui.getState().prompt.active, 'MCP command prompt')
+    assert.equal(ui.submitInput('/mcp start'), true)
+    await waitFor(
+      () => mcpStartCount === 1 && ui.getState().prompt.active,
+      'MCP server startup'
+    )
+    assert.equal(ui.submitInput('/exit'), true)
+    await withTimeout(runPromise, 'MCP exit shutdown')
+
+    assert.equal(mcpStopCount, 1)
+    assert.equal(browserCloseCount, 1)
+    assert.equal(terminalUnmountCount, 1)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
 
 function quoteShellArg(value: string): string {
   return os.platform() === 'win32'

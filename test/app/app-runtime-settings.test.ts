@@ -4,7 +4,7 @@ import test from 'node:test'
 import {
   createPortalRuntimeSettings,
   runtimeSetupModeForThreadCreation,
-} from '../../src/app/app-runtime-settings.ts'
+} from '../../src/runtime/runtime-settings.ts'
 
 test('thread creation modes map to setup modes', () => {
   assert.equal(runtimeSetupModeForThreadCreation('agent'), 'full')

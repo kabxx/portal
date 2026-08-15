@@ -3,7 +3,10 @@ import { stdin, stderr, stdout } from 'node:process'
 import type { Readable } from 'node:stream'
 import { stripVTControlCharacters } from 'node:util'
 
-import { normalizeProviderId, PROVIDERS } from '../app/app-provider-catalog.ts'
+import {
+  normalizeProviderId,
+  PROVIDERS,
+} from '../providers/provider-catalog.ts'
 import {
   ProviderModelSelectionError,
   resolveProviderModel,
@@ -148,8 +151,8 @@ export async function runExecCli(
       } catch (error) {
         if (exitCode === EXEC_EXIT_SUCCESS) {
           exitCode = EXEC_EXIT_RUNTIME_ERROR
-          writeError(errorOutput, error)
         }
+        writeError(errorOutput, error)
       }
     }
   }

@@ -11,7 +11,8 @@ inbound Portal MCP Server.
 
 | Area          | Main files                                                    | Responsibility                                                                            |
 | ------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Entry points  | `src/index.ts`, `src/cli-entry.ts`, `src/app.ts`, `src/exec/` | Dispatch the TUI or headless command and compose process resources                        |
+| Entry points  | `src/index.ts`, `src/cli-entry.ts`, `src/app.ts`, `src/exec/` | Dispatch the TUI or headless command and compose its surface                              |
+| Host          | `src/host/`, `src/shared/resource-scope.ts`                   | Compose shared process services and own startup, rollback, and ordered shutdown           |
 | Configuration | `src/config/`                                                 | Resolve sparse overrides and atomically update `config.yaml`                              |
 | Browser       | `src/platform/`                                               | Launch Chromium, connect over CDP, and own process lifetime                               |
 | Providers     | `src/providers/`                                              | Implement page readiness, submission, response capture, models, capabilities, and history |
@@ -27,24 +28,25 @@ The inbound MCP server is Portal's external automation interface.
 
 ## Process composition
 
-The TUI path in `app.ts`:
+`PortalHost` under `src/host/` is the shared composition root for the TUI and
+`portal exec`. `prepare()` resolves configuration, initializes the Skill and
+project-instruction snapshots, and opens the Thread store without launching a
+browser. `start()` launches Chromium and constructs the shared Thread lifecycle
+and Runtime factory. `close()` first closes Thread admission, waits for
+provisioning to settle, then cancels operations and closes jobs, Threads,
+browser resources, and SQLite in a bounded order. `ResourceScope` owns startup
+rollback and late-arriving resources; it does not replace this domain shutdown
+sequence.
 
-1. resolves the startup working directory and persistent data directory;
-2. resolves sparse configuration under a native cross-process lock;
-3. initializes the Skill registry, optional project-instruction snapshot,
-   thread store, job manager, and terminal controller;
-4. launches the configured Chromium profile and connects over CDP;
-5. constructs the shared thread lifecycle and runtime factory;
-6. renders Ink and accepts slash commands and thread input;
-7. optionally starts the inbound MCP Server through `/mcp start`;
-8. performs bounded cancellation and closes threads, jobs, browser resources,
-   the MCP Server, SQLite, and Ink during shutdown.
-
-`portal exec` uses a UI-independent composition under `src/exec/`. It does not
-create Ink, a terminal controller, or transcript writer. It creates one inactive
-agent thread, sends an inline setup plus task, writes progress to stderr and the
-final answer to stdout, records the conversation URL, then closes local
-resources. The provider-side conversation remains available for later resume.
+The TUI in `app.ts` adds only surface resources: the terminal controller, Ink,
+keybindings, slash-command dispatch, and the optional inbound MCP Server. Its
+single shutdown coordinator stops those resources around `PortalHost.close()`.
+`portal exec` uses the same Host through a UI-independent facade under
+`src/exec/`; its module graph does not load React, Ink, or terminal UI modules.
+It creates one inactive agent Thread, sends an inline setup plus task, writes
+progress to stderr and the final answer to stdout, records the conversation
+URL, then closes the Host. The provider-side conversation remains available for
+later resume.
 
 ## Setup prompt
 
@@ -89,7 +91,7 @@ The runtime executes a model response as a tool loop:
 2. capture the provider response;
 3. treat a single complete `<tool name="NAME">PAYLOAD</tool>` at the textual end
    as a tool request;
-4. validate optional Hook decisions and tool parameters;
+4. validate Tool parameters and host-owned capability and safety rules;
 5. execute the tool and send its structured result in the next user message;
 6. stop when the provider produces an ordinary assistant response.
 

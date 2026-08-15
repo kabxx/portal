@@ -104,7 +104,7 @@ class FakeAdapter extends ProviderAdapter {
   }
 }
 
-test('createRuntimeFromAdapter closes the adapter when changeModel fails', async () => {
+test('createRuntimeFromAdapter leaves adapter cleanup to its caller when changeModel fails', async () => {
   const adapter = new FakeAdapter({ failChangeModel: true })
 
   await assert.rejects(
@@ -114,10 +114,10 @@ test('createRuntimeFromAdapter closes the adapter when changeModel fails', async
     /changeModel failed/
   )
 
-  assert.equal(adapter.closeCalls, 1)
+  assert.equal(adapter.closeCalls, 0)
 })
 
-test('createRuntimeFromAdapter closes the adapter when runtime init fails', async () => {
+test('createRuntimeFromAdapter leaves adapter cleanup to its caller when runtime init fails', async () => {
   const adapter = new FakeAdapter({ failSubmit: true })
 
   await assert.rejects(
@@ -125,7 +125,7 @@ test('createRuntimeFromAdapter closes the adapter when runtime init fails', asyn
     /submit failed/
   )
 
-  assert.equal(adapter.closeCalls, 1)
+  assert.equal(adapter.closeCalls, 0)
   assert.equal(adapter.attachedTexts.length, 1)
 })
 
@@ -330,7 +330,7 @@ test('createRuntimeFromAdapter catalogs enabled skill metadata and paths', async
   }
 })
 
-test('createRuntimeFromAdapter passes abort signal into setup and closes on abort', async () => {
+test('createRuntimeFromAdapter passes abort signal into setup and leaves cleanup to its caller', async () => {
   const controller = new AbortController()
   let submitSignal: AbortSignal | undefined
   const adapter = new FakeAdapter({
@@ -352,5 +352,5 @@ test('createRuntimeFromAdapter passes abort signal into setup and closes on abor
 
   assert.equal(adapter.submitSignals[0], submitSignal)
   assert.equal(submitSignal?.aborted, true)
-  assert.equal(adapter.closeCalls, 1)
+  assert.equal(adapter.closeCalls, 0)
 })

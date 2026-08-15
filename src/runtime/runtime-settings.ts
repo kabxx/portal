@@ -1,4 +1,4 @@
-import type { RuntimeSetupMode } from '../runtime/setup-handshake.ts'
+import type { RuntimeSetupMode } from './setup-handshake.ts'
 import type { ThreadCreationMode } from '../threads/thread-creation-mode.ts'
 
 export interface PortalRuntimeSettings {

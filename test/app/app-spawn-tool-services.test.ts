@@ -6,8 +6,8 @@ import {
   createToolServices,
   inheritSpawnModelSelection,
   nextSpawnDepth,
-} from '../../src/app/app-spawn-tool-services.ts'
-import { createPortalRuntimeSettings } from '../../src/app/app-runtime-settings.ts'
+} from '../../src/tools/spawn-tool-services.ts'
+import { createPortalRuntimeSettings } from '../../src/runtime/runtime-settings.ts'
 import type { ProjectInstructions } from '../../src/instructions/project-instructions.ts'
 import type { RunCommandJobManager } from '../../src/processes/run-command-job-manager.ts'
 import type { SkillLibrary } from '../../src/skills/skill-library.ts'

@@ -15,6 +15,7 @@ import {
 } from '../../src/threads/thread-operation-coordinator.ts'
 import {
   ThreadLifecycleService,
+  ThreadProvisionCleanupError,
   type ThreadLifecycleDependencies,
   type ThreadLifecycleEvent,
 } from '../../src/threads/thread-lifecycle-service.ts'
@@ -317,6 +318,156 @@ test('resume preparation failure is reported as a provider failure', async () =>
   if (result.ok) return
   assert.equal(result.failure.code, 'provider_failure')
   assert.equal(result.failure.stage, 'building_runtime')
+})
+
+test('shutdown closes lifecycle admission for provisioning and sends', async () => {
+  const runtime = createFakeRuntime()
+  const harness = createHarness({ runtime })
+  admitThread(harness, runtime)
+
+  harness.service.beginShutdown()
+
+  const created = await harness.service.create({
+    provider: 'chatgpt',
+    model: null,
+    mode: 'agent',
+  })
+  assert.equal(created.ok, false)
+  if (!created.ok) assert.equal(created.failure.code, 'closing')
+
+  const resumed = await harness.service.resume({
+    conversationUrl: 'https://chatgpt.com/c/after-shutdown',
+  })
+  assert.equal(resumed.ok, false)
+  if (!resumed.ok) assert.equal(resumed.failure.code, 'closing')
+
+  assert.deepEqual(harness.service.startSend('t-1', 'late input'), {
+    accepted: false,
+    reason: 'closing',
+  })
+  assert.equal(
+    await harness.service.recordActivity({
+      provider: 'chatgpt',
+      conversationUrl: runtime.conversationUrl,
+      title: 'late activity',
+    }),
+    'Thread lifecycle is shutting down.'
+  )
+  assert.deepEqual(harness.store.touches, [])
+})
+
+test('shutdown aborts and waits for a late provisioning runtime to roll back', async () => {
+  let resolveRuntime!: (runtime: RuntimeCore) => void
+  const runtimeRequested = Promise.withResolvers<void>()
+  const runtimePromise = new Promise<RuntimeCore>((resolve) => {
+    resolveRuntime = resolve
+  })
+  let runtimeCloseCount = 0
+  const runtime = createFakeRuntime({
+    close: async () => {
+      runtimeCloseCount += 1
+    },
+  })
+  const harness = createHarness({
+    runtimeFactory: async () => {
+      runtimeRequested.resolve()
+      return await runtimePromise
+    },
+  })
+
+  const provisioning = harness.service.create({
+    provider: 'chatgpt',
+    model: null,
+    mode: 'agent',
+  })
+  await runtimeRequested.promise
+  harness.service.beginShutdown()
+  let shutdownSettled = false
+  const shutdown = harness.service.waitForProvisioning().then(() => {
+    shutdownSettled = true
+  })
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(shutdownSettled, false)
+
+  resolveRuntime(runtime)
+  const result = await provisioning
+  await shutdown
+
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.failure.code, 'cancelled')
+  assert.equal(runtimeCloseCount, 1)
+  assert.deepEqual(harness.manager.listThreads(), [])
+  assert.deepEqual(harness.registry.list(), [])
+})
+
+test('shutdown prevents a late resume history result from committing a Thread', async () => {
+  const historyStarted = Promise.withResolvers<void>()
+  const historyDeferred = Promise.withResolvers<ConversationHistoryResult>()
+  let runtimeCloseCount = 0
+  const runtime = createFakeRuntime({
+    conversationUrl: 'https://chatgpt.com/c/late-history',
+    loadHistory: async () => {
+      historyStarted.resolve()
+      return await historyDeferred.promise
+    },
+    close: async () => {
+      runtimeCloseCount += 1
+    },
+  })
+  const harness = createHarness({ runtime })
+
+  const provisioning = harness.service.resume({
+    conversationUrl: runtime.conversationUrl,
+    source: 'exec',
+  })
+  await historyStarted.promise
+  harness.service.beginShutdown()
+  const shutdown = harness.service.waitForProvisioning()
+  historyDeferred.resolve({ messages: [], complete: true, warning: null })
+
+  const result = await provisioning
+  await shutdown
+
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.failure.code, 'cancelled')
+  assert.equal(runtimeCloseCount, 1)
+  assert.deepEqual(harness.manager.listThreads(), [])
+  assert.deepEqual(harness.registry.list(), [])
+})
+
+test('shutdown reports a provisioning rollback failure', async () => {
+  const runtimeRequested = Promise.withResolvers<void>()
+  const runtimeDeferred = Promise.withResolvers<RuntimeCore>()
+  const harness = createHarness({
+    runtimeFactory: async () => {
+      runtimeRequested.resolve()
+      return await runtimeDeferred.promise
+    },
+  })
+  const provisioning = harness.service.create({
+    provider: 'chatgpt',
+    model: null,
+    mode: 'agent',
+  })
+  await runtimeRequested.promise
+  harness.service.beginShutdown()
+  const shutdown = harness.service.waitForProvisioning()
+  runtimeDeferred.resolve(
+    createFakeRuntime({
+      close: async () => {
+        throw new Error('late runtime close failed')
+      },
+    })
+  )
+
+  await assert.rejects(provisioning, ThreadProvisionCleanupError)
+  await assert.rejects(shutdown, (error: unknown) => {
+    assert.ok(error instanceof AggregateError)
+    assert.ok(error.errors[0] instanceof ThreadProvisionCleanupError)
+    return true
+  })
+  assert.deepEqual(harness.manager.listThreads(), [])
+  assert.deepEqual(harness.registry.list(), [])
 })
 
 test('close timeout keeps the runtime registry claim while the manager still owns the thread', async () => {

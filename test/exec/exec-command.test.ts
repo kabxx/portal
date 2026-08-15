@@ -81,6 +81,29 @@ test('runExecCli maps runtime failures and always closes the session', async () 
   assert.equal(harness.closeCalls(), 1)
 })
 
+test('runExecCli reports both runtime and Host cleanup failures', async () => {
+  const harness = createHarness(async () => {
+    throw new Error('provider failed')
+  })
+  harness.dependencies.createSession = async () => ({
+    run: async () => {
+      throw new Error('provider failed')
+    },
+    close: async () => {
+      throw new Error('Host cleanup failed')
+    },
+  })
+
+  const exitCode = await runExecCli(
+    ['--provider', 'gemini', 'question'],
+    harness.dependencies
+  )
+
+  assert.equal(exitCode, EXEC_EXIT_RUNTIME_ERROR)
+  assert.match(harness.stderr.value, /provider failed/)
+  assert.match(harness.stderr.value, /Host cleanup failed/)
+})
+
 test('runExecCli maps timeout and Ctrl+C to stable exit codes', async () => {
   const timeoutHarness = createHarness(
     async (_task, signal) => await waitForAbort(signal)
