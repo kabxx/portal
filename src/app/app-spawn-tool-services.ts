@@ -1,16 +1,10 @@
-import { randomUUID } from 'node:crypto'
 import type { BrowserContext } from 'playwright'
-import type { HookExecutionScope } from '../hooks/hook-types.ts'
-import type { HookDispatcher } from '../hooks/hook-dispatcher.ts'
 import type { ProjectInstructions } from '../instructions/project-instructions.ts'
 import type { RunCommandJobManager } from '../processes/run-command-job-manager.ts'
 import type { ProviderAdapter } from '../providers/adapters/adapter-base.ts'
 import type { ProviderId } from '../providers/provider-id.ts'
 import type { ResolvedProviderModel } from '../providers/provider-model-catalog.ts'
-import {
-  isAbortError,
-  throwIfAborted,
-} from '../runtime/runtime-cancellation.ts'
+import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
 import type { RuntimeCore } from '../runtime/runtime-core.ts'
 import { createRuntimeFromAdapter } from '../runtime/runtime-factory.ts'
 import type { SkillLibrary } from '../skills/skill-library.ts'
@@ -46,7 +40,6 @@ export function createToolServices({
   skillLibrary,
   projectInstructions,
   runCommandJobs,
-  hookDispatcher,
   settings,
   currentSpawnDepth,
   workingDirectory,
@@ -57,7 +50,6 @@ export function createToolServices({
   skillLibrary: SkillLibrary
   projectInstructions: ProjectInstructions
   runCommandJobs: RunCommandJobManager
-  hookDispatcher: HookDispatcher
   settings: PortalRuntimeSettings
   currentSpawnDepth: number
   workingDirectory: string
@@ -96,28 +88,9 @@ export function createToolServices({
         skillLibrary,
         projectInstructions,
         runCommandJobs,
-        hookDispatcher,
         settings,
         currentSpawnDepth: childSpawnDepth,
         workingDirectory,
-        ...(options.executionScope !== undefined
-          ? {
-              executionScope: {
-                ...options.executionScope,
-                source: 'spawn' as const,
-                spawnDepth: childSpawnDepth,
-                ...(options.executionScope.threadId === undefined
-                  ? {}
-                  : { parentThreadId: options.executionScope.threadId }),
-                ...(options.executionScope.turnId === undefined
-                  ? {}
-                  : { parentTurnId: options.executionScope.turnId }),
-                ...(options.toolCallId === undefined
-                  ? {}
-                  : { parentToolCallId: options.toolCallId }),
-              },
-            }
-          : {}),
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
       }
       return await runSpawnTask(spawnOptions)
@@ -133,10 +106,8 @@ async function runSpawnTask({
   skillLibrary,
   projectInstructions,
   runCommandJobs,
-  hookDispatcher,
   settings,
   currentSpawnDepth,
-  executionScope,
   signal,
   workingDirectory,
 }: {
@@ -147,37 +118,21 @@ async function runSpawnTask({
   skillLibrary: SkillLibrary
   projectInstructions: ProjectInstructions
   runCommandJobs: RunCommandJobManager
-  hookDispatcher: HookDispatcher
   settings: PortalRuntimeSettings
   currentSpawnDepth: number
-  executionScope?: HookExecutionScope
   signal?: AbortSignal
   workingDirectory: string
 }): Promise<SpawnTaskResult> {
   let adapter: ProviderAdapter | null = null
   let runtime: RuntimeCore | null = null
-  const spawnId = randomUUID()
   try {
     throwIfAborted(signal)
-    if (executionScope !== undefined) {
-      await hookDispatcher.dispatch(
-        hookDispatcher.createEvent(
-          'spawn.started',
-          executionScope,
-          { prompt },
-          { spawnId }
-        ),
-        executionScope,
-        signal
-      )
-    }
     adapter = await createAdapterForProvider(context, provider, null, signal)
     runtime = await createRuntimeFromAdapter(adapter, {
       model,
       setupMode: 'full',
       skillLibrary,
       projectInstructions,
-      hookDispatcher,
       advertiseSpawnTool: currentSpawnDepth < settings.spawnDepthLimit,
       workingDirectory,
       toolServices: createToolServices({
@@ -187,7 +142,6 @@ async function runSpawnTask({
         skillLibrary,
         projectInstructions,
         runCommandJobs,
-        hookDispatcher,
         settings,
         currentSpawnDepth,
         workingDirectory,
@@ -197,37 +151,12 @@ async function runSpawnTask({
     throwIfAborted(signal)
     const output = await runtime.submitUserInput(prompt, {
       ...(signal !== undefined ? { signal } : {}),
-      ...(executionScope === undefined ? {} : { executionScope }),
     })
-    if (executionScope !== undefined) {
-      await hookDispatcher.dispatch(
-        hookDispatcher.createEvent(
-          'spawn.completed',
-          executionScope,
-          { output },
-          { spawnId }
-        ),
-        executionScope
-      )
-    }
     return {
       provider,
       conversationUrl: runtime.conversationUrl,
       output,
     }
-  } catch (error) {
-    if (executionScope !== undefined) {
-      await hookDispatcher.dispatch(
-        hookDispatcher.createEvent(
-          isAbortError(error) ? 'spawn.cancelled' : 'spawn.failed',
-          executionScope,
-          { message: error instanceof Error ? error.message : String(error) },
-          { spawnId }
-        ),
-        executionScope
-      )
-    }
-    throw error
   } finally {
     if (runtime !== null) {
       await runtime.close().catch(() => {})

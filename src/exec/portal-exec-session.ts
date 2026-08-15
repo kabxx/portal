@@ -1,10 +1,7 @@
 import path from 'node:path'
 
 import { createToolServices } from '../app/app-spawn-tool-services.ts'
-import {
-  createPortalRuntimeSettings,
-  type PortalRuntimeSettings,
-} from '../app/app-runtime-settings.ts'
+import { createPortalRuntimeSettings } from '../app/app-runtime-settings.ts'
 import { createAdapterForProvider } from '../app/app-provider-catalog.ts'
 import {
   closeWithTimeout,
@@ -14,20 +11,12 @@ import {
   createDefaultPortalConfig,
   ensurePortalConfig,
 } from '../config/portal-config.ts'
-import { HookCatalog } from '../hooks/hook-catalog.ts'
-import { createHookSnapshot } from '../hooks/hook-config.ts'
-import { HookDispatcher } from '../hooks/hook-dispatcher.ts'
-import { HookEventBus } from '../hooks/hook-event-sink.ts'
-import {
-  loadProjectInstructions,
-  type ProjectInstructions,
-} from '../instructions/project-instructions.ts'
+import { loadProjectInstructions } from '../instructions/project-instructions.ts'
 import { launchBrowser } from '../platform/browser-cdp-launcher.ts'
 import { resolvePortalDataDirectory } from '../platform/portal-data-directory.ts'
 import { RunCommandJobManager } from '../processes/run-command-job-manager.ts'
 import { resolveConversationUrl } from '../providers/provider-conversation-url.ts'
 import type { RuntimeCore } from '../runtime/runtime-core.ts'
-import { ChildRuntimeFactory } from '../runtime/child-runtime-factory.ts'
 import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
 import { createRuntimeFromAdapter } from '../runtime/runtime-factory.ts'
 import { sleepWithAbortAsync } from '../shared/sleep.ts'
@@ -109,11 +98,6 @@ export class PortalApplicationCore implements PortalExecSession {
       cwd: options.cwd,
       enabled: portalConfig.projectInstructions,
     })
-    const hookCatalog = new HookCatalog(
-      configPath,
-      createHookSnapshot(portalConfig.hooks)
-    )
-    const hookDispatcher = new HookDispatcher(null, new HookEventBus())
     const browserEngine = 'chromium'
     const browserExecutablePath = path.resolve(
       options.browserExecutablePath ?? portalConfig.browser.executablePath
@@ -140,11 +124,7 @@ export class PortalApplicationCore implements PortalExecSession {
       threadStore.close()
       throw error
     }
-    const threadManager = new ThreadManager(
-      hookCatalog,
-      hookDispatcher,
-      options.cwd
-    )
+    const threadManager = new ThreadManager()
     const threadOperations = new ThreadOperationCoordinator()
     const runtimeRegistry = new ThreadRuntimeRegistry<RuntimeCore>()
     const runCommandJobs = new RunCommandJobManager()
@@ -172,7 +152,6 @@ export class PortalApplicationCore implements PortalExecSession {
           setupMode: 'inline',
           skillLibrary,
           projectInstructions,
-          hookDispatcher,
           advertiseSpawnTool: settings.spawnDepthLimit > 0,
           workingDirectory: options.cwd,
           toolServices: createToolServices({
@@ -182,7 +161,6 @@ export class PortalApplicationCore implements PortalExecSession {
             skillLibrary,
             projectInstructions,
             runCommandJobs,
-            hookDispatcher,
             settings,
             currentSpawnDepth: 0,
             workingDirectory: options.cwd,
@@ -198,18 +176,6 @@ export class PortalApplicationCore implements PortalExecSession {
             event
           ),
       },
-    })
-
-    configureHookModelExecutor({
-      hookDispatcher,
-      context,
-      skillLibrary,
-      projectInstructions,
-      runCommandJobs,
-      settings,
-      workingDirectory: options.cwd,
-      createProviderAdapter,
-      createRuntime,
     })
 
     const holder: { core: PortalApplicationCore | null } = { core: null }
@@ -276,7 +242,6 @@ export class PortalApplicationCore implements PortalExecSession {
     this.threadId = provision.threadId
     const result = await this.lifecycle.send(provision.threadId, task, {
       signal,
-      source: 'exec',
       onTurnItem: async (item) => {
         if (item.kind === 'status') {
           this.options.onProgress({ type: 'status', message: item.text })
@@ -330,71 +295,4 @@ function reportLifecycleEvent(
           : `Conversation: ${conversation.conversationUrl}`,
     })
   }
-}
-
-function configureHookModelExecutor({
-  hookDispatcher,
-  context,
-  skillLibrary,
-  projectInstructions,
-  runCommandJobs,
-  settings,
-  workingDirectory,
-  createProviderAdapter,
-  createRuntime,
-}: {
-  hookDispatcher: HookDispatcher
-  context: Parameters<typeof createToolServices>[0]['context']
-  skillLibrary: SkillLibrary
-  projectInstructions: ProjectInstructions
-  runCommandJobs: RunCommandJobManager
-  settings: PortalRuntimeSettings
-  workingDirectory: string
-  createProviderAdapter: typeof createAdapterForProvider
-  createRuntime: typeof createRuntimeFromAdapter
-}): void {
-  hookDispatcher.setModelExecutor(
-    new ChildRuntimeFactory('chatgpt', async (request) => {
-      const adapter = await createProviderAdapter(
-        context,
-        request.provider,
-        null,
-        request.signal
-      )
-      let runtime: RuntimeCore | null = null
-      try {
-        runtime = await createRuntime(adapter, {
-          model: null,
-          setupMode: 'full',
-          skillLibrary,
-          projectInstructions,
-          hookDispatcher,
-          workingDirectory,
-          allowedTools: request.allowedTools,
-          toolServices: createToolServices({
-            context,
-            provider: request.provider,
-            model: null,
-            skillLibrary,
-            projectInstructions,
-            runCommandJobs,
-            hookDispatcher,
-            settings,
-            currentSpawnDepth: request.executionScope.spawnDepth,
-            workingDirectory,
-          }),
-          signal: request.signal,
-        })
-        const childRuntime = runtime
-        return {
-          runtime: childRuntime,
-          close: async () => await childRuntime.close(),
-        }
-      } catch (error) {
-        if (runtime !== null) await runtime.close().catch(() => {})
-        else await adapter.close().catch(() => {})
-        throw error
-      }
-    })
-  )
 }

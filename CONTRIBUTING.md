@@ -61,7 +61,6 @@ src/
 ├── cli-commands/    # TUI slash commands
 ├── config/          # sparse configuration and atomic updates
 ├── exec/            # headless one-task execution
-├── hooks/           # lifecycle Hook catalog and execution
 ├── mcp-server/      # inbound Portal MCP Server
 ├── providers/       # provider adapters and parsers
 ├── runtime/         # setup, tool loop, and runtime state
@@ -82,12 +81,13 @@ docs/development/    # architecture and contributor references
 | Provider adapters   | [Provider Development](docs/development/provider-development.md)                            |
 | Browser/runtime     | [Architecture](docs/development/architecture.md) and [Testing](docs/development/testing.md) |
 | Configuration       | [Configuration](docs/user/configuration.md)                                                 |
-| Skills and Hooks    | [Skills](docs/user/skills.md), [Hooks](docs/user/hooks.md)                                  |
+| Skills              | [Skills](docs/user/skills.md)                                                               |
+| Hook architecture   | [Hook Architecture](docs/development/hook-architecture.md)                                  |
 | MCP Server          | [Portal MCP Server](docs/user/mcp-server.md)                                                |
 | Security boundaries | [Security](SECURITY.md)                                                                     |
 
 Provider selectors should prefer stable roles, test ids, data attributes, and
-owned network events. Local tools, Hooks, Skills, listeners, and browser changes
+owned network events. Local tools, extensions, Skills, listeners, and browser changes
 must document filesystem, process, network, account, and credential impact.
 
 ## Pull request checklist

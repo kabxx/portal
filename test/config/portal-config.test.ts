@@ -37,8 +37,6 @@ test('built-in config fixes implementation settings and uses sparse defaults', (
   assert.equal(config.browser.remoteDebuggingPort, 0)
   assert.deepEqual(config.mcp, { host: '127.0.0.1', port: 8788 })
   assert.equal(config.projectInstructions, false)
-  assert.equal(config.hooks.maxDepth, 1)
-  assert.equal(config.hooks.enabled, false)
 })
 
 test('missing and empty config use defaults without creating or rewriting files', async () => {
@@ -106,10 +104,6 @@ test('strict parser rejects unknown and invalid public fields', () => {
     /Unsupported mcp fields/
   )
   assert.throws(
-    () => parsePortalConfig({ hooks: { maxDepth: 2 } }),
-    /Unsupported hooks fields/
-  )
-  assert.throws(
     () => parsePortalConfig({ mcp: { port: 0 } }),
     /mcp\.port must be an integer/
   )
@@ -163,22 +157,28 @@ test('AST updates preserve user comments and untouched formatting', async () => 
         'mcp:',
         '  # custom host',
         '  host: localhost',
-        'hooks:',
-        '  # keep handler formatting',
-        '  handlers: []',
+        'keybindings:',
+        '  # keep keybinding formatting',
+        '  input.submit: [ctrl+enter]',
         '',
       ].join('\n'),
       'utf8'
     )
     await updatePortalConfig(configPath, (config) => {
-      config.hooks.enabled = true
+      config.projectInstructions = true
     })
     const contents = await readFile(configPath, 'utf8')
     assert.match(contents, /# root comment/)
     assert.match(contents, /# custom host\n {2}host: localhost/)
-    assert.match(contents, /# keep handler formatting\n {2}handlers: \[\]/)
-    assert.match(contents, /enabled: true/)
-    assert.equal((await readPortalConfig(configPath))?.hooks.enabled, true)
+    assert.match(
+      contents,
+      /# keep keybinding formatting\n {2}input\.submit: \[ ctrl\+enter \]/
+    )
+    assert.match(contents, /projectInstructions: true/)
+    assert.equal(
+      (await readPortalConfig(configPath))?.projectInstructions,
+      true
+    )
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -221,7 +221,6 @@ test('Portal rejects unsupported fields without rewriting or exposing values', a
     ['agentInstructions:\n  codex:\n    global: true\n', /agentInstructions/],
     [`mcp:\n  token: ${secret}\n`, /mcp/],
     [`browser:\n  profilePath: ${secret}\n`, /browser/],
-    ['hooks:\n  maxDepth: 2\n', /hooks/],
   ]
   try {
     for (const [contents, expected] of cases) {

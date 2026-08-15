@@ -6,7 +6,7 @@ portal intentionally connects an untrusted web model to powerful operations on t
 
 ## Security model
 
-Agent threads, spawned runtimes, and `portal exec` send the web model a textual catalog of available tools. Chat threads send only a minimal `READY` handshake, but their local runtime still registers tools, Skills, and Hooks. In every mode, when a model response contains a valid tool request, portal executes that request and sends the result back to the same web conversation. Chat mode is therefore not a sandbox or a permission boundary. Setup prompts, enabled project instructions, ordinary user input, Skill metadata and files read by the model, tool results, and selected local images can all cross the provider boundary.
+Agent threads, spawned runtimes, and `portal exec` send the web model a textual catalog of available tools. Chat threads send only a minimal `READY` handshake, but their local runtime still registers tools and Skills. In every mode, when a model response contains a valid tool request, portal executes that request and sends the result back to the same web conversation. Chat mode is therefore not a sandbox or a permission boundary. Setup prompts, enabled project instructions, ordinary user input, Skill metadata and files read by the model, tool results, and selected local images can all cross the provider boundary.
 
 There is currently no human approval gate between a valid model-generated request and local execution. The effective permissions are the permissions of the user account running portal.
 

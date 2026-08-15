@@ -19,7 +19,7 @@ subscription, and provider UI.
 - One terminal workflow for eight web providers
 - Persistent browser login and conversation history
 - Local commands, file patches, images, and focused child tasks
-- Optional Skills, Hooks, and working-directory project instructions
+- Optional Skills and working-directory project instructions
 - Headless one-task execution with `portal exec`
 - An optional inbound Portal MCP Server
 
@@ -59,7 +59,7 @@ Run `portal config` to print the optional configuration file path. Use `/help`
 inside the TUI for the live command index.
 
 > [!WARNING]
-> Portal is not a sandbox. Local tools, Skills, Hooks, and spawned workers use
+> Portal is not a sandbox. Local tools, Skills, and spawned workers use
 > the permissions of the Portal user, and valid model-generated tool calls do
 > not have a human approval gate. Read [Security](SECURITY.md) before using
 > Portal with sensitive data.
@@ -69,10 +69,11 @@ inside the TUI for the live command index.
 - **User guides:** [CLI](docs/user/cli.md),
   [Configuration](docs/user/configuration.md),
   [Providers](docs/user/providers.md),
-  [Skills](docs/user/skills.md), [Hooks](docs/user/hooks.md),
+  [Skills](docs/user/skills.md),
   [Project Instructions](docs/user/project-instructions.md),
   [Portal MCP Server](docs/user/mcp-server.md)
 - **Development:** [Architecture](docs/development/architecture.md),
+  [Hook Architecture](docs/development/hook-architecture.md),
   [Provider Development](docs/development/provider-development.md),
   [Testing](docs/development/testing.md)
 - **Project:** [Contributing](CONTRIBUTING.md), [Security](SECURITY.md)

@@ -15,7 +15,7 @@ Codex or Claude files, expand imports, or activate additional instructions when
 a tool targets another directory.
 
 The file is read once during application startup. Agent threads, spawned
-runtimes, Hooks, and listener-created runtimes share that immutable snapshot.
+runtimes and listener-created runtimes share that immutable snapshot.
 Changing the file has no effect until portal is restarted. Resumed provider
 conversations do not receive another setup turn.
 

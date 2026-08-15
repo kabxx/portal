@@ -12,9 +12,6 @@ import {
   type TurnItem,
   type TurnRecord,
 } from './thread-registry.ts'
-import type { HookCatalog } from '../hooks/hook-catalog.ts'
-import type { HookDispatcher } from '../hooks/hook-dispatcher.ts'
-import type { HookExecutionScope } from '../hooks/hook-types.ts'
 import { ComposerLimitExceededError } from '../providers/composer-limit.ts'
 import { ThreadSelectionController } from './thread-selection.ts'
 
@@ -34,7 +31,6 @@ interface CreateThreadInput {
   runtime: RuntimeCore
   createdAt: number
   origin?: 'new' | 'resumed'
-  source?: HookExecutionScope['source']
   activate?: boolean
 }
 
@@ -52,7 +48,6 @@ export interface ThreadInputHandlers {
     turn: TurnRecord
   ) => void
   signal?: AbortSignal
-  source?: HookExecutionScope['source']
 }
 
 export interface ThreadInputResult {
@@ -92,17 +87,11 @@ export class ThreadManager {
   private readonly threads = new ThreadRegistry()
   private readonly selection: ThreadSelectionController
   private readonly runningThreadIds = new Set<string>()
-  private readonly ready = new Map<string, Promise<void>>()
   private readonly pageCloseListeners = new Set<(threadId: string) => void>()
   private readonly pageCloseUnsubscribers = new Map<string, () => void>()
   private readonly closingThreads = new Map<string, Promise<boolean>>()
 
-  public constructor(
-    private readonly hookCatalog: HookCatalog | null = null,
-    private readonly hookDispatcher: HookDispatcher | null = null,
-    private readonly cwd: string = process.cwd(),
-    selection?: ThreadSelectionController
-  ) {
+  public constructor(selection?: ThreadSelectionController) {
     this.selection = selection ?? new ThreadSelectionController()
   }
 
@@ -130,24 +119,6 @@ export class ThreadManager {
       this.selection.switch(thread.id)
     }
     const handle = this.toThreadHandle(thread.id)
-    if (this.hookCatalog !== null && this.hookDispatcher !== null) {
-      const scope = this.createHookScope(
-        handle,
-        this.hookCatalog.snapshot(),
-        thread.source ?? 'system'
-      )
-      this.ready.set(
-        thread.id,
-        this.hookDispatcher
-          .dispatch(
-            this.hookDispatcher.createEvent('thread.ready', scope, {
-              origin: thread.origin ?? 'new',
-            }),
-            scope
-          )
-          .then(() => {})
-      )
-    }
     this.pageCloseUnsubscribers.set(
       thread.id,
       thread.runtime.onUnexpectedPageClose(() => {
@@ -208,17 +179,14 @@ export class ThreadManager {
     return this.switchThread(latestThread.id)
   }
 
-  public closeThread(
-    id: string,
-    source: HookExecutionScope['source'] = 'system'
-  ): Promise<boolean> {
+  public closeThread(id: string): Promise<boolean> {
     const existing = this.closingThreads.get(id)
     if (existing !== undefined) {
       return existing
     }
 
     const closing = Promise.resolve()
-      .then(async () => await this.closeThreadOnce(id, source))
+      .then(async () => await this.closeThreadOnce(id))
       .finally(() => {
         if (this.closingThreads.get(id) === closing) {
           this.closingThreads.delete(id)
@@ -228,10 +196,7 @@ export class ThreadManager {
     return closing
   }
 
-  private async closeThreadOnce(
-    id: string,
-    source: HookExecutionScope['source']
-  ): Promise<boolean> {
+  private async closeThreadOnce(id: string): Promise<boolean> {
     const thread = this.threads.getThread(id)
     if (thread === null) {
       return false
@@ -242,33 +207,12 @@ export class ThreadManager {
     unsubscribe?.()
     const failures: unknown[] = []
     try {
-      await this.ready.get(id)
-    } catch (error) {
-      failures.push(error)
-    }
-    try {
       await thread.runtime.close()
     } catch (error) {
       failures.push(error)
     }
     this.threads.removeThread(id)
     this.selection.detach(id)
-    this.ready.delete(id)
-    if (this.hookCatalog !== null && this.hookDispatcher !== null) {
-      const scope = this.createHookScope(
-        thread,
-        this.hookCatalog.snapshot(),
-        source
-      )
-      try {
-        await this.hookDispatcher.dispatch(
-          this.hookDispatcher.createEvent('thread.closed', scope),
-          scope
-        )
-      } catch (error) {
-        failures.push(error)
-      }
-    }
     if (failures.length > 0) {
       throw new ThreadCloseCleanupError(id, failures)
     }
@@ -319,7 +263,6 @@ export class ThreadManager {
     handlers: ThreadInputHandlers
   ): Promise<ThreadInputResult> {
     throwIfAborted(handlers.signal)
-    await this.ready.get(thread.id)
     const preflight = await thread.runtime.preflightInitialInput(
       input,
       handlers.signal
@@ -331,15 +274,6 @@ export class ThreadManager {
     if (turn === null) {
       throw new Error(`Unknown thread: ${thread.id}`)
     }
-    const hookScope =
-      this.hookCatalog === null
-        ? undefined
-        : this.createHookScope(
-            thread,
-            this.hookCatalog.snapshot(),
-            handlers.source ?? 'tui',
-            turn.id
-          )
     const emitTurnItem = async (item: TurnItem) => {
       throwIfAborted(handlers.signal)
       this.threads.appendTurnItem(thread.id, turn.id, item)
@@ -347,13 +281,6 @@ export class ThreadManager {
     }
 
     try {
-      if (hookScope !== undefined && this.hookDispatcher !== null) {
-        await this.hookDispatcher.dispatch(
-          this.hookDispatcher.createEvent('turn.started', hookScope, { input }),
-          hookScope,
-          handlers.signal
-        )
-      }
       const assistant = await thread.runtime.submitUserInput(input, {
         onAssistantStream: async (message) => {
           throwIfAborted(handlers.signal)
@@ -416,30 +343,13 @@ export class ThreadManager {
           }
         },
         ...(handlers.signal !== undefined ? { signal: handlers.signal } : {}),
-        ...(hookScope === undefined ? {} : { executionScope: hookScope }),
       })
       throwIfAborted(handlers.signal)
       this.threads.completeTurn(thread.id, turn.id, 'completed')
-      if (hookScope !== undefined && this.hookDispatcher !== null) {
-        await this.hookDispatcher.dispatch(
-          this.hookDispatcher.createEvent('turn.completed', hookScope, {
-            assistant,
-          }),
-          hookScope
-        )
-      }
       return { assistant, turn }
     } catch (error) {
       if (isAbortError(error)) {
         this.threads.completeTurn(thread.id, turn.id, 'canceled')
-        if (hookScope !== undefined && this.hookDispatcher !== null) {
-          await this.hookDispatcher.dispatch(
-            this.hookDispatcher.createEvent('turn.cancelled', hookScope, {
-              message: error instanceof Error ? error.message : String(error),
-            }),
-            hookScope
-          )
-        }
         throw error
       }
       await emitTurnItem({
@@ -448,33 +358,7 @@ export class ThreadManager {
         createdAt: Date.now(),
       })
       this.threads.completeTurn(thread.id, turn.id, 'failed')
-      if (hookScope !== undefined && this.hookDispatcher !== null) {
-        await this.hookDispatcher.dispatch(
-          this.hookDispatcher.createEvent('turn.failed', hookScope, {
-            message: error instanceof Error ? error.message : String(error),
-          }),
-          hookScope
-        )
-      }
       throw error
-    }
-  }
-
-  private createHookScope(
-    thread: Pick<ThreadHandle, 'id' | 'provider'>,
-    snapshot: ReturnType<HookCatalog['snapshot']>,
-    source: HookExecutionScope['source'],
-    turnId?: string
-  ): HookExecutionScope {
-    return {
-      snapshot,
-      cwd: this.cwd,
-      source,
-      spawnDepth: 0,
-      hookDepth: 0,
-      provider: thread.provider,
-      threadId: thread.id,
-      ...(turnId === undefined ? {} : { turnId }),
     }
   }
 }

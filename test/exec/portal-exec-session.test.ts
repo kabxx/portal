@@ -30,7 +30,7 @@ test(
 
     try {
       // The three external boundaries are replaced while the real config,
-      // Skills, Hooks, thread lifecycle, SQLite store, and job manager run.
+      // Skills, thread lifecycle, SQLite store, and job manager run.
       // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
       const browserContext = {} as unknown as BrowserContext
       core = await PortalApplicationCore.open(

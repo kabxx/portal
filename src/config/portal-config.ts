@@ -15,12 +15,6 @@ import { tryLock, unlock } from 'fs-native-extensions'
 import { Document, isMap, parseDocument } from 'yaml'
 
 import {
-  createDefaultHooksConfig,
-  HookConfigError,
-  parseHooksConfig,
-} from '../hooks/hook-config.ts'
-import type { HooksConfig } from '../hooks/hook-types.ts'
-import {
   KEYBINDING_ACTIONS,
   KeybindingConfigError,
   createDefaultKeybindings,
@@ -51,7 +45,6 @@ export interface PortalConfigDocument {
   browser: PortalBrowserConfig
   projectInstructions: boolean
   mcp: PortalMcpServerConfig
-  hooks: HooksConfig
   keybindings: KeybindingConfig
 }
 
@@ -78,7 +71,6 @@ const CONFIG_FIELDS = new Set([
   'browser',
   'projectInstructions',
   'mcp',
-  'hooks',
   'keybindings',
 ])
 const BROWSER_FIELDS = new Set(['executablePath'])
@@ -103,7 +95,6 @@ export function createDefaultPortalConfig(
     },
     projectInstructions: false,
     mcp: { host: '127.0.0.1', port: 8788 },
-    hooks: createDefaultHooksConfig(),
     keybindings: createDefaultKeybindings(),
   }
 }
@@ -158,15 +149,6 @@ export function parsePortalConfig(
     throw new PortalConfigError('mcp.port must be an integer from 1 to 65535')
   }
 
-  let hooks: HooksConfig
-  try {
-    hooks = parseHooksConfig(rawDocument.hooks)
-  } catch (error) {
-    if (error instanceof HookConfigError) {
-      throw new PortalConfigError(error.message)
-    }
-    throw error
-  }
   let keybindings: KeybindingConfig
   try {
     keybindings = parseKeybindingConfig(rawDocument.keybindings)
@@ -180,7 +162,6 @@ export function parsePortalConfig(
     browser: { ...defaults.browser, executablePath },
     projectInstructions,
     mcp: { host, port },
-    hooks,
     keybindings,
   }
 }
@@ -343,20 +324,6 @@ function applyResolvedDiff(
       )
     }
   }
-  if (before.hooks.enabled !== after.hooks.enabled) {
-    setOrDelete(
-      document,
-      ['hooks', 'enabled'],
-      after.hooks.enabled ? true : undefined
-    )
-  }
-  if (!deepEqual(before.hooks.handlers, after.hooks.handlers)) {
-    setOrDelete(
-      document,
-      ['hooks', 'handlers'],
-      after.hooks.handlers.length === 0 ? undefined : after.hooks.handlers
-    )
-  }
   for (const action of KEYBINDING_ACTIONS) {
     if (!deepEqual(before.keybindings[action], after.keybindings[action])) {
       setOrDelete(
@@ -368,7 +335,7 @@ function applyResolvedDiff(
       )
     }
   }
-  pruneEmptyMaps(document, ['browser', 'mcp', 'hooks', 'keybindings'])
+  pruneEmptyMaps(document, ['browser', 'mcp', 'keybindings'])
 }
 
 function setOrDelete(
@@ -607,7 +574,6 @@ function cloneConfig(config: PortalConfigDocument): PortalConfigDocument {
     browser: { ...config.browser },
     projectInstructions: config.projectInstructions,
     mcp: { ...config.mcp },
-    hooks: structuredClone(config.hooks),
     keybindings: structuredClone(config.keybindings),
   }
 }

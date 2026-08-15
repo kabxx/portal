@@ -16,7 +16,7 @@ Portal 支持 ChatGPT、Gemini、DeepSeek、豆包、Grok、GLM、Qwen 和 Kimi�
 - 用同一套终端流程管理八个网页 Provider
 - 保留浏览器登录状态和会话历史
 - 执行本地命令、修改文件、附加图片和委派独立任务
-- 可选的 Skills、Hooks 和工作目录项目指令
+- 可选的 Skills 和工作目录项目指令
 - 使用 `portal exec` 进行无 TUI 的单次执行
 - 可选的入站 Portal MCP Server
 
@@ -56,7 +56,7 @@ portal exec --provider chatgpt "总结当前仓库。"
 查看当前版本的命令索引。
 
 > [!WARNING]
-> Portal 不是沙箱。本地工具、Skills、Hooks 和 spawn worker 会使用 Portal
+> Portal 不是沙箱。本地工具、Skills 和 spawn worker 会使用 Portal
 > 用户的权限运行，合法的模型工具调用在执行前没有人工确认步骤。处理敏感数据前请
 > 阅读[安全说明](SECURITY.md)。
 
@@ -65,10 +65,11 @@ portal exec --provider chatgpt "总结当前仓库。"
 - **用户指南：** [CLI](docs/user/cli.md)、
   [配置](docs/user/configuration.md)、
   [Providers](docs/user/providers.md)、
-  [Skills](docs/user/skills.md)、[Hooks](docs/user/hooks.md)、
+  [Skills](docs/user/skills.md)、
   [项目指令](docs/user/project-instructions.md)、
   [Portal MCP Server](docs/user/mcp-server.md)
 - **开发文档：** [架构](docs/development/architecture.md)、
+  [Hook 架构](docs/development/hook-architecture.md)、
   [Provider 开发](docs/development/provider-development.md)、
   [测试](docs/development/testing.md)
 - **项目文档：** [参与贡献](CONTRIBUTING.md)、[安全说明](SECURITY.md)

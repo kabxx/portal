@@ -9,7 +9,7 @@ import {
 } from '../runtime/runtime-cancellation.ts'
 import type { RuntimeCore } from '../runtime/runtime-core.ts'
 import type { ConversationHistoryResult } from '../providers/conversation-history.ts'
-import type { HookExecutionScope } from '../hooks/hook-types.ts'
+import type { ThreadSource } from './thread-types.ts'
 import {
   ThreadOperationCoordinator,
   ThreadCloseTimeoutError,
@@ -94,7 +94,7 @@ export type ThreadLifecycleEvent =
 export type ThreadCloseReason =
   'user' | 'provider_page_closed' | 'shutdown' | 'provision_failed'
 
-export type ThreadLifecycleSource = HookExecutionScope['source']
+export type ThreadLifecycleSource = ThreadSource
 
 export interface ThreadLifecycleObserver {
   onEvent(event: ThreadLifecycleEvent): void | Promise<void>
@@ -237,8 +237,7 @@ export class ThreadLifecycleService {
     try {
       closed = await this.dependencies.threadOperations.close(
         threadId,
-        async () =>
-          await this.dependencies.threadManager.closeThread(threadId, 'system')
+        async () => await this.dependencies.threadManager.closeThread(threadId)
       )
     } catch (error) {
       closeError = error
@@ -260,10 +259,7 @@ export class ThreadLifecycleService {
             closed = await this.dependencies.threadOperations.close(
               threadId,
               async () =>
-                await this.dependencies.threadManager.closeThread(
-                  threadId,
-                  'system'
-                )
+                await this.dependencies.threadManager.closeThread(threadId)
             )
             closeError = null
           } catch (retryError) {
@@ -278,10 +274,7 @@ export class ThreadLifecycleService {
           const lateSettlement =
             this.dependencies.threadOperations.abandon(threadId)
           try {
-            closed = await this.dependencies.threadManager.closeThread(
-              threadId,
-              'system'
-            )
+            closed = await this.dependencies.threadManager.closeThread(threadId)
             closeError = null
           } catch (forceCloseError) {
             closeError = forceCloseError
@@ -675,7 +668,6 @@ export class ThreadLifecycleService {
           runtime,
           createdAt: snapshot.createdAt,
           origin: request.origin === 'resumed' ? 'resumed' : 'new',
-          source: request.source,
           activate: request.activate,
         })
       } catch (error) {

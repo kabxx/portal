@@ -14,8 +14,7 @@ and user-written comments. Unknown fields and invalid values are rejected.
 
 Configuration writes are serialized with `<data-dir>/.locks/config.lock` and
 committed through an atomic replacement. Startup-owned values require a Portal
-restart. Keybinding saves and Hook commands have the narrower reload behavior
-described below.
+restart. Keybinding saves have the narrower reload behavior described below.
 
 ## Example
 
@@ -29,10 +28,6 @@ projectInstructions: true
 
 mcp:
   port: 8790
-
-hooks:
-  enabled: true
-  handlers: []
 
 keybindings:
   input.newline: [ctrl+j]
@@ -116,27 +111,6 @@ Portal captures the address and environment token at startup, so changing any
 of them requires restarting Portal, not only the listener. See
 [Portal MCP Server](mcp-server.md).
 
-## Hooks
-
-```yaml
-hooks:
-  enabled: true
-  handlers:
-    - name: audit
-      type: command
-      events: [turn.completed]
-      command: [audit]
-```
-
-| Field      | Type      | Default | Reload                                     |
-| ---------- | --------- | ------- | ------------------------------------------ |
-| `enabled`  | `boolean` | `false` | `/hook reload`, `/hook enable`, or disable |
-| `handlers` | `array`   | `[]`    | `/hook reload`                             |
-
-Handler objects and event behavior are documented under [Hooks](hooks.md).
-Hook nesting and output limits are fixed product safety boundaries, not public
-configuration.
-
 ## Keybindings
 
 `keybindings` contains only actions that differ from the current platform
@@ -189,7 +163,7 @@ configuration. See [Skills](skills.md).
 ## Security
 
 Keep secrets out of `config.yaml`. The MCP token belongs in
-`PORTAL_MCP_TOKEN`; Hook commands and local browser paths should still be
-treated as sensitive. On POSIX systems Portal restricts managed configuration,
+`PORTAL_MCP_TOKEN`; local browser paths should still be treated as sensitive.
+On POSIX systems Portal restricts managed configuration,
 state, and lock paths to the current user. Windows follows inherited filesystem
 ACLs. See [Security](../../SECURITY.md).

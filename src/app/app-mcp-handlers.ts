@@ -228,7 +228,6 @@ export function createMcpHandlers({
               input,
               {
                 signal,
-                source: 'mcp',
                 onAssistantStream: async (message) => {
                   throwIfAborted(signal)
                   ui.renderAssistantStream(thread, message)

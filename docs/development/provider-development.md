@@ -133,7 +133,6 @@ Adding the adapter file is only one part of registration. Search for exhaustive 
 | Provider type      | Add the id to `src/providers/provider-id.ts`.                                                                                                                                                            |
 | App registry       | In `src/app/app-provider-catalog.ts`, add the import, `PROVIDERS` entry, normalized name/aliases, `createAdapterForProvider` case, and a Provider prompt only when the Provider needs an extra boundary. |
 | Resume URL         | Add strict HTTPS host/path recognition and canonicalization in `src/providers/provider-conversation-url.ts`, with positive, alias, malformed-encoding, wrong-host, and wrong-path tests.                 |
-| Hooks              | Add the id to Provider normalization in `src/hooks/hook-config.ts` and update Hook tests.                                                                                                                |
 | Spawn              | Update the Provider list in the `spawn` description and input-schema enum in `src/tools/builtins/spawn-tool.ts`; update `test/tools/builtins/spawn-tool.test.ts`.                                        |
 | Model argument     | Add the Provider's named models and per-model options to `src/providers/definitions/<id>.ts`; cover mapping and rejected forms in manifest, catalog, and command tests.                                  |
 | Capabilities       | Put only static capability keys, descriptions, and kinds in the Provider definition; keep live discovery and dispatch behavior in the Provider UI component.                                             |
@@ -334,7 +333,7 @@ Use `node:test`, existing fake-page helpers, and sanitized protocol fixtures. Ad
 
 | Area            | Minimum evidence                                                                                                                                                                                             |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Registration    | Provider lists, aliases, Spawn enum, Hooks, model grammar, MCP listing, and command completion include the new id.                                                                                           |
+| Registration    | Provider lists, aliases, Spawn enum, model grammar, MCP listing, and command completion include the new id.                                                                                                  |
 | URL             | Valid and alias URLs canonicalize; wrong scheme/host/path, empty ids, encoded ids, queries, and hashes are handled safely.                                                                                   |
 | Login and Ready | Signed in, signed out, redirect race, restricted/unrecoverable state, missing/duplicate controls, disabled state, and Composer-before-Ready behavior.                                                        |
 | Selectors       | The real scoped locator path is exercised; text/`aria-label` and responsive geometry are not used as hidden test shortcuts.                                                                                  |

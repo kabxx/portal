@@ -1,7 +1,6 @@
 import type { ProviderAdapter } from '../../providers/adapters/adapter-base.ts'
 import type { RunCommandJobService } from '../../processes/run-command-job-manager.ts'
 import type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
-import type { HookExecutionScope } from '../../hooks/hook-types.ts'
 
 const TOOL_METADATA_SYMBOL = Symbol('TOOL_METADATA')
 
@@ -44,7 +43,6 @@ type ToolProgressEvent =
 
 interface ToolExecutionOptions extends AbortOptions {
   onProgress?: (event: ToolProgressEvent) => void
-  executionScope?: HookExecutionScope
   toolCallId?: string
 }
 

@@ -55,9 +55,6 @@ export function canRunCommandWhileThreadBusy(input: string): boolean {
   if (command === '/skill') {
     return subcommand === undefined || subcommand === 'list'
   }
-  if (command === '/hook') {
-    return true
-  }
   return false
 }
 

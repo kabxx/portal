@@ -4,7 +4,7 @@
 
 portal coordinates a local Node.js runtime, a real Chromium browser, and one or
 more provider conversations. The same thread and runtime services support the
-interactive TUI, one-shot `portal exec`, spawned child tasks, Hooks, and the
+interactive TUI, one-shot `portal exec`, spawned child tasks, and the
 inbound Portal MCP Server.
 
 ## Component map
@@ -20,7 +20,6 @@ inbound Portal MCP Server.
 | Tools         | `src/tools/`, `src/processes/`                                | Advertise and validate tools, execute them, stream progress, and track command jobs       |
 | Skills        | `src/skills/`                                                 | Install and validate Skill directories and snapshot enabled metadata                      |
 | Instructions  | `src/instructions/`                                           | Optionally snapshot the startup directory's `AGENTS.md`                                   |
-| Hooks         | `src/hooks/`                                                  | Observe lifecycle events and allow, deny, or rewrite tool calls                           |
 | TUI           | `src/terminal-ui/`, `src/cli-commands/`                       | Render timelines, edit input, and dispatch slash commands                                 |
 | MCP Server    | `src/mcp-server/`, `src/app/app-mcp-handlers.ts`              | Expose selected thread and job operations over Streamable HTTP MCP                        |
 
@@ -33,7 +32,7 @@ The TUI path in `app.ts`:
 1. resolves the startup working directory and persistent data directory;
 2. resolves sparse configuration under a native cross-process lock;
 3. initializes the Skill registry, optional project-instruction snapshot,
-   Hooks, thread store, job manager, and terminal controller;
+   thread store, job manager, and terminal controller;
 4. launches the configured Chromium profile and connects over CDP;
 5. constructs the shared thread lifecycle and runtime factory;
 6. renders Ink and accepts slash commands and thread input;
@@ -126,17 +125,18 @@ affect new runtimes, not existing snapshots.
 
 Project Instructions are disabled by default. When enabled, the process reads
 only `<startup-cwd>/AGENTS.md`, once, into an immutable snapshot shared by TUI,
-exec, spawned, Hook, and MCP-created runtimes. It does not inspect ancestors,
+exec, spawned, and MCP-created runtimes. It does not inspect ancestors,
 nested paths, overrides, Claude files, user-level files, imports, or tool target
 paths. Resume does not resend the snapshot to an existing provider conversation.
 
-## Hooks
+## Hook-first development
 
-A turn captures one immutable Hook snapshot. Command, prompt, and agent handlers
-observe typed lifecycle events. `tool.before` handlers may allow, deny, or
-rewrite parameters; rewritten input is validated again before execution. Hook
-model runtimes use the same central setup renderer and only explicitly allowed
-host tools.
+The long-lived Hook-first development line is specified in
+[Hook Architecture](hook-architecture.md). It replaces the former
+conversation-only automation feature with a host-owned, typed, scoped extension
+architecture. The explicit lifecycle and safety rules in that document apply to
+the development branch; this overview is updated as each ownership boundary is
+implemented.
 
 ## Portal MCP Server
 
@@ -158,7 +158,7 @@ is stored separately from user configuration.
 
 ## Cancellation and retry
 
-Cancellation propagates through thread operations, adapters, Hooks, tool calls,
+Cancellation propagates through thread operations, adapters, tool calls,
 browser startup, and shutdown. Provider errors carry retryability and recovery
 metadata. A timeout after submission is treated as an unknown outcome and is
 not replayed automatically because the provider may already have accepted it.

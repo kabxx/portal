@@ -23,8 +23,6 @@ import {
 } from './runtime-cancellation.ts'
 import type { ConversationHistoryResult } from '../providers/conversation-history.ts'
 import type { ProjectInstructions } from '../instructions/project-instructions.ts'
-import { HookDispatcher } from '../hooks/hook-dispatcher.ts'
-import type { HookExecutionScope } from '../hooks/hook-types.ts'
 import {
   checkComposerLimit,
   ComposerLimitExceededError,
@@ -63,7 +61,6 @@ export interface RuntimeCoreHandlers {
     toolCallId: string
   ) => void
   signal?: AbortSignal
-  executionScope?: HookExecutionScope
   maxToolCalls?: number
 }
 
@@ -82,7 +79,6 @@ interface OutboundToolResult {
 export interface RuntimeCoreOptions {
   skills?: readonly SetupSkill[]
   projectInstructions?: ProjectInstructions | null
-  hookDispatcher?: HookDispatcher | null
   requestAttemptLimit?: number
   workingDirectory?: string
 }
@@ -90,7 +86,6 @@ export interface RuntimeCoreOptions {
 export class RuntimeCore {
   private readonly skills: readonly SetupSkill[]
   private readonly projectInstructions: ProjectInstructions | null
-  private readonly hookDispatcher: HookDispatcher | null
   private readonly requestAttemptLimit: number
   private readonly workingDirectory: string
   private inlineSetupPending = false
@@ -102,7 +97,6 @@ export class RuntimeCore {
   ) {
     this.skills = [...(options.skills ?? [])]
     this.projectInstructions = options.projectInstructions ?? null
-    this.hookDispatcher = options.hookDispatcher ?? null
     this.requestAttemptLimit = options.requestAttemptLimit ?? 3
     this.workingDirectory = options.workingDirectory ?? process.cwd()
   }
@@ -265,7 +259,7 @@ export class RuntimeCore {
         handlers
       )
       const toolCallId = randomUUID()
-      let metadata: ToolCallMetadata =
+      const metadata: ToolCallMetadata =
         toolCall === null
           ? {
               toolCallId,
@@ -305,147 +299,13 @@ export class RuntimeCore {
         )
       }
 
-      let effectivePrepared = prepared
-      let toolResult: ToolResult
-      let toolExecutionStarted = false
-      let toolExecutionSettled = false
-      const executeTool = async (
-        current: typeof effectivePrepared,
-        currentCall: ToolCall
-      ) => {
-        toolExecutionStarted = true
-        try {
-          const result = await this.executePreparedTool(
-            current,
-            handlers,
-            currentCall,
-            toolCallId
-          )
-          toolExecutionSettled = true
-          return result
-        } catch (error) {
-          if (!isAbortError(error)) toolExecutionSettled = true
-          throw error
-        }
-      }
-      const scope = handlers.executionScope
-      try {
-        if (this.hookDispatcher !== null && scope !== undefined) {
-          const beforeEvent = this.hookDispatcher.createEvent(
-            'tool.before',
-            scope,
-            {
-              tool: executableToolCall.tool,
-              params: structuredClone(executableToolCall.params),
-              originalInput: structuredClone(executableToolCall.params),
-            },
-            { toolCallId }
-          )
-          const decision = await this.hookDispatcher.dispatch(
-            beforeEvent,
-            scope,
-            handlers.signal
-          )
-          if (decision.action === 'deny') {
-            metadata = {
-              ...metadata,
-              rewrittenBy: decision.rewrittenBy,
-            }
-            toolResult = hookBlockedResult(
-              'HOOK_BLOCKED',
-              decision.reason,
-              decision.handler,
-              metadata
-            )
-          } else {
-            if (decision.action === 'rewrite') {
-              const rewrittenCall: ToolCall = {
-                tool: executableToolCall.tool,
-                params: decision.params,
-              }
-              const rewritten = this.toolRegistry.prepareParsedToolCall(
-                rewrittenCall,
-                extractedToolCall.declaredToolName !== null
-              )
-              metadata = {
-                ...metadata,
-                effectiveInput: structuredClone(decision.params),
-                rewrittenBy: decision.rewrittenBy,
-              }
-              if (!rewritten.ok) {
-                toolResult = hookBlockedResult(
-                  'HOOK_INVALID_REWRITE',
-                  rewritten.result.displayText ??
-                    'Hook rewrite failed validation',
-                  decision.rewrittenBy.at(-1) ?? 'unknown',
-                  metadata
-                )
-              } else {
-                effectivePrepared = rewritten
-                toolResult = await executeTool(effectivePrepared, rewrittenCall)
-              }
-            } else {
-              toolResult = await executeTool(
-                effectivePrepared,
-                executableToolCall
-              )
-            }
-          }
-        } else {
-          toolResult = await executeTool(effectivePrepared, executableToolCall)
-        }
-        throwIfAborted(handlers.signal)
-      } catch (error) {
-        if (
-          this.hookDispatcher !== null &&
-          scope !== undefined &&
-          isAbortError(error)
-        ) {
-          await this.hookDispatcher.dispatch(
-            this.hookDispatcher.createEvent(
-              'tool.after',
-              scope,
-              {
-                tool: executableToolCall.tool,
-                outcome:
-                  toolExecutionStarted && !toolExecutionSettled
-                    ? 'unknown'
-                    : 'cancelled',
-                originalInput: metadata?.originalInput,
-                effectiveInput: metadata?.effectiveInput,
-                rewrittenBy: metadata?.rewrittenBy ?? [],
-              },
-              { toolCallId }
-            ),
-            scope
-          )
-        }
-        throw error
-      }
-      if (this.hookDispatcher !== null && scope !== undefined) {
-        await this.hookDispatcher.dispatch(
-          this.hookDispatcher.createEvent(
-            'tool.after',
-            scope,
-            {
-              tool: executableToolCall.tool,
-              outcome:
-                toolResult.result.code === 'HOOK_BLOCKED' ||
-                toolResult.result.code === 'HOOK_INVALID_REWRITE'
-                  ? 'blocked'
-                  : toolResult.outcome === 'success'
-                    ? 'completed'
-                    : 'failed',
-              result: toolResult.result,
-              originalInput: metadata?.originalInput,
-              effectiveInput: metadata?.effectiveInput,
-              rewrittenBy: metadata?.rewrittenBy ?? [],
-            },
-            { toolCallId }
-          ),
-          scope
-        )
-      }
+      const toolResult = await this.executePreparedTool(
+        prepared,
+        handlers,
+        executableToolCall,
+        toolCallId
+      )
+      throwIfAborted(handlers.signal)
       await handlers.onToolResult?.(toolResult, toolCall, metadata)
       user = formatToolResultMessage(toolCall?.tool ?? 'unknown', toolResult)
       outboundOrigin = 'tool_result'
@@ -542,9 +402,6 @@ export class RuntimeCore {
       ...(handlers.signal === undefined ? {} : { signal: handlers.signal }),
       onProgress: (event) =>
         handlers.onToolProgress?.(event, toolCall, toolCallId),
-      ...(handlers.executionScope === undefined
-        ? {}
-        : { executionScope: handlers.executionScope }),
       toolCallId,
     })
   }
@@ -584,25 +441,5 @@ export class RuntimeCore {
       return
     }
     await handlers.onAssistantText?.(normalizedSegment)
-  }
-}
-
-function hookBlockedResult(
-  code: 'HOOK_BLOCKED' | 'HOOK_INVALID_REWRITE',
-  message: string,
-  handler: string,
-  metadata: ToolCallMetadata
-): ToolResult {
-  return {
-    outcome: 'error',
-    result: {
-      code,
-      message,
-      handler,
-      originalInput: metadata.originalInput,
-      effectiveInput: metadata.effectiveInput,
-      rewrittenBy: metadata.rewrittenBy,
-    },
-    displayText: message,
   }
 }

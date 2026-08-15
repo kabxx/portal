@@ -8,7 +8,6 @@ import {
   nextSpawnDepth,
 } from '../../src/app/app-spawn-tool-services.ts'
 import { createPortalRuntimeSettings } from '../../src/app/app-runtime-settings.ts'
-import type { HookDispatcher } from '../../src/hooks/hook-dispatcher.ts'
 import type { ProjectInstructions } from '../../src/instructions/project-instructions.ts'
 import type { RunCommandJobManager } from '../../src/processes/run-command-job-manager.ts'
 import type { SkillLibrary } from '../../src/skills/skill-library.ts'
@@ -28,9 +27,8 @@ test('nextSpawnDepth allows configured child levels and rejects the next one', (
   assert.equal(nextSpawnDepth(5, 5), null)
 })
 
-test('spawn depth rejection occurs before project, browser, or Hook side effects', async () => {
+test('spawn depth rejection occurs before project or browser side effects', async () => {
   let forkCalls = 0
-  let hookCalls = 0
   // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
   const projectInstructions = {
     fork: () => {
@@ -50,40 +48,12 @@ test('spawn depth rejection occurs before project, browser, or Hook side effects
     projectInstructions,
     // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
     runCommandJobs: {} as RunCommandJobManager,
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-    hookDispatcher: {
-      createEvent: () => {
-        hookCalls += 1
-        return {}
-      },
-      dispatch: async () => {
-        hookCalls += 1
-        return { action: 'allow', rewrittenBy: [] }
-      },
-    } as unknown as HookDispatcher,
     settings,
     currentSpawnDepth: 5,
     workingDirectory: process.cwd(),
   })
 
-  const result = await services.spawnTask?.(
-    { prompt: 'must not run' },
-    {
-      executionScope: {
-        cwd: process.cwd(),
-        source: 'system',
-        spawnDepth: 0,
-        hookDepth: 0,
-        snapshot: {
-          enabled: false,
-          handlers: [],
-          maxDepth: 0,
-          revision: 'test',
-          loadedAt: 0,
-        },
-      },
-    }
-  )
+  const result = await services.spawnTask?.({ prompt: 'must not run' })
 
   assert.deepEqual(result, {
     kind: 'error',
@@ -91,5 +61,4 @@ test('spawn depth rejection occurs before project, browser, or Hook side effects
       'SPAWN_DEPTH_LIMIT_REACHED: spawn depth 5 reached the configured limit 5',
   })
   assert.equal(forkCalls, 0)
-  assert.equal(hookCalls, 0)
 })

@@ -140,7 +140,6 @@ function admitThread(harness: Harness, runtime: RuntimeCore, id = 't-1'): void {
     provider: 'chatgpt',
     runtime,
     createdAt: 1,
-    source: 'tui',
   })
 }
 

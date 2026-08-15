@@ -13,7 +13,6 @@ import type { SkillLibrary } from '../skills/skill-library.ts'
 import { RuntimeCore } from './runtime-core.ts'
 import { throwIfAborted } from './runtime-cancellation.ts'
 import type { ProjectInstructions } from '../instructions/project-instructions.ts'
-import type { HookDispatcher } from '../hooks/hook-dispatcher.ts'
 import type { RuntimeSetupMode } from './setup-handshake.ts'
 
 export interface RuntimeFactoryOptions extends ProviderAdapterOptions {
@@ -21,7 +20,6 @@ export interface RuntimeFactoryOptions extends ProviderAdapterOptions {
   toolServices?: ToolServices
   skillLibrary?: SkillLibrary
   projectInstructions?: ProjectInstructions | null
-  hookDispatcher?: HookDispatcher | null
   allowedTools?: readonly string[] | null
   advertiseSpawnTool?: boolean
   requestAttemptLimit?: number
@@ -59,7 +57,7 @@ export async function createRuntimeFromAdapter(
       const unavailable = allowedTools.filter((name) => !selected.has(name))
       if (unavailable.length > 0) {
         throw new Error(
-          `Hook requested unavailable tools: ${unavailable.join(', ')}`
+          `Requested unavailable tools: ${unavailable.join(', ')}`
         )
       }
     }
@@ -75,7 +73,6 @@ export async function createRuntimeFromAdapter(
     const runtime = new RuntimeCore(adapter, toolRegistry, {
       skills: skillCatalog?.setupSkills ?? [],
       projectInstructions: options.projectInstructions ?? null,
-      hookDispatcher: options.hookDispatcher ?? null,
       requestAttemptLimit: options.requestAttemptLimit ?? 3,
       workingDirectory: options.workingDirectory ?? process.cwd(),
     })

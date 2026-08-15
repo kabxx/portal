@@ -64,7 +64,7 @@ Portal targets non-browser MCP clients. Requests containing any
 defaults to `"agent"`. Chat creation sends only the shared `READY` handshake,
 using a case-insensitive whole-word match, instead of the full portal setup
 prompt. It still creates a normal local runtime with configured tools, Skills,
-and Hooks, so chat mode is not a sandbox.
+and local runtime services, so chat mode is not a sandbox.
 
 `portal_create_thread` accepts `provider` plus optional named `model` and
 model-specific `option` keys from [Providers](providers.md). Numeric menu

@@ -34,11 +34,6 @@ import {
   ensurePortalConfig,
 } from './config/portal-config.ts'
 import { loadProjectInstructions } from './instructions/project-instructions.ts'
-import { createHookSnapshot } from './hooks/hook-config.ts'
-import { HookCatalog } from './hooks/hook-catalog.ts'
-import { HookDispatcher } from './hooks/hook-dispatcher.ts'
-import { HookEventBus } from './hooks/hook-event-sink.ts'
-import { ChildRuntimeFactory } from './runtime/child-runtime-factory.ts'
 import {
   PortalMcpServer,
   resolvePortalMcpToken,
@@ -194,12 +189,6 @@ export async function run(
     cwd,
     enabled: portalConfig.projectInstructions,
   })
-  const hookCatalog = new HookCatalog(
-    configPath,
-    createHookSnapshot(portalConfig.hooks)
-  )
-  const hookEvents = new HookEventBus()
-  const hookDispatcher = new HookDispatcher(null, hookEvents)
   const browserEngine = 'chromium'
   const browserExecutablePath = path.resolve(
     options.browserExecutablePath ?? portalConfig.browser.executablePath
@@ -209,7 +198,7 @@ export async function run(
   const threadStore = await createThreadStore(
     path.join(dataDirectory, 'threads.db')
   )
-  const threadManager = new ThreadManager(hookCatalog, hookDispatcher, cwd)
+  const threadManager = new ThreadManager()
   const threadOperations = new ThreadOperationCoordinator()
   const mcpMessageOperations = new McpMessageOperationStore()
   const mcpForegroundOperations = new Set<McpForegroundOperation>()
@@ -570,7 +559,6 @@ export async function run(
               : runtimeSetupModeForThreadCreation(mode),
           skillLibrary,
           projectInstructions,
-          hookDispatcher,
           advertiseSpawnTool: settings.spawnDepthLimit > 0,
           workingDirectory: cwd,
           toolServices: createToolServices({
@@ -580,7 +568,6 @@ export async function run(
             skillLibrary,
             projectInstructions,
             runCommandJobs,
-            hookDispatcher,
             settings,
             currentSpawnDepth: 0,
             workingDirectory: cwd,
@@ -607,54 +594,6 @@ export async function run(
             }
           })
       }
-    )
-
-    hookDispatcher.setModelExecutor(
-      new ChildRuntimeFactory('chatgpt', async (request) => {
-        const adapter = await createProviderAdapter(
-          context,
-          request.provider,
-          null,
-          request.signal
-        )
-        let runtime: RuntimeCore | null = null
-        try {
-          runtime = await createRuntime(adapter, {
-            model: null,
-            setupMode: 'full',
-            skillLibrary,
-            projectInstructions,
-            hookDispatcher,
-            workingDirectory: cwd,
-            allowedTools: request.allowedTools,
-            toolServices: createToolServices({
-              context,
-              provider: request.provider,
-              model: null,
-              skillLibrary,
-              projectInstructions,
-              runCommandJobs,
-              hookDispatcher,
-              settings,
-              currentSpawnDepth: request.executionScope.spawnDepth,
-              workingDirectory: cwd,
-            }),
-            signal: request.signal,
-          })
-          const childRuntime = runtime
-          return {
-            runtime: childRuntime,
-            close: async () => await childRuntime.close(),
-          }
-        } catch (error) {
-          if (runtime !== null) {
-            await runtime.close().catch(() => {})
-          } else {
-            await adapter.close().catch(() => {})
-          }
-          throw error
-        }
-      })
     )
 
     ui.setBrowserConnected(true)
@@ -693,28 +632,11 @@ export async function run(
         await mcpMessageOperations.stopAll()
       },
     })
-    hookEvents.subscribe((event) => {
-      if (event.threadId !== undefined) {
-        const thread = threadManager.getThread(event.threadId)
-        if (
-          thread !== null &&
-          (event.phase === 'blocked' || event.phase === 'failed')
-        ) {
-          ui.renderThreadWarning(
-            thread,
-            `Hook ${event.handler}`,
-            event.message ?? `${event.event}: ${event.phase}`
-          )
-        }
-      }
-    })
-
     const commandContext: CliCommandContext = {
       threadManager,
       threadStore,
       skillLibrary,
       runCommandJobs,
-      hookCatalog,
       keybindingCatalog,
       mcpServer,
       ui,
