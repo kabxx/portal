@@ -9,21 +9,21 @@ inbound Portal MCP Server.
 
 ## Component map
 
-| Area          | Main files                                                    | Responsibility                                                                            |
-| ------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Entry points  | `src/index.ts`, `src/cli-entry.ts`, `src/app.ts`, `src/exec/` | Dispatch the TUI or headless command and compose its surface                              |
-| Host          | `src/host/`, `src/shared/resource-scope.ts`                   | Compose shared process services and own startup, rollback, and ordered shutdown           |
-| Extensions    | `src/extensions/`                                             | Resolve typed contributions, services, and lifecycle Hooks into one immutable generation  |
-| Configuration | `src/config/`                                                 | Resolve sparse overrides and atomically update `config.yaml`                              |
-| Browser       | `src/platform/`                                               | Launch Chromium, connect over CDP, and own process lifetime                               |
-| Providers     | `src/providers/`                                              | Implement page readiness, submission, response capture, models, capabilities, and history |
-| Runtime       | `src/runtime/`                                                | Render setup prompts, initialize conversations, run the tool loop, retry, and cancel      |
-| Threads       | `src/threads/`                                                | Admit create/resume/send/close operations and persist conversation metadata               |
-| Tools         | `src/tools/`, `src/processes/`                                | Advertise and validate tools, execute them, stream progress, and track command jobs       |
-| Skills        | `src/skills/`                                                 | Install and validate Skill directories and snapshot enabled metadata                      |
-| Instructions  | `src/instructions/`                                           | Optionally snapshot the startup directory's `AGENTS.md`                                   |
-| TUI           | `src/terminal-ui/`, `src/cli-commands/`                       | Render timelines, edit input, and dispatch slash commands                                 |
-| MCP Server    | `src/mcp-server/`, `src/app/app-mcp-handlers.ts`              | Expose selected thread and job operations over Streamable HTTP MCP                        |
+| Area          | Main files                                                    | Responsibility                                                                                     |
+| ------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Entry points  | `src/index.ts`, `src/cli-entry.ts`, `src/app.ts`, `src/exec/` | Dispatch the TUI or headless command and compose its surface                                       |
+| Host          | `src/host/`, `src/shared/resource-scope.ts`                   | Compose shared process services and own startup, rollback, and ordered shutdown                    |
+| Extensions    | `src/extensions/`, `src/cli-commands/core/`                   | Resolve typed contributions, services, lifecycle Hooks, and Commands into one immutable generation |
+| Configuration | `src/config/`                                                 | Resolve sparse overrides and atomically update `config.yaml`                                       |
+| Browser       | `src/platform/`                                               | Launch Chromium, connect over CDP, and own process lifetime                                        |
+| Providers     | `src/providers/`                                              | Implement page readiness, submission, response capture, models, capabilities, and history          |
+| Runtime       | `src/runtime/`                                                | Render setup prompts, initialize conversations, run the tool loop, retry, and cancel               |
+| Threads       | `src/threads/`                                                | Admit create/resume/send/close operations and persist conversation metadata                        |
+| Tools         | `src/tools/`, `src/processes/`                                | Advertise and validate tools, execute them, stream progress, and track command jobs                |
+| Skills        | `src/skills/`                                                 | Install and validate Skill directories and snapshot enabled metadata                               |
+| Instructions  | `src/instructions/`                                           | Optionally snapshot the startup directory's `AGENTS.md`                                            |
+| TUI           | `src/terminal-ui/`, `src/cli-commands/`                       | Render timelines, edit input, and dispatch slash commands                                          |
+| MCP Server    | `src/mcp-server/`, `src/app/app-mcp-handlers.ts`              | Expose selected thread and job operations over Streamable HTTP MCP                                 |
 
 The inbound MCP server is Portal's external automation interface.
 
@@ -43,8 +43,13 @@ are released. `ResourceScope` owns startup rollback and late-arriving
 resources; it does not replace this domain shutdown sequence.
 
 The TUI in `app.ts` adds only surface resources: the terminal controller, Ink,
-keybindings, slash-command dispatch, and the optional inbound MCP Server. Its
-single shutdown coordinator stops those resources around `PortalHost.close()`.
+keybindings, a Host-owned Command session, and the optional inbound MCP Server.
+All in-session built-ins are first-party `commands.collect` contributions. One
+resolved plan drives their parsing, help, hints, completion, syntax,
+thread-busy admission, and execution. Handlers resolve narrow command services
+instead of receiving the terminal controller, stores, managers, or a mutable
+application context. The TUI's single shutdown coordinator stops its surface
+resources around `PortalHost.close()`.
 `portal exec` uses the same Host through a UI-independent facade under
 `src/exec/`; its module graph does not load React, Ink, or terminal UI modules.
 It creates one inactive agent Thread, sends an inline setup plus task, writes

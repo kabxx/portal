@@ -3,9 +3,11 @@ import assert from 'node:assert/strict'
 
 import {
   createContributionRef,
+  createExecutableBindingRef,
   createHookRef,
   createServiceRef,
   type ContributionSpec,
+  type ExecutableBindingSpec,
   type HookHandlerRegistration,
   type ObserveHookSpec,
   type RuntimeSchema,
@@ -14,9 +16,11 @@ import {
   AsyncExtensionRegistrationError,
   CapabilityNotGrantedError,
   DuplicateContributionIdError,
+  DuplicateExecutableBindingIdError,
   DuplicateExtensionIdError,
   ExtensionRegistrationError,
   ExtensionResolutionError,
+  ExecutableBindingValidationError,
   GraphResolutionError,
   RegistryFrozenError,
   ServiceAccessDeniedError,
@@ -58,6 +62,27 @@ const itemSpec: ContributionSpec<ItemContribution> = {
   ordering: 'dependency-edges',
   allowedServices: [],
   allowedCapabilities: [],
+}
+
+type TestExecutableBinding = (value: string) => string
+
+const itemBindingRef = createExecutableBindingRef<TestExecutableBinding>({
+  id: 'test.item-bindings',
+  version: 1,
+  kind: 'test-handler',
+})
+
+const itemBindingSpec: ExecutableBindingSpec<TestExecutableBinding> = {
+  ref: itemBindingRef,
+  targetContribution: itemsRef,
+  cardinality: 'exactly-one-per-target',
+  ownership: 'same-owner',
+  capture(binding) {
+    if (typeof binding !== 'function') {
+      throw new TypeError('test binding must be a function')
+    }
+    return binding
+  },
 }
 
 test('ExtensionRegistry commits registration atomically and rejects async registration', async () => {
@@ -143,6 +168,240 @@ test('Extension registration API expires synchronously and frozen registries rej
     RegistryFrozenError
   )
   await host.dispose()
+})
+
+test('Executable bindings register transactionally and resolve one-to-one with contributions', async () => {
+  const host = createTestHost()
+  host.defineContribution(itemSpec)
+  host.defineExecutableBinding(itemBindingSpec)
+
+  assert.throws(
+    () =>
+      host.register(extension('test.failed-binding-owner'), {
+        register(api) {
+          api.contribute(itemsRef, {
+            id: 'test.bound-item',
+            value: {
+              id: 'test.bound-item',
+              group: 'bound',
+              label: 'discarded',
+            },
+            requiredServices: [],
+            requiredCapabilities: [],
+          })
+          api.bind(itemBindingRef, {
+            id: 'test.bound-handler',
+            targetId: 'test.bound-item',
+            binding: (value) => `discarded:${value}`,
+          })
+          throw new Error('discard binding transaction')
+        },
+      }),
+    ExtensionRegistrationError
+  )
+
+  host.register(extension('test.binding-owner'), {
+    register(api) {
+      api.contribute(itemsRef, {
+        id: 'test.bound-item',
+        value: {
+          id: 'test.bound-item',
+          group: 'bound',
+          label: 'committed',
+        },
+        requiredServices: [],
+        requiredCapabilities: [],
+      })
+      api.bind(itemBindingRef, {
+        id: 'test.bound-handler',
+        targetId: 'test.bound-item',
+        binding: (value) => `committed:${value}`,
+      })
+    },
+  })
+
+  const [binding] = host.executableBindings(itemBindingRef)
+  assert.equal(binding?.owner, 'test.binding-owner')
+  assert.equal(binding?.targetId, 'test.bound-item')
+  assert.equal(binding?.binding('value'), 'committed:value')
+  await host.dispose()
+})
+
+test('Executable binding specs enforce runtime ownership and cardinality contracts', async () => {
+  for (const invalid of [
+    { ...itemBindingSpec, cardinality: 'many' },
+    { ...itemBindingSpec, ownership: 'cross-owner' },
+    { ...itemBindingSpec, capture: undefined },
+  ]) {
+    const host = createTestHost()
+    host.defineContribution(itemSpec)
+    assert.throws(() => {
+      // @ts-expect-error Exercise the JavaScript runtime boundary.
+      host.defineExecutableBinding(invalid)
+    }, ExtensionResolutionError)
+    await host.dispose()
+  }
+})
+
+test('Executable binding resolution rejects missing, duplicate, orphan, and cross-owner bindings', async () => {
+  const createBindingHost = () => {
+    const host = createTestHost()
+    host.defineContribution(itemSpec)
+    host.defineExecutableBinding(itemBindingSpec)
+    return host
+  }
+  const contribution = {
+    id: 'test.binding-target',
+    value: {
+      id: 'test.binding-target',
+      group: 'binding-target',
+      label: 'target',
+    },
+    requiredServices: [],
+    requiredCapabilities: [],
+  } as const
+
+  const missingHost = createBindingHost()
+  missingHost.register(extension('test.missing-binding'), {
+    register(api) {
+      api.contribute(itemsRef, contribution)
+    },
+  })
+  assert.throws(() => missingHost.freeze(), ExtensionResolutionError)
+  await missingHost.dispose()
+
+  const duplicateHost = createBindingHost()
+  duplicateHost.register(extension('test.duplicate-binding'), {
+    register(api) {
+      api.contribute(itemsRef, contribution)
+      api.bind(itemBindingRef, {
+        id: 'test.binding-one',
+        targetId: contribution.id,
+        binding: (value) => value,
+      })
+      api.bind(itemBindingRef, {
+        id: 'test.binding-two',
+        targetId: contribution.id,
+        binding: (value) => value,
+      })
+    },
+  })
+  assert.throws(() => duplicateHost.freeze(), ExtensionResolutionError)
+  await duplicateHost.dispose()
+
+  const orphanHost = createBindingHost()
+  orphanHost.register(extension('test.orphan-binding'), {
+    register(api) {
+      api.bind(itemBindingRef, {
+        id: 'test.orphan-handler',
+        targetId: 'test.missing-target',
+        binding: (value) => value,
+      })
+    },
+  })
+  assert.throws(() => orphanHost.freeze(), ExecutableBindingValidationError)
+  await orphanHost.dispose()
+
+  const ownerHost = createBindingHost()
+  ownerHost.register(extension('test.target-owner'), {
+    register(api) {
+      api.contribute(itemsRef, contribution)
+    },
+  })
+  ownerHost.register(
+    extension('test.binding-substitute', {
+      dependencies: ['test.target-owner'],
+    }),
+    {
+      register(api) {
+        api.bind(itemBindingRef, {
+          id: 'test.substitute-handler',
+          targetId: contribution.id,
+          binding: (value) => value,
+        })
+      },
+    }
+  )
+  assert.throws(() => ownerHost.freeze(), ExecutableBindingValidationError)
+  await ownerHost.dispose()
+})
+
+test('Executable binding IDs are global and captured callables cannot be hot-swapped', async () => {
+  const host = createTestHost()
+  host.defineContribution(itemSpec)
+  host.defineExecutableBinding(itemBindingSpec)
+  const mutable = {
+    execute(value: string) {
+      return `captured:${value}`
+    },
+  }
+  host.register(extension('test.first-binding'), {
+    register(api) {
+      api.contribute(itemsRef, {
+        id: 'test.first-bound-item',
+        value: {
+          id: 'test.first-bound-item',
+          group: 'first-bound',
+          label: 'first',
+        },
+        requiredServices: [],
+        requiredCapabilities: [],
+      })
+      api.bind(itemBindingRef, {
+        id: 'test.shared-binding-id',
+        targetId: 'test.first-bound-item',
+        binding: mutable.execute.bind(mutable),
+      })
+    },
+  })
+  host.register(extension('test.second-binding'), {
+    register(api) {
+      api.contribute(itemsRef, {
+        id: 'test.second-bound-item',
+        value: {
+          id: 'test.second-bound-item',
+          group: 'second-bound',
+          label: 'second',
+        },
+        requiredServices: [],
+        requiredCapabilities: [],
+      })
+      api.bind(itemBindingRef, {
+        id: 'test.shared-binding-id',
+        targetId: 'test.second-bound-item',
+        binding: (value) => value,
+      })
+    },
+  })
+  assert.throws(() => host.freeze(), DuplicateExecutableBindingIdError)
+  await host.dispose()
+
+  const captureHost = createTestHost()
+  captureHost.defineContribution(itemSpec)
+  captureHost.defineExecutableBinding(itemBindingSpec)
+  captureHost.register(extension('test.captured-binding'), {
+    register(api) {
+      api.contribute(itemsRef, {
+        id: 'test.captured-item',
+        value: {
+          id: 'test.captured-item',
+          group: 'captured',
+          label: 'captured',
+        },
+        requiredServices: [],
+        requiredCapabilities: [],
+      })
+      api.bind(itemBindingRef, {
+        id: 'test.captured-handler',
+        targetId: 'test.captured-item',
+        binding: mutable.execute.bind(mutable),
+      })
+    },
+  })
+  const [captured] = captureHost.executableBindings(itemBindingRef)
+  mutable.execute = (value) => `mutated:${value}`
+  assert.equal(captured?.binding('value'), 'captured:value')
+  await captureHost.dispose()
 })
 
 test('Contribution resolution is deterministic across registration order and extension dependencies', async () => {

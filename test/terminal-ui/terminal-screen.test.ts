@@ -2,9 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createElement } from 'react'
 import { renderToString, stripAnsiSequences, Text } from '@kabxx/ink'
-import type { CliCommand } from '../../src/cli-commands/core/command-types.ts'
-import { DEFAULT_COMMANDS } from '../../src/cli-commands/command-set.ts'
-import type { ProviderId } from '../../src/providers/provider-id.ts'
+import { createBuiltinCommandTestRuntime } from '../helpers/builtin-command-runtime.ts'
 
 import {
   INPUT_CURSOR,
@@ -42,16 +40,11 @@ import {
 } from '../../src/terminal-ui/terminal-screen.tsx'
 import type { KeyModifiers } from '../../src/terminal-ui/terminal-screen.tsx'
 
-const PROVIDERS: readonly ProviderId[] = [
-  'chatgpt',
-  'gemini',
-  'deepseek',
-  'doubao',
-  'grok',
-  'glm',
-  'qwen',
-  'kimi',
-]
+const commandFixture = createBuiltinCommandTestRuntime()
+const COMMAND_SESSION = commandFixture.session
+const COMPLETION_SNAPSHOT = commandFixture.completionSnapshot
+
+test.after(async () => await commandFixture.close())
 
 function key(modifiers: Partial<KeyModifiers> = {}): KeyModifiers {
   return {
@@ -590,87 +583,49 @@ test('deletePreviousWord deletes the word before the cursor', () => {
 })
 
 test('completeSlashCommand completes unique command and subcommand prefixes', () => {
-  const execute: CliCommand['execute'] = async () => ({ continue: true })
-  const commands: CliCommand[] = [
-    { name: '/help', description: 'help', execute },
-    { name: '/providers', description: 'providers', execute },
-    {
-      name: '/skill',
-      description: 'skill',
-      subcommands: ['add', 'list', 'enable', 'disable', 'remove'],
-      execute,
-    },
-    {
-      name: '/thread',
-      description: 'thread',
-      subcommands: [
-        'agent',
-        'list',
-        'history',
-        'resume',
-        'switch',
-        'status',
-        'close',
-        'detach',
-        'capability',
-      ],
-      execute,
-    },
-    {
-      name: '/mcp',
-      description: 'MCP server',
-      subcommands: ['start', 'status', 'stop', 'token'],
-      execute,
-    },
-  ]
-
-  assert.equal(completeSlashCommand('/th', commands), '/thread ')
-  assert.equal(completeSlashCommand('/thread ag', commands), '/thread agent ')
+  assert.equal(completeSlashCommand('/th', COMMAND_SESSION), '/thread ')
   assert.equal(
-    completeSlashCommand('/thread cap', commands),
+    completeSlashCommand('/thread ag', COMMAND_SESSION),
+    '/thread agent '
+  )
+  assert.equal(
+    completeSlashCommand('/thread cap', COMMAND_SESSION),
     '/thread capability '
   )
-  assert.equal(completeSlashCommand('/skill a', commands), '/skill add ')
-  assert.equal(completeSlashCommand('/mcp sto', commands), '/mcp stop ')
-  assert.equal(completeSlashCommand('/mcp t', commands), '/mcp token ')
-  assert.equal(completeSlashCommand('/mcp sta', commands), '/mcp sta')
-  assert.equal(completeSlashCommand('/thread s', commands), '/thread s')
+  assert.equal(completeSlashCommand('/skill a', COMMAND_SESSION), '/skill add ')
+  assert.equal(completeSlashCommand('/mcp sto', COMMAND_SESSION), '/mcp stop ')
+  assert.equal(completeSlashCommand('/mcp t', COMMAND_SESSION), '/mcp token ')
+  assert.equal(completeSlashCommand('/mcp sta', COMMAND_SESSION), '/mcp sta')
+  assert.equal(completeSlashCommand('/thread s', COMMAND_SESSION), '/thread s')
   assert.equal(
-    completeSlashCommand('/thread agent gemini', commands),
-    '/thread agent gemini'
+    completeSlashCommand(
+      '/thread agent gemini',
+      COMMAND_SESSION,
+      COMPLETION_SNAPSHOT
+    ),
+    '/thread agent gemini '
   )
-  assert.equal(completeSlashCommand('/', commands), '/')
-  assert.equal(completeSlashCommand('hello /op', commands), 'hello /op')
+  assert.equal(completeSlashCommand('/', COMMAND_SESSION), '/')
+  assert.equal(completeSlashCommand('hello /op', COMMAND_SESSION), 'hello /op')
 })
 
 test('resolveInputSyntaxHighlight only marks recognized commands', () => {
-  const execute: CliCommand['execute'] = async () => ({ continue: true })
-  const commands: readonly CliCommand[] = [
-    { name: '/help', description: 'help', execute },
-    {
-      name: '/thread',
-      description: 'thread',
-      subcommands: ['agent', 'reload'],
-      execute,
-    },
-  ]
   assert.deepEqual(
-    resolveInputSyntaxHighlight('/thread reload t-1', commands),
+    resolveInputSyntaxHighlight('/thread reload t-1', COMMAND_SESSION),
     { start: 0, end: 14, kind: 'command' }
   )
-  assert.deepEqual(resolveInputSyntaxHighlight('/thread unknown', commands), {
-    start: 0,
-    end: 7,
-    kind: 'command',
-  })
-  assert.deepEqual(resolveInputSyntaxHighlight('  /help', commands), {
+  assert.deepEqual(
+    resolveInputSyntaxHighlight('/thread unknown', COMMAND_SESSION),
+    { start: 0, end: 7, kind: 'command' }
+  )
+  assert.deepEqual(resolveInputSyntaxHighlight('  /help', COMMAND_SESSION), {
     start: 2,
     end: 7,
     kind: 'command',
   })
-  assert.equal(resolveInputSyntaxHighlight('/th', commands), null)
+  assert.equal(resolveInputSyntaxHighlight('/th', COMMAND_SESSION), null)
   assert.equal(
-    resolveInputSyntaxHighlight('$chrome-automation', commands),
+    resolveInputSyntaxHighlight('$chrome-automation', COMMAND_SESSION),
     null
   )
 })
@@ -798,19 +753,24 @@ test('busy input accepts slash commands but keeps ordinary prompts pending', () 
 
 test('slash command submission completes the current hint once', () => {
   assert.equal(
-    resolveSubmittedInputValue('/', null, DEFAULT_COMMANDS, PROVIDERS),
+    resolveSubmittedInputValue('/', null, COMMAND_SESSION, COMPLETION_SNAPSHOT),
     '/help'
   )
   assert.equal(
-    resolveSubmittedInputValue('/thread ag', null, DEFAULT_COMMANDS, PROVIDERS),
+    resolveSubmittedInputValue(
+      '/thread ag',
+      null,
+      COMMAND_SESSION,
+      COMPLETION_SNAPSHOT
+    ),
     '/thread agent'
   )
   assert.equal(
     resolveSubmittedInputValue(
       '/thread agent gem',
       null,
-      DEFAULT_COMMANDS,
-      PROVIDERS
+      COMMAND_SESSION,
+      COMPLETION_SNAPSHOT
     ),
     '/thread agent gemini'
   )
@@ -818,19 +778,29 @@ test('slash command submission completes the current hint once', () => {
 
 test('slash command submission uses the selected or current default hint', () => {
   assert.equal(
-    resolveSubmittedInputValue('/', '/thread ', DEFAULT_COMMANDS, PROVIDERS),
+    resolveSubmittedInputValue(
+      '/',
+      '/thread ',
+      COMMAND_SESSION,
+      COMPLETION_SNAPSHOT
+    ),
     '/thread'
   )
   assert.equal(
-    resolveSubmittedInputValue('/', '/missing ', DEFAULT_COMMANDS, PROVIDERS),
+    resolveSubmittedInputValue(
+      '/',
+      '/missing ',
+      COMMAND_SESSION,
+      COMPLETION_SNAPSHOT
+    ),
     '/help'
   )
   assert.equal(
     resolveSubmittedInputValue(
       '/thread agent ',
       '/thread agent deepseek ',
-      DEFAULT_COMMANDS,
-      PROVIDERS
+      COMMAND_SESSION,
+      COMPLETION_SNAPSHOT
     ),
     '/thread agent deepseek'
   )
@@ -838,8 +808,8 @@ test('slash command submission uses the selected or current default hint', () =>
     resolveSubmittedInputValue(
       '/thread agent gemini ',
       '/thread agent gemini 3.1-pro ',
-      DEFAULT_COMMANDS,
-      PROVIDERS
+      COMMAND_SESSION,
+      COMPLETION_SNAPSHOT
     ),
     '/thread agent gemini 3.1-pro'
   )
@@ -847,8 +817,8 @@ test('slash command submission uses the selected or current default hint', () =>
     resolveSubmittedInputValue(
       '/thread agent gemini ',
       null,
-      DEFAULT_COMMANDS,
-      PROVIDERS
+      COMMAND_SESSION,
+      COMPLETION_SNAPSHOT
     ),
     '/thread agent gemini 3.5-flash-lite'
   )
@@ -856,8 +826,8 @@ test('slash command submission uses the selected or current default hint', () =>
     resolveSubmittedInputValue(
       '/thread agent gemini 3.1-pro e',
       null,
-      DEFAULT_COMMANDS,
-      PROVIDERS
+      COMMAND_SESSION,
+      COMPLETION_SNAPSHOT
     ),
     '/thread agent gemini 3.1-pro extended'
   )
@@ -877,8 +847,8 @@ test('slash command submission preserves inputs without a selectable hint', () =
       resolveSubmittedInputValue(
         value,
         '/thread ',
-        DEFAULT_COMMANDS,
-        PROVIDERS
+        COMMAND_SESSION,
+        COMPLETION_SNAPSHOT
       ),
       value
     )
@@ -887,7 +857,12 @@ test('slash command submission preserves inputs without a selectable hint', () =
 
 test('slash command submission matches hints for leading whitespace', () => {
   assert.equal(
-    resolveSubmittedInputValue('  /thr', null, DEFAULT_COMMANDS, PROVIDERS),
+    resolveSubmittedInputValue(
+      '  /thr',
+      null,
+      COMMAND_SESSION,
+      COMPLETION_SNAPSHOT
+    ),
     '/thread'
   )
 })

@@ -10,6 +10,8 @@ export type HandlerId = string
 export type ServiceId = string
 export type HookId = string
 export type HookPolicyId = string
+export type ExecutableBindingPointId = string
+export type ExecutableBindingId = string
 export type Capability = string
 
 export type ResourceScopeKind =
@@ -68,6 +70,28 @@ export interface ContributionRef<Value> {
   readonly id: ContributionPointId
   readonly version: number
   readonly __value?: Value
+}
+
+export interface ExecutableBindingRef<Binding> {
+  readonly key: symbol
+  readonly id: ExecutableBindingPointId
+  readonly version: number
+  readonly kind: string
+  readonly __binding?: Binding
+}
+
+export interface ExecutableBindingSpec<Binding> {
+  readonly ref: ExecutableBindingRef<Binding>
+  readonly targetContribution: ContributionRef<unknown>
+  readonly cardinality: 'exactly-one-per-target'
+  readonly ownership: 'same-owner'
+  capture(binding: Binding): Binding
+}
+
+export interface ExecutableBindingRegistration<Binding> {
+  readonly id: ExecutableBindingId
+  readonly targetId: ContributionId
+  readonly binding: Binding
 }
 
 export interface HookRef<Input, Output, Mode extends HookMode = HookMode> {
@@ -207,6 +231,10 @@ export interface ExtensionRegistrationApi {
     ref: ContributionRef<Value>,
     registration: ContributionRegistration<Value>
   ): void
+  bind<Binding>(
+    ref: ExecutableBindingRef<Binding>,
+    registration: ExecutableBindingRegistration<Binding>
+  ): void
   handle<Input, Output, Mode extends HookMode>(
     ref: HookRef<Input, Output, Mode>,
     registration: HookHandlerRegistration<Input, Output>
@@ -306,6 +334,13 @@ export interface ResolvedContribution<Value> {
   readonly resolvedIndex: number
 }
 
+export interface ResolvedExecutableBinding<Binding> {
+  readonly id: ExecutableBindingId
+  readonly targetId: ContributionId
+  readonly owner: ExtensionId
+  readonly binding: Binding
+}
+
 export type HookTraceEventKind =
   | 'hook.started'
   | 'hook.completed'
@@ -385,6 +420,25 @@ export function createContributionRef<Value>(options: {
     key: Symbol(options.id),
     id: assertStableId('Contribution point', options.id),
     version: options.version,
+  })
+}
+
+export function createExecutableBindingRef<Binding>(options: {
+  readonly id: ExecutableBindingPointId
+  readonly version: number
+  readonly kind: string
+}): ExecutableBindingRef<Binding> {
+  assertVersion(options.version)
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(options.kind)) {
+    throw new TypeError(
+      'Executable binding kind must use lowercase letters, numbers, dots, underscores, or hyphens.'
+    )
+  }
+  return Object.freeze({
+    key: Symbol(options.id),
+    id: assertStableId('Executable binding point', options.id),
+    version: options.version,
+    kind: options.kind,
   })
 }
 

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  canRunCommandWhileThreadBusy,
   clearInteractiveTerminal,
   clearTerminalBeforeRender,
   shouldRenderFallbackThreadError,
@@ -39,39 +38,6 @@ test('terminal clears before render only when interactive', () => {
   clearTerminalBeforeRender({ ...output, isTTY: false })
 
   assert.deepEqual(events, ['\u001B[2J\u001B[3J\u001B[H'])
-})
-
-test('busy threads allow navigation and queries but reject runtime mutations', () => {
-  for (const input of [
-    '/help',
-    '/thread switch t-2',
-    '/thread close t-1',
-    '/thread agent gemini',
-    '/thread chat gemini',
-    '/thread status',
-    '/mcp',
-    '/mcp start',
-    '/mcp status',
-    '/mcp stop',
-    '/mcp token',
-    '/skill list',
-    '/job',
-    '/job stop j-1',
-    '/keybinding reset',
-    '/exit',
-  ]) {
-    assert.equal(canRunCommandWhileThreadBusy(input), true, input)
-  }
-
-  for (const input of [
-    '/thread capability thinking on',
-    '/serve',
-    '/skill add ./skill',
-    '/unknown',
-    '/thread reload',
-  ]) {
-    assert.equal(canRunCommandWhileThreadBusy(input), false, input)
-  }
 })
 
 test('fallback thread error avoids duplicate turn errors', () => {

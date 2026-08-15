@@ -12,10 +12,15 @@ import {
   useStdout,
   useWindowSize,
 } from '../vendor/ink.ts'
-import type { CliCommand } from '../cli-commands/core/command-types.ts'
+import type { CommandSessionRuntime } from '../cli-commands/core/command-runtime.ts'
+import type { CommandCompletionSnapshot } from '../cli-commands/core/command-contracts.ts'
 import type { KeybindingCatalog } from '../keybindings/keybinding-catalog.ts'
-import type { ProviderId } from '../providers/provider-id.ts'
-import { resolveCommandHints } from './command-hints.ts'
+import {
+  completeSlashCommand as completeCommandInput,
+  resolveCommandHints,
+  resolveInputSyntaxHighlight as resolveCommandHighlight,
+  resolveSubmittedInputValue as resolveCommandSubmission,
+} from './command-hints.ts'
 import {
   navigateInputHintSelection,
   resolveInputHintSelection,
@@ -34,8 +39,8 @@ import { render as renderMarkdown } from '../vendor/markdansi.ts'
 
 interface TerminalScreenProps {
   ui: TerminalController
-  commands: readonly CliCommand[]
-  providers: readonly ProviderId[]
+  commandSession: CommandSessionRuntime
+  commandCompletionSnapshot?: CommandCompletionSnapshot
   keybindings: KeybindingCatalog
   onInterrupt: () => void
   transcriptWriter?: TerminalTranscriptWriter
@@ -698,41 +703,22 @@ function deletePreviousWordAtCursor(
 
 export function completeSlashCommand(
   value: string,
-  commands: readonly CliCommand[]
+  commandSession: CommandSessionRuntime,
+  completionSnapshot?: CommandCompletionSnapshot
 ): string {
-  const match = value.match(/^\/(\S+)(?: +(\S*))?$/)
-  if (match === null) {
-    return value
-  }
-
-  const commandPrefix = match[1] ?? ''
-  const subcommandPrefix = match[2]
-  if (subcommandPrefix === undefined) {
-    const matches = commands
-      .map((command) => command.name.replace(/^\/+/, ''))
-      .filter((name) => name.startsWith(commandPrefix))
-    return matches.length === 1 ? `/${matches[0]} ` : value
-  }
-
-  const command = commands.find(
-    (item) => item.name.replace(/^\/+/, '') === commandPrefix
-  )
-  const matches =
-    command?.subcommands?.filter((name) => name.startsWith(subcommandPrefix)) ??
-    []
-  if (matches.length !== 1) {
-    return value
-  }
-
-  return `/${commandPrefix} ${matches[0]} `
+  return completeCommandInput(value, commandSession, completionSnapshot)
 }
 
 export function resolveInputHintGroup(
   value: string,
-  commands: readonly CliCommand[],
-  providers: readonly ProviderId[]
+  commandSession: CommandSessionRuntime,
+  completionSnapshot?: CommandCompletionSnapshot
 ): InputHintGroup | null {
-  const commandHints = resolveCommandHints(value, commands, providers)
+  const commandHints = resolveCommandHints(
+    value,
+    commandSession,
+    completionSnapshot
+  )
   return commandHints.length > 0
     ? { title: 'commands', hints: commandHints }
     : null
@@ -741,51 +727,22 @@ export function resolveInputHintGroup(
 export function resolveSubmittedInputValue(
   value: string,
   selectedHintCompletion: string | null,
-  commands: readonly CliCommand[],
-  providers: readonly ProviderId[]
+  commandSession: CommandSessionRuntime,
+  completionSnapshot?: CommandCompletionSnapshot
 ): string {
-  const commandHints = resolveCommandHints(value, commands, providers)
-  const completion = resolveInputHintSelection(
-    commandHints,
+  return resolveCommandSubmission(
     value,
-    selectedHintCompletion
+    selectedHintCompletion,
+    commandSession,
+    completionSnapshot
   )
-  return completion?.trimEnd() ?? value
 }
 
 export function resolveInputSyntaxHighlight(
   value: string,
-  commands: readonly CliCommand[]
+  commandSession: CommandSessionRuntime
 ): InputSyntaxHighlight | null {
-  const normalized = normalizePastedInput(value)
-  const trimmed = normalized.trimStart()
-  const start = normalized.length - trimmed.length
-
-  const command = commands.find(
-    ({ name }) =>
-      trimmed.startsWith(name) && hasInputTokenBoundary(trimmed, name.length)
-  )
-  if (command !== undefined) {
-    let end = command.name.length
-    const subcommandMatch = trimmed
-      .slice(command.name.length)
-      .match(/^(\s+)(\S+)/)
-    const subcommand = subcommandMatch?.[2]
-    if (
-      subcommand !== undefined &&
-      command.subcommands?.includes(subcommand) === true
-    ) {
-      end += subcommandMatch![1]!.length + subcommand.length
-    }
-    return { start, end: start + end, kind: 'command' }
-  }
-
-  return null
-}
-
-function hasInputTokenBoundary(value: string, index: number): boolean {
-  const next = value[index]
-  return next === undefined || /\s/.test(next)
+  return resolveCommandHighlight(value, commandSession)
 }
 
 export function shouldInterruptForKey({
@@ -937,8 +894,8 @@ export function describeInputPanel(
 
 export function TerminalScreen({
   ui,
-  commands,
-  providers,
+  commandSession,
+  commandCompletionSnapshot,
   keybindings,
   onInterrupt,
   transcriptWriter: transcriptWriterProp,
@@ -1051,8 +1008,8 @@ export function TerminalScreen({
       const current = inputStateRef.current
       const hintGroup = resolveInputHintGroup(
         current.value,
-        commands,
-        providers
+        commandSession,
+        commandCompletionSnapshot
       )
       const selectedHint = navigateInputHintSelection(
         hintGroup?.hints ?? [],
@@ -1099,8 +1056,8 @@ export function TerminalScreen({
         }
         const currentHintGroup = resolveInputHintGroup(
           current.value,
-          commands,
-          providers
+          commandSession,
+          commandCompletionSnapshot
         )
         const selected = resolveInputHintSelection(
           currentHintGroup?.hints ?? [],
@@ -1116,7 +1073,11 @@ export function TerminalScreen({
           }
         }
 
-        const commandValue = completeSlashCommand(current.value, commands)
+        const commandValue = completeSlashCommand(
+          current.value,
+          commandSession,
+          commandCompletionSnapshot
+        )
         if (commandValue !== current.value) {
           return {
             value: commandValue,
@@ -1147,8 +1108,8 @@ export function TerminalScreen({
       const submittedValue = resolveSubmittedInputValue(
         currentInput.value,
         currentInput.selectedHintCompletion,
-        commands,
-        providers
+        commandSession,
+        commandCompletionSnapshot
       )
       const submittedRevision = inputRevisionRef.current
       if (
@@ -1364,13 +1325,17 @@ export function TerminalScreen({
     inputValue,
     SPINNER_FRAMES[spinnerFrameIndex]!
   )
-  const inputHighlight = resolveInputSyntaxHighlight(inputValue, commands)
+  const inputHighlight = resolveInputSyntaxHighlight(inputValue, commandSession)
   const inputCursorDisplay = formatInputAroundCursorWithSyntax(
     inputValue,
     inputState.cursor,
     inputHighlight
   )
-  const inputHintGroup = resolveInputHintGroup(inputValue, commands, providers)
+  const inputHintGroup = resolveInputHintGroup(
+    inputValue,
+    commandSession,
+    commandCompletionSnapshot
+  )
   const selectedHintCompletion = resolveInputHintSelection(
     inputHintGroup?.hints ?? [],
     inputValue,

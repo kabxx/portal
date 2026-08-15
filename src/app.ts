@@ -6,13 +6,11 @@ import { render } from './vendor/ink.ts'
 import { createElement } from 'react'
 import { isAbortError } from './runtime/runtime-cancellation.ts'
 import { ResourceScope } from './shared/resource-scope.ts'
-import type { ThreadCreationMode } from './threads/thread-creation-mode.ts'
-import type { ProviderId } from './providers/provider-id.ts'
-import type { ResolvedProviderModel } from './providers/provider-model-catalog.ts'
 import { ComposerLimitExceededError } from './providers/composer-limit.ts'
-import { DEFAULT_COMMANDS } from './cli-commands/command-set.ts'
-import { CommandRegistry } from './cli-commands/core/command-registry.ts'
-import type { CliCommandContext } from './cli-commands/core/command-types.ts'
+import {
+  createPortalCommandServices,
+  portalCommandCompletionSnapshot,
+} from './host/portal-command-services.ts'
 import {
   renderTimelineEntryToAnsi,
   TerminalScreen,
@@ -39,12 +37,9 @@ import {
   type McpForegroundOperation,
   type StopTarget,
 } from './app/app-lifecycle.ts'
-import { PROVIDERS, normalizeProviderId } from './providers/provider-catalog.ts'
 import { createMcpHandlers } from './app/app-mcp-handlers.ts'
-import { startThreadReload } from './app/app-thread-reload.ts'
 import { createTuiThreadInputHandler } from './app/app-tui-thread-input-handler.ts'
 import {
-  canRunCommandWhileThreadBusy,
   clearInteractiveTerminal,
   clearTerminalBeforeRender,
   showPendingThreadTimeline,
@@ -65,7 +60,6 @@ export {
 } from './runtime/runtime-settings.ts'
 export { inheritSpawnModelSelection } from './tools/spawn-tool-services.ts'
 export {
-  canRunCommandWhileThreadBusy,
   clearInteractiveTerminal,
   clearTerminalBeforeRender,
   shouldRenderFallbackThreadError,
@@ -177,16 +171,14 @@ export async function run(
     const {
       configPath,
       config: portalConfig,
-      skillLibrary,
       browserProfileDir,
-      threadStore,
       threadManager,
       threadOperations,
       runCommandJobs,
     } = host.prepared
     const mcpMessageOperations = new McpMessageOperationStore()
     const mcpForegroundOperations = new Set<McpForegroundOperation>()
-    const commandRegistry = new CommandRegistry(DEFAULT_COMMANDS)
+    const commandCatalog = host.commandCatalog()
     const ui = dependencies.terminalController ?? new TerminalController()
     ui.bindThreadManager(threadManager)
     const keybindingCatalog = new KeybindingCatalog(
@@ -202,6 +194,12 @@ export async function run(
     )
     keybindingsForCleanup = keybindingCatalog
     keybindingCatalog.start()
+    const commandSession = host.openCommandSession('tui')
+    const commandCompletionSnapshot = portalCommandCompletionSnapshot()
+    surfaceScope.defer(
+      'Command session',
+      async () => await commandSession.close()
+    )
     let currentOperation: {
       controller: AbortController
       stopTarget: StopTarget | null
@@ -303,8 +301,8 @@ export async function run(
     const inkApp = renderTerminal(
       createElement(TerminalScreen, {
         ui,
-        commands: commandRegistry.list(),
-        providers: PROVIDERS,
+        commandSession,
+        commandCompletionSnapshot,
         keybindings: keybindingCatalog,
         transcriptWriter,
         onInterrupt: () => {
@@ -536,80 +534,17 @@ export async function run(
     mcpServer =
       dependencies.createMcpServer?.(mcpServerOptions) ??
       new PortalMcpServer(mcpServerOptions)
-    const commandContext: CliCommandContext = {
-      threadManager,
-      threadStore,
-      skillLibrary,
-      runCommandJobs,
-      keybindingCatalog,
-      mcpServer,
-      ui,
-      browserProfileDir,
-      providers: PROVIDERS,
-      resolveProvider: normalizeProviderId,
-      createThread: async (
-        provider: ProviderId,
-        model: ResolvedProviderModel | null,
-        mode: ThreadCreationMode = 'agent'
-      ) =>
-        await withCancellableOperation(null, async (signal, setStopTarget) => {
-          void setStopTarget
-          await threadLifecycle.create(
-            { provider, model, mode, source: 'tui', activate: true },
-            signal
-          )
-        }),
-      resumeThread: async (conversationUrl: string) =>
-        await withCancellableOperation(null, async (signal, setStopTarget) => {
-          void setStopTarget
-          const result = await threadLifecycle.resume(
-            { conversationUrl, source: 'tui', activate: true },
-            signal
-          )
-          if (!result.ok && result.failure.code !== 'cancelled') {
-            throw new Error(result.failure.message)
-          }
-        }),
-      reloadThread: async (threadId: string) => {
-        const result = startThreadReload(threadId, {
-          threadManager,
-          threadLifecycle,
+    host.bindCommandServices(
+      createPortalCommandServices(
+        {
+          started: host.services,
           ui,
-        })
-        if (!result.accepted) {
-          throw new Error(
-            result.reason === 'not_found'
-              ? `Unknown thread: ${threadId}`
-              : `Thread ${threadId} already has an active operation.`
-          )
-        }
-        void result.operation.done.catch(() => {})
-      },
-      closeThread: async (threadId: string) => {
-        if (threadManager.getThread(threadId) === null) {
-          return false
-        }
-        ui.setThreadBusy(threadId, true)
-        try {
-          return (await threadLifecycle.close(threadId, 'user')).closed
-        } finally {
-          if (threadOperations.get(threadId) === null) {
-            ui.setThreadBusy(threadId, false)
-          }
-          if (threadManager.getThread(threadId) === null) {
-            ui.removeThreadTimeline(threadId)
-          }
-        }
-      },
-      addSkill: async (source, options = {}) =>
-        await withCancellableOperation(
-          null,
-          async (signal) =>
-            await skillLibrary.add(source, { ...options, signal })
-        ),
-      submitThreadInput,
-      listCommands: () => commandRegistry.list(),
-    }
+          keybindings: keybindingCatalog,
+          mcp: mcpServer,
+        },
+        { list: () => commandCatalog }
+      )
+    )
 
     while (!exitRequested) {
       const input = (
@@ -645,11 +580,20 @@ export async function run(
 
       try {
         if (input.startsWith('/')) {
+          const analysis = commandSession.prepare(input)
+          if (analysis.kind !== 'ready') {
+            if (analysis.kind === 'unknown' || analysis.kind === 'invalid') {
+              ui.renderWarning('portal', analysis.diagnostic.message)
+            }
+            continue
+          }
           const activeThread = threadManager.getActiveThread()
           if (
             activeThread !== null &&
             threadOperations.get(activeThread.id) !== null &&
-            !canRunCommandWhileThreadBusy(input)
+            !commandSession.canExecute(analysis.invocation, {
+              threadBusy: true,
+            })
           ) {
             ui.renderThreadWarning(
               activeThread,
@@ -658,18 +602,22 @@ export async function run(
             )
             continue
           }
-          const commandResult = await commandRegistry.execute(
-            input,
-            commandContext
-          )
-          if (commandResult === null) {
-            ui.renderWarning('portal', [
-              `Unknown command: ${input.split(/\s+/)[0]}`,
-              'Use /help to see available commands.',
-            ])
-            continue
-          }
-          if (!commandResult.continue) {
+          ui.setBusy(true)
+          const commandResult = await (async () => {
+            try {
+              return await withCancellableOperation(
+                null,
+                async (signal) =>
+                  await commandSession.execute(analysis.invocation, {
+                    signal,
+                    deadline: Number.POSITIVE_INFINITY,
+                  })
+              )
+            } finally {
+              ui.setBusy(false)
+            }
+          })()
+          if (commandResult.disposition === 'request-stop') {
             break
           }
           continue
@@ -677,7 +625,9 @@ export async function run(
 
         await submitThreadInput(input)
       } catch (error) {
-        ui.renderError('runtime', String(error))
+        if (!isAbortError(error)) {
+          ui.renderError('runtime', String(error))
+        }
       }
     }
   } catch (error) {

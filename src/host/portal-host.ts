@@ -11,6 +11,13 @@ import {
   type PortalSessionIntent,
   type PortalShutdownPreviousState,
 } from '../extensions/portal-hooks.ts'
+import { createPortalCommandsRegistration } from '../cli-commands/command-extension.ts'
+import { builtinCommandDefinitions } from '../cli-commands/builtin-commands.ts'
+import {
+  CommandServiceHost,
+  type CommandServiceBundle,
+} from '../cli-commands/core/command-services.ts'
+import type { CommandSessionRuntime } from '../cli-commands/core/command-runtime.ts'
 import { ExtensionResourceScope } from '../extensions/scope-registration.ts'
 import type { BrowserLaunch } from '../platform/browser-cdp-launcher.ts'
 import { launchBrowser } from '../platform/browser-cdp-launcher.ts'
@@ -118,6 +125,7 @@ export class PortalHost {
   readonly #coreScope: ResourceScope
   readonly #portalScope: ExtensionResourceScope
   readonly #hooks: PortalHookRuntime
+  readonly #commandServices: CommandServiceHost
   readonly #startupController = new AbortController()
   readonly #dependencies: ResolvedPortalHostDependencies
   #state: PortalHostState = 'resolved'
@@ -135,6 +143,7 @@ export class PortalHost {
     coreScope: ResourceScope,
     portalScope: ExtensionResourceScope,
     hooks: PortalHookRuntime,
+    commandServices: CommandServiceHost,
     dependencies: ResolvedPortalHostDependencies
   ) {
     this.#rootScope = rootScope
@@ -142,6 +151,7 @@ export class PortalHost {
     this.#coreScope = coreScope
     this.#portalScope = portalScope
     this.#hooks = hooks
+    this.#commandServices = commandServices
     this.#dependencies = dependencies
   }
 
@@ -164,8 +174,13 @@ export class PortalHost {
         `portal:${options.profile}`,
         coreScope
       )
+      const commandServices = new CommandServiceHost()
       const hooks = new PortalHookRuntime({
         extensions: Object.freeze([
+          createPortalCommandsRegistration(
+            commandServices,
+            builtinCommandDefinitions
+          ),
           ...FIRST_PARTY_PORTAL_EXTENSIONS,
           ...(dependencies[portalHostTestExtensions] ?? []),
         ]),
@@ -231,6 +246,7 @@ export class PortalHost {
         coreScope,
         portalScope,
         hooks,
+        commandServices,
         {
           launchBrowser: dependencies.launchBrowser ?? launchBrowser,
           createProviderAdapter:
@@ -254,6 +270,31 @@ export class PortalHost {
 
   public get state(): PortalHostState {
     return this.#state
+  }
+
+  /** @internal Opens the host-owned in-session Command surface. */
+  public openCommandSession(resourceId = 'tui'): CommandSessionRuntime {
+    if (this.#state !== 'resolved' && this.#state !== 'ready') {
+      throw new Error(
+        `Command session is unavailable in state "${this.#state}".`
+      )
+    }
+    return this.#hooks.openCommandSession(this.#portalScope, resourceId)
+  }
+
+  /** @internal Completes the late binding after Portal resources are ready. */
+  public bindCommandServices(services: CommandServiceBundle): void {
+    if (this.#state !== 'ready') {
+      throw new Error(
+        `Command services cannot be bound in state "${this.#state}".`
+      )
+    }
+    this.#commandServices.bind(services)
+  }
+
+  /** @internal Returns immutable command metadata for a host-owned surface. */
+  public commandCatalog(): readonly import('../cli-commands/core/command-contracts.ts').CommandDescriptor[] {
+    return this.#hooks.commandCatalog()
   }
 
   public get services(): PortalHostStartedServices {

@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import type { BrowserContext } from 'playwright'
+import { isValidElement } from 'react'
 
 import { run, type PortalRunDependencies } from '../../src/app.ts'
 import {
@@ -260,6 +261,97 @@ test('run stops an active MCP surface before exiting through /exit', async () =>
     assert.equal(browserCloseCount, 1)
     assert.equal(terminalUnmountCount, 1)
   } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('a foreground Command owns busy state and Ctrl+C cancellation', async () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-app-command-cancel-'))
+  const dataDirectory = path.join(cwd, 'portal-state')
+  const ui = new TerminalController()
+  const commandStarted = createDeferred<void>()
+  const releaseStart = createDeferred<void>()
+  const terminal = { onInterrupt: null as (() => void) | null }
+  let runPromise: Promise<void> | null = null
+  class PendingPortalMcpServer extends PortalMcpServer {
+    public override async start(): Promise<void> {
+      commandStarted.resolve()
+      await releaseStart.promise
+    }
+
+    public override async stop(): Promise<void> {
+      releaseStart.resolve()
+    }
+  }
+  const inkApp = {
+    rerender: () => {},
+    unmount: () => {},
+    waitUntilExit: async () => await new Promise<never>(() => {}),
+    waitUntilRenderFlush: async () => {},
+    cleanup: () => {},
+    clear: () => {},
+  }
+  try {
+    runPromise = run(
+      [process.execPath, 'portal', '--data-dir', dataDirectory],
+      {
+        cwd,
+        terminalController: ui,
+        renderTerminal: (node) => {
+          assert.equal(isValidElement(node), true)
+          if (isValidElement<{ onInterrupt?: () => void }>(node)) {
+            assert.equal(typeof node.props.onInterrupt, 'function')
+            if (typeof node.props.onInterrupt === 'function') {
+              terminal.onInterrupt = node.props.onInterrupt
+            }
+          }
+          return inkApp
+        },
+        launchBrowser: async () => ({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+          context: { isClosed: () => false } as unknown as BrowserContext,
+          disconnected: new Promise(() => {}),
+          close: async () => {},
+        }),
+        createMcpServer: (options) => new PendingPortalMcpServer(options),
+      }
+    )
+
+    await waitFor(() => ui.getState().prompt.active, 'Command prompt')
+    assert.equal(ui.submitInput('/mcp start'), true)
+    await withTimeout(commandStarted.promise, 'MCP Command start')
+    await waitFor(() => ui.getState().busy, 'Command foreground busy state')
+    const onInterrupt = terminal.onInterrupt
+    assert.ok(onInterrupt !== null)
+    onInterrupt()
+    await waitFor(
+      () => !ui.getState().busy && ui.getState().prompt.active,
+      'cancelled Command prompt'
+    )
+    assert.equal(
+      ui
+        .getState()
+        .timeline.some(
+          (entry) =>
+            entry.welcome === undefined &&
+            entry.tone === 'error' &&
+            entry.body.includes('abort')
+        ),
+      false
+    )
+
+    assert.equal(ui.submitInput('/exit'), true)
+    await withTimeout(runPromise, 'Command cancellation shutdown')
+  } finally {
+    releaseStart.resolve()
+    terminal.onInterrupt?.()
+    await new Promise((resolve) => setImmediate(resolve))
+    terminal.onInterrupt?.()
+    if (runPromise !== null) {
+      await withTimeout(runPromise, 'Command test cleanup', 3000).catch(
+        () => undefined
+      )
+    }
     rmSync(cwd, { recursive: true, force: true })
   }
 })

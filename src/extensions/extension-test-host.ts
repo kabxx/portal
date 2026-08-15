@@ -5,12 +5,15 @@ import type {
   Decision,
   ExtensionDescriptor,
   ExtensionModule,
+  ExecutableBindingRef,
+  ExecutableBindingSpec,
   HookInvocationOptions,
   HookRef,
   HookRuntimeClock,
   HookTraceSink,
   InitialHookSpec,
   ResolvedContribution,
+  ResolvedExecutableBinding,
   ResolvedHookPolicy,
   ResourceScopeKind,
   ServiceRef,
@@ -74,6 +77,12 @@ export class ExtensionTestHost {
     this.#registry.defineHook(spec)
   }
 
+  public defineExecutableBinding<Binding>(
+    spec: ExecutableBindingSpec<Binding>
+  ): void {
+    this.#registry.defineExecutableBinding(spec)
+  }
+
   public register(
     descriptor: ExtensionDescriptor,
     module: ExtensionModule
@@ -102,6 +111,12 @@ export class ExtensionTestHost {
     ref: ContributionRef<Value>
   ): readonly ResolvedContribution<Value>[] {
     return this.freeze().contributions(ref)
+  }
+
+  public executableBindings<Binding>(
+    ref: ExecutableBindingRef<Binding>
+  ): readonly ResolvedExecutableBinding<Binding>[] {
+    return this.freeze().executableBindings(ref)
   }
 
   public createScope(

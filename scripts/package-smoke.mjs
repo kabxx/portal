@@ -407,7 +407,7 @@ function auditPack(pack) {
   assert.equal(pack.name, '@kabxx/portal')
   assert.equal(pack.version, packageMetadata.version)
   assert.deepEqual(pack.bundled ?? [], [])
-  assert.equal(pack.entryCount, 148)
+  assert.equal(pack.entryCount, 145)
 
   const allowedFiles = pack.files.map(({ path: filePath }) => filePath)
   for (const required of [
@@ -415,10 +415,14 @@ function auditPack(pack) {
     'README.md',
     'README.zh-CN.md',
     'dist/cli-entry.js',
+    'dist/cli-commands/builtin-commands.js',
+    'dist/cli-commands/core/command-plan.js',
+    'dist/cli-commands/core/command-runtime.js',
     'dist/exec/exec-command.js',
     'dist/extensions/extension-registry.js',
     'dist/extensions/portal-hooks.js',
     'dist/host/portal-host.js',
+    'dist/host/portal-command-services.js',
     'dist/index.js',
     'dist/mcp-server/mcp-server.js',
     'dist/vendor/ink.js',

@@ -100,7 +100,12 @@ The internal Extension, Contribution, Service, and Hook registries now resolve
 and freeze one typed generation. HookPlanner and HookRunner implement observe,
 waterfall, and guard policies, and PortalHost invokes `portal.beforeStart`,
 `portal.ready`, `portal.beforeStop`, and terminal `portal.stopped` through that
-production Kernel.
+production Kernel. The first complete vertical slice is also in place:
+`portal.commands` contributes every in-session built-in through
+`commands.collect`, and one resolved Command plan owns parsing, execution,
+help, hints, completion, admission, and diagnostics. Command Handlers receive
+only their declared ServiceRefs and capabilities; the former mutable command
+context and static command registry have been removed.
 
 SurfaceRegistry, Provider facet registries, manifest loading, and the external
 SDK do not exist yet. The TUI is currently a hand-written composition root with
@@ -899,7 +904,7 @@ not mean that HookRunner invokes a `collect` Hook mode.
 
 | Contribution point                  | Scope  | Owner                   | Availability |
 | ----------------------------------- | ------ | ----------------------- | ------------ |
-| `commands.collect`                  | portal | CommandRegistry         | first slice  |
+| `commands.collect`                  | portal | CommandPlanner          | implemented  |
 | `cli.commands.collect`              | portal | CLI bootstrap           | later        |
 | `prompt.sections.collect`           | portal | PromptRegistry          | later        |
 | `agent.profiles.collect`            | portal | AgentProfileRegistry    | later        |
@@ -1200,6 +1205,9 @@ delivery contract is complete.
    around Hook.
 3. Migrate Command contributions as the first complete vertical slice. One
    resolved plan must drive parsing, execution, help, hints, and completion.
+   This slice is complete for in-session first-party Commands. It deliberately
+   excludes bootstrap CLI Commands, manifests, external activation, and the
+   public SDK.
 4. Migrate Prompt sections, Agent profiles, and Skills, including startup and
    on-demand Skill activation, prompt snapshots, budgets, and resource handles.
 5. Establish BrowserHost and PageService as the only BrowserContext/Page owners.
@@ -1247,7 +1255,14 @@ The kernel has backend-neutral contract tests for every mode and policy:
   cleanup errors;
 - input finalizer execution after every external transform and guard, plus
   result finalizer execution after every result transform;
-- trace ownership and stable generation snapshots.
+- trace ownership and stable generation snapshots;
+- Command contribution and executable-binding ownership, strict route parsing,
+  alias and route conflict rejection, immutable prepared invocations, narrow
+  ServiceRef authorization, cancellation, absolute deadlines, late settlement,
+  and command-scope cleanup;
+- one resolved Command analysis driving TUI help, hints, completion, syntax,
+  admission, and execution, with architecture tests excluding legacy command
+  registries and broad implementation imports.
 - exact Portal shutdown event order from admission close through extension
   activation-scope disposal.
 

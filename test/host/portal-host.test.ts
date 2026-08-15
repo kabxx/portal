@@ -17,6 +17,68 @@ import {
   createProviderAdapterStub,
 } from '../helpers/fakes.ts'
 
+test('PortalHost owns the resolved built-in Command plan and session lifecycle', async () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-host-commands-'))
+  const dataDirectory = path.join(cwd, 'data')
+  let host: PortalHost | null = null
+  try {
+    host = await PortalHost.prepare(
+      { profile: 'tui', cwd, dataDirectory },
+      {
+        launchBrowser: async () => ({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+          context: { isClosed: () => false } as unknown as BrowserContext,
+          disconnected: new Promise(() => {}),
+          close: async () => undefined,
+        }),
+      }
+    )
+    const catalog = host.commandCatalog()
+    assert.deepEqual(
+      catalog.map(({ primaryName }) => primaryName),
+      [
+        '/help',
+        '/thread',
+        '/skill',
+        '/mcp',
+        '/job',
+        '/keybinding',
+        '/providers',
+        '/exit',
+      ]
+    )
+    assert.equal(Object.isFrozen(catalog), true)
+
+    const session = host.openCommandSession('host-test')
+    await host.start()
+    const analysis = session.prepare('/exit')
+    assert.equal(analysis.kind, 'ready')
+    if (analysis.kind !== 'ready') return
+    assert.deepEqual(
+      await session.execute(analysis.invocation, {
+        signal: new AbortController().signal,
+        deadline: Number.POSITIVE_INFINITY,
+      }),
+      { disposition: 'request-stop' }
+    )
+
+    await host.close()
+    await assert.rejects(
+      session.execute(analysis.invocation, {
+        signal: new AbortController().signal,
+        deadline: Number.POSITIVE_INFINITY,
+      })
+    )
+    assert.throws(
+      () => host?.openCommandSession('closed'),
+      /unavailable in state "stopped"/
+    )
+  } finally {
+    await host?.close().catch(() => {})
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
 test('PortalHost prepares without launching a browser and starts once', async () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-host-'))
   const dataDirectory = path.join(cwd, 'data')

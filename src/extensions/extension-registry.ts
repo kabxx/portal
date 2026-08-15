@@ -8,11 +8,16 @@ import type {
   ExtensionId,
   ExtensionModule,
   ExtensionRegistrationApi,
+  ExecutableBindingId,
+  ExecutableBindingRef,
+  ExecutableBindingRegistration,
+  ExecutableBindingSpec,
   HookHandlerRegistration,
   HookMode,
   HookRef,
   InitialHookSpec,
   ResolvedContribution,
+  ResolvedExecutableBinding,
   ResolvedHookPolicy,
   ServiceFactoryContext,
   ServiceFactory,
@@ -24,10 +29,12 @@ import {
   CapabilityNotGrantedError,
   ContributionValidationError,
   DuplicateContributionIdError,
+  DuplicateExecutableBindingIdError,
   DuplicateExtensionIdError,
   DuplicateServiceProviderError,
   ExtensionRegistrationError,
   ExtensionResolutionError,
+  ExecutableBindingValidationError,
   GraphResolutionError,
   RegistryFrozenError,
   RequirementNotAllowedError,
@@ -83,10 +90,33 @@ interface PendingContribution {
   readonly after: readonly ContributionId[]
 }
 
+interface RuntimeExecutableBindingSpec {
+  readonly refIdentity: object
+  readonly refKey: symbol
+  readonly id: string
+  readonly version: number
+  readonly kind: string
+  readonly targetContributionKey: symbol
+  readonly targetContributionIdentity: object
+  readonly cardinality: 'exactly-one-per-target'
+  readonly ownership: 'same-owner'
+  capture(binding: unknown): unknown
+}
+
+interface PendingExecutableBinding {
+  readonly refKey: symbol
+  readonly pointId: string
+  readonly id: ExecutableBindingId
+  readonly targetId: ContributionId
+  readonly owner: ExtensionId
+  readonly binding: unknown
+}
+
 interface ExtensionTransaction {
   readonly services: PendingServiceFactory[]
   readonly contributions: PendingContribution[]
   readonly handlers: PendingHookHandler[]
+  readonly bindings: PendingExecutableBinding[]
 }
 
 export interface ResolvedServicePlan {
@@ -101,6 +131,11 @@ export class ResolvedExtensionGraph {
   >
   readonly #contributionRefs: ReadonlyMap<symbol, object>
   readonly #hookPlans: ReadonlyMap<symbol, RuntimeResolvedHookPlan>
+  readonly #bindingPlans: ReadonlyMap<
+    symbol,
+    readonly ResolvedExecutableBinding<unknown>[]
+  >
+  readonly #bindingRefs: ReadonlyMap<symbol, object>
 
   public constructor(
     public readonly generation: string,
@@ -111,11 +146,18 @@ export class ResolvedExtensionGraph {
       readonly ResolvedContribution<unknown>[]
     >,
     contributionRefs: ReadonlyMap<symbol, object>,
-    hookPlans: ReadonlyMap<symbol, RuntimeResolvedHookPlan>
+    hookPlans: ReadonlyMap<symbol, RuntimeResolvedHookPlan>,
+    bindingPlans: ReadonlyMap<
+      symbol,
+      readonly ResolvedExecutableBinding<unknown>[]
+    >,
+    bindingRefs: ReadonlyMap<symbol, object>
   ) {
     this.#contributionPlans = new ReadonlyMapView(contributionPlans)
     this.#contributionRefs = new ReadonlyMapView(contributionRefs)
     this.#hookPlans = new ReadonlyMapView(hookPlans)
+    this.#bindingPlans = new ReadonlyMapView(bindingPlans)
+    this.#bindingRefs = new ReadonlyMapView(bindingRefs)
     Object.freeze(this)
   }
 
@@ -141,6 +183,19 @@ export class ResolvedExtensionGraph {
     }
     return plan
   }
+
+  public executableBindings<Binding>(
+    ref: ExecutableBindingRef<Binding>
+  ): readonly ResolvedExecutableBinding<Binding>[] {
+    const bindings = this.#bindingPlans.get(ref.key)
+    if (bindings === undefined || this.#bindingRefs.get(ref.key) !== ref) {
+      throw new UnknownRefError('Executable binding', ref.id)
+    }
+    // The Portal-owned Ref/spec captures every binding before this erased
+    // boundary. Ref identity restores the relation for resolved consumers.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    return bindings as readonly ResolvedExecutableBinding<Binding>[]
+  }
 }
 
 export class ExtensionRegistry {
@@ -152,10 +207,13 @@ export class ExtensionRegistry {
   readonly #contributionPointIds = new Set<string>()
   readonly #hookSpecs = new Map<symbol, RuntimeHookSpec>()
   readonly #hookIds = new Set<string>()
+  readonly #bindingSpecs = new Map<symbol, RuntimeExecutableBindingSpec>()
+  readonly #bindingPointIds = new Set<string>()
   readonly #extensions = new Map<ExtensionId, ExtensionDescriptor>()
   readonly #services: PendingServiceFactory[] = []
   readonly #contributions: PendingContribution[] = []
   readonly #handlers: PendingHookHandler[] = []
+  readonly #bindings: PendingExecutableBinding[] = []
   readonly #contributionSelections: ReadonlyMap<
     string,
     ReadonlyMap<string, string>
@@ -268,6 +326,63 @@ export class ExtensionRegistry {
     this.#hookIds.add(spec.ref.id)
   }
 
+  public defineExecutableBinding<Binding>(
+    spec: ExecutableBindingSpec<Binding>
+  ): void {
+    this.#assertMutable()
+    assertPortalRef('Executable binding', spec.ref)
+    assertPortalRef('Contribution', spec.targetContribution)
+    if (spec.cardinality !== 'exactly-one-per-target') {
+      throw new ExtensionResolutionError(
+        `Executable binding spec "${spec.ref.id}" has invalid cardinality.`
+      )
+    }
+    if (spec.ownership !== 'same-owner') {
+      throw new ExtensionResolutionError(
+        `Executable binding spec "${spec.ref.id}" has invalid ownership.`
+      )
+    }
+    if (typeof spec.capture !== 'function') {
+      throw new ExtensionResolutionError(
+        `Executable binding spec "${spec.ref.id}" must define a capture function.`
+      )
+    }
+    if (
+      this.#bindingSpecs.has(spec.ref.key) ||
+      this.#bindingPointIds.has(spec.ref.id)
+    ) {
+      throw new ExtensionResolutionError(
+        `Executable binding spec "${spec.ref.id}" is defined more than once.`
+      )
+    }
+    const contributionSpec = this.#contributionSpecs.get(
+      spec.targetContribution.key
+    )
+    if (
+      contributionSpec === undefined ||
+      contributionSpec.refIdentity !== spec.targetContribution
+    ) {
+      throw new UnknownRefError('Contribution', spec.targetContribution.id)
+    }
+    const capture = spec.capture.bind(spec)
+    this.#bindingSpecs.set(
+      spec.ref.key,
+      Object.freeze({
+        refIdentity: spec.ref,
+        refKey: spec.ref.key,
+        id: spec.ref.id,
+        version: spec.ref.version,
+        kind: spec.ref.kind,
+        targetContributionKey: spec.targetContribution.key,
+        targetContributionIdentity: spec.targetContribution,
+        cardinality: 'exactly-one-per-target',
+        ownership: 'same-owner',
+        capture: (binding: unknown) => captureBinding(capture, binding),
+      })
+    )
+    this.#bindingPointIds.add(spec.ref.id)
+  }
+
   public register(
     descriptor: ExtensionDescriptor,
     module: ExtensionModule
@@ -282,6 +397,7 @@ export class ExtensionRegistry {
       services: [],
       contributions: [],
       handlers: [],
+      bindings: [],
     }
     let active = true
     const ensureActive = () => {
@@ -362,6 +478,38 @@ export class ExtensionRegistry {
           after: Object.freeze([...(registration.after ?? [])]),
         })
       },
+      bind: <Binding>(
+        ref: ExecutableBindingRef<Binding>,
+        registration: ExecutableBindingRegistration<Binding>
+      ) => {
+        ensureActive()
+        const spec = this.#bindingSpecs.get(ref.key)
+        if (spec === undefined || spec.refIdentity !== ref) {
+          throw new UnknownRefError('Executable binding', ref.id)
+        }
+        assertStableId('Executable binding', registration.id)
+        assertStableId('Contribution', registration.targetId)
+        let binding: unknown
+        try {
+          binding = spec.capture(registration.binding)
+        } catch (error) {
+          throw new ExecutableBindingValidationError(
+            registration.id,
+            'capture failed.',
+            error
+          )
+        }
+        transaction.bindings.push(
+          Object.freeze({
+            refKey: ref.key,
+            pointId: ref.id,
+            id: registration.id,
+            targetId: registration.targetId,
+            owner: descriptor.id,
+            binding,
+          })
+        )
+      },
       handle: <Input, Output, Mode extends HookMode>(
         ref: HookRef<Input, Output, Mode>,
         registration: HookHandlerRegistration<Input, Output>
@@ -420,6 +568,7 @@ export class ExtensionRegistry {
     this.#services.push(...transaction.services)
     this.#contributions.push(...transaction.contributions)
     this.#handlers.push(...transaction.handlers)
+    this.#bindings.push(...transaction.bindings)
   }
 
   public freeze(): ResolvedExtensionGraph {
@@ -434,6 +583,7 @@ export class ExtensionRegistry {
       this.#validateKnownServiceRequirements(servicePlan)
       validateGlobalHandlerIds(this.#handlers)
       const contributionPlans = this.#resolveContributions()
+      const bindingPlans = this.#resolveExecutableBindings(contributionPlans)
       const planner = new HookPlanner(this.#policies)
       const hookPlans = planner.resolve(
         this.#generation,
@@ -452,7 +602,14 @@ export class ExtensionRegistry {
             spec.refIdentity,
           ])
         ),
-        hookPlans
+        hookPlans,
+        bindingPlans,
+        new Map(
+          [...this.#bindingSpecs.values()].map((spec) => [
+            spec.refKey,
+            spec.refIdentity,
+          ])
+        )
       )
       this.#resolved = resolved
       this.#state = 'frozen'
@@ -630,6 +787,76 @@ export class ExtensionRegistry {
     }
   }
 
+  #resolveExecutableBindings(
+    contributionPlans: ReadonlyMap<
+      symbol,
+      readonly ResolvedContribution<unknown>[]
+    >
+  ): ReadonlyMap<symbol, readonly ResolvedExecutableBinding<unknown>[]> {
+    const globalIds = new Set<string>()
+    for (const binding of this.#bindings) {
+      if (globalIds.has(binding.id)) {
+        throw new DuplicateExecutableBindingIdError(binding.id)
+      }
+      globalIds.add(binding.id)
+    }
+
+    const plans = new Map<
+      symbol,
+      readonly ResolvedExecutableBinding<unknown>[]
+    >()
+    for (const spec of this.#bindingSpecs.values()) {
+      const targets =
+        contributionPlans.get(spec.targetContributionKey) ?? Object.freeze([])
+      const targetById = new Map(targets.map((target) => [target.id, target]))
+      const bindings = this.#bindings.filter(
+        (binding) => binding.refKey === spec.refKey
+      )
+      const byTarget = new Map<string, PendingExecutableBinding[]>()
+      for (const binding of bindings) {
+        const target = targetById.get(binding.targetId)
+        if (target === undefined) {
+          throw new ExecutableBindingValidationError(
+            binding.id,
+            `targets missing or disabled Contribution "${binding.targetId}".`
+          )
+        }
+        if (spec.ownership === 'same-owner' && target.owner !== binding.owner) {
+          throw new ExecutableBindingValidationError(
+            binding.id,
+            `owner "${binding.owner}" does not own target Contribution "${binding.targetId}".`
+          )
+        }
+        const candidates = byTarget.get(binding.targetId) ?? []
+        candidates.push(binding)
+        byTarget.set(binding.targetId, candidates)
+      }
+      for (const target of targets) {
+        const candidates = byTarget.get(target.id) ?? []
+        if (candidates.length !== 1) {
+          throw new ExtensionResolutionError(
+            `Executable binding point "${spec.id}" requires exactly one binding for Contribution "${target.id}", received ${candidates.length}.`
+          )
+        }
+      }
+      plans.set(
+        spec.refKey,
+        Object.freeze(
+          targets.map((target) => {
+            const binding = byTarget.get(target.id)![0]!
+            return Object.freeze({
+              id: binding.id,
+              targetId: binding.targetId,
+              owner: binding.owner,
+              binding: binding.binding,
+            })
+          })
+        )
+      )
+    }
+    return plans
+  }
+
   #assertMutable(): void {
     if (this.#state === 'frozen' || this.#state === 'resolving') {
       throw new RegistryFrozenError()
@@ -640,6 +867,16 @@ export class ExtensionRegistry {
       )
     }
   }
+}
+
+function captureBinding<Binding>(
+  capture: (binding: Binding) => Binding,
+  binding: unknown
+): unknown {
+  // The binding Ref/spec pair is defined by Portal. Registration verifies Ref
+  // identity before this single heterogeneous-registry boundary.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  return capture(binding as Binding)
 }
 
 function validateDescriptor(descriptor: ExtensionDescriptor): void {

@@ -1,5 +1,6 @@
 import type {
   ContributionId,
+  ExecutableBindingId,
   ExtensionId,
   HandlerId,
   HookId,
@@ -65,6 +66,24 @@ export class DuplicateContributionIdError extends ExtensionResolutionError {
   public constructor(public readonly contributionId: ContributionId) {
     super(`Contribution ID "${contributionId}" is registered more than once.`)
     this.name = 'DuplicateContributionIdError'
+  }
+}
+
+export class DuplicateExecutableBindingIdError extends ExtensionResolutionError {
+  public constructor(public readonly bindingId: ExecutableBindingId) {
+    super(`Executable binding ID "${bindingId}" is registered more than once.`)
+    this.name = 'DuplicateExecutableBindingIdError'
+  }
+}
+
+export class ExecutableBindingValidationError extends ExtensionResolutionError {
+  public constructor(
+    public readonly bindingId: ExecutableBindingId,
+    message: string,
+    cause?: unknown
+  ) {
+    super(`Executable binding "${bindingId}" is invalid: ${message}`, cause)
+    this.name = 'ExecutableBindingValidationError'
   }
 }
 

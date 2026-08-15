@@ -1,4 +1,3 @@
-import { tokenizeCommandInput } from '../cli-commands/core/command-registry.ts'
 import type { TerminalController } from '../terminal-ui/terminal-controller.ts'
 import type { ThreadManager } from '../threads/thread-manager.ts'
 
@@ -22,40 +21,6 @@ export function clearInteractiveTerminal(
   }
   inkApp.clear()
   output.write(CLEAR_TERMINAL_ESCAPE)
-}
-
-export function canRunCommandWhileThreadBusy(input: string): boolean {
-  const [command, subcommand] = tokenizeCommandInput(input)
-  if (
-    command === '/help' ||
-    command === '/providers' ||
-    command === '/job' ||
-    command === '/keybinding' ||
-    command === '/mcp' ||
-    command === '/exit'
-  ) {
-    return true
-  }
-  if (command === '/thread') {
-    return (
-      subcommand === undefined ||
-      [
-        'agent',
-        'chat',
-        'list',
-        'history',
-        'resume',
-        'switch',
-        'status',
-        'close',
-        'detach',
-      ].includes(subcommand)
-    )
-  }
-  if (command === '/skill') {
-    return subcommand === undefined || subcommand === 'list'
-  }
-  return false
 }
 
 export function shouldRenderFallbackThreadError({

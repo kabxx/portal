@@ -1,7 +1,4 @@
-import type { CliCommand } from '../cli-commands/core/command-types.ts'
-import type { ThreadHistoryEntry } from '../threads/thread-store.ts'
 import type { ThreadHandle, ThreadManager } from '../threads/thread-manager.ts'
-import type { SkillListResult } from '../skills/skill-library.ts'
 import type { ConversationHistoryMessage } from '../providers/conversation-history.ts'
 import type {
   ToolOutcome,
@@ -500,105 +497,6 @@ export class TerminalController {
     const view = this.getThreadTimelineView(thread.id)
     view.phase = 'attention'
     this.addTimelineEntry('error', title, body, format, undefined, view)
-  }
-
-  public renderCommandHelp(commands: readonly CliCommand[]) {
-    const usageWidth = Math.max(
-      0,
-      ...commands.map((command) => (command.usage ?? command.name).length)
-    )
-    const lines = commands.map((command) => {
-      const usage = command.usage ?? command.name
-      return `  ${usage.padEnd(usageWidth, ' ')}  ${command.description}`
-    })
-
-    this.renderInfo('/help', ['Commands:', ...lines].join('\n'))
-  }
-
-  public renderProviderList(providers: readonly string[]) {
-    this.renderInfo(
-      '/providers',
-      ['Providers:', ...providers.map((provider) => `  ${provider}`)].join('\n')
-    )
-  }
-
-  public renderSkillList(result: SkillListResult) {
-    if (result.skills.length === 0 && result.issues.length === 0) {
-      this.renderWarning('/skill list', 'No skills registered.')
-      return
-    }
-
-    if (result.skills.length > 0) {
-      this.renderInfo('/skill list', [
-        'Skills:',
-        ...result.skills.map(
-          (skill) => `${skill.enabled ? '*' : ' '} ${skill.name}`
-        ),
-      ])
-    }
-
-    if (result.issues.length > 0) {
-      const issueRows = result.issues.flatMap((issue) => [
-        `  ${issue.directory}`,
-        `    ${issue.message}`,
-      ])
-      this.renderWarning('/skill list', ['Invalid skills:', ...issueRows])
-    }
-  }
-
-  public renderThreadList(threads: readonly ThreadHandle[]) {
-    if (threads.length === 0) {
-      this.renderWarning('/thread list', 'No local threads.')
-      return
-    }
-
-    const activeThreadId = this.threadManager?.getActiveThread()?.id ?? null
-    const rows = threads.flatMap((thread, index) => {
-      const marker = thread.id === activeThreadId ? '*' : ' '
-      const turnLabel = thread.turnCount === 1 ? 'turn' : 'turns'
-      const lines = [
-        `${marker} ${thread.id}  ${thread.provider}  ${thread.turnCount} ${turnLabel}`,
-        `  title: ${thread.title ?? '(untitled)'}`,
-        `  url: ${thread.runtime.conversationUrl}`,
-      ]
-      return index === threads.length - 1 ? lines : [...lines, '']
-    })
-
-    this.renderInfo('/thread list', ['Threads:', ...rows].join('\n'))
-  }
-
-  public renderThreadHistory(entries: readonly ThreadHistoryEntry[]) {
-    if (entries.length === 0) {
-      this.renderWarning('/thread history', 'No thread history.')
-      return
-    }
-
-    const rows = entries.flatMap((entry, index) => {
-      const lines = [
-        `#${entry.id} ${entry.title ?? '(untitled)'}`,
-        `   Provider: ${entry.provider}`,
-        `   Created: ${entry.createdAt}`,
-        `   Last used: ${entry.lastUsedAt}`,
-        `   URL: ${entry.conversationUrl}`,
-      ]
-      return index === entries.length - 1 ? lines : [...lines, '']
-    })
-
-    this.renderInfo('/thread history', ['History:', ...rows].join('\n'))
-  }
-
-  public renderThreadStatus(thread: ThreadHandle) {
-    this.renderInfo(
-      '/thread status',
-      [
-        'Thread:',
-        `  id: ${thread.id}`,
-        `  provider: ${thread.provider}`,
-        `  title: ${thread.title ?? '(untitled)'}`,
-        `  turns: ${thread.turnCount}`,
-        `  url: ${thread.runtime.conversationUrl}`,
-      ].join('\n')
-    )
   }
 
   public renderAssistantStream(thread: ThreadHandle, message: string) {

@@ -3,9 +3,8 @@ import assert from 'node:assert/strict'
 import { createElement } from 'react'
 import { renderToString } from '@kabxx/ink'
 
-import { DEFAULT_COMMANDS } from '../../src/cli-commands/command-set.ts'
-import type { ProviderId } from '../../src/providers/provider-id.ts'
-import { resolveCommandHints } from '../../src/terminal-ui/command-hints.ts'
+import { createBuiltinCommandTestRuntime } from '../helpers/builtin-command-runtime.ts'
+import { resolveCommandHints as resolveSessionCommandHints } from '../../src/terminal-ui/command-hints.ts'
 import {
   MAX_INPUT_HINT_LINES as MAX_COMMAND_HINT_LINES,
   moveInputHintSelection as moveCommandHintSelection,
@@ -19,16 +18,24 @@ import {
   formatInputHintLines as formatCommandHintLines,
 } from '../../src/terminal-ui/terminal-screen.tsx'
 
-const PROVIDERS: readonly ProviderId[] = [
-  'chatgpt',
-  'gemini',
-  'deepseek',
-  'doubao',
-  'grok',
-  'glm',
-  'qwen',
-  'kimi',
-]
+const commandFixture = createBuiltinCommandTestRuntime()
+const DEFAULT_COMMANDS = commandFixture.session.catalog
+const PROVIDERS = commandFixture.completionSnapshot
+
+test.after(async () => await commandFixture.close())
+
+function resolveCommandHints(
+  value: string,
+  catalog = DEFAULT_COMMANDS,
+  completionSnapshot = PROVIDERS
+) {
+  assert.equal(catalog, commandFixture.session.catalog)
+  return resolveSessionCommandHints(
+    value,
+    commandFixture.session,
+    completionSnapshot
+  )
+}
 
 test('root slash input returns every command while the window stays bounded', () => {
   const hints = resolveCommandHints('/', DEFAULT_COMMANDS, PROVIDERS)
@@ -496,7 +503,9 @@ test('guide-derived subcommands preserve existing completion order', () => {
 
   for (const [name, subcommands] of Object.entries(expected)) {
     assert.deepEqual(
-      DEFAULT_COMMANDS.find((command) => command.name === name)?.subcommands,
+      DEFAULT_COMMANDS.find((command) => command.primaryName === name)
+        ?.routes.filter(({ path }) => path.length > 0)
+        .map(({ path }) => path[0]),
       subcommands
     )
   }
