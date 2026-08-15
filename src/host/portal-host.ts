@@ -1,5 +1,17 @@
 import path from 'node:path'
 
+import type {
+  HookRuntimeClock,
+  HookTraceSink,
+} from '../extensions/extension-contracts.ts'
+import {
+  PortalHookRuntime,
+  portalHostTestExtensions,
+  type PortalExtensionRegistration,
+  type PortalSessionIntent,
+  type PortalShutdownPreviousState,
+} from '../extensions/portal-hooks.ts'
+import { ExtensionResourceScope } from '../extensions/scope-registration.ts'
 import type { BrowserLaunch } from '../platform/browser-cdp-launcher.ts'
 import { launchBrowser } from '../platform/browser-cdp-launcher.ts'
 import { resolvePortalDataDirectory } from '../platform/portal-data-directory.ts'
@@ -40,10 +52,14 @@ import { createAdapterForProvider } from '../providers/provider-catalog.ts'
 
 const LOGIN_CHECK_INTERVAL_MS = 1000
 const HOST_OPERATION_TIMEOUT_MS = 3000
+const PORTAL_ACTIVATION_HOOK_TIMEOUT_MS = 5000
+const PORTAL_SHUTDOWN_HOOK_TIMEOUT_MS = 3000
+const FIRST_PARTY_PORTAL_EXTENSIONS: readonly PortalExtensionRegistration[] =
+  Object.freeze([])
 
 export type PortalHostProfile = 'tui' | 'exec'
 export type PortalHostState =
-  'prepared' | 'starting' | 'ready' | 'stopping' | 'stopped' | 'failed'
+  'resolved' | 'starting' | 'ready' | 'stopping' | 'stopped' | 'failed'
 
 export interface PortalHostOptions {
   readonly profile: PortalHostProfile
@@ -56,6 +72,15 @@ export interface PortalHostDependencies {
   readonly launchBrowser?: typeof launchBrowser
   readonly createProviderAdapter?: typeof createAdapterForProvider
   readonly createRuntime?: typeof createRuntimeFromAdapter
+  readonly extensionClock?: HookRuntimeClock
+  readonly extensionTraceSink?: HookTraceSink
+  readonly [portalHostTestExtensions]?: readonly PortalExtensionRegistration[]
+}
+
+interface ResolvedPortalHostDependencies {
+  readonly launchBrowser: typeof launchBrowser
+  readonly createProviderAdapter: typeof createAdapterForProvider
+  readonly createRuntime: typeof createRuntimeFromAdapter
 }
 
 export interface PortalHostStartOptions {
@@ -89,11 +114,16 @@ export interface PortalHostStartedServices extends PortalHostPreparedServices {
 
 export class PortalHost {
   readonly #rootScope: ResourceScope
+  readonly #extensionActivationScope: ResourceScope
+  readonly #coreScope: ResourceScope
+  readonly #portalScope: ExtensionResourceScope
+  readonly #hooks: PortalHookRuntime
   readonly #startupController = new AbortController()
-  readonly #dependencies: Required<PortalHostDependencies>
-  #state: PortalHostState = 'prepared'
+  readonly #dependencies: ResolvedPortalHostDependencies
+  #state: PortalHostState = 'resolved'
   #startPromise: Promise<PortalHostStartedServices> | null = null
   #closePromise: Promise<void> | null = null
+  #startAttemptScope: ResourceScope | null = null
   #browserScope: ResourceScope | null = null
   #runtimeScope: ResourceScope | null = null
   #startedServices: PortalHostStartedServices | null = null
@@ -101,9 +131,17 @@ export class PortalHost {
   private constructor(
     public readonly prepared: PortalHostPreparedServices,
     rootScope: ResourceScope,
-    dependencies: Required<PortalHostDependencies>
+    extensionActivationScope: ResourceScope,
+    coreScope: ResourceScope,
+    portalScope: ExtensionResourceScope,
+    hooks: PortalHookRuntime,
+    dependencies: ResolvedPortalHostDependencies
   ) {
     this.#rootScope = rootScope
+    this.#extensionActivationScope = extensionActivationScope
+    this.#coreScope = coreScope
+    this.#portalScope = portalScope
+    this.#hooks = hooks
     this.#dependencies = dependencies
   }
 
@@ -111,8 +149,33 @@ export class PortalHost {
     options: PortalHostOptions,
     dependencies: PortalHostDependencies = {}
   ): Promise<PortalHost> {
-    const rootScope = new ResourceScope(`portal:${options.profile}`)
+    const rootScope = new ResourceScope(`portal:${options.profile}`, {
+      ...(dependencies.extensionClock === undefined
+        ? {}
+        : { clock: dependencies.extensionClock }),
+    })
     try {
+      const extensionActivationScope = rootScope.createChild(
+        'extension activations'
+      )
+      const coreScope = rootScope.createChild('portal core')
+      const portalScope = new ExtensionResourceScope(
+        'portal',
+        `portal:${options.profile}`,
+        coreScope
+      )
+      const hooks = new PortalHookRuntime({
+        extensions: Object.freeze([
+          ...FIRST_PARTY_PORTAL_EXTENSIONS,
+          ...(dependencies[portalHostTestExtensions] ?? []),
+        ]),
+        ...(dependencies.extensionClock === undefined
+          ? {}
+          : { clock: dependencies.extensionClock }),
+        ...(dependencies.extensionTraceSink === undefined
+          ? {}
+          : { traceSink: dependencies.extensionTraceSink }),
+      })
       const cwd = path.resolve(options.cwd)
       const dataDirectory = resolvePortalDataDirectory({
         cwd,
@@ -136,7 +199,7 @@ export class PortalHost {
         cwd,
         enabled: config.projectInstructions,
       })
-      const threadStore = await rootScope.acquire(
+      const threadStore = await coreScope.acquire(
         'thread store',
         async () =>
           await createThreadStore(path.join(dataDirectory, 'threads.db')),
@@ -161,12 +224,20 @@ export class PortalHost {
         runtimeRegistry: new ThreadRuntimeRegistry<RuntimeCore>(),
         runCommandJobs: new RunCommandJobManager(),
       }
-      return new PortalHost(prepared, rootScope, {
-        launchBrowser: dependencies.launchBrowser ?? launchBrowser,
-        createProviderAdapter:
-          dependencies.createProviderAdapter ?? createAdapterForProvider,
-        createRuntime: dependencies.createRuntime ?? createRuntimeFromAdapter,
-      })
+      return new PortalHost(
+        prepared,
+        rootScope,
+        extensionActivationScope,
+        coreScope,
+        portalScope,
+        hooks,
+        {
+          launchBrowser: dependencies.launchBrowser ?? launchBrowser,
+          createProviderAdapter:
+            dependencies.createProviderAdapter ?? createAdapterForProvider,
+          createRuntime: dependencies.createRuntime ?? createRuntimeFromAdapter,
+        }
+      )
     } catch (error) {
       try {
         await rootScope.dispose({ reason: error })
@@ -203,7 +274,7 @@ export class PortalHost {
     ) {
       return this.#startPromise
     }
-    if (this.#state !== 'prepared') {
+    if (this.#state !== 'resolved') {
       return Promise.reject(
         new Error(`PortalHost cannot start from state "${this.#state}".`)
       )
@@ -225,11 +296,31 @@ export class PortalHost {
   ): Promise<PortalHostStartedServices> {
     try {
       throwIfAborted(options.signal)
-      const browserScope = this.#rootScope.createChild('browser')
-      this.#browserScope = browserScope
       const signals = [this.#startupController.signal]
       if (options.signal !== undefined) signals.push(options.signal)
       const signal = AbortSignal.any(signals)
+      const startScope = this.#portalScope.createChild(
+        'portal',
+        'start-attempt'
+      )
+      this.#startAttemptScope = startScope.resourceScope
+      const beforeStartScope = startScope.createChild('portal', 'before-start')
+      await this.#hooks.beforeStart(
+        {
+          sessionIntent: sessionIntentForProfile(this.prepared.profile),
+          previousState: 'resolved',
+        },
+        {
+          scopeAccess: 'active',
+          scope: beforeStartScope,
+          signal,
+          deadline: this.#hooks.now() + PORTAL_ACTIVATION_HOOK_TIMEOUT_MS,
+        }
+      )
+      throwIfAborted(signal)
+
+      const browserScope = startScope.resourceScope.createChild('browser')
+      this.#browserScope = browserScope
       const browser = await browserScope.acquire(
         'browser launch',
         async () =>
@@ -244,7 +335,7 @@ export class PortalHost {
       )
       throwIfAborted(signal)
 
-      const runtimeScope = this.#rootScope.createChild('runtime')
+      const runtimeScope = startScope.resourceScope.createChild('runtime')
       this.#runtimeScope = runtimeScope
       const context = browser.context
       const lifecycle = new ThreadLifecycleService({
@@ -310,6 +401,18 @@ export class PortalHost {
       runtimeScope.defer('thread page-close listener', () => unsubscribe())
       throwIfAborted(signal)
 
+      const readyScope = startScope.createChild('portal', 'ready')
+      await this.#hooks.ready(
+        { sessionIntent: sessionIntentForProfile(this.prepared.profile) },
+        {
+          scopeAccess: 'active',
+          scope: readyScope,
+          signal,
+          deadline: this.#hooks.now() + PORTAL_ACTIVATION_HOOK_TIMEOUT_MS,
+        }
+      )
+      throwIfAborted(signal)
+
       const services: PortalHostStartedServices = {
         ...this.prepared,
         browser,
@@ -324,10 +427,7 @@ export class PortalHost {
       }
       const cleanupErrors: unknown[] = []
       await this.#runClosePhase(cleanupErrors, async () => {
-        await this.#runtimeScope?.dispose({ reason: error })
-      })
-      await this.#runClosePhase(cleanupErrors, async () => {
-        await this.#browserScope?.dispose({ reason: error })
+        await this.#startAttemptScope?.dispose({ reason: error })
       })
       if (cleanupErrors.length > 0) {
         throw new AggregateError(
@@ -342,72 +442,162 @@ export class PortalHost {
 
   async #close(reason: unknown): Promise<void> {
     if (this.#state === 'stopped') return
+    const previousState = shutdownPreviousState(this.#state)
     this.#state = 'stopping'
     this.#startupController.abort(reason)
     const errors: unknown[] = []
+    const coreCleanupErrors: unknown[] = []
     const servicesAtShutdown = this.#startedServices
     servicesAtShutdown?.lifecycle.beginShutdown(reason)
-    servicesAtShutdown?.runCommandJobs.beginShutdown()
+    this.prepared.runCommandJobs.beginShutdown()
     const provisioningShutdown =
       servicesAtShutdown?.lifecycle.waitForProvisioning() ?? null
     void provisioningShutdown?.catch(() => {})
 
     if (this.#startPromise !== null && this.#startedServices === null) {
-      await this.#runClosePhase(errors, async () => {
-        await runWithTimeout(
-          'PortalHost startup cancellation',
-          this.#startPromise!.then(
-            () => {},
-            () => {}
+      await this.#runClosePhase(
+        errors,
+        async () => {
+          await runWithTimeout(
+            'PortalHost startup cancellation',
+            this.#startPromise!.then(
+              () => {},
+              () => {}
+            ),
+            this.#hooks
           )
-        )
-      })
+        },
+        coreCleanupErrors
+      )
     }
+
+    const beforeStopScope = this.#portalScope.createChild(
+      'portal',
+      'before-stop'
+    )
+    await this.#runClosePhase(errors, async () => {
+      await this.#hooks.beforeStop(
+        {
+          sessionIntent: sessionIntentForProfile(this.prepared.profile),
+          previousState,
+        },
+        {
+          scopeAccess: 'active',
+          scope: beforeStopScope,
+          deadline: this.#hooks.now() + PORTAL_SHUTDOWN_HOOK_TIMEOUT_MS,
+        }
+      )
+    })
 
     const services = this.#startedServices
     if (services !== null) {
       services.lifecycle.beginShutdown(reason)
       services.runCommandJobs.beginShutdown()
-      await this.#runClosePhase(errors, async () => {
-        await this.#runtimeScope?.dispose({ reason })
-      })
-      await this.#runClosePhase(errors, async () => {
-        await runWithTimeout(
-          'thread provisioning shutdown',
-          provisioningShutdown ?? Promise.resolve()
-        )
-      })
-      await this.#runClosePhase(errors, async () => {
-        await services.lifecycle.cancelAll()
-      })
-      await this.#runClosePhase(errors, async () => {
-        await services.runCommandJobs.stopAll()
-      })
-      for (const thread of services.threadManager.listThreads()) {
-        await this.#runClosePhase(errors, async () => {
+      await this.#runClosePhase(
+        errors,
+        async () => {
+          await this.#runtimeScope?.dispose({ reason })
+        },
+        coreCleanupErrors
+      )
+      await this.#runClosePhase(
+        errors,
+        async () => {
           await runWithTimeout(
-            `thread ${thread.id} shutdown`,
-            services.lifecycle.close(thread.id, 'shutdown').then(() => {})
+            'thread provisioning shutdown',
+            provisioningShutdown ?? Promise.resolve(),
+            this.#hooks
           )
-        })
+        },
+        coreCleanupErrors
+      )
+      await this.#runClosePhase(
+        errors,
+        async () => {
+          await services.lifecycle.cancelAll()
+        },
+        coreCleanupErrors
+      )
+      await this.#runClosePhase(
+        errors,
+        async () => {
+          await services.runCommandJobs.stopAll()
+        },
+        coreCleanupErrors
+      )
+      for (const thread of services.threadManager.listThreads()) {
+        await this.#runClosePhase(
+          errors,
+          async () => {
+            await runWithTimeout(
+              `thread ${thread.id} shutdown`,
+              services.lifecycle.close(thread.id, 'shutdown').then(() => {}),
+              this.#hooks
+            )
+          },
+          coreCleanupErrors
+        )
       }
     } else {
-      this.prepared.runCommandJobs.beginShutdown()
-      await this.#runClosePhase(errors, async () => {
-        await this.prepared.threadOperations.cancelAll()
-      })
-      await this.#runClosePhase(errors, async () => {
-        await this.prepared.runCommandJobs.stopAll()
-      })
+      await this.#runClosePhase(
+        errors,
+        async () => {
+          await this.prepared.threadOperations.cancelAll()
+        },
+        coreCleanupErrors
+      )
+      await this.#runClosePhase(
+        errors,
+        async () => {
+          await this.prepared.runCommandJobs.stopAll()
+        },
+        coreCleanupErrors
+      )
     }
 
+    await this.#runClosePhase(
+      errors,
+      async () => {
+        await this.#browserScope?.dispose({ reason })
+      },
+      coreCleanupErrors
+    )
+    await this.#runClosePhase(
+      errors,
+      async () => {
+        await this.#coreScope.dispose({ reason })
+      },
+      coreCleanupErrors
+    )
+    this.#state = 'stopped'
+
     await this.#runClosePhase(errors, async () => {
-      await this.#browserScope?.dispose({ reason })
+      await this.#hooks.stopped(
+        {
+          sessionIntent: sessionIntentForProfile(this.prepared.profile),
+          previousState,
+          coreCleanup: {
+            status: coreCleanupErrors.length === 0 ? 'clean' : 'errors',
+            errorCount: coreCleanupErrors.length,
+          },
+        },
+        {
+          scopeAccess: 'terminal',
+          scope: {
+            kind: 'portal',
+            resourceId: this.#portalScope.resourceId,
+            closedAt: this.#hooks.now(),
+          },
+          deadline: this.#hooks.now() + PORTAL_SHUTDOWN_HOOK_TIMEOUT_MS,
+        }
+      )
+    })
+    await this.#runClosePhase(errors, async () => {
+      await this.#extensionActivationScope.dispose({ reason })
     })
     await this.#runClosePhase(errors, async () => {
       await this.#rootScope.dispose({ reason })
     })
-    this.#state = 'stopped'
 
     if (errors.length > 0) {
       throw new AggregateError(errors, 'PortalHost failed to close cleanly.')
@@ -416,12 +606,14 @@ export class PortalHost {
 
   async #runClosePhase(
     errors: unknown[],
-    phase: () => Promise<void>
+    phase: () => Promise<void>,
+    category?: unknown[]
   ): Promise<void> {
     try {
       await phase()
     } catch (error) {
       errors.push(error)
+      if (category !== undefined && category !== errors) category.push(error)
     }
   }
 }
@@ -439,22 +631,29 @@ export class PortalHostOperationTimeoutError extends Error {
 async function runWithTimeout(
   operation: string,
   promise: Promise<void>,
+  clock: HookRuntimeClock,
   timeoutMs = HOST_OPERATION_TIMEOUT_MS
 ): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | null = null
+  const timeoutError = new PortalHostOperationTimeoutError(operation, timeoutMs)
+  const deadline = clock.now() + timeoutMs
+  void promise.catch(() => undefined)
+  let rejectTimeout!: (reason: unknown) => void
+  const timeout = new Promise<never>((_resolve, reject) => {
+    rejectTimeout = reject
+  })
+  const timer = clock.setTimer(timeoutMs, () => rejectTimeout(timeoutError))
   try {
-    await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(new PortalHostOperationTimeoutError(operation, timeoutMs)),
-          timeoutMs
-        )
-      }),
-    ])
+    try {
+      await Promise.race([promise, timeout])
+      if (clock.now() >= deadline) throw timeoutError
+    } catch (error) {
+      if (error !== timeoutError && clock.now() >= deadline) {
+        throw timeoutError
+      }
+      throw error
+    }
   } finally {
-    if (timer !== null) clearTimeout(timer)
+    timer.cancel()
   }
 }
 
@@ -465,4 +664,25 @@ function resolveSetupMode(
   if (mode === 'resume') return 'skip'
   if (profile === 'exec') return 'inline'
   return runtimeSetupModeForThreadCreation(mode)
+}
+
+function sessionIntentForProfile(
+  profile: PortalHostProfile
+): PortalSessionIntent {
+  return profile === 'tui' ? 'interactive' : 'batch'
+}
+
+function shutdownPreviousState(
+  state: PortalHostState
+): PortalShutdownPreviousState {
+  switch (state) {
+    case 'resolved':
+    case 'starting':
+    case 'ready':
+    case 'failed':
+      return state
+    case 'stopping':
+    case 'stopped':
+      throw new Error(`PortalHost cannot begin shutdown from state "${state}".`)
+  }
 }

@@ -96,15 +96,18 @@ registration error, including for JavaScript callers that bypass TypeScript.
 
 On `next/hook-first`, the former conversation Hook product has been removed,
 ResourceScope is implemented, and TUI plus exec share one PortalHost lifecycle.
-Those are foundations, not a completed plugin system.
+The internal Extension, Contribution, Service, and Hook registries now resolve
+and freeze one typed generation. HookPlanner and HookRunner implement observe,
+waterfall, and guard policies, and PortalHost invokes `portal.beforeStart`,
+`portal.ready`, `portal.beforeStop`, and terminal `portal.stopped` through that
+production Kernel.
 
-ExtensionRegistry, ContributionRegistry, ServiceRef resolution, HookRegistry,
-HookPlanner, HookRunner, SurfaceRegistry, Provider facet registries, manifest
-loading, and the external SDK do not exist yet. The TUI is currently a
-hand-written composition root with a separable Host boundary; it is not yet the
-`portal.tui` Surface extension. Exec and MCP are not yet resolved Surface
-extensions either. The delivery contract below defines when Portal may claim
-that first-party capabilities are plugin-based.
+SurfaceRegistry, Provider facet registries, manifest loading, and the external
+SDK do not exist yet. The TUI is currently a hand-written composition root with
+a separable Host boundary; it is not yet the `portal.tui` Surface extension.
+Exec and MCP are not yet resolved Surface extensions either. The delivery
+contract below defines when Portal may claim that first-party capabilities are
+plugin-based.
 
 ## Host lifecycle
 

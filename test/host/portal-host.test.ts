@@ -52,7 +52,7 @@ test('PortalHost prepares without launching a browser and starts once', async ()
         },
       }
     )
-    assert.equal(host.state, 'prepared')
+    assert.equal(host.state, 'resolved')
     assert.equal(launchCount, 0)
     const first = host.start()
     const second = host.start()
@@ -80,13 +80,20 @@ test('PortalHost closes a browser that resolves after shutdown begins', async ()
     disconnected: Promise<void>
     close(): Promise<void>
   }>()
+  const launchStarted = Promise.withResolvers<void>()
   let closeCount = 0
   try {
     const host = await PortalHost.prepare(
       { profile: 'tui', cwd, dataDirectory },
-      { launchBrowser: async () => await launch.promise }
+      {
+        launchBrowser: async () => {
+          launchStarted.resolve()
+          return await launch.promise
+        },
+      }
     )
     const start = host.start()
+    await launchStarted.promise
     const close = host.close()
     launch.resolve({
       // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion

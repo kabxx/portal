@@ -111,6 +111,50 @@ test('ResourceScope bounds cleanup and continues after a timeout', async () => {
   )
 })
 
+test('ResourceScope rejects a synchronous disposer that crosses its deadline', async () => {
+  const scope = new ResourceScope('root')
+  scope.defer('blocking', () => {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25)
+  })
+
+  let error: unknown
+  try {
+    await scope.dispose({ timeoutMs: 5 })
+  } catch (caught) {
+    error = caught
+  }
+
+  assert(error instanceof ResourceScopeDisposalError)
+  assert(
+    error.errors.some((item) => item instanceof ResourceCleanupTimeoutError)
+  )
+})
+
+test('parent disposal applies its shorter deadline to an active child disposal', async () => {
+  const root = new ResourceScope('root')
+  const child = root.createChild('child')
+  const disposerStarted = Promise.withResolvers<void>()
+  const releaseDisposer = Promise.withResolvers<void>()
+  child.defer('slow child cleanup', async () => {
+    disposerStarted.resolve()
+    await releaseDisposer.promise
+  })
+  const childDisposal = child.dispose({ timeoutMs: 200 })
+  await disposerStarted.promise
+
+  const startedAt = Date.now()
+  await assert.rejects(
+    root.dispose({ timeoutMs: 20 }),
+    ResourceScopeDisposalError
+  )
+  assert(
+    Date.now() - startedAt < 100,
+    'Parent disposal waited for the child cleanup timeout.'
+  )
+  releaseDisposer.resolve()
+  await childDisposal
+})
+
 test('ResourceScope closes a resource that arrives after disposal starts', async () => {
   const scope = new ResourceScope('root', { cleanupTimeoutMs: 100 })
   const pendingResource = Promise.withResolvers<{ id: string }>()

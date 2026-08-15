@@ -17,6 +17,16 @@ export interface ResourceRegistration {
 
 export interface ResourceScopeOptions {
   readonly cleanupTimeoutMs?: number
+  readonly clock?: ResourceScopeClock
+}
+
+export interface ResourceScopeTimerHandle {
+  cancel(): void
+}
+
+export interface ResourceScopeClock {
+  now(): number
+  setTimer(delayMs: number, callback: () => void): ResourceScopeTimerHandle
 }
 
 export interface ResourceScopeDisposeOptions {
@@ -92,6 +102,7 @@ export class ResourceScopeDisposalError extends AggregateError {
 export class ResourceScope {
   readonly #controller = new AbortController()
   readonly #cleanupTimeoutMs: number
+  readonly #clock: ResourceScopeClock
   readonly #entries: CleanupEntry[] = []
   readonly #children: ResourceScope[] = []
   #state: ResourceScopeState = 'open'
@@ -111,6 +122,7 @@ export class ResourceScope {
       )
     }
     this.#cleanupTimeoutMs = cleanupTimeoutMs
+    this.#clock = options.clock ?? systemResourceScopeClock
   }
 
   public get state(): ResourceScopeState {
@@ -128,6 +140,7 @@ export class ResourceScope {
     this.#assertOpen()
     const child = new ResourceScope(name, {
       cleanupTimeoutMs: options.cleanupTimeoutMs ?? this.#cleanupTimeoutMs,
+      clock: options.clock ?? this.#clock,
     })
     child.#attachToParent(this)
     this.#children.push(child)
@@ -237,7 +250,7 @@ export class ResourceScope {
 
   #createRegistration(entry: CleanupEntry): ResourceRegistration {
     const dispose = async (reason?: unknown) => {
-      const deadline = Date.now() + this.#cleanupTimeoutMs
+      const deadline = this.#clock.now() + this.#cleanupTimeoutMs
       await this.#runEntry(
         entry,
         reason ?? new ResourceScopeClosedError(this.name),
@@ -293,15 +306,24 @@ export class ResourceScope {
 
   async #dispose(reason: unknown, timeoutMs: number): Promise<void> {
     const errors: unknown[] = []
-    const deadline = Date.now() + timeoutMs
+    const deadline = this.#clock.now() + timeoutMs
     const children = [...this.#children].reverse()
     const entries = [...this.#entries].reverse()
 
     try {
       for (const child of children) {
-        const remainingMs = Math.max(0, deadline - Date.now())
+        const remainingMs = Math.max(0, deadline - this.#clock.now())
         try {
-          await child.dispose({ reason, timeoutMs: remainingMs })
+          const operation = child.dispose({ reason, timeoutMs: remainingMs })
+          await this.#settleBeforeDeadline(
+            operation,
+            deadline,
+            new ResourceCleanupTimeoutError(
+              this.name,
+              `child:${child.name}`,
+              timeoutMs
+            )
+          )
         } catch (error) {
           errors.push(error)
         }
@@ -309,7 +331,12 @@ export class ResourceScope {
 
       for (const entry of entries) {
         try {
-          await this.#runEntry(entry, reason, deadline, timeoutMs)
+          const operation = this.#runEntry(entry, reason, deadline, timeoutMs)
+          await this.#settleBeforeDeadline(
+            operation,
+            deadline,
+            new ResourceCleanupTimeoutError(this.name, entry.label, timeoutMs)
+          )
         } catch (error) {
           errors.push(error)
         }
@@ -355,36 +382,75 @@ export class ResourceScope {
     deadline: number,
     timeoutMs: number
   ): Promise<void> {
-    const remainingMs = Math.max(0, deadline - Date.now())
     const controller = new AbortController()
     const timeoutError = new ResourceCleanupTimeoutError(
       this.name,
       entry.label,
       timeoutMs
     )
-    let timer: ReturnType<typeof setTimeout> | null = null
-
     const operation = Promise.resolve().then(
       async () => await entry.disposer({ reason, signal: controller.signal })
     )
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        controller.abort(timeoutError)
-        reject(timeoutError)
-      }, remainingMs)
-    })
 
     try {
-      await Promise.race([operation, timeout])
+      await this.#settleBeforeDeadline(operation, deadline, timeoutError, () =>
+        controller.abort(timeoutError)
+      )
     } catch (error) {
       if (error instanceof ResourceCleanupTimeoutError) {
         throw error
       }
       throw new ResourceCleanupError(this.name, entry.label, error)
-    } finally {
-      if (timer !== null) {
-        clearTimeout(timer)
+    }
+  }
+
+  async #settleBeforeDeadline<Value>(
+    operation: Promise<Value>,
+    deadline: number,
+    timeoutError: ResourceCleanupTimeoutError,
+    onTimeout: () => void = () => {}
+  ): Promise<Value> {
+    void operation.catch(() => undefined)
+    let expired = false
+    const expire = () => {
+      if (!expired) {
+        expired = true
+        onTimeout()
       }
+      return timeoutError
+    }
+    const remainingMs = deadline - this.#clock.now()
+    if (remainingMs <= 0) throw expire()
+
+    let cancelTimer = () => {}
+    const timeout = new Promise<never>((_resolve, reject) => {
+      const timer = this.#clock.setTimer(remainingMs, () => reject(expire()))
+      cancelTimer = () => timer.cancel()
+    })
+    try {
+      try {
+        const value = await Promise.race([operation, timeout])
+        if (this.#clock.now() >= deadline) throw expire()
+        return value
+      } catch (error) {
+        if (error !== timeoutError && this.#clock.now() >= deadline) {
+          throw expire()
+        }
+        throw error
+      }
+    } finally {
+      cancelTimer()
     }
   }
 }
+
+const systemResourceScopeClock: ResourceScopeClock = Object.freeze({
+  now: () => Date.now(),
+  setTimer: (
+    delayMs: number,
+    callback: () => void
+  ): ResourceScopeTimerHandle => {
+    const timer = setTimeout(callback, delayMs)
+    return Object.freeze({ cancel: () => clearTimeout(timer) })
+  },
+})

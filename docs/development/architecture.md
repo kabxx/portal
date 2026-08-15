@@ -13,6 +13,7 @@ inbound Portal MCP Server.
 | ------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | Entry points  | `src/index.ts`, `src/cli-entry.ts`, `src/app.ts`, `src/exec/` | Dispatch the TUI or headless command and compose its surface                              |
 | Host          | `src/host/`, `src/shared/resource-scope.ts`                   | Compose shared process services and own startup, rollback, and ordered shutdown           |
+| Extensions    | `src/extensions/`                                             | Resolve typed contributions, services, and lifecycle Hooks into one immutable generation  |
 | Configuration | `src/config/`                                                 | Resolve sparse overrides and atomically update `config.yaml`                              |
 | Browser       | `src/platform/`                                               | Launch Chromium, connect over CDP, and own process lifetime                               |
 | Providers     | `src/providers/`                                              | Implement page readiness, submission, response capture, models, capabilities, and history |
@@ -31,12 +32,15 @@ The inbound MCP server is Portal's external automation interface.
 `PortalHost` under `src/host/` is the shared composition root for the TUI and
 `portal exec`. `prepare()` resolves configuration, initializes the Skill and
 project-instruction snapshots, and opens the Thread store without launching a
-browser. `start()` launches Chromium and constructs the shared Thread lifecycle
-and Runtime factory. `close()` first closes Thread admission, waits for
-provisioning to settle, then cancels operations and closes jobs, Threads,
-browser resources, and SQLite in a bounded order. `ResourceScope` owns startup
-rollback and late-arriving resources; it does not replace this domain shutdown
-sequence.
+browser. It also synchronously registers and freezes the internal extension
+generation. `start()` invokes the Portal activation Hooks, launches Chromium,
+and constructs the shared Thread lifecycle and Runtime factory. `close()` first
+closes Thread admission, invokes the shutdown Hook, waits for provisioning to
+settle, then cancels operations and closes jobs, Threads, browser resources,
+and SQLite in a bounded order. Terminal `portal.stopped` runs after core
+resources close and before extension activation resources and the Portal root
+are released. `ResourceScope` owns startup rollback and late-arriving
+resources; it does not replace this domain shutdown sequence.
 
 The TUI in `app.ts` adds only surface resources: the terminal controller, Ink,
 keybindings, slash-command dispatch, and the optional inbound MCP Server. Its
