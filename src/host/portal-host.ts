@@ -1,5 +1,9 @@
 import path from 'node:path'
 
+import {
+  KernelBootstrap,
+  type KernelPluginPlan,
+} from '../bootstrap/kernel-bootstrap.ts'
 import type {
   HookRuntimeClock,
   HookTraceSink,
@@ -11,7 +15,8 @@ import {
   type PortalSessionIntent,
   type PortalShutdownPreviousState,
 } from '../extensions/portal-hooks.ts'
-import { createPortalCommandsRegistration } from '../cli-commands/command-extension.ts'
+import { CommandHost } from '../cli-commands/core/command-host.ts'
+import { PortalDomainRuntime } from './portal-domain-runtime.ts'
 import { builtinCommandDefinitions } from '../cli-commands/builtin-commands.ts'
 import {
   CommandServiceHost,
@@ -56,14 +61,14 @@ import {
 } from '../runtime/runtime-settings.ts'
 import { createToolServices } from '../tools/spawn-tool-services.ts'
 import { createAdapterForProvider } from '../providers/provider-catalog.ts'
+import { buildPortalExtensionCatalog } from './portal-catalog.ts'
+import { PluginManager } from '../extensions/plugin-manager.ts'
+import { JsonPluginStore } from '../extensions/plugin-store.ts'
 
 const LOGIN_CHECK_INTERVAL_MS = 1000
 const HOST_OPERATION_TIMEOUT_MS = 3000
 const PORTAL_ACTIVATION_HOOK_TIMEOUT_MS = 5000
 const PORTAL_SHUTDOWN_HOOK_TIMEOUT_MS = 3000
-const FIRST_PARTY_PORTAL_EXTENSIONS: readonly PortalExtensionRegistration[] =
-  Object.freeze([])
-
 export type PortalHostProfile = 'tui' | 'exec'
 export type PortalHostState =
   'resolved' | 'starting' | 'ready' | 'stopping' | 'stopped' | 'failed'
@@ -112,6 +117,8 @@ export interface PortalHostPreparedServices {
   readonly threadOperations: ThreadOperationCoordinator
   readonly runtimeRegistry: ThreadRuntimeRegistry<RuntimeCore>
   readonly runCommandJobs: RunCommandJobManager
+  readonly pluginManager: PluginManager
+  readonly pluginPlan: KernelPluginPlan
 }
 
 export interface PortalHostStartedServices extends PortalHostPreparedServices {
@@ -125,6 +132,7 @@ export class PortalHost {
   readonly #coreScope: ResourceScope
   readonly #portalScope: ExtensionResourceScope
   readonly #hooks: PortalHookRuntime
+  readonly #commandHost: CommandHost
   readonly #commandServices: CommandServiceHost
   readonly #startupController = new AbortController()
   readonly #dependencies: ResolvedPortalHostDependencies
@@ -143,6 +151,7 @@ export class PortalHost {
     coreScope: ResourceScope,
     portalScope: ExtensionResourceScope,
     hooks: PortalHookRuntime,
+    commandHost: CommandHost,
     commandServices: CommandServiceHost,
     dependencies: ResolvedPortalHostDependencies
   ) {
@@ -151,6 +160,7 @@ export class PortalHost {
     this.#coreScope = coreScope
     this.#portalScope = portalScope
     this.#hooks = hooks
+    this.#commandHost = commandHost
     this.#commandServices = commandServices
     this.#dependencies = dependencies
   }
@@ -174,29 +184,38 @@ export class PortalHost {
         `portal:${options.profile}`,
         coreScope
       )
-      const commandServices = new CommandServiceHost()
-      const hooks = new PortalHookRuntime({
-        extensions: Object.freeze([
-          createPortalCommandsRegistration(
-            commandServices,
-            builtinCommandDefinitions
-          ),
-          ...FIRST_PARTY_PORTAL_EXTENSIONS,
-          ...(dependencies[portalHostTestExtensions] ?? []),
-        ]),
-        ...(dependencies.extensionClock === undefined
-          ? {}
-          : { clock: dependencies.extensionClock }),
-        ...(dependencies.extensionTraceSink === undefined
-          ? {}
-          : { traceSink: dependencies.extensionTraceSink }),
-      })
       const cwd = path.resolve(options.cwd)
       const dataDirectory = resolvePortalDataDirectory({
         cwd,
         ...(options.dataDirectory === undefined
           ? {}
           : { dataDirectory: options.dataDirectory }),
+      })
+      const pluginManager = new PluginManager({
+        store: new JsonPluginStore(
+          path.join(dataDirectory, 'plugins', 'installed.json')
+        ),
+      })
+      const pluginPlan = await new KernelBootstrap({
+        manager: pluginManager,
+      }).prepare()
+      const commandServices = new CommandServiceHost()
+      const catalog = buildPortalExtensionCatalog({
+        commandServices,
+        commandDefinitions: builtinCommandDefinitions,
+        installed: pluginPlan.extensions,
+        ...(dependencies[portalHostTestExtensions] === undefined
+          ? {}
+          : { testExtensions: dependencies[portalHostTestExtensions] }),
+      })
+      const domainRuntime = new PortalDomainRuntime({
+        extensions: catalog,
+        ...(dependencies.extensionClock === undefined
+          ? {}
+          : { clock: dependencies.extensionClock }),
+        ...(dependencies.extensionTraceSink === undefined
+          ? {}
+          : { traceSink: dependencies.extensionTraceSink }),
       })
       const configPath = path.join(dataDirectory, 'config.yaml')
       const config = await ensurePortalConfig(
@@ -238,6 +257,8 @@ export class PortalHost {
         threadOperations: new ThreadOperationCoordinator(),
         runtimeRegistry: new ThreadRuntimeRegistry<RuntimeCore>(),
         runCommandJobs: new RunCommandJobManager(),
+        pluginManager,
+        pluginPlan,
       }
       return new PortalHost(
         prepared,
@@ -245,7 +266,8 @@ export class PortalHost {
         extensionActivationScope,
         coreScope,
         portalScope,
-        hooks,
+        domainRuntime.lifecycle,
+        domainRuntime.commands,
         commandServices,
         {
           launchBrowser: dependencies.launchBrowser ?? launchBrowser,
@@ -279,7 +301,7 @@ export class PortalHost {
         `Command session is unavailable in state "${this.#state}".`
       )
     }
-    return this.#hooks.openCommandSession(this.#portalScope, resourceId)
+    return this.#commandHost.openSession(this.#portalScope, resourceId)
   }
 
   /** @internal Completes the late binding after Portal resources are ready. */
@@ -294,7 +316,7 @@ export class PortalHost {
 
   /** @internal Returns immutable command metadata for a host-owned surface. */
   public commandCatalog(): readonly import('../cli-commands/core/command-contracts.ts').CommandDescriptor[] {
-    return this.#hooks.commandCatalog()
+    return this.#commandHost.catalog()
   }
 
   public get services(): PortalHostStartedServices {

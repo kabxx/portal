@@ -12,25 +12,14 @@ import type {
   TerminalHookInvocationOptions,
 } from './extension-contracts.ts'
 import { createHookRef } from './extension-contracts.ts'
-import { ExtensionRegistry } from './extension-registry.ts'
+import { HookRunner } from './hook-runner.ts'
 import {
   activationHookPolicyRef,
-  canonicalHookPolicies,
   notificationHookPolicyRef,
   shutdownHookPolicyRef,
 } from './hook-policies.ts'
-import { HookRunner } from './hook-runner.ts'
-import { ServiceContainer } from './service-container.ts'
-import {
-  CommandRuntime,
-  type CommandSessionRuntime,
-} from '../cli-commands/core/command-runtime.ts'
-import type { CommandDescriptor } from '../cli-commands/core/command-contracts.ts'
-import {
-  commandContributionSpec,
-  commandHandlerBindingSpec,
-} from '../cli-commands/core/command-plan.ts'
-import { commandServiceRefs } from '../cli-commands/core/command-services.ts'
+import type { ResolvedExtensionGraph } from './extension-registry.ts'
+import type { ServiceContainer } from './service-container.ts'
 
 export type PortalSessionIntent = 'interactive' | 'batch'
 export type PortalShutdownPreviousState =
@@ -148,49 +137,22 @@ export const portalStoppedSpec: ObserveHookSpec<PortalStoppedInput> =
 export class PortalHookRuntime implements HookRuntimeClock {
   readonly #clock: HookRuntimeClock
   readonly #runner: HookRunner
-  readonly #commandRuntime: CommandRuntime
 
   public readonly generation: string
 
-  public constructor(
-    options: {
-      readonly generation?: string
-      readonly extensions?: readonly PortalExtensionRegistration[]
-      readonly clock?: HookRuntimeClock
-      readonly traceSink?: HookTraceSink
-    } = {}
-  ) {
+  public constructor(options: {
+    readonly graph: ResolvedExtensionGraph
+    readonly services: ServiceContainer
+    readonly clock?: HookRuntimeClock
+    readonly traceSink?: HookTraceSink
+  }) {
     this.#clock = options.clock ?? systemPortalHookClock
-    const registry = new ExtensionRegistry({
-      generation: options.generation ?? 'portal-host-v1',
-      policies: canonicalHookPolicies,
-    })
-    registry.defineHook(portalBeforeStartSpec)
-    registry.defineHook(portalReadySpec)
-    registry.defineHook(portalBeforeStopSpec)
-    registry.defineHook(portalStoppedSpec)
-    for (const service of commandServiceRefs) {
-      registry.defineService(service)
-    }
-    registry.defineContribution(commandContributionSpec)
-    registry.defineExecutableBinding(commandHandlerBindingSpec)
-    for (const extension of options.extensions ?? []) {
-      registry.register(extension.descriptor, extension.module)
-    }
-    const graph = registry.freeze()
-    this.generation = graph.generation
-    const services = new ServiceContainer(graph.servicePlan, {
-      clock: this.#clock,
-    })
-    this.#runner = new HookRunner(graph, services, {
+    this.generation = options.graph.generation
+    this.#runner = new HookRunner(options.graph, options.services, {
       clock: this.#clock,
       ...(options.traceSink === undefined
         ? {}
         : { traceSink: options.traceSink }),
-    })
-    this.#commandRuntime = new CommandRuntime(graph, {
-      clock: this.#clock,
-      serviceContainer: services,
     })
   }
 
@@ -228,17 +190,6 @@ export class PortalHookRuntime implements HookRuntimeClock {
     options: TerminalHookInvocationOptions
   ): Promise<void> {
     await this.#runner.invokeObserve(portalStoppedHook, input, options)
-  }
-
-  public openCommandSession(
-    parent: import('./scope-registration.ts').ExtensionResourceScope,
-    resourceId: string
-  ): CommandSessionRuntime {
-    return this.#commandRuntime.openSession(parent, resourceId)
-  }
-
-  public commandCatalog(): readonly CommandDescriptor[] {
-    return this.#commandRuntime.plan.catalog
   }
 }
 
