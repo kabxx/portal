@@ -119,6 +119,9 @@ export interface PortalHostPreparedServices {
   readonly runCommandJobs: RunCommandJobManager
   readonly pluginManager: PluginManager
   readonly pluginPlan: KernelPluginPlan
+  readonly providerHost: import('../providers/provider-host.ts').ProviderHost
+  readonly toolHost: import('../tools/tool-host.ts').ToolHost
+  readonly conversationHost: import('../threads/conversation-host.ts').ConversationHost
 }
 
 export interface PortalHostStartedServices extends PortalHostPreparedServices {
@@ -210,6 +213,7 @@ export class PortalHost {
       })
       const domainRuntime = new PortalDomainRuntime({
         extensions: catalog,
+        parentScope: coreScope,
         ...(dependencies.extensionClock === undefined
           ? {}
           : { clock: dependencies.extensionClock }),
@@ -259,6 +263,9 @@ export class PortalHost {
         runCommandJobs: new RunCommandJobManager(),
         pluginManager,
         pluginPlan,
+        providerHost: domainRuntime.providers,
+        toolHost: domainRuntime.tools,
+        conversationHost: domainRuntime.conversations,
       }
       return new PortalHost(
         prepared,
