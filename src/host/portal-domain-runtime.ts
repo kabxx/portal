@@ -25,6 +25,7 @@ import { defineToolHost, ToolHost } from '../tools/tool-host.ts'
 import { ProviderHost } from '../providers/provider-host.ts'
 import { ResourceScope } from '../shared/resource-scope.ts'
 import { ConversationHost } from '../threads/conversation-host.ts'
+import type { AttachmentReader } from '../attachments/attachment-contracts.ts'
 
 export class PortalDomainRuntime {
   public readonly lifecycle: PortalHookRuntime
@@ -40,6 +41,7 @@ export class PortalDomainRuntime {
     readonly clock?: HookRuntimeClock
     readonly traceSink?: HookTraceSink
     readonly parentScope: ResourceScope
+    readonly attachmentReader?: AttachmentReader
   }) {
     const clock = options.clock ?? systemPortalClock
     const registry = new ExtensionRegistry({
@@ -70,6 +72,9 @@ export class PortalDomainRuntime {
     this.providers = new ProviderHost({
       graph: this.graph,
       parent: options.parentScope,
+      ...(options.attachmentReader === undefined
+        ? {}
+        : { attachmentReader: options.attachmentReader }),
     })
     this.tools = new ToolHost({
       graph: this.graph,

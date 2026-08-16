@@ -12,10 +12,19 @@ import {
 import type { ExtensionRegistry } from '../extensions/extension-registry.ts'
 import type { AttachmentRef } from '../attachments/attachment-contracts.ts'
 
+export const PROVIDER_ATTACHMENT_CAPABILITY = 'portal.provider.attachments'
+
+export interface ProviderToolCall {
+  readonly toolCallId: string
+  readonly name: string
+  readonly input: Record<string, unknown> | string
+}
+
 export interface ProviderMessage {
   readonly role: 'user' | 'assistant' | 'tool'
   readonly content: string
   readonly toolCallId?: string
+  readonly toolCalls?: readonly ProviderToolCall[]
 }
 
 export interface ProviderOutboundLeg {
@@ -63,6 +72,7 @@ export interface ProviderEndpointContext {
   readonly exchangeId: string
   readonly signal: AbortSignal
   readonly scope: { readonly name: string; readonly signal: AbortSignal }
+  readonly readAttachment: (ref: AttachmentRef) => Promise<Uint8Array>
 }
 
 export interface ProviderEndpoint {
@@ -77,6 +87,7 @@ export type ProviderEndpointFactory = (context: {
   readonly providerId: string
   readonly scope: { readonly name: string; readonly signal: AbortSignal }
   readonly signal: AbortSignal
+  readonly readAttachment: (ref: AttachmentRef) => Promise<Uint8Array>
 }) => ProviderEndpoint | Promise<ProviderEndpoint>
 
 export interface ProviderContribution {

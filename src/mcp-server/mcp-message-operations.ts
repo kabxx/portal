@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { abortable } from '../runtime/runtime-cancellation.ts'
-import type { ThreadOperationHandle } from '../threads/thread-operation-coordinator.ts'
+import type { SurfaceOperation } from '../surfaces/surface-port.ts'
 import type { PortalMcpMessageOperation } from './mcp-server-types.ts'
 
 interface OperationRecord extends PortalMcpMessageOperation {
   createdAt: number
   finishedAt: number | null
-  handle: ThreadOperationHandle | null
+  handle: SurfaceOperation | null
   resolveDone: () => void
   done: Promise<void>
   waiterActive: boolean
@@ -49,10 +49,7 @@ export class McpMessageOperationStore {
     return this.getSnapshot(operationId)
   }
 
-  public attachHandle(
-    operationId: string,
-    handle: ThreadOperationHandle
-  ): void {
+  public attachHandle(operationId: string, handle: SurfaceOperation): void {
     const operation = this.require(operationId)
     if (operation.status !== 'running') {
       throw new Error(`MCP message operation is not running: ${operationId}`)
@@ -137,7 +134,7 @@ export class McpMessageOperationStore {
           (
             operation
           ): operation is OperationRecord & {
-            handle: ThreadOperationHandle
+            handle: SurfaceOperation
           } => operation.status === 'running' && operation.handle !== null
         )
         .map(async (operation) => await operation.handle.cancel())

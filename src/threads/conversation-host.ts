@@ -5,7 +5,9 @@ import type {
   ProviderCompletion,
   ProviderEvent,
   ProviderMessage,
+  ProviderToolCall,
 } from '../providers/provider-exchange.ts'
+import { PROVIDER_ATTACHMENT_CAPABILITY } from '../providers/provider-exchange.ts'
 import type {
   ProviderBinding,
   ProviderHost,
@@ -15,7 +17,11 @@ import { ResourceScope } from '../shared/resource-scope.ts'
 
 export type ConversationItem =
   | { readonly kind: 'user'; readonly text: string }
-  | { readonly kind: 'assistant'; readonly text: string }
+  | {
+      readonly kind: 'assistant'
+      readonly text: string
+      readonly toolCalls?: readonly ProviderToolCall[]
+    }
   | {
       readonly kind: 'tool.request'
       readonly toolCallId: string
@@ -209,17 +215,30 @@ export class ConversationHost {
     try {
       let toolLoops = 0
       const maxToolLoops = options.maxToolLoops ?? 8
-      let attachments = options.attachments ?? []
+      let attachments: readonly AttachmentRef[] = [
+        ...(options.attachments ?? []),
+      ]
+      if (
+        attachments.length > 0 &&
+        !binding.capabilities.includes(PROVIDER_ATTACHMENT_CAPABILITY)
+      ) {
+        throw new ConversationHostError(
+          `Provider ${binding.providerId} does not support attachments.`
+        )
+      }
       while (true) {
         if (operationScope.signal.aborted) throw operationScope.signal.reason
-        const exchange = await binding.exchange({
-          exchangeId: `${turnId}:${toolLoops}`,
-          conversationId: thread.conversationId,
-          messages: messagesFor(thread),
-          attachments,
-        })
+        const exchange = await binding.exchange(
+          {
+            exchangeId: `${turnId}:${toolLoops}`,
+            conversationId: thread.conversationId,
+            messages: messagesFor(thread),
+            attachments,
+          },
+          operationScope.signal
+        )
         activeExchange = exchange
-        const leg = await consumeExchange(exchange)
+        const leg = await consumeExchange(exchange, operationScope.signal)
         activeExchange = null
         if (leg.completion.status !== 'completed') {
           thread = this.#appendTurnItem(
@@ -246,6 +265,17 @@ export class ConversationHost {
           throw new ConversationHostError('Tool loop limit exceeded.')
         }
         thread = this.#appendTurnItem(thread, turnId, {
+          kind: 'assistant',
+          text: leg.completion.text,
+          toolCalls: [
+            {
+              toolCallId: leg.toolRequest.toolCallId,
+              name: leg.toolRequest.name,
+              input: leg.toolRequest.input,
+            },
+          ],
+        })
+        thread = this.#appendTurnItem(thread, turnId, {
           kind: 'tool.request',
           toolCallId: leg.toolRequest.toolCallId,
           name: leg.toolRequest.name,
@@ -255,7 +285,10 @@ export class ConversationHost {
           leg.toolRequest.name,
           leg.toolRequest.input,
           leg.toolRequest.toolCallId,
-          { signal: operationScope.signal }
+          {
+            signal: operationScope.signal,
+            availableCapabilities: binding.capabilities,
+          }
         )
         thread = this.#appendTurnItem(thread, turnId, {
           kind: 'tool.result',
@@ -263,7 +296,15 @@ export class ConversationHost {
           name: leg.toolRequest.name,
           result,
         })
-        attachments = []
+        attachments = extractAttachments(result)
+        if (
+          attachments.length > 0 &&
+          !binding.capabilities.includes(PROVIDER_ATTACHMENT_CAPABILITY)
+        ) {
+          throw new ConversationHostError(
+            `Provider ${binding.providerId} does not support attachments.`
+          )
+        }
       }
     } catch (error) {
       if (operationScope.signal.aborted) {
@@ -278,7 +319,13 @@ export class ConversationHost {
         )
         return thread
       }
-      throw error
+      thread = this.#appendTurnItem(
+        thread,
+        turnId,
+        { kind: 'error', message: getErrorMessage(error) },
+        'failed'
+      )
+      return thread
     } finally {
       options.signal?.removeEventListener('abort', cancel)
       await operationScope.dispose({ reason: 'conversation-complete' })
@@ -303,10 +350,13 @@ export class ConversationHost {
   }
 }
 
-async function consumeExchange(exchange: {
-  readonly events: AsyncIterable<ProviderEvent>
-  readonly completion: Promise<ProviderCompletion>
-}): Promise<{
+async function consumeExchange(
+  exchange: {
+    readonly events: AsyncIterable<ProviderEvent>
+    readonly completion: Promise<ProviderCompletion>
+  },
+  signal: AbortSignal
+): Promise<{
   readonly completion: ProviderCompletion
   readonly toolRequest: Extract<
     ProviderEvent,
@@ -317,16 +367,49 @@ async function consumeExchange(exchange: {
     ProviderEvent,
     { readonly type: 'tool.request' }
   > | null = null
-  for await (const event of exchange.events) {
-    if (event.type === 'tool.request') {
-      if (toolRequest !== null)
-        throw new ConversationHostError(
-          'Provider emitted multiple Tool requests in one exchange.'
-        )
-      toolRequest = event
+  const iterator = exchange.events[Symbol.asyncIterator]()
+  const completion = exchange.completion.then((value) => ({
+    kind: 'completion' as const,
+    value,
+  }))
+  const aborted = new Promise<never>((_, reject) => {
+    if (signal.aborted) {
+      reject(toConversationError(signal.reason))
+      return
     }
+    signal.addEventListener(
+      'abort',
+      () => reject(toConversationError(signal.reason)),
+      {
+        once: true,
+      }
+    )
+  })
+  try {
+    while (true) {
+      const next = await Promise.race([
+        iterator.next().then((result) => ({ kind: 'event' as const, result })),
+        completion,
+        aborted,
+      ])
+      if (next.kind === 'completion') {
+        return { completion: next.value, toolRequest }
+      }
+      if (next.result.done) {
+        return { completion: await exchange.completion, toolRequest }
+      }
+      const event = next.result.value
+      if (event.type === 'tool.request') {
+        if (toolRequest !== null)
+          throw new ConversationHostError(
+            'Provider emitted multiple Tool requests in one exchange.'
+          )
+        toolRequest = event
+      }
+    }
+  } finally {
+    void Promise.resolve(iterator.return?.()).catch(() => undefined)
   }
-  return { completion: await exchange.completion, toolRequest }
 }
 
 function messagesFor(thread: ConversationThread): readonly ProviderMessage[] {
@@ -336,7 +419,13 @@ function messagesFor(thread: ConversationThread): readonly ProviderMessage[] {
       if (item.kind === 'user')
         messages.push({ role: 'user', content: item.text })
       else if (item.kind === 'assistant')
-        messages.push({ role: 'assistant', content: item.text })
+        messages.push({
+          role: 'assistant',
+          content: item.text,
+          ...(item.toolCalls === undefined
+            ? {}
+            : { toolCalls: item.toolCalls }),
+        })
       else if (item.kind === 'tool.result') {
         messages.push({
           role: 'tool',
@@ -358,6 +447,50 @@ function freezeThread(thread: ConversationThread): ConversationThread {
       )
     ),
   })
+}
+
+function extractAttachments(result: ToolResult): readonly AttachmentRef[] {
+  const attachment = result.output.attachment
+  if (
+    attachment === null ||
+    typeof attachment !== 'object' ||
+    Array.isArray(attachment)
+  ) {
+    return []
+  }
+  if (!isAttachmentRef(attachment)) return []
+  return [
+    Object.freeze({
+      id: attachment.id,
+      mediaType: attachment.mediaType,
+      sizeBytes: attachment.sizeBytes,
+      sha256: attachment.sha256,
+    }),
+  ]
+}
+
+function isAttachmentRef(value: unknown): value is AttachmentRef {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    'id' in value &&
+    typeof value.id === 'string' &&
+    'mediaType' in value &&
+    typeof value.mediaType === 'string' &&
+    'sizeBytes' in value &&
+    typeof value.sizeBytes === 'number' &&
+    'sha256' in value &&
+    typeof value.sha256 === 'string'
+  )
+}
+
+function toConversationError(reason: unknown): ConversationHostError {
+  return new ConversationHostError(
+    reason instanceof Error && reason.message !== ''
+      ? reason.message
+      : 'Conversation exchange canceled.'
+  )
 }
 
 function getErrorMessage(error: unknown): string {

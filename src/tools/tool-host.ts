@@ -12,6 +12,7 @@ import {
 import type { ExtensionRegistry } from '../extensions/extension-registry.ts'
 import type { ResolvedExtensionGraph } from '../extensions/extension-registry.ts'
 import { ResourceScope } from '../shared/resource-scope.ts'
+import { PROVIDER_ATTACHMENT_CAPABILITY } from '../providers/provider-exchange.ts'
 
 export interface ToolContribution {
   readonly id: string
@@ -34,6 +35,7 @@ export interface ToolHandlerContext {
   readonly requestId: string
   readonly signal: AbortSignal
   readonly scope: { readonly name: string; readonly signal: AbortSignal }
+  readonly capabilities: readonly Capability[]
 }
 
 export type ToolHandler = (
@@ -98,7 +100,7 @@ export const toolContributionSpec: ContributionSpec<ToolContribution> =
     selection: 'all',
     ordering: 'dependency-edges',
     allowedServices: Object.freeze([]),
-    allowedCapabilities: Object.freeze([]),
+    allowedCapabilities: Object.freeze([PROVIDER_ATTACHMENT_CAPABILITY]),
   })
 
 export const toolHandlerBindingSpec: ExecutableBindingSpec<ToolHandler> =
@@ -151,7 +153,10 @@ export class ToolHost {
     name: string,
     input: Record<string, unknown> | string,
     requestId: string,
-    options: { readonly signal?: AbortSignal } = {}
+    options: {
+      readonly signal?: AbortSignal
+      readonly availableCapabilities?: readonly Capability[]
+    } = {}
   ): Promise<ToolResult> {
     const contribution = this.#graph
       .contributions(toolContributions)
@@ -168,6 +173,16 @@ export class ToolHost {
     if (binding.id !== contribution.value.handlerBindingId) {
       throw new ToolHostError(`Tool ${name} handler binding ID does not match.`)
     }
+    const availableCapabilities = options.availableCapabilities ?? []
+    const available = new Set(availableCapabilities)
+    const missing = contribution.value.requiredCapabilities.filter(
+      (capability) => !available.has(capability)
+    )
+    if (missing.length > 0) {
+      throw new ToolHostError(
+        `Tool ${name} requires unavailable capabilities: ${missing.join(', ')}.`
+      )
+    }
     const scope = this.#parent.createChild(`tool:${name}:${requestId}`)
     const externalSignal = options.signal
     const abortScope = () => {
@@ -177,11 +192,20 @@ export class ToolHost {
     else externalSignal?.addEventListener('abort', abortScope, { once: true })
     try {
       if (scope.signal.aborted) throw scope.signal.reason
-      const result = await binding.binding(input, {
-        requestId,
-        signal: scope.signal,
-        scope,
-      })
+      const handler = Promise.resolve(
+        binding.binding(input, {
+          requestId,
+          signal: scope.signal,
+          scope,
+          capabilities: Object.freeze([...availableCapabilities]),
+        })
+      )
+      void handler.catch(() => undefined)
+      const result = await raceWithAbort(
+        handler,
+        scope.signal,
+        `Tool ${name} execution canceled.`
+      )
       return normalizeToolResult(result, name)
     } finally {
       externalSignal?.removeEventListener('abort', abortScope)
@@ -189,6 +213,40 @@ export class ToolHost {
     }
   }
 }
+
+async function raceWithAbort<T>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+  message: string
+): Promise<T> {
+  if (signal.aborted) throw toToolError(signal.reason, message)
+  let remove = () => {}
+  let timeout: ReturnType<typeof setTimeout> | null = null
+  const aborted = new Promise<never>((_, reject) => {
+    const onAbort = () => {
+      timeout = setTimeout(
+        () => reject(toToolError(signal.reason, message)),
+        TOOL_CANCELLATION_GRACE_MS
+      )
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    remove = () => signal.removeEventListener('abort', onAbort)
+  })
+  try {
+    return await Promise.race([operation, aborted])
+  } finally {
+    remove()
+    if (timeout !== null) clearTimeout(timeout)
+  }
+}
+
+function toToolError(reason: unknown, fallback: string): ToolHostError {
+  return new ToolHostError(
+    reason instanceof Error && reason.message !== '' ? reason.message : fallback
+  )
+}
+
+const TOOL_CANCELLATION_GRACE_MS = 100
 
 function normalizeToolResult(value: ToolResult, name: string): ToolResult {
   if (

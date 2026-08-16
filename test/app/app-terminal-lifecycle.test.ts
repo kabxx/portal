@@ -10,6 +10,7 @@ import {
 import { TerminalController } from '../../src/terminal-ui/terminal-controller.ts'
 import { ThreadManager } from '../../src/threads/thread-manager.ts'
 import { createFakeRuntime } from '../helpers/fakes.ts'
+import { createTestSurfacePort } from '../helpers/surface-port.ts'
 
 test('interactive terminal clearing preserves operation order', () => {
   const events: string[] = []
@@ -80,7 +81,7 @@ test('pending thread timeline restores the previous thread on failure', () => {
     createdAt: 1,
   })
   const ui = new TerminalController()
-  ui.bindThreadManager(manager)
+  ui.bindSurfacePort(createTestSurfacePort(manager))
   ui.showThreadTimeline(first.id)
   ui.renderInfo('thread', 'existing a output')
 
@@ -108,7 +109,7 @@ test('successful pending thread timeline keeps its isolated output', () => {
     createdAt: 1,
   })
   const ui = new TerminalController()
-  ui.bindThreadManager(manager)
+  ui.bindSurfacePort(createTestSurfacePort(manager))
 
   const pending = showPendingThreadTimeline(ui, manager, 't-b')
   ui.renderWarning('MCP', 'warning for b')

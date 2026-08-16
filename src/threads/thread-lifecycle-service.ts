@@ -404,6 +404,11 @@ export class ThreadLifecycleService {
     return true
   }
 
+  /** @internal Exposes the active operation to Portal-owned surface adapters. */
+  public getOperation(threadId: string): ThreadOperationHandle | null {
+    return this.activeOperations.get(threadId) ?? null
+  }
+
   public async cancelAll(): Promise<void> {
     await Promise.all(
       this.dependencies.threadOperations.list().map(async ({ threadId }) => {

@@ -122,6 +122,59 @@ test(
   }
 )
 
+test(
+  'PortalApplicationCore fails an exec task when the browser disconnects',
+  { timeout: 20_000 },
+  async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-exec-disconnect-'))
+    const dataDirectory = path.join(cwd, 'data')
+    const adapter = createProviderAdapterStub()
+    const disconnected = createDeferred<void>()
+    let core: PortalApplicationCore | null = null
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+      const browserContext = {} as unknown as BrowserContext
+      core = await PortalApplicationCore.open(
+        {
+          cwd,
+          dataDirectory,
+          provider: 'chatgpt',
+          model: null,
+          signal: new AbortController().signal,
+          onProgress: () => {},
+        },
+        {
+          launchBrowser: async () => ({
+            context: browserContext,
+            disconnected: disconnected.promise,
+            close: async () => {},
+          }),
+          createProviderAdapter: async () => adapter,
+          createRuntime: async () =>
+            createFakeRuntime({
+              adapter,
+              submitUserInput: async () => await new Promise<never>(() => {}),
+            }),
+        }
+      )
+
+      const execution = core.run(
+        'wait for browser',
+        new AbortController().signal
+      )
+      disconnected.resolve()
+      await assert.rejects(
+        execution,
+        /Browser disconnected while the exec task was running/
+      )
+    } finally {
+      disconnected.resolve()
+      await core?.close().catch(() => {})
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  }
+)
+
 function longRunningCommand(ready: string, cwd: string) {
   const fixture = path.resolve('test/fixtures/run-command-ready.mjs')
   const invocation = [process.execPath, fixture, ready]

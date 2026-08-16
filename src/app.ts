@@ -6,7 +6,6 @@ import { render } from './vendor/ink.ts'
 import { createElement } from 'react'
 import { isAbortError } from './runtime/runtime-cancellation.ts'
 import { ResourceScope } from './shared/resource-scope.ts'
-import { ComposerLimitExceededError } from './providers/composer-limit.ts'
 import {
   createPortalCommandServices,
   portalCommandCompletionSnapshot,
@@ -39,6 +38,7 @@ import {
 } from './app/app-lifecycle.ts'
 import { createMcpHandlers } from './app/app-mcp-handlers.ts'
 import { createTuiThreadInputHandler } from './app/app-tui-thread-input-handler.ts'
+import { PortalSurfacePort } from './host/portal-surface-port.ts'
 import {
   clearInteractiveTerminal,
   clearTerminalBeforeRender,
@@ -171,7 +171,6 @@ export async function run(
     const {
       configPath,
       config: portalConfig,
-      browserProfileDir,
       threadManager,
       threadOperations,
       runCommandJobs,
@@ -180,7 +179,6 @@ export async function run(
     const mcpForegroundOperations = new Set<McpForegroundOperation>()
     const commandCatalog = host.commandCatalog()
     const ui = dependencies.terminalController ?? new TerminalController()
-    ui.bindThreadManager(threadManager)
     const keybindingCatalog = new KeybindingCatalog(
       configPath,
       portalConfig.keybindings,
@@ -325,12 +323,12 @@ export async function run(
               .catch(() => {})
             return
           }
-          const activeThreadId = threadManager.getActiveThread()?.id ?? null
+          const activeThreadId = surfacePort.getActiveThread()?.id ?? null
           if (
             activeThreadId !== null &&
-            threadOperations.get(activeThreadId) !== null
+            surfacePort.operation(activeThreadId) !== null
           ) {
-            void threadLifecycle.cancel(activeThreadId)
+            void surfacePort.cancelThread(activeThreadId)
             return
           }
           if (!state.busy) {
@@ -435,6 +433,7 @@ export async function run(
       }
     }
 
+    let surfacePort!: PortalSurfacePort
     try {
       await host.start({
         observer: { onEvent: lifecycleObserver },
@@ -448,6 +447,13 @@ export async function run(
         },
       })
       threadLifecycle = host.services.lifecycle
+      surfacePort = new PortalSurfacePort({
+        threadManager,
+        threadLifecycle,
+        threadOperations,
+        runCommandJobs,
+      })
+      ui.bindSurfacePort(surfacePort)
       const activeBrowserLaunch = host.services.browser
       void activeBrowserLaunch.disconnected
         .then(async () => {
@@ -498,19 +504,12 @@ export async function run(
     ui.setBrowserConnected(true)
 
     const submitThreadInput = createTuiThreadInputHandler({
-      threadManager,
-      threadLifecycle,
+      surface: surfacePort,
       ui,
-      runCommandJobs,
-      browserProfileDir,
     })
     const mcpHandlers = createMcpHandlers({
-      threadManager,
-      threadOperations,
-      threadLifecycle,
-      ui,
+      surface: surfacePort,
       messageOperations: mcpMessageOperations,
-      runCommandJobs,
       foregroundOperations: mcpForegroundOperations,
       isForegroundOperationActive: () => currentOperation !== null,
       withCancellableOperation,
@@ -549,20 +548,17 @@ export async function run(
     while (!exitRequested) {
       const input = (
         await ui.requestInput(
-          ui.promptLabel(threadManager),
+          ui.promptLabel(surfacePort),
           'Type a task or enter a slash command.',
           async (candidate) => {
             const normalizedCandidate = candidate.trim()
             if (normalizedCandidate.startsWith('/')) return
-            const activeThread = threadManager.getActiveThread()
+            const activeThread = surfacePort.getActiveThread()
             if (activeThread === null) return
-            const check =
-              await activeThread.runtime.preflightInitialInput(
-                normalizedCandidate
-              )
-            if (check.status === 'over_limit') {
-              throw new ComposerLimitExceededError(check, 'user')
-            }
+            await surfacePort.preflightMessage(
+              activeThread.id,
+              normalizedCandidate
+            )
           }
         )
       ).trim()
@@ -587,10 +583,10 @@ export async function run(
             }
             continue
           }
-          const activeThread = threadManager.getActiveThread()
+          const activeThread = surfacePort.getActiveThread()
           if (
             activeThread !== null &&
-            threadOperations.get(activeThread.id) !== null &&
+            surfacePort.operation(activeThread.id) !== null &&
             !commandSession.canExecute(analysis.invocation, {
               threadBusy: true,
             })

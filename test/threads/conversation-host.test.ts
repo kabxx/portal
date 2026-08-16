@@ -124,11 +124,11 @@ test('ConversationHost owns the commit and promotes a Provider Tool request into
   assert.equal(exchangeCount, 2)
   assert.deepEqual(
     secondLegMessages.map((message) => message.role),
-    ['user', 'tool']
+    ['user', 'assistant', 'tool']
   )
   assert.equal(result.turns[0]?.status, 'completed')
   assert.deepEqual(
     result.turns[0]?.items.map((item) => item.kind),
-    ['user', 'tool.request', 'tool.result', 'assistant']
+    ['user', 'assistant', 'tool.request', 'tool.result', 'assistant']
   )
 })

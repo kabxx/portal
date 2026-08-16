@@ -5,6 +5,7 @@ import type {
   ExtensionRegistrationApi,
 } from '../../extensions/extension-contracts.ts'
 import { AttachmentFileService } from '../../attachments/attachment-service.ts'
+import { PROVIDER_ATTACHMENT_CAPABILITY } from '../../providers/provider-exchange.ts'
 import {
   toolContributions,
   toolHandlerBindings,
@@ -22,7 +23,7 @@ export const attachImageContribution = Object.freeze({
       required: ['path'],
     }),
   }),
-  requiredCapabilities: Object.freeze([]),
+  requiredCapabilities: Object.freeze([PROVIDER_ATTACHMENT_CAPABILITY]),
   handlerBindingId: 'portal.tool.attach-image.handler',
 })
 
@@ -44,7 +45,7 @@ export function createAttachImagePlugin(
       id: 'portal.tool.attach-image',
       version: '1.0.0',
       dependencies: Object.freeze([]),
-      capabilities: Object.freeze([]),
+      capabilities: Object.freeze([PROVIDER_ATTACHMENT_CAPABILITY]),
     }),
     module: Object.freeze({
       register(api: ExtensionRegistrationApi): void {
@@ -52,7 +53,7 @@ export function createAttachImagePlugin(
           id: attachImageContribution.id,
           value: attachImageContribution,
           requiredServices: [],
-          requiredCapabilities: [],
+          requiredCapabilities: [PROVIDER_ATTACHMENT_CAPABILITY],
         })
         api.bind(toolHandlerBindings, {
           id: attachImageContribution.handlerBindingId,
@@ -66,7 +67,7 @@ export function createAttachImagePlugin(
               return {
                 status: 'success' as const,
                 output: { attachment },
-                displayText: `Image prepared for the next Provider exchange.\npath: ${attachment.path}`,
+                displayText: `Image prepared for the next Provider exchange.\nattachment: ${attachment.id}`,
               }
             } catch (error) {
               return {

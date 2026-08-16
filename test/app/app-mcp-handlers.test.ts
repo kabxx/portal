@@ -10,6 +10,7 @@ test('MCP handler factory exposes the provider catalog without eager work', asyn
   // This focused fake implements only the catalog dependency path.
   // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
   const dependencies = {
+    surface: { listProviders: () => ['grok', 'chatgpt'] },
     foregroundOperations: new Set(),
     isForegroundOperationActive: () => false,
   } as unknown as McpHandlerDependencies
@@ -34,10 +35,21 @@ test('MCP handlers map thread state at the surface boundary', async () => {
   // This focused fake implements only the thread-summary dependency path.
   // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
   const dependencies = {
-    threadManager: {
-      getThread: (threadId: string) => (threadId === thread.id ? thread : null),
+    surface: {
+      getThread: (threadId: string) =>
+        threadId === thread.id
+          ? {
+              id: thread.id,
+              provider: thread.provider,
+              title: thread.title,
+              conversationUrl: thread.runtime.conversationUrl,
+              busy: true,
+              turnCount: thread.turnCount,
+              createdAt: thread.createdAt,
+              updatedAt: thread.updatedAt,
+            }
+          : null,
     },
-    threadOperations: { get: () => ({ phase: 'running' }) },
     foregroundOperations: new Set(),
     isForegroundOperationActive: () => false,
   } as unknown as McpHandlerDependencies
@@ -72,9 +84,9 @@ test('MCP handlers list and stop run_command jobs', async () => {
   // This focused fake implements only the job dependencies exercised here.
   // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
   const dependencies = {
-    runCommandJobs: {
-      list: () => jobs,
-      stop: async () => stopResult,
+    surface: {
+      listJobs: () => jobs,
+      stopJob: async () => stopResult,
     },
     foregroundOperations: new Set(),
     isForegroundOperationActive: () => false,

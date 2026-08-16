@@ -12,6 +12,7 @@ import {
 } from '../../src/terminal-ui/terminal-screen.tsx'
 import { ThreadManager } from '../../src/threads/thread-manager.ts'
 import { createFakeRuntime } from '../helpers/fakes.ts'
+import { createTestSurfacePort } from '../helpers/surface-port.ts'
 import { SETUP_HANDSHAKE_PROMPT } from '../../src/runtime/setup-handshake.ts'
 
 test('TerminalController stores the startup welcome in the home timeline', () => {
@@ -89,10 +90,10 @@ test('TerminalController exposes the active thread through bound thread state', 
   })
 
   const ui = new TerminalController()
-  ui.bindThreadManager(manager)
+  ui.bindSurfacePort(createTestSurfacePort(manager))
 
   assert.equal(ui.promptLabel(manager), 'gemini > ')
-  assert.equal(ui.getThreadManager()?.getActiveThread()?.id, 't-1')
+  assert.equal(ui.promptLabel(), 'gemini > ')
 })
 
 test('TerminalController caches home and thread timelines independently', () => {
@@ -147,7 +148,7 @@ test('TerminalController discards live tools when switching timelines', () => {
     createdAt: 2,
   })
   const ui = new TerminalController()
-  ui.bindThreadManager(manager)
+  ui.bindSurfacePort(createTestSurfacePort(manager))
 
   manager.switchThread(first.id)
   ui.showThreadTimeline(first.id)
@@ -203,7 +204,7 @@ test('TerminalController preserves inactive live assistant state across switches
     createdAt: 2,
   })
   const ui = new TerminalController()
-  ui.bindThreadManager(manager)
+  ui.bindSurfacePort(createTestSurfacePort(manager))
 
   manager.switchThread(first.id)
   ui.showThreadTimeline(first.id)
@@ -227,7 +228,7 @@ test('foreground busy state cannot clear a running thread', () => {
     createdAt: 1,
   })
   const ui = new TerminalController()
-  ui.bindThreadManager(manager)
+  ui.bindSurfacePort(createTestSurfacePort(manager))
   ui.showThreadTimeline(thread.id)
 
   ui.setThreadBusy(thread.id, true)

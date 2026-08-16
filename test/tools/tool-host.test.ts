@@ -16,6 +16,7 @@ import {
   toolContributions,
   toolHandlerBindings,
 } from '../../src/tools/tool-host.ts'
+import { PROVIDER_ATTACHMENT_CAPABILITY } from '../../src/providers/provider-exchange.ts'
 
 function createHost(register: (api: ExtensionRegistrationApi) => void): {
   readonly host: ToolHost
@@ -31,7 +32,7 @@ function createHost(register: (api: ExtensionRegistrationApi) => void): {
       id: 'test.tool-package',
       version: '1.0.0',
       dependencies: [],
-      capabilities: [],
+      capabilities: ['portal.provider.attachments'],
     },
     { register }
   )
@@ -55,14 +56,24 @@ test('attach_image is a Tool package that returns an AttachmentRef without a Pro
   const result = await host.execute(
     'attach_image',
     { path: imagePath },
-    'tool-1'
+    'tool-1',
+    { availableCapabilities: [PROVIDER_ATTACHMENT_CAPABILITY] }
   )
   assert.equal(result.status, 'success')
   const attachment = z
-    .object({ path: z.string(), mediaType: z.string() })
+    .object({ id: z.string(), mediaType: z.string() })
     .parse(result.output.attachment)
   assert.equal(attachment.mediaType, 'image/png')
-  assert.equal(attachment.path, path.resolve(imagePath))
+  assert.match(attachment.id, /^attachment:[a-f0-9]{64}$/)
+
+  await assert.rejects(
+    host.execute(
+      'attach_image',
+      { path: imagePath },
+      'tool-without-capability'
+    ),
+    /requires unavailable capabilities/
+  )
 })
 
 test('ToolHost revokes a Tool scope on cancellation before the handler settles', async (t) => {
@@ -103,4 +114,44 @@ test('ToolHost revokes a Tool scope on cancellation before the handler settles',
   controller.abort(new Error('user canceled'))
   const result = await execution
   assert.equal(result.status, 'unknown')
+})
+
+test('ToolHost bounds cancellation when a handler ignores its signal', async (t) => {
+  let rejectHandler!: (error: Error) => void
+  const { host, root } = createHost((api) => {
+    api.contribute(toolContributions, {
+      id: 'test.ignore-cancel-tool',
+      value: {
+        id: 'test.ignore-cancel-tool',
+        descriptor: {
+          name: 'ignore_cancel_tool',
+          description: 'Ignores cancellation.',
+          inputSchema: {},
+        },
+        requiredCapabilities: [],
+        handlerBindingId: 'test.ignore-cancel-tool.handler',
+      },
+      requiredServices: [],
+      requiredCapabilities: [],
+    })
+    api.bind(toolHandlerBindings, {
+      id: 'test.ignore-cancel-tool.handler',
+      targetId: 'test.ignore-cancel-tool',
+      binding: async () =>
+        await new Promise<never>((_resolve, reject) => {
+          rejectHandler = reject
+        }),
+    })
+  })
+  t.after(async () => await root.dispose())
+
+  const controller = new AbortController()
+  const execution = host.execute('ignore_cancel_tool', {}, 'tool-ignore', {
+    signal: controller.signal,
+  })
+  controller.abort(new Error('user canceled'))
+  await assert.rejects(execution, /user canceled/)
+
+  rejectHandler(new Error('late handler failure'))
+  await new Promise<void>((resolve) => setImmediate(resolve))
 })

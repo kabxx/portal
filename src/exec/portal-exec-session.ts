@@ -1,8 +1,8 @@
 import { PortalHost, type PortalHostDependencies } from '../host/portal-host.ts'
+import { PortalSurfacePort } from '../host/portal-surface-port.ts'
 import { resolveConversationUrl } from '../providers/provider-conversation-url.ts'
 import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
-import type { ThreadLifecycleEvent } from '../threads/thread-lifecycle-service.ts'
-import { buildThreadHistoryTitle } from '../threads/thread-store.ts'
+import type { SurfacePortActions } from '../surfaces/surface-port.ts'
 import type {
   ExecProgressEvent,
   PortalExecSession,
@@ -23,7 +23,8 @@ export class PortalApplicationCore implements PortalExecSession {
 
   private constructor(
     private readonly options: PortalExecSessionOptions,
-    private readonly host: PortalHost
+    private readonly host: PortalHost,
+    private readonly surface: SurfacePortActions
   ) {}
 
   public static async open(
@@ -71,66 +72,91 @@ export class PortalApplicationCore implements PortalExecSession {
       }
       throw error
     }
-    return new PortalApplicationCore(options, host)
+    const services = host.services
+    return new PortalApplicationCore(
+      options,
+      host,
+      new PortalSurfacePort({
+        threadManager: services.threadManager,
+        threadLifecycle: services.lifecycle,
+        threadOperations: services.threadOperations,
+        runCommandJobs: services.runCommandJobs,
+      })
+    )
   }
 
   public async run(task: string, signal: AbortSignal): Promise<string> {
-    const { browser } = this.host.services
+    void this.host.services
     if (this.threadId !== null) {
       throw new Error('An exec session can run only one task.')
     }
-    const disconnected = browser.disconnected.then<never>(() => {
-      throw new Error('Browser disconnected while the exec task was running.')
-    })
-    const execution = this.executeTask(task, signal)
-    return await Promise.race([execution, disconnected])
+    const browserDisconnected = this.host.services.browser.disconnected.then(
+      () => {
+        throw new Error('Browser disconnected while the exec task was running.')
+      }
+    )
+    return await Promise.race([
+      this.executeTask(task, signal),
+      browserDisconnected,
+    ])
   }
 
   private async executeTask(
     task: string,
     signal: AbortSignal
   ): Promise<string> {
-    const { lifecycle } = this.host.services
-    const provision = await lifecycle.create(
+    const provision = await this.surface.createThread(
       {
         provider: this.options.provider,
         model: this.options.model,
+        option: null,
         mode: 'agent',
         source: 'exec',
         activate: false,
-        persistInitialHistory: false,
       },
       signal
     )
-    if (!provision.ok) throw new Error(provision.failure.message)
-    this.threadId = provision.threadId
-    const result = await lifecycle.send(provision.threadId, task, {
-      signal,
-      onTurnItem: async (item) => {
-        if (item.kind === 'status') {
-          this.options.onProgress({ type: 'status', message: item.text })
-        } else if (item.kind === 'tool_call') {
-          this.options.onProgress({ type: 'tool', name: item.toolName })
-        } else if (item.kind === 'error') {
-          this.options.onProgress({ type: 'warning', message: item.text })
+    this.threadId = provision.thread.id
+    let assistant = ''
+    const start = this.surface.startMessage(
+      provision.thread.id,
+      task,
+      async (event) => {
+        if (event.type === 'assistant.result') {
+          assistant = event.text
+        } else if (event.type === 'tool.progress') {
+          this.options.onProgress({ type: 'tool', name: event.toolName })
+        } else if (event.type === 'turn.item') {
+          if (event.item.kind === 'status') {
+            this.options.onProgress({
+              type: 'status',
+              message: event.item.text,
+            })
+          } else if (event.item.kind === 'tool_call') {
+            this.options.onProgress({ type: 'tool', name: event.item.toolName })
+          } else if (event.item.kind === 'error') {
+            this.options.onProgress({
+              type: 'warning',
+              message: event.item.text,
+            })
+          }
         }
       },
-    })
-    if (result === null) throw new Error('The exec thread could not run.')
-    const persistenceWarning = await lifecycle.recordActivity({
-      threadId: provision.threadId,
-      provider: provision.provider,
-      conversationUrl: provision.conversationUrl,
-      title: buildThreadHistoryTitle(task),
-      createdAt: provision.createdAt,
-    })
-    if (persistenceWarning !== null) {
-      this.options.onProgress({
-        type: 'warning',
-        message: persistenceWarning,
-      })
+      task,
+      signal
+    )
+    if (!start.accepted) {
+      throw new Error(
+        start.reason === 'closing'
+          ? `Thread ${provision.thread.id} is closing.`
+          : `Thread ${provision.thread.id} is already running.`
+      )
     }
-    return result.assistant
+    await start.operation.done
+    if (assistant === '') {
+      throw new Error('The exec thread did not produce a final response.')
+    }
+    return assistant
   }
 
   public async close(): Promise<void> {
@@ -140,16 +166,29 @@ export class PortalApplicationCore implements PortalExecSession {
 
 function reportLifecycleEvent(
   onProgress: (event: ExecProgressEvent) => void,
-  event: ThreadLifecycleEvent
+  event: unknown
 ): void {
-  if (event.type === 'provision.warning') {
-    onProgress({ type: 'warning', message: event.lines.join(' ') })
-  } else if (event.type === 'provision.login_wait') {
+  if (!isRecord(event) || typeof event.type !== 'string') return
+  if (event.type === 'provision.warning' && Array.isArray(event.lines)) {
+    onProgress({
+      type: 'warning',
+      message: event.lines
+        .filter((line): line is string => typeof line === 'string')
+        .join(' '),
+    })
+  } else if (
+    event.type === 'provision.login_wait' &&
+    typeof event.provider === 'string'
+  ) {
     onProgress({
       type: 'status',
       message: `Waiting for ${event.provider} login...`,
     })
-  } else if (event.type === 'thread.ready') {
+  } else if (
+    event.type === 'thread.ready' &&
+    typeof event.provider === 'string' &&
+    typeof event.conversationUrl === 'string'
+  ) {
     const conversation = resolveConversationUrl(event.conversationUrl)
     onProgress({
       type: 'status',
@@ -159,4 +198,8 @@ function reportLifecycleEvent(
           : `Conversation: ${conversation.conversationUrl}`,
     })
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }

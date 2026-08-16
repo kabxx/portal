@@ -1,4 +1,5 @@
-import type { ThreadHandle, ThreadManager } from '../threads/thread-manager.ts'
+import type { SurfacePort, SurfaceThread } from '../surfaces/surface-port.ts'
+type ThreadHandle = SurfaceThread
 import type { ConversationHistoryMessage } from '../providers/conversation-history.ts'
 import type {
   ToolOutcome,
@@ -117,7 +118,7 @@ type ScreenResetter = () => void
 
 export class TerminalController {
   private readonly listeners = new Set<Listener>()
-  private threadManager: ThreadManager | null = null
+  private surfacePort: SurfacePort | null = null
   private nextTimelineEntryId = 1
   private activeTimelineKey = HOME_TIMELINE_KEY
   private readonly timelineViews = new Map<string, TimelineViewState>([
@@ -148,8 +149,8 @@ export class TerminalController {
     } | null
   } | null = null
 
-  public bindThreadManager(threadManager: ThreadManager) {
-    this.threadManager = threadManager
+  public bindSurfacePort(surfacePort: SurfacePort) {
+    this.surfacePort = surfacePort
     this.emit()
   }
 
@@ -173,22 +174,18 @@ export class TerminalController {
     }
   }
 
-  public getThreadManager(): ThreadManager | null {
-    return this.threadManager
-  }
-
-  public cycleThread(direction: -1 | 1): ThreadHandle | null {
-    const threadManager = this.threadManager
-    if (threadManager === null) {
+  public cycleThread(direction: -1 | 1): SurfaceThread | null {
+    const surfacePort = this.surfacePort
+    if (surfacePort === null) {
       return null
     }
 
-    const threads = threadManager.listThreads()
+    const threads = surfacePort.listThreads()
     if (threads.length === 0) {
       return null
     }
 
-    const activeThreadId = threadManager.getActiveThread()?.id ?? null
+    const activeThreadId = surfacePort.getActiveThread()?.id ?? null
     const currentIndex = threads.findIndex(
       (thread) => thread.id === activeThreadId
     )
@@ -199,11 +196,11 @@ export class TerminalController {
       return null
     }
 
-    threadManager.switchThread(nextThread.id)
+    surfacePort.switchThread(nextThread.id)
     this.showThreadTimeline(nextThread.id)
     this.activeTimelineView().lastAction = `Switched to ${nextThread.id} (${nextThread.provider}).`
     this.emit()
-    return threadManager.getActiveThread()
+    return surfacePort.getActiveThread()
   }
 
   public subscribe(listener: Listener): () => void {
@@ -414,10 +411,10 @@ export class TerminalController {
     this.emit()
   }
 
-  public renderPromptHeader(_threadManager: ThreadManager) {}
+  public renderPromptHeader(_surfacePort: SurfacePort) {}
 
-  public promptLabel(threadManager: ThreadManager): string {
-    const activeThread = threadManager.getActiveThread()
+  public promptLabel(_surfacePort?: SurfacePort): string {
+    const activeThread = this.surfacePort?.getActiveThread() ?? null
     if (activeThread === null) {
       return 'portal > '
     }
@@ -1205,7 +1202,7 @@ export class TerminalController {
 
   private getThreadTimelineView(threadId: string): TimelineViewState {
     if (
-      this.threadManager === null &&
+      this.surfacePort === null &&
       this.activeTimelineKey === HOME_TIMELINE_KEY
     ) {
       return this.activeTimelineView()

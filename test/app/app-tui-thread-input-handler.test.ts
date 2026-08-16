@@ -11,7 +11,7 @@ test('TUI input handler reports the missing active-thread boundary', async () =>
   // This focused fake implements only the no-active-thread path.
   // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
   const dependencies = {
-    threadManager: { getActiveThread: () => null },
+    surface: { getActiveThread: () => null },
     ui: {
       renderWarning: (title: string, message: unknown) => {
         warnings.push({ title, message })
@@ -44,24 +44,26 @@ test('TUI input handler starts a send and records the display input', async () =
   // This focused fake implements only the accepted-send path.
   // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
   const dependencies = {
-    threadManager: {
+    surface: {
       getActiveThread: () => thread,
-      submitThreadInput: async () => ({ assistant: 'done' }),
-    },
-    threadLifecycle: {
-      startSend: (
+      startMessage: (
         _threadId: string,
         _input: string,
-        runner: (signal: AbortSignal) => Promise<void>
+        _onEvent: unknown,
+        title: string
       ) => {
-        operationDone = runner(new AbortController().signal)
+        activities.push(title)
+        operationDone = Promise.resolve()
         return {
           accepted: true,
-          operation: { done: operationDone },
+          operation: {
+            threadId: 'thread-1',
+            phase: 'running',
+            startedAt: 1,
+            done: operationDone,
+            cancel: async () => true,
+          },
         }
-      },
-      recordActivity: async (activity: unknown) => {
-        activities.push(activity)
       },
     },
     ui: {
@@ -74,8 +76,6 @@ test('TUI input handler starts a send and records the display input', async () =
       clearLiveCommand: () => {},
       renderThreadError: () => {},
     },
-    runCommandJobs: { list: () => [] },
-    browserProfileDir: 'C:/portal-profile',
   } as unknown as TuiThreadInputDependencies
 
   const submitThreadInput = createTuiThreadInputHandler(dependencies)
@@ -84,12 +84,5 @@ test('TUI input handler starts a send and records the display input', async () =
 
   assert.deepEqual(userMessages, ['Display input'])
   assert.deepEqual(busyStates, [true, false])
-  assert.deepEqual(activities, [
-    {
-      threadId: 'thread-1',
-      provider: 'grok',
-      conversationUrl: 'https://grok.com/c/example',
-      title: 'Display input',
-    },
-  ])
+  assert.deepEqual(activities, ['Display input'])
 })

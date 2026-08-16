@@ -16,6 +16,7 @@ import {
   createFakeRuntime,
   createProviderAdapterStub,
 } from '../helpers/fakes.ts'
+import { createTestSurfacePort } from '../helpers/surface-port.ts'
 
 test('portal Command thread adapter validates model selection before lifecycle creation', async () => {
   const creations: unknown[] = []
@@ -149,7 +150,7 @@ test('portal Command reload owns the Thread operation and bridges cancellation',
   })
   const operations = new ThreadOperationCoordinator(100)
   const ui = new TerminalController()
-  ui.bindThreadManager(threadManager)
+  ui.bindSurfacePort(createTestSurfacePort(threadManager))
   ui.showThreadTimeline(thread.id)
   const services = createPortalCommandServices(
     {
@@ -204,7 +205,7 @@ test('portal Command reload remains busy until an abort-ignoring operation settl
   })
   const operations = new ThreadOperationCoordinator(5)
   const ui = new TerminalController()
-  ui.bindThreadManager(threadManager)
+  ui.bindSurfacePort(createTestSurfacePort(threadManager))
   ui.showThreadTimeline(thread.id)
   const services = createPortalCommandServices(
     {
@@ -258,7 +259,7 @@ test('portal Command reload rejects a concurrent Thread operation', async () => 
   })
   assert.equal(existing.accepted, true)
   const ui = new TerminalController()
-  ui.bindThreadManager(threadManager)
+  ui.bindSurfacePort(createTestSurfacePort(threadManager))
   const services = createPortalCommandServices(
     {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion

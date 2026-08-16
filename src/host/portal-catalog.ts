@@ -7,6 +7,7 @@ import {
 } from '../cli-commands/command-extension.ts'
 import { CommandServiceHost } from '../cli-commands/core/command-services.ts'
 import { createAttachImagePlugin } from '../tools/builtins/attach-image-plugin.ts'
+import { AttachmentFileService } from '../attachments/attachment-service.ts'
 
 // First-party and installed packages enter the same catalog path. The command
 // package is compiled into Portal for now; it no longer has a special registry path.
@@ -15,6 +16,7 @@ export function buildPortalExtensionCatalog(options: {
   readonly commandDefinitions: readonly BuiltinCommandDefinition[]
   readonly installed: readonly PortalExtensionRegistration[]
   readonly testExtensions?: readonly PortalExtensionRegistration[]
+  readonly attachments?: AttachmentFileService
 }): readonly PortalExtensionRegistration[] {
   const builder = new ExtensionCatalogBuilder()
   const commandRegistration = createPortalCommandsRegistration(
@@ -26,7 +28,9 @@ export function buildPortalExtensionCatalog(options: {
     descriptor: commandRegistration.descriptor,
     module: commandRegistration.module,
   })
-  const attachImage = createAttachImagePlugin()
+  const attachImage = createAttachImagePlugin(
+    options.attachments ?? new AttachmentFileService()
+  )
   builder.add({
     packageId: attachImage.descriptor.id,
     descriptor: attachImage.descriptor,

@@ -3,38 +3,20 @@ import type {
   PortalMcpHandlers,
   PortalMcpThreadSummary,
 } from '../mcp-server/mcp-server-types.ts'
-import type { RunCommandJobService } from '../processes/run-command-job-manager.ts'
-import { resolveConversationUrl } from '../providers/provider-conversation-url.ts'
-import { resolveProviderModel } from '../providers/provider-model-catalog.ts'
 import {
   isAbortError,
   throwIfAborted,
 } from '../runtime/runtime-cancellation.ts'
-import type { TerminalController } from '../terminal-ui/terminal-controller.ts'
-import type {
-  ProvisionResult,
-  ThreadLifecycleService,
-} from '../threads/thread-lifecycle-service.ts'
-import type { ThreadManager } from '../threads/thread-manager.ts'
-import type { ThreadOperationCoordinator } from '../threads/thread-operation-coordinator.ts'
-import { buildThreadHistoryTitle } from '../threads/thread-store.ts'
+import type { SurfacePortActions } from '../surfaces/surface-port.ts'
 import {
   stopMcpForegroundOperation,
   type McpForegroundOperation,
   type StopTarget,
 } from './app-lifecycle.ts'
-import {
-  PROVIDERS,
-  normalizeProviderId,
-} from '../providers/provider-catalog.ts'
 
 export interface McpHandlerDependencies {
-  threadManager: ThreadManager
-  threadOperations: ThreadOperationCoordinator
-  threadLifecycle: ThreadLifecycleService
-  ui: TerminalController
+  surface: SurfacePortActions
   messageOperations: McpMessageOperationStore
-  runCommandJobs: Pick<RunCommandJobService, 'list' | 'stop'>
   foregroundOperations: Set<McpForegroundOperation>
   isForegroundOperationActive: () => boolean
   withCancellableOperation: <T>(
@@ -47,21 +29,15 @@ export interface McpHandlerDependencies {
 }
 
 export function createMcpHandlers({
-  threadManager,
-  threadOperations,
-  threadLifecycle,
-  ui,
+  surface,
   messageOperations,
-  runCommandJobs,
   foregroundOperations,
   isForegroundOperationActive,
   withCancellableOperation,
 }: McpHandlerDependencies): PortalMcpHandlers {
   const getThread = (threadId: string) => {
-    const thread = threadManager.getThread(threadId)
-    if (thread === null) {
-      throw new Error(`Unknown thread: ${threadId}`)
-    }
+    const thread = surface.getThread(threadId)
+    if (thread === null) throw new Error(`Unknown thread: ${threadId}`)
     return thread
   }
 
@@ -70,12 +46,12 @@ export function createMcpHandlers({
     return {
       id: thread.id,
       provider: thread.provider,
-      title: thread.title,
-      conversationUrl: thread.runtime.conversationUrl,
-      busy: threadOperations.get(thread.id) !== null,
-      turnCount: thread.turnCount,
-      createdAt: thread.createdAt,
-      updatedAt: thread.updatedAt,
+      title: thread.title ?? null,
+      conversationUrl: thread.conversationUrl ?? '',
+      busy: thread.busy ?? false,
+      turnCount: thread.turnCount ?? 0,
+      createdAt: thread.createdAt ?? 0,
+      updatedAt: thread.updatedAt ?? 0,
     }
   }
 
@@ -129,182 +105,65 @@ export function createMcpHandlers({
   }
 
   return {
-    listProviders: () => ({ providers: [...PROVIDERS] }),
-    listJobs: () => ({ jobs: runCommandJobs.list() }),
+    listProviders: () => ({ providers: [...surface.listProviders()] }),
+    listJobs: () => ({
+      jobs: surface.listJobs().map((job) => ({ ...job })),
+    }),
     stopJob: async (jobId) => {
-      if (jobId.trim() === '') {
+      if (jobId.trim() === '')
         throw new Error('jobId must be a non-empty string.')
-      }
-      const result = await runCommandJobs.stop(jobId)
-      if (result === 'not_found') {
+      const result = await surface.stopJob(jobId)
+      if (result === 'not_found')
         throw new Error(`Unknown or finished job: ${jobId}`)
-      }
-      if (result === 'timeout') {
+      if (result === 'timeout')
         throw new Error(`Timed out waiting for ${jobId} to stop.`)
-      }
       return { stopped: true, jobId }
     },
     listThreads: () => ({
-      threads: threadManager.listThreads().map(({ id }) => toThreadSummary(id)),
+      threads: surface
+        .listThreads()
+        .map((thread) => toThreadSummary(thread.id)),
     }),
     getThread: async (threadId) => toThreadSummary(threadId),
-    createThread: async (
-      { provider: providerValue, model, option, mode },
-      signal
-    ) => {
-      const provider = normalizeProviderId(providerValue)
-      if (provider === null) {
-        throw new Error(`Unsupported provider: ${providerValue}`)
-      }
-      const resolvedModel = resolveProviderModel(provider, model, option)
+    createThread: async ({ provider, model, option, mode }, signal) => {
       const created = await withForegroundOperation(
         signal,
-        async (operationSignal, setStopTarget) => {
-          void setStopTarget
-          return requireProvisionResult(
-            await threadLifecycle.create(
-              {
-                provider,
-                model: resolvedModel,
-                mode,
-                source: 'mcp',
-                activate: false,
-              },
-              operationSignal
-            )
+        async (operationSignal) =>
+          await surface.createThread(
+            { provider, model, option, mode, source: 'mcp', activate: false },
+            operationSignal
           )
-        }
       )
-      return toThreadSummary(created.threadId)
+      return toThreadSummary(created.thread.id)
     },
     resumeThread: async (conversationUrl, signal) => {
-      const resolved = resolveConversationUrl(conversationUrl)
-      if (resolved === null) {
-        throw new Error('Conversation URL is invalid or unsupported.')
-      }
       const resumed = await withForegroundOperation(
         signal,
-        async (operationSignal, setStopTarget) => {
-          void setStopTarget
-          return requireProvisionResult(
-            await threadLifecycle.resume(
-              {
-                conversationUrl: resolved.conversationUrl,
-                source: 'mcp',
-                activate: false,
-              },
-              operationSignal
-            )
+        async (operationSignal) =>
+          await surface.resumeThread(
+            conversationUrl,
+            'mcp',
+            false,
+            operationSignal
           )
-        }
       )
-      return toThreadSummary(resumed.threadId)
+      return toThreadSummary(resumed.thread.id)
     },
     closeThread: async (threadId) => {
       getThread(threadId)
-      ui.setThreadBusy(threadId, true)
-      try {
-        const closed = (await threadLifecycle.close(threadId, 'user')).closed
-        if (!closed) {
-          throw new Error(`Unknown thread: ${threadId}`)
-        }
-        return { closed: true, threadId }
-      } finally {
-        if (threadOperations.get(threadId) === null) {
-          ui.setThreadBusy(threadId, false)
-        }
-        if (threadManager.getThread(threadId) === null) {
-          ui.removeThreadTimeline(threadId)
-        }
-      }
+      const result = await surface.closeThread(threadId)
+      if (!result.closed) throw new Error(`Unknown thread: ${threadId}`)
+      return { closed: true, threadId }
     },
     sendMessage: async (threadId, input) => {
-      const thread = getThread(threadId)
+      getThread(threadId)
       const operation = messageOperations.begin(threadId)
-      const startResult = threadLifecycle.startSend(
-        threadId,
-        input,
-        async (signal) => {
-          try {
-            const result = await threadManager.submitThreadInput(
-              threadId,
-              input,
-              {
-                signal,
-                onAssistantStream: async (message) => {
-                  throwIfAborted(signal)
-                  ui.renderAssistantStream(thread, message)
-                },
-                onToolProgress: (event, toolCall, toolCallId) => {
-                  if (
-                    signal.aborted ||
-                    (toolCall?.tool !== 'run_command' &&
-                      toolCall?.tool !== 'spawn')
-                  ) {
-                    return
-                  }
-                  ui.renderToolProgress(
-                    thread,
-                    toolCall.tool,
-                    event,
-                    toolCallId
-                  )
-                },
-                onTurnItem: async (item) => {
-                  throwIfAborted(signal)
-                  if (item.kind === 'assistant_text') {
-                    ui.renderAssistantMessage(thread, item.text)
-                  } else if (item.kind === 'tool_call') {
-                    ui.setThreadLastToolName(thread.id, item.toolName)
-                    ui.renderToolCall(
-                      thread,
-                      item.toolName,
-                      item.rawPayload,
-                      item.toolCallId
-                    )
-                  } else if (item.kind === 'tool_result') {
-                    ui.setThreadLastToolName(thread.id, item.toolName)
-                    ui.renderToolResult(
-                      thread,
-                      item.toolName,
-                      item.outcome,
-                      item.result,
-                      item.displayText,
-                      item.toolCallId
-                    )
-                  } else if (item.kind === 'error') {
-                    ui.renderThreadError(thread, 'thread', item.text)
-                  }
-                },
-              }
-            )
-            if (result === null) {
-              throw new Error(`Unknown thread: ${threadId}`)
-            }
-            await threadLifecycle.recordActivity({
-              threadId: thread.id,
-              provider: thread.provider,
-              conversationUrl: thread.runtime.conversationUrl,
-              title: buildThreadHistoryTitle(input),
-            })
-            messageOperations.complete(operation.operationId, result.assistant)
-          } catch (error) {
-            if (isAbortError(error)) {
-              messageOperations.cancelled(operation.operationId)
-            } else {
-              messageOperations.fail(
-                operation.operationId,
-                error instanceof Error ? error.message : String(error)
-              )
-            }
-            throw error
-          } finally {
-            ui.clearLiveCommand(thread)
-            ui.setThreadBusy(thread.id, false)
-          }
+      let assistant = ''
+      const startResult = surface.startMessage(threadId, input, (event) => {
+        if (event.type === 'assistant.result') {
+          assistant = event.text
         }
-      )
-
+      })
       if (!startResult.accepted) {
         messageOperations.remove(operation.operationId)
         throw new Error(
@@ -317,8 +176,16 @@ export function createMcpHandlers({
         operation.operationId,
         startResult.operation
       )
-      ui.renderUserMessage(thread, input)
-      ui.setThreadBusy(thread.id, true)
+      void startResult.operation.done
+        .then(() =>
+          messageOperations.complete(operation.operationId, assistant)
+        )
+        .catch((error: unknown) => {
+          if (isAbortError(error))
+            messageOperations.cancelled(operation.operationId)
+          else messageOperations.fail(operation.operationId, String(error))
+        })
+        .catch(() => undefined)
       return messageOperations.get(operation.operationId)
     },
     waitMessage: async (operationId, timeoutMs, signal) =>
@@ -326,11 +193,4 @@ export function createMcpHandlers({
     cancelMessage: async (operationId) =>
       await messageOperations.cancel(operationId),
   }
-}
-
-function requireProvisionResult(
-  result: ProvisionResult
-): Extract<ProvisionResult, { ok: true }> {
-  if (result.ok) return result
-  throw new Error(result.failure.message)
 }

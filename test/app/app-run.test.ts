@@ -125,7 +125,7 @@ test(
       await waitFor(() => ui.getState().prompt.active, 'thread command prompt')
       assert.equal(ui.submitInput('/thread agent chatgpt'), true)
       await waitFor(
-        () => ui.getThreadManager()?.getActiveThread() !== null,
+        () => ui.promptLabel() !== 'portal > ',
         'thread to become active'
       )
 
@@ -143,7 +143,7 @@ test(
       assert.ok(completedJob !== undefined)
       assert.equal((await completedJob.wait()).terminationReason, 'shutdown')
       assert.equal(runCommandJobs.list().length, 0)
-      assert.deepEqual(ui.getThreadManager()?.listThreads(), [])
+      assert.equal(ui.promptLabel(), 'portal > ')
       assert.equal(adapterCloseCount, 1)
       assert.equal(runtimeCloseCount, 1)
       assert.equal(browserCloseCount, 1)

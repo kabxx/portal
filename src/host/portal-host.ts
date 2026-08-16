@@ -64,6 +64,7 @@ import { createAdapterForProvider } from '../providers/provider-catalog.ts'
 import { buildPortalExtensionCatalog } from './portal-catalog.ts'
 import { PluginManager } from '../extensions/plugin-manager.ts'
 import { JsonPluginStore } from '../extensions/plugin-store.ts'
+import { AttachmentFileService } from '../attachments/attachment-service.ts'
 
 const LOGIN_CHECK_INTERVAL_MS = 1000
 const HOST_OPERATION_TIMEOUT_MS = 3000
@@ -203,10 +204,12 @@ export class PortalHost {
         manager: pluginManager,
       }).prepare()
       const commandServices = new CommandServiceHost()
+      const attachmentService = new AttachmentFileService()
       const catalog = buildPortalExtensionCatalog({
         commandServices,
         commandDefinitions: builtinCommandDefinitions,
         installed: pluginPlan.extensions,
+        attachments: attachmentService,
         ...(dependencies[portalHostTestExtensions] === undefined
           ? {}
           : { testExtensions: dependencies[portalHostTestExtensions] }),
@@ -220,6 +223,7 @@ export class PortalHost {
         ...(dependencies.extensionTraceSink === undefined
           ? {}
           : { traceSink: dependencies.extensionTraceSink }),
+        attachmentReader: attachmentService,
       })
       const configPath = path.join(dataDirectory, 'config.yaml')
       const config = await ensurePortalConfig(

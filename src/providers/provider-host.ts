@@ -4,6 +4,10 @@ import type {
 } from '../extensions/extension-contracts.ts'
 import type { ResolvedExtensionGraph } from '../extensions/extension-registry.ts'
 import { ResourceScope } from '../shared/resource-scope.ts'
+import type {
+  AttachmentReader,
+  AttachmentRef,
+} from '../attachments/attachment-contracts.ts'
 import {
   providerContributions,
   providerEndpointBindings,
@@ -23,21 +27,29 @@ export class ProviderHostError extends Error {
 
 export interface ProviderBinding {
   readonly providerId: string
+  readonly capabilities: readonly string[]
   readonly scope: ResourceScope
-  exchange(input: ProviderOutboundLeg): Promise<ProviderExchangeHandle>
+  exchange(
+    input: ProviderOutboundLeg,
+    signal?: AbortSignal
+  ): Promise<ProviderExchangeHandle>
   close(reason?: unknown): Promise<void>
 }
 
 export class ProviderHost {
   readonly #graph: ResolvedExtensionGraph
   readonly #parent: ResourceScope
+  readonly #attachmentReader: AttachmentReader
 
   public constructor(options: {
     readonly graph: ResolvedExtensionGraph
     readonly parent: ResourceScope
+    readonly attachmentReader?: AttachmentReader
   }) {
     this.#graph = options.graph
     this.#parent = options.parent
+    this.#attachmentReader =
+      options.attachmentReader ?? unavailableAttachmentReader
   }
 
   public async openBinding(
@@ -70,6 +82,7 @@ export class ProviderHost {
         providerId,
         scope,
         signal: scope.signal,
+        readAttachment: async (ref) => await this.#attachmentReader.read(ref),
       })
       if (typeof endpoint !== 'function') {
         throw new ProviderHostError(
@@ -78,8 +91,10 @@ export class ProviderHost {
       }
       const providerBinding = new ProviderBindingRuntime(
         providerId,
+        contribution.value.descriptor.capabilities,
         scope,
-        endpoint
+        endpoint,
+        this.#attachmentReader
       )
       scope.defer('provider endpoint close', async ({ reason }) => {
         await endpoint.close?.(reason)
@@ -124,14 +139,20 @@ class ProviderBindingRuntime implements ProviderBinding {
 
   public constructor(
     public readonly providerId: string,
+    public readonly capabilities: readonly string[],
     public readonly scope: ResourceScope,
-    endpoint: ProviderEndpoint
+    endpoint: ProviderEndpoint,
+    attachmentReader: AttachmentReader
   ) {
     this.#endpoint = endpoint
+    this.#attachmentReader = attachmentReader
   }
 
+  readonly #attachmentReader: AttachmentReader
+
   public async exchange(
-    input: ProviderOutboundLeg
+    input: ProviderOutboundLeg,
+    signal?: AbortSignal
   ): Promise<ProviderExchangeHandle> {
     if (this.#closed || this.scope.state !== 'open') {
       throw new ProviderHostError(
@@ -139,25 +160,64 @@ class ProviderBindingRuntime implements ProviderBinding {
       )
     }
     const exchangeScope = this.scope.createChild(`exchange:${input.exchangeId}`)
+    const removeExternalCancellation = this.bindExternalCancellation(
+      exchangeScope,
+      signal
+    )
     let handle: ProviderExchangeHandle
     try {
-      handle = await this.#endpoint(input, {
-        exchangeId: input.exchangeId,
-        signal: exchangeScope.signal,
-        scope: exchangeScope,
-      })
+      const endpointPromise = Promise.resolve().then(
+        async () =>
+          await this.#endpoint(input, {
+            exchangeId: input.exchangeId,
+            signal: exchangeScope.signal,
+            scope: exchangeScope,
+            readAttachment: async (ref) =>
+              await this.#attachmentReader.read(ref),
+          })
+      )
+      void endpointPromise.then(
+        (lateEndpoint) => {
+          if (
+            exchangeScope.signal.aborted &&
+            isProviderExchangeHandle(lateEndpoint)
+          ) {
+            void Promise.resolve(lateEndpoint.completion).catch(() => undefined)
+            void Promise.resolve(
+              lateEndpoint.cancel(exchangeScope.signal.reason)
+            ).catch(() => undefined)
+          }
+        },
+        () => undefined
+      )
+      handle = await raceWithAbort(
+        endpointPromise,
+        exchangeScope.signal,
+        `Provider ${this.providerId} exchange creation canceled.`
+      )
       assertExchangeHandle(handle, this.providerId)
       exchangeScope.defer('provider exchange cancel', async ({ reason }) => {
         await handle.cancel(reason)
       })
     } catch (error) {
       await exchangeScope.dispose({ reason: error }).catch(() => undefined)
+      removeExternalCancellation()
       throw error
     }
 
-    const completion = handle.completion.finally(async () => {
-      await exchangeScope.dispose({ reason: 'provider-completion' })
-    })
+    const completion = handle.completion
+      .then(
+        async (value) => {
+          await exchangeScope.dispose({ reason: 'provider-completion' })
+          return value
+        },
+        async (error: unknown) => {
+          await exchangeScope.dispose({ reason: error }).catch(() => undefined)
+          throw error
+        }
+      )
+      .finally(removeExternalCancellation)
+    void completion.catch(() => undefined)
     return Object.freeze({
       events: handle.events,
       completion,
@@ -167,6 +227,21 @@ class ProviderBindingRuntime implements ProviderBinding {
     })
   }
 
+  private bindExternalCancellation(
+    exchangeScope: ResourceScope,
+    signal: AbortSignal | undefined
+  ): () => void {
+    if (signal === undefined) return () => {}
+    const cancel = () => {
+      void exchangeScope
+        .dispose({ reason: signal.reason })
+        .catch(() => undefined)
+    }
+    if (signal.aborted) cancel()
+    else signal.addEventListener('abort', cancel, { once: true })
+    return () => signal.removeEventListener('abort', cancel)
+  }
+
   public async close(reason?: unknown): Promise<void> {
     if (this.#closed) return
     this.#closed = true
@@ -174,20 +249,59 @@ class ProviderBindingRuntime implements ProviderBinding {
   }
 }
 
+const unavailableAttachmentReader: AttachmentReader = Object.freeze({
+  async read(ref: AttachmentRef): Promise<Uint8Array> {
+    throw new ProviderHostError(
+      `Attachment ${ref.id} cannot be read because no attachment service is configured.`
+    )
+  },
+})
+
+async function raceWithAbort<T>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+  message: string
+): Promise<T> {
+  if (signal.aborted) throw toProviderError(signal.reason, message)
+  let remove = () => {}
+  const aborted = new Promise<never>((_, reject) => {
+    const onAbort = () => reject(toProviderError(signal.reason, message))
+    signal.addEventListener('abort', onAbort, { once: true })
+    remove = () => signal.removeEventListener('abort', onAbort)
+  })
+  try {
+    return await Promise.race([operation, aborted])
+  } finally {
+    remove()
+  }
+}
+
+function toProviderError(reason: unknown, fallback: string): ProviderHostError {
+  return new ProviderHostError(
+    reason instanceof Error && reason.message !== '' ? reason.message : fallback
+  )
+}
+
 function assertExchangeHandle(
   value: unknown,
   providerId: string
 ): asserts value is ProviderExchangeHandle {
-  if (
-    !isRecord(value) ||
-    typeof value.cancel !== 'function' ||
-    !isPromiseLike(value.completion) ||
-    !isAsyncIterable(value.events)
-  ) {
+  if (!isProviderExchangeHandle(value)) {
     throw new ProviderHostError(
       `Provider ${providerId} returned an invalid exchange handle.`
     )
   }
+}
+
+function isProviderExchangeHandle(
+  value: unknown
+): value is ProviderExchangeHandle {
+  return (
+    isRecord(value) &&
+    typeof value.cancel === 'function' &&
+    isPromiseLike(value.completion) &&
+    isAsyncIterable(value.events)
+  )
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

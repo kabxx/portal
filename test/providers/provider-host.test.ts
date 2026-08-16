@@ -11,6 +11,7 @@ import {
   type ProviderCompletion,
   type ProviderEvent,
   type ProviderEndpointFactory,
+  type ProviderExchangeHandle,
 } from '../../src/providers/provider-exchange.ts'
 import {
   ProviderHost,
@@ -156,4 +157,46 @@ test('ProviderHost rejects binding ownership mismatches before invoking plugin c
     ProviderHostError
   )
   assert.equal(factoryCalls, 0)
+})
+
+test('ProviderHost cancels exchange creation and disposes a late handle', async (t) => {
+  let resolveEndpoint!: (handle: ProviderExchangeHandle) => void
+  let cancelCalls = 0
+  const { host, root } = createHost(async () => {
+    return async (_input, _context) =>
+      await new Promise<ProviderExchangeHandle>((resolve) => {
+        resolveEndpoint = resolve
+      })
+  })
+  t.after(async () => await root.dispose())
+
+  const binding = await host.openBinding(
+    'test.provider',
+    'test.provider-package',
+    'creation-cancel'
+  )
+  const controller = new AbortController()
+  const exchange = binding.exchange(
+    {
+      exchangeId: 'exchange-creation-cancel',
+      conversationId: 'conversation-1',
+      messages: [{ role: 'user', content: 'cancel creation' }],
+      attachments: [],
+    },
+    controller.signal
+  )
+  controller.abort(new Error('cancel creation'))
+  await assert.rejects(exchange, ProviderHostError)
+
+  resolveEndpoint({
+    events: (async function* (): AsyncGenerator<ProviderEvent> {})(),
+    completion: Promise.reject<ProviderCompletion>(
+      new Error('late creation completion failure')
+    ),
+    cancel: () => {
+      cancelCalls += 1
+    },
+  })
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(cancelCalls, 1)
 })

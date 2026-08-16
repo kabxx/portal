@@ -14,6 +14,7 @@ export class AttachmentServiceError extends Error {
 
 export class AttachmentFileService {
   readonly #maxBytes: number
+  readonly #contents = new Map<string, Uint8Array>()
 
   public constructor(options: { readonly maxBytes?: number } = {}) {
     this.#maxBytes = options.maxBytes ?? 20 * 1024 * 1024
@@ -46,13 +47,26 @@ export class AttachmentFileService {
     const sha256 = createHash('sha256').update(bytes).digest('hex')
     const result: AttachmentRef = {
       id: `attachment:${sha256}`,
-      path: absolutePath,
       mediaType: mediaTypeForPath(absolutePath),
       sizeBytes: bytes.byteLength,
       sha256,
     }
+    this.#contents.set(result.id, new Uint8Array(bytes))
     freezeImmutableData(result)
     return result
+  }
+
+  public async read(ref: AttachmentRef): Promise<Uint8Array> {
+    const bytes = this.#contents.get(ref.id)
+    if (
+      bytes === undefined ||
+      ref.sha256 !== ref.id.slice('attachment:'.length)
+    ) {
+      throw new AttachmentServiceError(
+        `Attachment is not available: ${ref.id}.`
+      )
+    }
+    return new Uint8Array(bytes)
   }
 }
 
