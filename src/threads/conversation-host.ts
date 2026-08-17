@@ -14,6 +14,7 @@ import type {
 } from '../providers/provider-host.ts'
 import type { ToolHost, ToolResult } from '../tools/tool-host.ts'
 import { ResourceScope } from '../shared/resource-scope.ts'
+import type { AgentMode, AgentStartup } from '../agents/agent-extension.ts'
 
 export type ConversationItem =
   | { readonly kind: 'user'; readonly text: string }
@@ -117,7 +118,8 @@ export interface ConversationOpenOptions {
   readonly model?:
     | import('../providers/provider-model-catalog.ts').ResolvedProviderModel
     | null
-  readonly setupMode?: import('../runtime/setup-handshake.ts').RuntimeSetupMode
+  readonly agentMode: AgentMode | null
+  readonly agentStartup: AgentStartup
   readonly workingDirectory?: string
   readonly spawnDepth?: number
   readonly sessionKey?: string | null
@@ -168,7 +170,8 @@ export class ConversationHost {
       {
         conversationUrl: options.conversationUrl ?? null,
         model: options.model ?? null,
-        setupMode: options.setupMode ?? 'full',
+        agentMode: options.agentMode,
+        agentStartup: options.agentStartup,
         workingDirectory: options.workingDirectory ?? process.cwd(),
         spawnDepth: options.spawnDepth ?? 0,
         sessionKey: options.sessionKey ?? null,

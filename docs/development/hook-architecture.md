@@ -32,6 +32,13 @@ Disabling a package removes all of its contributions. Disabling a dependency
 removes dependent packages from the effective graph and reports a typed
 `disabled-dependency` diagnostic.
 
+A contribution may also declare exact contribution dependencies by package,
+point, ID, and contract version. Bootstrap computes their transitive effective
+disablement without writing derived state back to the installed snapshot. This
+lets one optional capability in a multi-contribution package disappear together
+with only the higher-level contributions that require it; re-enabling the base
+contribution restores that closure in the next generation.
+
 The persisted installed snapshot is the source of truth for the next
 generation. Kernel bootstrap synchronizes bundled records, resolves the
 effective graph, and only then loads selected modules. Disabled or invalid
@@ -113,13 +120,20 @@ user intent -> ProviderHost.exchange -> events/completion
 ```
 
 It does not implement Provider login, page recovery, generic retry, or model
-protocol conversion. Prompt sections, Skill content, and Agent policies are
-plugin contributions. They provide immutable snapshots and declared strategy;
-ConversationHost only supplies source, intent, and structured finalization.
+protocol conversion. `PromptHost` resolves `prompts.collect` and same-owner
+renderer bindings. `AgentHost` resolves `agents.collect`, verifies that its
+referenced Prompt is active, and owns the scoped Agent session. Prompt sections,
+Skill content, READY acceptance, interactive initialization, and inline-first-
+task policy are first-party plugin behavior. `RuntimeCore` consumes only the
+resolved Agent session and no longer imports a setup Prompt builder.
 
-Prompt and Skill contributions can be disabled independently from their
-commands or tools. A Skill package does not gain a broad Runtime or Host
-object merely because its content is included in a prompt.
+Prompt, Agent, and Skill contributions can be disabled independently from
+their commands or tools. Disabling a Prompt package disables dependent Agent
+packages; disabling only a Prompt contribution removes referencing Agents from
+the effective Agent catalog and transitively removes the exec and spawn
+contributions that require the default Agent. A Skill package does not gain a
+broad Runtime or Host object merely because its content is included in a
+prompt.
 
 ## Tool and attachment boundary
 
@@ -143,9 +157,10 @@ create an untracked Runtime or bypass graph grants.
 `CommandHost` resolves typed command contributions, routes, options, handlers,
 required services, and capabilities. A Command receives a narrow port, not a
 Manager, RuntimeCore, Provider adapter, Browser object, or mutable application
-context. `/plugins` is a plugin-owned command and delegates to the typed
-PluginManagementService. The recovery `portal plugins` CLI remains available
-when the normal graph cannot start.
+context. Its route projection removes disabled Agent modes from parsing, help,
+completion, and the Surface command catalog. `/plugins` is a plugin-owned
+command and delegates to the typed PluginManagementService. The recovery
+`portal plugins` CLI remains available when the normal graph cannot start.
 
 The common Surface contract contains only typed user actions, immutable domain
 projections, operation status/result, event subscription, and close. TUI,

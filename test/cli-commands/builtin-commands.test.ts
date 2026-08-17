@@ -23,12 +23,12 @@ test('built-in catalog drives help, providers, and exit', async (t) => {
     [
       '/help',
       '/thread',
-      '/mcp',
       '/keybinding',
       '/providers',
       '/exit',
       '/skill',
       '/job',
+      '/mcp',
     ]
   )
   assert.match(bodyText(help?.body), /\/thread <subcommand>/)
@@ -546,6 +546,7 @@ test('keybinding reset reports success and failures', async (t) => {
 
 function defaultThreads(): CommandThreadService {
   return {
+    listAgentModes: () => ['agent', 'chat'],
     create: async () => ({ ok: true }),
     list: () => [],
     history: async () => ({ ok: true, entries: [] }),

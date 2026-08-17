@@ -218,6 +218,7 @@ test('KernelBootstrap applies persisted capability grants to graph enforcement',
         point: contributionRef.id,
         id: 'test.restricted-item',
         version: contributionRef.version,
+        dependencies: Object.freeze([]),
       }),
     ]),
     capabilities: Object.freeze(['portal.allowed', 'portal.restricted']),
@@ -313,12 +314,30 @@ test('KernelBootstrap filters a disabled contribution and its executable binding
     id: 'test.filter-items.bind',
     version: 1,
     kind: 'test-filter',
+    targetContribution: contributionRef,
+  })
+  const otherContributionRef = createContributionRef<{ readonly id: string }>({
+    id: 'test.filter-other.collect',
+    version: 1,
+  })
+  const otherBindingRef = createExecutableBindingRef<() => string>({
+    id: 'test.filter-other.bind',
+    version: 1,
+    kind: 'test-filter-other',
+    targetContribution: otherContributionRef,
   })
   const contributionId = 'test.filtered-item'
   const declaration = Object.freeze({
     point: contributionRef.id,
     id: contributionId,
     version: contributionRef.version,
+    dependencies: Object.freeze([]),
+  })
+  const otherDeclaration = Object.freeze({
+    point: otherContributionRef.id,
+    id: contributionId,
+    version: otherContributionRef.version,
+    dependencies: Object.freeze([]),
   })
   const manifest = Object.freeze({
     id: 'test.contribution-filter',
@@ -326,7 +345,7 @@ test('KernelBootstrap filters a disabled contribution and its executable binding
     apiVersion: 1,
     entry: 'built-in',
     dependencies: Object.freeze([]),
-    contributions: Object.freeze([declaration]),
+    contributions: Object.freeze([declaration, otherDeclaration]),
     capabilities: Object.freeze([]),
   })
   const record: BuiltInPluginRecord = Object.freeze({
@@ -361,10 +380,21 @@ test('KernelBootstrap filters a disabled contribution and its executable binding
             requiredServices: [],
             requiredCapabilities: [],
           })
+          api.contribute(otherContributionRef, {
+            id: contributionId,
+            value: { id: contributionId },
+            requiredServices: [],
+            requiredCapabilities: [],
+          })
           api.bind(bindingRef, {
             id: 'test.filtered-item.binding',
             targetId: contributionId,
             binding: () => 'filtered',
+          })
+          api.bind(otherBindingRef, {
+            id: 'test.filtered-item.other-binding',
+            targetId: contributionId,
+            binding: () => 'retained',
           })
         },
       },
@@ -384,18 +414,18 @@ test('KernelBootstrap filters a disabled contribution and its executable binding
     manager,
     builtIns: [definition],
   }).prepare()
-  const forwarded = { contributions: 0, bindings: 0 }
+  const forwarded = { contributions: 0, bindings: [] as string[] }
   const api: ExtensionRegistrationApi = {
     provide() {},
     contribute() {
       forwarded.contributions += 1
     },
     bind() {
-      forwarded.bindings += 1
+      forwarded.bindings.push('retained')
     },
     handle() {},
   }
   plan.extensions[0]!.module.register(api)
 
-  assert.deepEqual(forwarded, { contributions: 0, bindings: 0 })
+  assert.deepEqual(forwarded, { contributions: 1, bindings: ['retained'] })
 })

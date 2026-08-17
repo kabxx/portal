@@ -25,6 +25,10 @@ import {
   PluginStoreError,
 } from '../../src/extensions/plugin-store.ts'
 import { firstPartyPluginRecords } from '../../src/bootstrap/first-party-plugins.ts'
+import type {
+  BuiltInPluginRecord,
+  PluginContributionDeclaration,
+} from '../../src/extensions/plugin-contracts.ts'
 
 function manifest(
   id: string,
@@ -68,7 +72,19 @@ test('plugin manifests are strictly validated and semver checked', () => {
       version: '2.0.0',
       dependencies: [{ id: 'test.base', versionRange: '^1.0.0' }],
       contributions: [
-        { point: 'test.commands', id: 'test.command', version: 1 },
+        {
+          point: 'test.commands',
+          id: 'test.command',
+          version: 1,
+          dependencies: [
+            {
+              packageId: 'test.base',
+              point: 'test.commands',
+              id: 'test.base-command',
+              version: 1,
+            },
+          ],
+        },
       ],
     })
   )
@@ -76,6 +92,30 @@ test('plugin manifests are strictly validated and semver checked', () => {
   assert.equal(parsed.version, '2.0.0')
   assert.equal(Object.isFrozen(parsed), true)
   assert.equal(Object.isFrozen(parsed.dependencies), true)
+
+  assert.throws(
+    () =>
+      parsePluginManifest(
+        manifest('test.missing-package-dependency', {
+          contributions: [
+            {
+              point: 'test.commands',
+              id: 'test.command',
+              version: 1,
+              dependencies: [
+                {
+                  packageId: 'test.undeclared',
+                  point: 'test.commands',
+                  id: 'test.target',
+                  version: 1,
+                },
+              ],
+            },
+          ],
+        })
+      ),
+    /requires package dependency test\.undeclared/
+  )
 
   assert.throws(
     () =>
@@ -395,3 +435,162 @@ test('disabling a bundled dependency removes its dependents from the effective g
     true
   )
 })
+
+test('contribution disablement cascades without mutating persisted selections and restores on enable', async (t) => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), 'portal-contribution-cascade-')
+  )
+  t.after(async () => await rm(root, { recursive: true, force: true }))
+  const manager = new PluginManager({
+    store: new JsonPluginStore(path.join(root, 'plugins.json')),
+  })
+  await manager.synchronizeBuiltIns(firstPartyPluginRecords())
+
+  await manager.setContributionEnabled(
+    'portal.agent.default',
+    'agents.collect',
+    'portal.agent.default',
+    false
+  )
+  const disabled = await manager.resolveEnabled()
+  for (const [packageId, point, contributionId] of [
+    ['portal.agent.default', 'agents.collect', 'portal.agent.default'],
+    ['portal.tool.spawn', 'tools.collect', 'portal.tool.spawn'],
+    ['portal.surface.exec', 'surfaces.collect', 'portal.exec'],
+  ] as const) {
+    const record = disabled.packages.find(
+      ({ manifest: packageManifest }) => packageManifest.id === packageId
+    )
+    assert.equal(
+      record?.disabledContributions.some(
+        ({ point: disabledPoint, id }) =>
+          disabledPoint === point && id === contributionId
+      ),
+      true
+    )
+  }
+  assert.deepEqual(
+    (await manager.inspect('portal.surface.exec'))?.disabledContributions,
+    []
+  )
+
+  await manager.setContributionEnabled(
+    'portal.agent.default',
+    'agents.collect',
+    'portal.agent.default',
+    true
+  )
+  const restored = await manager.resolveEnabled()
+  assert.deepEqual(
+    restored.packages.find(
+      ({ manifest: packageManifest }) =>
+        packageManifest.id === 'portal.surface.exec'
+    )?.disabledContributions,
+    []
+  )
+})
+
+test('missing and cyclic contribution dependencies are diagnosed and disabled', async (t) => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), 'portal-contribution-invalid-')
+  )
+  t.after(async () => await rm(root, { recursive: true, force: true }))
+  const manager = new PluginManager({
+    store: new JsonPluginStore(path.join(root, 'plugins.json')),
+  })
+  const missing = builtInRecord('test.contribution.missing', [
+    contributionDeclaration('test.items', 'test.source', [
+      {
+        packageId: 'test.contribution.missing',
+        point: 'test.items',
+        id: 'test.target',
+        version: 1,
+      },
+    ]),
+  ])
+  const cycle = builtInRecord('test.contribution.cycle', [
+    contributionDeclaration('test.items', 'test.a', [
+      {
+        packageId: 'test.contribution.cycle',
+        point: 'test.items',
+        id: 'test.b',
+        version: 1,
+      },
+    ]),
+    contributionDeclaration('test.items', 'test.b', [
+      {
+        packageId: 'test.contribution.cycle',
+        point: 'test.items',
+        id: 'test.a',
+        version: 1,
+      },
+    ]),
+  ])
+  await manager.synchronizeBuiltIns([missing, cycle])
+
+  const resolved = await manager.resolveEnabled()
+  assert.equal(
+    resolved.diagnostics.some(
+      ({ code }) => code === 'missing-contribution-dependency'
+    ),
+    true
+  )
+  assert.equal(
+    resolved.diagnostics.filter(
+      ({ code }) => code === 'contribution-dependency-cycle'
+    ).length,
+    2
+  )
+  assert.deepEqual(
+    resolved.packages.flatMap(({ disabledContributions }) =>
+      disabledContributions.map(({ id }) => id)
+    ),
+    ['test.source', 'test.a', 'test.b']
+  )
+  const diagnosed = await manager.diagnose()
+  assert.equal(
+    diagnosed.some(({ code }) => code === 'missing-contribution-dependency'),
+    true
+  )
+  assert.equal(
+    diagnosed.filter(({ code }) => code === 'contribution-dependency-cycle')
+      .length,
+    2
+  )
+})
+
+function builtInRecord(
+  id: string,
+  contributions: readonly PluginContributionDeclaration[]
+): BuiltInPluginRecord {
+  return Object.freeze({
+    manifest: Object.freeze({
+      id,
+      version: '1.0.0',
+      apiVersion: 1,
+      entry: 'built-in',
+      dependencies: Object.freeze([]),
+      contributions: Object.freeze([...contributions]),
+      capabilities: Object.freeze([]),
+    }),
+    source: Object.freeze({
+      kind: 'built-in' as const,
+      locator: `portal:built-in/${id}`,
+      digest: 'a'.repeat(64),
+    }),
+    trust: Object.freeze({
+      capabilities: Object.freeze([]),
+      updatePolicy: 'pinned' as const,
+      capabilityExpansion: 'deny' as const,
+    }),
+    disabledContributions: Object.freeze([]),
+  })
+}
+
+function contributionDeclaration(
+  point: string,
+  id: string,
+  dependencies: PluginContributionDeclaration['dependencies']
+): PluginContributionDeclaration {
+  return Object.freeze({ point, id, version: 1, dependencies })
+}

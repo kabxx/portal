@@ -77,6 +77,7 @@ export interface ExecutableBindingRef<Binding> {
   readonly id: ExecutableBindingPointId
   readonly version: number
   readonly kind: string
+  readonly targetContribution: ContributionRef<unknown>
   readonly __binding?: Binding
 }
 
@@ -427,6 +428,7 @@ export function createExecutableBindingRef<Binding>(options: {
   readonly id: ExecutableBindingPointId
   readonly version: number
   readonly kind: string
+  readonly targetContribution: ContributionRef<unknown>
 }): ExecutableBindingRef<Binding> {
   assertVersion(options.version)
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(options.kind)) {
@@ -439,6 +441,7 @@ export function createExecutableBindingRef<Binding>(options: {
     id: assertStableId('Executable binding point', options.id),
     version: options.version,
     kind: options.kind,
+    targetContribution: options.targetContribution,
   })
 }
 

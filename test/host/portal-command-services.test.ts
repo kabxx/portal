@@ -27,6 +27,12 @@ function withProviderHost(value: object): PortalHostStartedServices {
   return {
     ...value,
     providerHost: createTestProviderHost(),
+    agentHost: {
+      list: () => [
+        { descriptor: { mode: 'agent' } },
+        { descriptor: { mode: 'chat' } },
+      ],
+    },
   } as unknown as PortalHostStartedServices
 }
 

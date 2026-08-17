@@ -144,6 +144,8 @@ test('ConversationHost owns the commit and promotes a Provider Tool request into
     providerOwnerId: 'test.conversation-package',
     conversationId: 'remote-1',
     selectionRevision: 'selection-1',
+    agentMode: null,
+    agentStartup: 'resume',
   })
   const result = await conversations.send(thread.id, 'hello')
 
@@ -221,6 +223,8 @@ test('ConversationHost reports both generation stop and Provider close failures'
     providerId: 'test.provider',
     providerOwnerId: 'test.provider-package',
     selectionRevision: 'close-failure',
+    agentMode: null,
+    agentStartup: 'resume',
   })
   const sending = conversations.send(thread.id, 'wait')
   await exchangeStarted.promise
@@ -292,6 +296,8 @@ test('ConversationHost reports Provider cancellation failure to the sender', asy
     providerId: 'test.provider',
     providerOwnerId: 'test.provider-package',
     selectionRevision: 'cancel-failure',
+    agentMode: null,
+    agentStartup: 'resume',
   })
   const controller = new AbortController()
   const sending = conversations.send(thread.id, 'wait', {

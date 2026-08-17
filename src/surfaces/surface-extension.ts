@@ -144,7 +144,7 @@ export interface SurfaceCommandPort {
   completionSnapshot(): CommandCompletionSnapshot
   bindPresentation(services: {
     readonly output: CommandOutputService
-    readonly mcp: CommandMcpService
+    readonly mcp?: CommandMcpService
     readonly keybindings: CommandKeybindingService
     readonly setThreadBusy?: (threadId: string, busy: boolean) => void
   }): void
@@ -228,6 +228,7 @@ export const surfaceActivationBindings =
     id: 'surfaces.activators',
     version: 1,
     kind: 'surface-activator',
+    targetContribution: surfaceContributions,
   })
 
 export const surfaceFeatureContributions =
@@ -241,6 +242,7 @@ export const surfaceFeatureActivationBindings =
     id: 'surface.features.activators',
     version: 1,
     kind: 'surface-feature-activator',
+    targetContribution: surfaceFeatureContributions,
   })
 
 export const surfaceContributionSpec: ContributionSpec<SurfaceContribution> =

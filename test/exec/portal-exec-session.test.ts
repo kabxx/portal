@@ -69,7 +69,7 @@ test(
           },
           [portalHostTestExtensions]: [
             ...createTestProviderExtensions(async (_providerId, context) => {
-              assert.equal(context.setupMode, 'inline')
+              assert.equal(context.agentStartup, 'inline')
               const jobs = runCommandPlugin.jobService
               return createFakeRuntime({
                 adapter,

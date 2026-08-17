@@ -5,13 +5,18 @@ import { createServiceRef } from '../extensions/extension-contracts.ts'
 import type { PortalWorkspaceContext } from '../extensions/portal-workspace-service.ts'
 import { loadProjectInstructions } from '../instructions/project-instructions.ts'
 import { abortable, throwIfAborted } from '../runtime/runtime-cancellation.ts'
-import type { SetupSkill } from '../runtime/setup-prompt.ts'
 import { SkillLibrary } from './skill-library.ts'
 
 export const PORTAL_SKILLS_PACKAGE_ID = 'portal.skills'
 
+export interface PromptSkillMetadata {
+  readonly name: string
+  readonly description: string
+  readonly manifestPath: string
+}
+
 export interface PromptSkillSnapshot {
-  readonly skills: readonly SetupSkill[]
+  readonly skills: readonly PromptSkillMetadata[]
   readonly projectInstructions: string | null
 }
 

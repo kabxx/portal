@@ -96,3 +96,42 @@ test('Provider endpoint plugins own web Adapter and retry implementation', () =>
   assert.match(endpoint, /createFirstPartyWebProviderAdapter/)
   assert.match(endpoint, /submitWithRetry/)
 })
+
+test('Prompt and Agent policy are graph plugins rather than RuntimeCore behavior', () => {
+  assert.equal(existsSync(path.resolve('src/runtime/setup-prompt.ts')), false)
+  assert.equal(
+    existsSync(path.resolve('src/runtime/setup-handshake.ts')),
+    false
+  )
+
+  const runtime = source('runtime/runtime-core.ts')
+  const factory = source('runtime/runtime-factory.ts')
+  const provider = source('providers/web-provider-endpoint.ts')
+  const domain = source('host/portal-domain-runtime.ts')
+  const promptPlugin = source('prompts/portal-prompt-plugin.ts')
+  const agentPlugin = source('agents/portal-agent-plugin.ts')
+
+  assert.doesNotMatch(
+    runtime,
+    /buildSetupPrompt|PromptSkill|projectInstructions|# Portal Agent/
+  )
+  assert.doesNotMatch(provider, /promptSkillService|buildSetupPrompt/)
+  assert.match(factory, /createAgentSession/)
+  assert.match(domain, /definePromptHost|defineAgentHost/)
+  assert.match(promptPlugin, /promptContributions|promptRendererBindings/)
+  assert.match(agentPlugin, /agentContributions|agentSessionBindings/)
+  assert.doesNotMatch(
+    source('terminal-ui/terminal-controller.ts'),
+    /portal-agent-plugin|portal-prompt-plugin/
+  )
+  for (const relativePath of [
+    'app/tui-surface-plugin.ts',
+    'exec/exec-surface-plugin.ts',
+    'tools/builtins/spawn-plugin.ts',
+  ]) {
+    assert.doesNotMatch(
+      source(relativePath),
+      /portal-agent-plugin|portal-prompt-plugin/
+    )
+  }
+})

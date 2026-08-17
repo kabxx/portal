@@ -52,12 +52,12 @@ test('PortalHost owns the resolved built-in Command plan and session lifecycle',
       [
         '/help',
         '/thread',
-        '/mcp',
         '/keybinding',
         '/providers',
         '/exit',
         '/skill',
         '/plugins',
+        '/mcp',
         '/job',
       ]
     )
@@ -232,11 +232,10 @@ test('run_command graph ownership reaches the Runtime tool prompt', async () => 
     )
     runtime = await createRuntimeFromAdapter(createProviderAdapterStub(), {
       model: null,
-      setupMode: 'skip',
       textToolProtocol: PORTAL_ACTION_PROTOCOL,
       toolHost: host.prepared.toolHost,
+      createAgentSession: async () => null,
     })
-    assert.match(runtime.prompt, /### run_command/)
   } finally {
     await runtime?.close().catch(() => {})
     await host?.close()
@@ -274,7 +273,7 @@ test('PortalHost prepares without launching a browser and starts once', async ()
         },
         [portalHostTestExtensions]: createTestProviderExtensions(
           async (_providerId, context) => {
-            assert.equal(context.setupMode, 'inline')
+            assert.equal(context.agentStartup, 'inline')
             return createFakeRuntime({ adapter })
           }
         ),

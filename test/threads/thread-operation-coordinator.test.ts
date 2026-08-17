@@ -82,6 +82,31 @@ test('coordinator cancellation aborts and stops only the selected thread', async
   await coordinator.cancel('b')
 })
 
+test('coordinator exposes stop and runner failures during cancellation', async () => {
+  const coordinator = new ThreadOperationCoordinator()
+  const operation = coordinator.tryStart(
+    'a',
+    {
+      stopGeneration: async () => {
+        throw new Error('stop failed')
+      },
+    },
+    async ({ signal }) => {
+      await new Promise<void>((resolve) => {
+        signal.addEventListener('abort', () => resolve(), { once: true })
+      })
+    }
+  )
+  assert.equal(operation.accepted, true)
+  if (!operation.accepted) return
+
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  await assert.rejects(operation.operation.cancel(), /stop failed/)
+  assert.ok(operation.operation.settled)
+  await assert.rejects(operation.operation.settled, /stop failed/)
+  assert.equal(coordinator.get('a'), null)
+})
+
 test('operation handle cancellation cannot cancel later work on the same thread', async () => {
   const coordinator = new ThreadOperationCoordinator()
   const first = coordinator.tryStart('a', null, async () => {})

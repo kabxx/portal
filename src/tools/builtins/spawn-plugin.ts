@@ -36,7 +36,11 @@ export const spawnContribution = Object.freeze({
   handlerBindingId: 'portal.tool.spawn.handler',
 })
 
-export function createSpawnPlugin(): {
+export function createSpawnPlugin(
+  options: {
+    readonly dependencies?: readonly string[]
+  } = {}
+): {
   readonly descriptor: {
     readonly id: string
     readonly version: string
@@ -49,7 +53,7 @@ export function createSpawnPlugin(): {
     descriptor: Object.freeze({
       id: 'portal.tool.spawn',
       version: '1.0.0',
-      dependencies: Object.freeze([]),
+      dependencies: Object.freeze([...(options.dependencies ?? [])]),
       capabilities: Object.freeze([]),
     }),
     module: Object.freeze({

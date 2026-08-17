@@ -80,7 +80,8 @@ export function createWebChildConversationService(options: {
             spawnProvider,
             parent.model
           ),
-          setupMode: 'full',
+          agentMode: 'agent',
+          agentStartup: 'interactive',
           workingDirectory: parent.workingDirectory,
           spawnDepth: childSpawnDepth,
         })

@@ -2,7 +2,6 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import * as z from 'zod'
 import type { PortalMcpHandlers } from './mcp-server-types.ts'
-import { THREAD_CREATION_MODES } from '../threads/thread-creation-mode.ts'
 
 const threadSchema = z.object({
   id: z.string(),
@@ -123,48 +122,60 @@ export function createPortalMcpProtocolServer(
       await runTool(async () => await handlers.getThread(threadId))
   )
 
-  server.registerTool(
-    'portal_create_thread',
-    {
-      title: 'Create Portal Thread',
-      description:
-        'Create and initialize a new browser-backed Portal thread. This may wait for browser login.',
-      inputSchema: z.object({
-        provider: z.string().min(1),
-        model: z
-          .string()
-          .nullable()
-          .optional()
-          .describe('Named model key; omit to keep the provider default.'),
-        option: z
-          .string()
-          .nullable()
-          .optional()
-          .describe('Named option key for the selected model.'),
-        mode: z.enum(THREAD_CREATION_MODES).optional(),
-      }),
-      outputSchema: threadSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
+  const agentModes = handlers.listAgentModes()
+  const defaultAgentMode = agentModes.includes('agent')
+    ? 'agent'
+    : agentModes[0]
+  if (defaultAgentMode !== undefined) {
+    const modeSchema =
+      agentModes.length === 2
+        ? z.enum(['agent', 'chat'])
+        : defaultAgentMode === 'agent'
+          ? z.literal('agent')
+          : z.literal('chat')
+    server.registerTool(
+      'portal_create_thread',
+      {
+        title: 'Create Portal Thread',
+        description:
+          'Create and initialize a new browser-backed Portal thread. This may wait for browser login.',
+        inputSchema: z.object({
+          provider: z.string().min(1),
+          model: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('Named model key; omit to keep the provider default.'),
+          option: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('Named option key for the selected model.'),
+          mode: modeSchema.optional(),
+        }),
+        outputSchema: threadSchema,
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: true,
+        },
       },
-    },
-    async ({ provider, model, option, mode }, extra) =>
-      await runTool(
-        async () =>
-          await handlers.createThread(
-            {
-              provider,
-              model: model ?? null,
-              option: option ?? null,
-              mode: mode ?? 'agent',
-            },
-            AbortSignal.any([requestSignal, extra.signal])
-          )
-      )
-  )
+      async ({ provider, model, option, mode }, extra) =>
+        await runTool(
+          async () =>
+            await handlers.createThread(
+              {
+                provider,
+                model: model ?? null,
+                option: option ?? null,
+                mode: mode ?? defaultAgentMode,
+              },
+              AbortSignal.any([requestSignal, extra.signal])
+            )
+        )
+    )
+  }
 
   server.registerTool(
     'portal_resume_thread',

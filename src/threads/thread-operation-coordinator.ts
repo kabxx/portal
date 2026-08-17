@@ -36,6 +36,7 @@ interface MutableThreadOperation {
   done: Promise<void>
   settled: Promise<void>
   resolveSettled: () => void
+  rejectSettled: (reason?: unknown) => void
   cancellation: Promise<void> | null
 }
 
@@ -83,8 +84,10 @@ export class ThreadOperationCoordinator {
     const token = Symbol(threadId)
     const controller = new AbortController()
     let resolveSettled!: () => void
-    const settled = new Promise<void>((resolve) => {
+    let rejectSettled!: (reason?: unknown) => void
+    const settled = new Promise<void>((resolve, reject) => {
       resolveSettled = resolve
+      rejectSettled = reject
     })
     const operation: MutableThreadOperation = {
       token,
@@ -96,6 +99,7 @@ export class ThreadOperationCoordinator {
       done: Promise.resolve(),
       settled,
       resolveSettled,
+      rejectSettled,
       cancellation: null,
     }
     this.operations.set(threadId, operation)
@@ -215,11 +219,18 @@ export class ThreadOperationCoordinator {
   }
 
   public async cancelAll(): Promise<void> {
-    await Promise.allSettled(
+    const outcomes = await Promise.allSettled(
       [...this.operations.keys()].map(async (threadId) => {
         await this.cancel(threadId)
       })
     )
+    const errors: unknown[] = []
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') errors.push(outcome.reason as unknown)
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(errors, 'Thread cancellation failed.')
+    }
   }
 
   private async cancelOperation(
@@ -261,11 +272,28 @@ export class ThreadOperationCoordinator {
         async () => await operation.stopTarget?.stopGeneration()
       ),
       operation.done,
-    ]).then(() => {
+    ]).then((outcomes) => {
       if (this.operations.get(threadId)?.token === operation.token) {
         this.operations.delete(threadId)
       }
-      operation.resolveSettled()
+      const errors: unknown[] = []
+      const stopOutcome = outcomes[0]
+      if (stopOutcome?.status === 'rejected') {
+        errors.push(stopOutcome.reason as unknown)
+      }
+      if (errors.length === 0) {
+        operation.resolveSettled()
+        return
+      }
+      const failure =
+        errors.length === 1
+          ? errors[0]
+          : new AggregateError(
+              errors,
+              `Thread ${threadId} cancellation failed.`
+            )
+      operation.rejectSettled(failure)
+      throw failure
     })
     return await waitForSettlement(
       operation.cancellation,

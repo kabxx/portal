@@ -143,6 +143,45 @@ test('analysis distinguishes partial, unknown, invalid, and ready inputs', () =>
   }
 })
 
+test('route projection removes disabled routes from parsing, hints, and catalog', () => {
+  const host = commandHost()
+  registerCommand(
+    host,
+    command(
+      'test.thread',
+      '/thread',
+      [],
+      [
+        route('root', [], 'always'),
+        route('agent', ['agent'], 'always', [
+          { name: 'provider', cardinality: 'required' },
+        ]),
+        route('chat', ['chat'], 'always', [
+          { name: 'provider', cardinality: 'required' },
+        ]),
+      ]
+    )
+  )
+  const plan = new ResolvedCommandPlan(host.freeze())
+  const projection = {
+    isRouteEnabled: (_commandId: string, routeId: string) =>
+      routeId !== 'agent',
+  }
+
+  assert.equal(plan.prepare('/thread agent gemini', projection).kind, 'invalid')
+  assert.equal(plan.prepare('/thread chat gemini', projection).kind, 'ready')
+  const partial = plan.analyze('/thread a', undefined, projection)
+  assert.equal(partial.kind, 'invalid')
+  assert.equal(
+    partial.hints.some(({ usage }) => usage === 'agent'),
+    false
+  )
+  assert.deepEqual(
+    plan.projectCatalog(projection)[0]?.routes.map(({ id }) => id),
+    ['root', 'chat']
+  )
+})
+
 test('route metadata drives static and dynamic hints, completion, and syntax spans', () => {
   const host = commandHost()
   registerCommand(

@@ -13,7 +13,6 @@ import {
 import { ThreadManager } from '../../src/threads/thread-manager.ts'
 import { createFakeRuntime } from '../helpers/fakes.ts'
 import { createTestSurfacePort } from '../helpers/surface-port.ts'
-import { SETUP_HANDSHAKE_PROMPT } from '../../src/runtime/setup-handshake.ts'
 
 test('TerminalController stores the startup welcome in the home timeline', () => {
   const manager = new ThreadManager()
@@ -332,7 +331,7 @@ test('TerminalController appends resumed history after the ready message', () =>
   assert.equal(notifications, 1)
 })
 
-test('TerminalController hides resume internals and restores tool calls', () => {
+test('TerminalController renders projected history and restores tool calls', () => {
   const manager = new ThreadManager()
   const thread = manager.addThread({
     id: manager.createThreadId(),
@@ -345,24 +344,8 @@ test('TerminalController hides resume internals and restores tool calls', () => 
   ui.showThreadTimeline(thread.id)
   ui.renderConversationHistory(thread, [
     {
-      id: 'setup',
-      parentId: null,
-      role: 'user',
-      text: '# System\n# Tools\n# Setup Handshake',
-      format: 'plain',
-      createdAt: 1,
-    },
-    {
-      id: 'ready',
-      parentId: 'setup',
-      role: 'assistant',
-      text: 'READY',
-      format: 'markdown',
-      createdAt: 2,
-    },
-    {
       id: 'question',
-      parentId: 'ready',
+      parentId: null,
       role: 'user',
       text: 'Inspect the project.',
       format: 'plain',
@@ -500,7 +483,7 @@ test('TerminalController keeps READY when no setup prompt is present', () => {
   )
 })
 
-test('TerminalController hides the chat handshake and accepted READY response', () => {
+test('TerminalController renders history already projected by AgentHost', () => {
   const manager = new ThreadManager()
   const thread = manager.addThread({
     id: manager.createThreadId(),
@@ -512,24 +495,8 @@ test('TerminalController hides the chat handshake and accepted READY response', 
 
   ui.renderConversationHistory(thread, [
     {
-      id: 'setup',
-      parentId: null,
-      role: 'user',
-      text: SETUP_HANDSHAKE_PROMPT,
-      format: 'plain',
-      createdAt: 1,
-    },
-    {
-      id: 'ready',
-      parentId: 'setup',
-      role: 'assistant',
-      text: 'ready - complete',
-      format: 'markdown',
-      createdAt: 2,
-    },
-    {
       id: 'question',
-      parentId: 'ready',
+      parentId: null,
       role: 'user',
       text: 'Hello.',
       format: 'plain',
@@ -543,7 +510,7 @@ test('TerminalController hides the chat handshake and accepted READY response', 
   )
 })
 
-test('TerminalController keeps a later READY response when the handshake reply is missing', () => {
+test('TerminalController keeps ordinary later READY text in projected history', () => {
   const manager = new ThreadManager()
   const thread = manager.addThread({
     id: manager.createThreadId(),
@@ -555,16 +522,8 @@ test('TerminalController keeps a later READY response when the handshake reply i
 
   ui.renderConversationHistory(thread, [
     {
-      id: 'setup',
-      parentId: null,
-      role: 'user',
-      text: SETUP_HANDSHAKE_PROMPT,
-      format: 'plain',
-      createdAt: 1,
-    },
-    {
       id: 'question',
-      parentId: 'setup',
+      parentId: null,
       role: 'user',
       text: 'Can you help?',
       format: 'plain',

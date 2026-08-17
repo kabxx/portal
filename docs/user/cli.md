@@ -109,8 +109,8 @@ Resume from a provider URL or local history id:
 `/thread agent` sends the full portal agent setup prompt. `/thread chat` sends only
 the shared setup handshake and accepts a response containing `READY` as a
 case-insensitive whole word. Both commands still construct the local runtime,
-snapshot Skills and register tools, and
-persist the provider conversation. Chat mode does not advertise those local
+register tools, and persist the provider conversation. Chat mode does not
+request a Skill snapshot or advertise those local
 capabilities to the model, but a valid model-generated tool call can still be
 executed; it is not a sandbox.
 
@@ -151,7 +151,7 @@ Remote messages loaded by resume are display-only and do not increase the local 
 | `/keybinding reset` | Restore and save platform-default terminal shortcuts |
 | `/exit`             | Shut down portal                                     |
 
-The live `/help` output is the source of truth for commands available in the current plugin generation. `/skill`, `/job`, and their related capabilities are absent when their owning plugins or contributions are disabled. Plugin changes apply to the next Portal generation. The normal command supports `/plugins list`, `inspect`, `add`, `update`, `enable`, `disable`, `remove`, and `diagnose`, plus contribution enablement. The recovery CLI also exposes `portal plugins list|inspect|add|update|enable|disable|remove|enable-contribution|disable-contribution|diagnose|repair`. Detailed behavior is documented under [Skills](skills.md) and [Portal MCP Server](mcp-server.md).
+The live `/help` output is the source of truth for commands available in the current plugin generation. `/skill`, `/job`, `/mcp`, and their related capabilities are absent when their owning plugins or contributions are disabled. Plugin changes apply to the next Portal generation. The normal command supports `/plugins list`, `inspect`, `add`, `update`, `enable`, `disable`, `remove`, and `diagnose`, plus contribution enablement. The recovery CLI also exposes `portal plugins list|inspect|add|update|enable|disable|remove|enable-contribution|disable-contribution|diagnose|repair`. Detailed behavior is documented under [Skills](skills.md) and [Portal MCP Server](mcp-server.md).
 
 ## Input controls
 

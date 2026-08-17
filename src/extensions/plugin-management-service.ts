@@ -1,7 +1,7 @@
 import { createServiceRef } from './extension-contracts.ts'
 import type {
   InstalledPluginRecord,
-  PluginContributionDeclaration,
+  PluginContributionSelection,
   PluginDiagnostic,
 } from './plugin-contracts.ts'
 import type {
@@ -66,7 +66,7 @@ export function createPluginManagementService(
 }
 
 export function contributionLabel(
-  contribution: PluginContributionDeclaration
+  contribution: PluginContributionSelection
 ): string {
   return `${contribution.point}:${contribution.id}`
 }

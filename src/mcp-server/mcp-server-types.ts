@@ -34,6 +34,7 @@ export type PortalMcpMessageOperation = {
 
 export interface PortalMcpHandlers {
   listProviders(): Promise<{ providers: string[] }> | { providers: string[] }
+  listAgentModes(): readonly ThreadCreationMode[]
   listJobs?():
     Promise<{ jobs: PortalMcpJobSummary[] }> | { jobs: PortalMcpJobSummary[] }
   stopJob?(

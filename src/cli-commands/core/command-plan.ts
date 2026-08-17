@@ -23,6 +23,7 @@ import type {
   CommandName,
   CommandPositionalSpec,
   CommandRouteConstraint,
+  CommandRouteProjection,
   CommandRouteSpec,
   CommandSyntaxSpan,
   PreparedCommandArguments,
@@ -62,6 +63,7 @@ interface RouteTokenProjection {
 interface AnalyzeOptions {
   readonly final: boolean
   readonly completionSnapshot?: CommandCompletionSnapshot
+  readonly routeProjection?: CommandRouteProjection
 }
 
 export const commandContributions = createContributionRef<CommandContribution>({
@@ -74,6 +76,7 @@ export const commandHandlerBindings =
     id: 'commands.handlers',
     version: 1,
     kind: 'command-handler',
+    targetContribution: commandContributions,
   })
 
 export const commandContributionSpec: ContributionSpec<CommandContribution> =
@@ -152,16 +155,35 @@ export class ResolvedCommandPlan {
 
   public analyze(
     input: string,
-    completionSnapshot?: CommandCompletionSnapshot
+    completionSnapshot?: CommandCompletionSnapshot,
+    routeProjection?: CommandRouteProjection
   ): CommandInputAnalysis {
     return this.#analyze(input, {
       final: false,
       ...(completionSnapshot === undefined ? {} : { completionSnapshot }),
+      ...(routeProjection === undefined ? {} : { routeProjection }),
     })
   }
 
-  public prepare(input: string): CommandInputAnalysis {
-    return this.#analyze(input, { final: true })
+  public prepare(
+    input: string,
+    routeProjection?: CommandRouteProjection
+  ): CommandInputAnalysis {
+    return this.#analyze(input, {
+      final: true,
+      ...(routeProjection === undefined ? {} : { routeProjection }),
+    })
+  }
+
+  public projectCatalog(
+    routeProjection?: CommandRouteProjection
+  ): readonly CommandDescriptor[] {
+    if (routeProjection === undefined) return this.catalog
+    return Object.freeze(
+      this.catalog.map((command) =>
+        projectCommandDescriptor(command, routeProjection)
+      )
+    )
   }
 
   public canExecute(
@@ -237,10 +259,14 @@ export class ResolvedCommandPlan {
       })
     }
 
-    const argumentTokens = tokenized.tokens.slice(1)
-    const routeResult = parseRoute(exact.descriptor, argumentTokens)
-    const hints = routeHints(
+    const descriptor = projectCommandDescriptor(
       exact.descriptor,
+      options.routeProjection
+    )
+    const argumentTokens = tokenized.tokens.slice(1)
+    const routeResult = parseRoute(descriptor, argumentTokens)
+    const hints = routeHints(
+      descriptor,
       commandToken.value,
       input,
       argumentTokens,
@@ -248,10 +274,7 @@ export class ResolvedCommandPlan {
       options.completionSnapshot
     )
     if ('diagnostic' in routeResult) {
-      if (
-        !options.final &&
-        routePrefixExists(exact.descriptor, argumentTokens)
-      ) {
+      if (!options.final && routePrefixExists(descriptor, argumentTokens)) {
         return analysis('partial', {
           hints,
           completion: uniqueCompletion(hints),
@@ -273,8 +296,8 @@ export class ResolvedCommandPlan {
 
     const invocation = freezeImmutableData({
       generation: this.generation,
-      commandId: exact.descriptor.id,
-      primaryName: exact.descriptor.primaryName,
+      commandId: descriptor.id,
+      primaryName: descriptor.primaryName,
       invokedName: commandToken.value,
       routeId: routeResult.route.id,
       availability: routeResult.route.availability,
@@ -317,6 +340,21 @@ export class ResolvedCommandPlan {
     }
     return candidates
   }
+}
+
+function projectCommandDescriptor(
+  command: CommandDescriptor,
+  projection: CommandRouteProjection | undefined
+): CommandDescriptor {
+  if (projection === undefined) return command
+  const routes = command.routes.filter((route) =>
+    projection.isRouteEnabled(command.id, route.id)
+  )
+  if (routes.length === command.routes.length) return command
+  return Object.freeze({
+    ...command,
+    routes: Object.freeze(routes),
+  })
 }
 
 function resolveCommand(

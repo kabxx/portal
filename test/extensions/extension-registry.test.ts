@@ -70,6 +70,7 @@ const itemBindingRef = createExecutableBindingRef<TestExecutableBinding>({
   id: 'test.item-bindings',
   version: 1,
   kind: 'test-handler',
+  targetContribution: itemsRef,
 })
 
 const itemBindingSpec: ExecutableBindingSpec<TestExecutableBinding> = {

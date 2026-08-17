@@ -26,10 +26,7 @@ export {
   transitionLoginWaitWarning,
   type McpForegroundOperation,
 } from './app/app-lifecycle.ts'
-export {
-  createPortalRuntimeSettings,
-  runtimeSetupModeForThreadCreation,
-} from './runtime/runtime-settings.ts'
+export { createPortalRuntimeSettings } from './runtime/runtime-settings.ts'
 export { inheritSpawnModelSelection } from './threads/web-child-conversation-service.ts'
 export {
   clearInteractiveTerminal,
@@ -126,7 +123,7 @@ export async function run(
   )
   try {
     await host.start()
-    let mcp: CommandMcpService = disabledMcpService()
+    let mcp: CommandMcpService | undefined
     if (host.surfaceCatalog().some(({ id }) => id === MCP_SURFACE_ID)) {
       const mcpSurface = await host.activateSurface(MCP_SURFACE_ID, {
         ...(dependencies.createMcpServer === undefined
@@ -140,7 +137,7 @@ export async function run(
     }
     const tui = await host.activateSurface(TUI_SURFACE_ID, {
       version: PORTAL_VERSION,
-      mcp,
+      ...(mcp === undefined ? {} : { mcp }),
       input: stdin,
       output: stdout,
       ...(dependencies.renderTerminal === undefined
@@ -164,14 +161,4 @@ export async function run(
     throw error
   }
   await host.close()
-}
-
-function disabledMcpService(): CommandMcpService {
-  return Object.freeze({
-    start: async () => {
-      throw new Error('The portal.mcp Surface is disabled.')
-    },
-    stop: async () => {},
-    status: () => Object.freeze({ running: false, address: null, auth: false }),
-  })
 }

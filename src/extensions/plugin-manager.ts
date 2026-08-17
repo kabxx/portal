@@ -9,6 +9,7 @@ import type {
   PluginCapabilityExpansionPolicy,
   PluginDiagnostic,
   PluginContributionDeclaration,
+  PluginContributionSelection,
   PluginResolutionSnapshot,
   PluginStoreRepairResult,
   PluginTrustGrant,
@@ -345,7 +346,13 @@ export class PluginManager {
         }),
       ])
     }
-    return await this.#diagnosePackages(packages, true)
+    const diagnostics = [...(await this.#diagnosePackages(packages, true))]
+    resolveContributionDependencies(
+      packages.filter(({ enabled }) => enabled),
+      diagnostics,
+      packages
+    )
+    return Object.freeze(diagnostics)
   }
 
   async #diagnosePackages(
@@ -471,9 +478,14 @@ export class PluginManager {
     for (const record of packages) {
       if (record.enabled) visit(record.manifest.id, [])
     }
+    const effectivePackages = resolveContributionDependencies(
+      resolved,
+      diagnostics,
+      packages
+    )
     return Object.freeze({
       generation: createGeneration(packages),
-      packages: Object.freeze(resolved),
+      packages: effectivePackages,
       diagnostics: Object.freeze(diagnostics),
     })
   }
@@ -529,7 +541,7 @@ export class PluginManager {
         ? current.disabledContributions.filter(
             (item) => item.point !== point || item.id !== contributionId
           )
-        : [...current.disabledContributions, declaration]
+        : [...current.disabledContributions, contributionSelection(declaration)]
       const updated = [...packages]
       updated[index] = Object.freeze({
         ...current,
@@ -610,9 +622,9 @@ function createGeneration(packages: readonly InstalledPluginRecord[]): string {
 }
 
 function retainDeclaredContributions(
-  disabled: readonly PluginContributionDeclaration[],
+  disabled: readonly PluginContributionSelection[],
   declared: readonly PluginContributionDeclaration[]
-): readonly PluginContributionDeclaration[] {
+): readonly PluginContributionSelection[] {
   const current = new Set(
     declared.map((item) => `${item.point}\0${item.id}\0${item.version}`)
   )
@@ -621,6 +633,162 @@ function retainDeclaredContributions(
       current.has(`${item.point}\0${item.id}\0${item.version}`)
     )
   )
+}
+
+function resolveContributionDependencies(
+  packages: readonly InstalledPluginRecord[],
+  diagnostics: PluginDiagnostic[],
+  allPackages: readonly InstalledPluginRecord[]
+): readonly InstalledPluginRecord[] {
+  const nodes = new Map<
+    string,
+    {
+      readonly packageId: string
+      readonly declaration: PluginContributionDeclaration
+    }
+  >()
+  const allPackageIds = new Set(allPackages.map(({ manifest }) => manifest.id))
+  const activePackageIds = new Set(packages.map(({ manifest }) => manifest.id))
+  const disabled = new Set<string>()
+  for (const record of packages) {
+    for (const declaration of record.manifest.contributions) {
+      nodes.set(contributionKey(record.manifest.id, declaration), {
+        packageId: record.manifest.id,
+        declaration,
+      })
+    }
+    for (const selection of record.disabledContributions) {
+      disabled.add(contributionKey(record.manifest.id, selection))
+    }
+  }
+
+  const state = new Map<string, 'visiting' | 'visited'>()
+  const stack: string[] = []
+  const markCycles = (key: string): void => {
+    const current = state.get(key)
+    if (current === 'visited') return
+    if (current === 'visiting') {
+      const cycleStart = stack.indexOf(key)
+      const cycle = stack.slice(cycleStart < 0 ? 0 : cycleStart)
+      for (const cycleKey of cycle) {
+        const node = nodes.get(cycleKey)
+        if (node === undefined) continue
+        disabled.add(cycleKey)
+        pushPluginDiagnostic(diagnostics, {
+          packageId: node.packageId,
+          code: 'contribution-dependency-cycle',
+          message: `Contribution dependency cycle includes ${formatContributionKey(cycleKey)}.`,
+        })
+      }
+      return
+    }
+    const node = nodes.get(key)
+    if (node === undefined) return
+    state.set(key, 'visiting')
+    stack.push(key)
+    for (const dependency of node.declaration.dependencies) {
+      const dependencyKey = contributionKey(dependency.packageId, dependency)
+      if (nodes.has(dependencyKey)) markCycles(dependencyKey)
+    }
+    stack.pop()
+    state.set(key, 'visited')
+  }
+  for (const key of nodes.keys()) markCycles(key)
+
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const [key, node] of nodes) {
+      if (disabled.has(key)) continue
+      for (const dependency of node.declaration.dependencies) {
+        const dependencyKey = contributionKey(dependency.packageId, dependency)
+        if (!nodes.has(dependencyKey)) {
+          disabled.add(key)
+          changed = true
+          const dependencyUnavailable =
+            allPackageIds.has(dependency.packageId) &&
+            !activePackageIds.has(dependency.packageId)
+          pushPluginDiagnostic(diagnostics, {
+            packageId: node.packageId,
+            code: dependencyUnavailable
+              ? 'disabled-contribution-dependency'
+              : 'missing-contribution-dependency',
+            message: dependencyUnavailable
+              ? `${formatContributionKey(key)} requires disabled ${formatContributionKey(dependencyKey)}.`
+              : `${formatContributionKey(key)} requires missing ${formatContributionKey(dependencyKey)}.`,
+          })
+          break
+        }
+        if (disabled.has(dependencyKey)) {
+          disabled.add(key)
+          changed = true
+          pushPluginDiagnostic(diagnostics, {
+            packageId: node.packageId,
+            code: 'disabled-contribution-dependency',
+            message: `${formatContributionKey(key)} requires disabled ${formatContributionKey(dependencyKey)}.`,
+          })
+          break
+        }
+      }
+    }
+  }
+
+  return Object.freeze(
+    packages.map((record) => {
+      const disabledContributions = record.manifest.contributions
+        .filter((declaration) =>
+          disabled.has(contributionKey(record.manifest.id, declaration))
+        )
+        .map(contributionSelection)
+      return Object.freeze({
+        ...record,
+        disabledContributions: Object.freeze(disabledContributions),
+      })
+    })
+  )
+}
+
+function contributionSelection(
+  declaration: PluginContributionDeclaration
+): PluginContributionSelection {
+  return Object.freeze({
+    point: declaration.point,
+    id: declaration.id,
+    version: declaration.version,
+  })
+}
+
+function contributionKey(
+  packageId: string,
+  contribution: {
+    readonly point: string
+    readonly id: string
+    readonly version: number
+  }
+): string {
+  return `${packageId}\0${contribution.point}\0${contribution.id}\0${contribution.version}`
+}
+
+function formatContributionKey(key: string): string {
+  const [packageId, point, id, version] = key.split('\0')
+  return `${packageId}:${point}:${id}@${version}`
+}
+
+function pushPluginDiagnostic(
+  diagnostics: PluginDiagnostic[],
+  diagnostic: PluginDiagnostic
+): void {
+  if (
+    diagnostics.some(
+      (current) =>
+        current.packageId === diagnostic.packageId &&
+        current.code === diagnostic.code &&
+        current.message === diagnostic.message
+    )
+  ) {
+    return
+  }
+  diagnostics.push(diagnostic)
 }
 
 function getErrorMessage(error: unknown): string {

@@ -10,7 +10,21 @@ export interface PluginDependency {
   readonly versionRange: string
 }
 
+export interface PluginContributionDependency {
+  readonly packageId: string
+  readonly point: string
+  readonly id: string
+  readonly version: number
+}
+
 export interface PluginContributionDeclaration {
+  readonly point: string
+  readonly id: string
+  readonly version: number
+  readonly dependencies: readonly PluginContributionDependency[]
+}
+
+export interface PluginContributionSelection {
   readonly point: string
   readonly id: string
   readonly version: number
@@ -50,7 +64,7 @@ export interface InstalledPluginRecord {
   readonly source: PluginSourceRecord
   readonly trust: PluginTrustGrant
   readonly enabled: boolean
-  readonly disabledContributions: readonly PluginContributionDeclaration[]
+  readonly disabledContributions: readonly PluginContributionSelection[]
   readonly installedAt: string
   readonly updatedAt: string
 }
@@ -74,6 +88,9 @@ export interface PluginDiagnostic {
     | 'disabled-dependency'
     | 'dependency-cycle'
     | 'version-mismatch'
+    | 'missing-contribution-dependency'
+    | 'disabled-contribution-dependency'
+    | 'contribution-dependency-cycle'
     | 'api-version-unsupported'
   readonly message: string
 }

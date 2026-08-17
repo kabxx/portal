@@ -7,6 +7,7 @@ import {
   type CommandSessionRuntime,
 } from './command-runtime.ts'
 import type { CommandDescriptor } from './command-contracts.ts'
+import type { CommandRouteProjection } from './command-contracts.ts'
 import {
   commandContributionSpec,
   commandHandlerBindingSpec,
@@ -36,12 +37,17 @@ export class CommandHost {
 
   public openSession(
     parent: ExtensionResourceScope,
-    resourceId: string
+    resourceId: string,
+    options: {
+      readonly routeProjection?: CommandRouteProjection
+    } = {}
   ): CommandSessionRuntime {
-    return this.#runtime.openSession(parent, resourceId)
+    return this.#runtime.openSession(parent, resourceId, options)
   }
 
-  public catalog(): readonly CommandDescriptor[] {
-    return this.#runtime.plan.catalog
+  public catalog(
+    routeProjection?: CommandRouteProjection
+  ): readonly CommandDescriptor[] {
+    return this.#runtime.plan.projectCatalog(routeProjection)
   }
 }

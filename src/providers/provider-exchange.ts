@@ -13,9 +13,10 @@ import {
 import type { ExtensionRegistry } from '../extensions/extension-registry.ts'
 import type { AttachmentRef } from '../attachments/attachment-contracts.ts'
 import type { ResolvedProviderModel } from './provider-model-catalog.ts'
-import type { RuntimeSetupMode } from '../runtime/setup-handshake.ts'
 import type { ConversationHistoryResult } from './conversation-history.ts'
-import { promptSkillService } from '../skills/skill-services.ts'
+import type { AgentSession } from '../agents/agent-extension.ts'
+import type { AgentMode, AgentStartup } from '../agents/agent-extension.ts'
+import type { TextToolProtocol } from '../tools/core/text-tool-protocol.ts'
 
 export const PROVIDER_ATTACHMENT_CAPABILITY = 'portal.provider.attachments'
 
@@ -131,17 +132,22 @@ export interface ProviderEndpoint {
 
 export type ProviderEndpointFactory = (context: {
   readonly providerId: string
+  readonly agentMode: AgentMode | null
+  readonly agentStartup: AgentStartup
   readonly scope: { readonly name: string; readonly signal: AbortSignal }
   readonly signal: AbortSignal
   readonly readAttachment: (ref: AttachmentRef) => Promise<Uint8Array>
   readonly services: ServiceAccessor
   readonly conversationUrl: string | null
   readonly model: ResolvedProviderModel | null
-  readonly setupMode: RuntimeSetupMode
   readonly workingDirectory: string
   readonly spawnDepth: number
   readonly sessionKey: string | null
   readonly emit: (event: ProviderEvent) => void | Promise<void>
+  readonly openAgentSession: (request: {
+    readonly tools: string | null
+    readonly textToolProtocol: TextToolProtocol | null
+  }) => Promise<AgentSession | null>
 }) => ProviderEndpoint | Promise<ProviderEndpoint>
 
 export interface ProviderContribution {
@@ -196,6 +202,7 @@ export const providerEndpointBindings =
     id: 'providers.endpoint-factories',
     version: 1,
     kind: 'provider-endpoint',
+    targetContribution: providerContributions,
   })
 
 export function createProviderContributionSpec(
@@ -249,10 +256,7 @@ export function createProviderContributionSpec(
     maxPerConflictKey: 1,
     selection: 'all',
     ordering: 'dependency-edges',
-    allowedServices: Object.freeze([
-      promptSkillService,
-      ...additionalAllowedServices,
-    ]),
+    allowedServices: Object.freeze([...additionalAllowedServices]),
     allowedCapabilities: Object.freeze([]),
   })
 }
@@ -278,6 +282,7 @@ export const providerConversationUrlBindings =
     id: 'providers.conversation-url-resolvers',
     version: 1,
     kind: 'provider-conversation-url-resolver',
+    targetContribution: providerContributions,
   })
 
 export const providerConversationUrlBindingSpec: ExecutableBindingSpec<ProviderConversationUrlResolver> =
@@ -302,7 +307,6 @@ export function defineProviderHost(
     readonly allowedServices?: readonly import('../extensions/extension-contracts.ts').ServiceRef<unknown>[]
   } = {}
 ): void {
-  registry.defineService(promptSkillService)
   for (const service of options.allowedServices ?? []) {
     registry.defineService(service)
   }

@@ -39,7 +39,6 @@ import type {
   ProviderOutboundLeg,
   ProviderSessionControl,
 } from './provider-exchange.ts'
-import { promptSkillService } from '../skills/skill-services.ts'
 
 export interface WebProviderEndpointOptions {
   readonly context: BrowserContext
@@ -76,8 +75,6 @@ export async function createWebProviderEndpoint(
   context: Parameters<ProviderEndpointFactory>[0],
   options: WebProviderEndpointOptions
 ): Promise<ProviderEndpoint> {
-  const prompt = await context.services.get(promptSkillService)
-  const promptSnapshot = await prompt.snapshot(context.signal)
   const attachmentReader: AttachmentReader = Object.freeze({
     read: context.readAttachment,
   })
@@ -102,9 +99,6 @@ export async function createWebProviderEndpoint(
     createRuntime: async (adapter) =>
       await (options.createRuntime?.(adapter, {
         model: context.model,
-        setupMode: context.setupMode,
-        skills: promptSnapshot.skills,
-        projectInstructions: promptSnapshot.projectInstructions,
         toolHost: options.tools,
         providerId,
         currentSpawnDepth: context.spawnDepth,
@@ -112,12 +106,11 @@ export async function createWebProviderEndpoint(
         textToolProtocol: adapter.textToolProtocol,
         attachmentReader,
         signal: context.signal,
+        createAgentSession: async ({ tools, textToolProtocol }) =>
+          await context.openAgentSession({ tools, textToolProtocol }),
       }) ??
         createRuntimeFromAdapter(adapter, {
           model: context.model,
-          setupMode: context.setupMode,
-          skills: promptSnapshot.skills,
-          projectInstructions: promptSnapshot.projectInstructions,
           toolHost: options.tools,
           providerId,
           currentSpawnDepth: context.spawnDepth,
@@ -125,6 +118,8 @@ export async function createWebProviderEndpoint(
           textToolProtocol: adapter.textToolProtocol,
           attachmentReader,
           signal: context.signal,
+          createAgentSession: async ({ tools, textToolProtocol }) =>
+            await context.openAgentSession({ tools, textToolProtocol }),
         })),
     onWarning: async (plan) => {
       if (plan.requiresLogin) loginAttentionSent = true
@@ -198,7 +193,7 @@ export async function createWebProviderEndpoint(
       adapter,
       tools,
       requestAttemptLimit: options.requestAttemptLimit ?? 3,
-      prepareText: (text) => runtime.prepareExchangeInput(text),
+      prepareText: async (text) => await runtime.prepareExchangeInput(text),
     })
     void submission.catch(() => undefined)
     const events: AsyncIterable<ProviderEvent> = Object.freeze({
@@ -260,7 +255,7 @@ async function submitLeg(options: {
   readonly adapter: ProviderAdapter
   readonly tools: ToolRegistry
   readonly requestAttemptLimit: number
-  readonly prepareText: (text: string) => string
+  readonly prepareText: (text: string) => Promise<string>
 }): Promise<{
   readonly text: string
   readonly toolRequest: {
@@ -277,7 +272,9 @@ async function submitLeg(options: {
       read: options.context.readAttachment,
     })
   }
-  const payload = options.prepareText(formatOutboundMessage(message, options))
+  const payload = await options.prepareText(
+    formatOutboundMessage(message, options)
+  )
   const response = await submitWithRetry(
     options.adapter,
     payload,

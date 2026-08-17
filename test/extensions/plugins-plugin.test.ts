@@ -53,7 +53,9 @@ test('/plugins session routes cover package and contribution enablement', async 
   )
   t.after(async () => await rm(root, { recursive: true, force: true }))
   const packageDirectory = await createPlugin(root, 'test.routes', {
-    contributions: [{ point: 'test.tools', id: 'test.tool', version: 1 }],
+    contributions: [
+      { point: 'test.tools', id: 'test.tool', version: 1, dependencies: [] },
+    ],
   })
   const manager = new PluginManager({
     store: new JsonPluginStore(path.join(root, 'plugins.json')),

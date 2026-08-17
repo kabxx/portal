@@ -20,10 +20,7 @@ export function createTuiThreadInputHandler({
   ): Promise<void> {
     const activeThread = surface.getActiveThread()
     if (activeThread === null) {
-      ui.renderWarning(
-        'portal',
-        'No active thread. Use /thread agent to create one, or /help to see commands.'
-      )
+      ui.renderWarning('portal', noActiveThreadMessage(surface))
       return
     }
 
@@ -65,6 +62,13 @@ export function createTuiThreadInputHandler({
       )
       .catch(() => undefined)
   }
+}
+
+export function noActiveThreadMessage(surface: SurfacePortActions): string {
+  const mode = surface.listAgentModes()[0]
+  return mode === undefined
+    ? 'No active thread. No Agent mode is enabled; use /plugins list to inspect plugins.'
+    : `No active thread. Use /thread ${mode} to create one, or /help to see commands.`
 }
 
 async function renderSurfaceEvent(

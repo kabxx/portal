@@ -71,6 +71,7 @@ export const toolHandlerBindings = createExecutableBindingRef<ToolHandler>({
   id: 'tools.handlers',
   version: 1,
   kind: 'tool-handler',
+  targetContribution: toolContributions,
 })
 
 const stableId = z.string().regex(/^[a-z0-9][a-z0-9._:/-]*$/)

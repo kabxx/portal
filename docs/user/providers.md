@@ -22,9 +22,11 @@ portal supports eight web AI products through provider-specific adapters. Every 
 
 Model keys and model-specific options are maintained in the typed Provider definitions under `src/providers/definitions/`. Provider-local UI components translate those logical keys into current page interactions. Numeric menu positions and DOM details are internal and are not accepted by the CLI or MCP Server.
 
-Portal statically imports all eight definitions into one deeply frozen domain snapshot. TypeScript and startup validation check each Provider's exact model, option, and capability metadata. Definitions contain no selector, menu position, or dispatch target. Provider-local UI components own selectors, page ownership, uniqueness, visibility, interaction state, and model/capability dispatch. Account- or experiment-dependent capabilities are still discovered from the live page.
-
-`gpt` is accepted as a command alias for `chatgpt`; the other provider ids are used as shown.
+Each bundled Provider package contributes its immutable descriptor and endpoint
+bindings to the resolved plugin graph. TypeScript and startup validation check
+the model, option, and capability metadata. Provider-local UI components own
+selectors, page ownership, visibility, interaction state, and dispatch.
+Account- or experiment-dependent capabilities are discovered from the live page.
 
 ## Creating a conversation
 
@@ -45,11 +47,12 @@ Examples:
 /thread chat gemini 3.6-flash extended
 ```
 
-When the model argument is omitted, portal leaves the provider's current/default selection unchanged. Both creation commands create a page, verify login and composer readiness, snapshot enabled Skills, and require a case-insensitive whole-word `READY` token in the handshake response.
+When the model argument is omitted, portal leaves the provider's current/default selection unchanged. Both creation commands create a page, verify login and composer readiness, and require the selected Agent plugin to accept the initialization response. The bundled Agent accepts `READY` as a case-insensitive whole word.
 
 `/thread agent` sends the full portal agent setup prompt. `/thread chat` sends
-only the shared setup handshake, without the tool protocol, Skill catalog,
-working directory, or project instructions.
+only the shared setup handshake, without the tool protocol, Skill catalog, or
+project instructions. It still includes the working directory in its Runtime
+section.
 The local chat runtime still owns those configured integrations and can execute
 a valid model-generated tool call, so this mode is not a sandbox.
 

@@ -6,8 +6,6 @@ import type {
   ToolProgressEvent,
 } from '../tools/core/tool-definition.ts'
 import { getDefaultShell } from '../platform/platform-defaults.ts'
-import { hasReadyHandshakeToken } from '../runtime/setup-handshake.ts'
-import { isPortalSetupPrompt } from '../runtime/setup-prompt.ts'
 
 export type UiTone =
   | 'info'
@@ -569,34 +567,8 @@ export class TerminalController {
       return
     }
 
-    const hiddenIndexes = new Set<number>()
-    const firstMessage = messages[0]
-    if (isInitialSetupMessage(firstMessage)) {
-      hiddenIndexes.add(0)
-      const nextUserIndex = messages.findIndex(
-        (message, index) => index > 0 && message.role === 'user'
-      )
-      const firstAssistantIndex = messages.findIndex(
-        (message, index) =>
-          index > 0 &&
-          (nextUserIndex === -1 || index < nextUserIndex) &&
-          message.role === 'assistant'
-      )
-      const firstAssistant =
-        firstAssistantIndex === -1 ? null : messages[firstAssistantIndex]
-      if (
-        firstAssistant != null &&
-        hasReadyHandshakeToken(firstAssistant.text)
-      ) {
-        hiddenIndexes.add(firstAssistantIndex)
-      }
-    }
-
     const entries: TimelineEntry[] = []
-    for (const [index, message] of messages.entries()) {
-      if (hiddenIndexes.has(index)) {
-        continue
-      }
+    for (const message of messages) {
       if (message.role === 'user' && message.toolResult === true) {
         continue
       }
@@ -1234,16 +1206,6 @@ function createTimelineView(key: string): TimelineViewState {
 
 function isLiveCommandTool(toolName: string): boolean {
   return toolName === 'run_command' || toolName === 'spawn'
-}
-
-function isInitialSetupMessage(
-  message: ConversationHistoryMessage | undefined
-): boolean {
-  return (
-    message?.role === 'user' &&
-    (message.text.trimStart().startsWith('# System') ||
-      isPortalSetupPrompt(message.text))
-  )
 }
 
 function toBodyText(body: string | readonly string[]): string {

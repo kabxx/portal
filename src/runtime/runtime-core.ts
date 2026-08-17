@@ -30,15 +30,7 @@ import {
   type ComposerLimitCheck,
   type ComposerTextOrigin,
 } from '../providers/composer-limit.ts'
-import {
-  hasReadyHandshakeToken,
-  type RuntimeSetupMode,
-} from './setup-handshake.ts'
-import {
-  buildSetupHandshakePrompt,
-  buildSetupPrompt,
-  type SetupSkill,
-} from './setup-prompt.ts'
+import { type AgentSession } from '../agents/agent-extension.ts'
 import type {
   ThreadRuntimeHandlers,
   ThreadToolCallMetadata,
@@ -53,10 +45,8 @@ interface OutboundToolResult {
 }
 
 export interface RuntimeCoreOptions {
-  skills?: readonly SetupSkill[]
-  projectInstructions?: string | null
+  agentSession: AgentSession | null
   requestAttemptLimit?: number
-  workingDirectory?: string
   attachmentReader?: AttachmentReader
   exchangeDelegate?: (
     input: string,
@@ -66,40 +56,31 @@ export interface RuntimeCoreOptions {
 }
 
 export class RuntimeCore {
-  private readonly skills: readonly SetupSkill[]
-  private readonly projectInstructions: string | null
+  private readonly agentSession: AgentSession | null
   private readonly requestAttemptLimit: number
-  private readonly workingDirectory: string
   private readonly attachmentReader: AttachmentReader | null
   private readonly exchangeDelegate: RuntimeCoreOptions['exchangeDelegate']
   private readonly onClose: RuntimeCoreOptions['onClose']
-  private inlineSetupPending = false
 
   constructor(
     private readonly agentAdapter: ProviderAdapter,
     private readonly toolRegistry: ToolRegistry,
-    options: RuntimeCoreOptions = {}
+    options: RuntimeCoreOptions
   ) {
-    this.skills = [...(options.skills ?? [])]
-    this.projectInstructions = options.projectInstructions ?? null
+    this.agentSession = options.agentSession
     this.requestAttemptLimit = options.requestAttemptLimit ?? 3
-    this.workingDirectory = options.workingDirectory ?? process.cwd()
     this.attachmentReader = options.attachmentReader ?? null
     this.exchangeDelegate = options.exchangeDelegate
     this.onClose = options.onClose
   }
 
-  public async init(
-    options: AbortOptions & {
-      setupMode?: Exclude<RuntimeSetupMode, 'skip' | 'inline'>
-    } = {}
-  ) {
+  public async init(options: AbortOptions = {}) {
+    const initialization = this.agentSession?.initialization ?? null
+    if (initialization === null) return
     await this.retryAsync(async () => {
       throwIfAborted(options.signal)
       const setupPrompt = await this.prepareOutboundText(
-        options.setupMode === 'handshake'
-          ? buildSetupHandshakePrompt(this.workingDirectory)
-          : this.prompt,
+        initialization.prompt,
         'internal',
         null,
         options.signal
@@ -109,43 +90,18 @@ export class RuntimeCore {
       const response =
         await this.agentAdapter.submitWithResponseTimeout(options)
       throwIfAborted(options.signal)
-      if (!hasReadyHandshakeToken(response)) {
+      if (!initialization.accepts(response)) {
         throw new Error(
-          'Setup handshake failed: response did not contain READY.'
+          'Agent initialization failed: response was not accepted.'
         )
       }
     }, options)
   }
 
-  public get prompt(): string {
-    return buildSetupPrompt({
-      tools: this.toolRegistry.prompt,
-      textToolProtocol: this.toolRegistry.protocol,
-      skills: this.skills,
-      projectInstructions: this.projectInstructions,
-      workingDirectory: this.workingDirectory,
-    })
-  }
-
-  public enableInlineSetup(): void {
-    this.inlineSetupPending = true
-  }
-
-  public buildInlineTaskPrompt(input: string): string {
-    return buildSetupPrompt({
-      tools: this.toolRegistry.prompt,
-      textToolProtocol: this.toolRegistry.protocol,
-      skills: this.skills,
-      projectInstructions: this.projectInstructions,
-      workingDirectory: this.workingDirectory,
-      task: input,
-    })
-  }
-
-  public prepareExchangeInput(input: string): string {
-    if (!this.inlineSetupPending) return input
-    this.inlineSetupPending = false
-    return this.buildInlineTaskPrompt(input)
+  public async prepareExchangeInput(input: string): Promise<string> {
+    return this.agentSession === null
+      ? input
+      : await this.agentSession.prepareInput(input)
   }
 
   public get conversationId(): string | null {
@@ -164,9 +120,10 @@ export class RuntimeCore {
     input: string,
     signal?: AbortSignal
   ): Promise<ComposerLimitCheck> {
-    const outboundText = this.inlineSetupPending
-      ? this.buildInlineTaskPrompt(input)
-      : input
+    const outboundText =
+      this.agentSession === null
+        ? input
+        : await this.agentSession.previewInput(input)
     const limit = await this.agentAdapter.getComposerLimit({ signal })
     throwIfAborted(signal)
     return checkComposerLimit(outboundText, limit)
@@ -216,7 +173,7 @@ export class RuntimeCore {
     if (this.exchangeDelegate !== undefined) {
       return await this.exchangeDelegate(input, handlers)
     }
-    let user = this.prepareExchangeInput(input)
+    let user = await this.prepareExchangeInput(input)
     let outboundOrigin: ComposerTextOrigin = 'user'
     let outboundToolResult: OutboundToolResult | null = null
     let assistant: string
@@ -442,6 +399,7 @@ export class RuntimeCore {
   public async close() {
     const outcomes = await Promise.allSettled([
       this.agentAdapter.close(),
+      Promise.resolve().then(async () => await this.agentSession?.close?.()),
       Promise.resolve().then(async () => await this.onClose?.()),
     ])
     const failures = outcomes

@@ -22,10 +22,17 @@ import {
   ProviderHostError,
 } from '../../src/providers/provider-host.ts'
 import { promptSkillService } from '../../src/skills/skill-services.ts'
+import type { AttachmentReader } from '../../src/attachments/attachment-contracts.ts'
+
+const RESUME_BINDING = Object.freeze({
+  agentMode: null,
+  agentStartup: 'resume' as const,
+})
 
 function createHost(
   factory: ProviderEndpointFactory,
-  resolveConversationUrl: (value: string) => string | null = () => null
+  resolveConversationUrl: (value: string) => string | null = () => null,
+  attachmentReader?: AttachmentReader
 ): {
   readonly host: ProviderHost
   readonly root: ResourceScope
@@ -78,7 +85,11 @@ function createHost(
   )
   const root = new ResourceScope('provider-test-root')
   return {
-    host: new ProviderHost({ graph: registry.freeze(), parent: root }),
+    host: new ProviderHost({
+      graph: registry.freeze(),
+      parent: root,
+      ...(attachmentReader === undefined ? {} : { attachmentReader }),
+    }),
     root,
   }
 }
@@ -105,7 +116,7 @@ test('ProviderHost resolves conversation URLs through the owning Provider bindin
   assert.equal(host.resolveConversationUrl('provider://unknown'), null)
 })
 
-test('ProviderHost reports unknown preflight when a Provider has no session control', async (t) => {
+test('ProviderHost rejects session capability requests without a Provider session control', async (t) => {
   const { host, root } = createHost(async () => async () => ({
     events: (async function* (): AsyncGenerator<ProviderEvent> {})(),
     completion: Promise.resolve({
@@ -119,10 +130,85 @@ test('ProviderHost reports unknown preflight when a Provider has no session cont
   const binding = await host.openBinding(
     'test.provider',
     'test.provider-package',
-    'preflight'
+    'preflight',
+    RESUME_BINDING
   )
 
-  assert.deepEqual(await binding.preflightInput('input'), { status: 'unknown' })
+  await assert.rejects(
+    binding.preflightInput('input'),
+    /does not expose the requested session capability/
+  )
+})
+
+test('ProviderHost exposes an explicit resumed binding to Provider plugins', async (t) => {
+  let observedStartup: string | null = null
+  const { host, root } = createHost(async (context) => {
+    observedStartup = context.agentStartup
+    assert.equal(
+      await context.openAgentSession({ tools: null, textToolProtocol: null }),
+      null
+    )
+    return async () => ({
+      events: (async function* (): AsyncGenerator<ProviderEvent> {})(),
+      completion: Promise.resolve<ProviderCompletion>({
+        status: 'completed',
+        text: '',
+        delivery: 'not-sent',
+      }),
+      cancel: () => undefined,
+    })
+  })
+  t.after(async () => await root.dispose())
+
+  const binding = await host.openBinding(
+    'test.provider',
+    'test.provider-package',
+    'explicit-resume',
+    RESUME_BINDING
+  )
+  assert.equal(observedStartup, 'resume')
+  await binding.close()
+})
+
+test('ProviderHost rejects inconsistent Agent startup selections', async (t) => {
+  let factoryCalls = 0
+  const { host, root } = createHost(async () => {
+    factoryCalls += 1
+    throw new Error('must not run')
+  })
+  t.after(async () => await root.dispose())
+
+  await assert.rejects(
+    host.openBinding('test.provider', 'test.provider-package', 'invalid', {
+      agentMode: 'agent',
+      agentStartup: 'resume',
+    }),
+    /invalid Agent startup selection/
+  )
+  assert.equal(factoryCalls, 0)
+})
+
+test('ProviderHost checks Agent availability before invoking the endpoint factory', async (t) => {
+  let factoryCalls = 0
+  const { host, root } = createHost(async () => {
+    factoryCalls += 1
+    throw new Error('must not run')
+  })
+  t.after(async () => await root.dispose())
+
+  await assert.rejects(
+    host.openBinding(
+      'test.provider',
+      'test.provider-package',
+      'missing-agent',
+      {
+        agentMode: 'agent',
+        agentStartup: 'interactive',
+      }
+    ),
+    /no Agent Host/
+  )
+  assert.equal(factoryCalls, 0)
 })
 
 test('ProviderHost waits for and closes a late endpoint after binding cancellation', async () => {
@@ -136,7 +222,8 @@ test('ProviderHost waits for and closes a late endpoint after binding cancellati
   const opening = host.openBinding(
     'test.provider',
     'test.provider-package',
-    '1'
+    '1',
+    RESUME_BINDING
   )
   void opening.catch(() => undefined)
   await factoryStarted.promise
@@ -185,7 +272,8 @@ test('ProviderHost binds one owner endpoint and closes an exchange after provide
   const binding = await host.openBinding(
     'test.provider',
     'test.provider-package',
-    '1'
+    '1',
+    RESUME_BINDING
   )
   const exchange = await binding.exchange({
     exchangeId: 'exchange-1',
@@ -225,7 +313,8 @@ test('ProviderHost cancellation revokes exchange scope and observes a late compl
   const binding = await host.openBinding(
     'test.provider',
     'test.provider-package',
-    '1'
+    '1',
+    RESUME_BINDING
   )
   const exchange = await binding.exchange({
     exchangeId: 'exchange-cancel',
@@ -254,7 +343,7 @@ test('ProviderHost rejects binding ownership mismatches before invoking plugin c
   t.after(async () => await root.dispose())
 
   await assert.rejects(
-    host.openBinding('test.provider', 'other.owner', '1'),
+    host.openBinding('test.provider', 'other.owner', '1', RESUME_BINDING),
     ProviderHostError
   )
   assert.equal(factoryCalls, 0)
@@ -274,7 +363,8 @@ test('ProviderHost cancels exchange creation and disposes a late handle', async 
   const binding = await host.openBinding(
     'test.provider',
     'test.provider-package',
-    'creation-cancel'
+    'creation-cancel',
+    RESUME_BINDING
   )
   const controller = new AbortController()
   const exchange = binding.exchange(
@@ -302,6 +392,47 @@ test('ProviderHost cancels exchange creation and disposes a late handle', async 
   assert.equal(cancelCalls, 1)
 })
 
+test('ProviderHost releases attachments when exchange creation fails', async (t) => {
+  const released: string[] = []
+  const attachment = Object.freeze({
+    id: 'attachment:abc',
+    mediaType: 'image/png',
+    sizeBytes: 3,
+    sha256: 'abc',
+  })
+  const endpoint: ProviderEndpoint = async () => {
+    throw new Error('exchange creation failed')
+  }
+  const { host, root } = createHost(
+    async () => endpoint,
+    () => null,
+    {
+      read: async () => new Uint8Array([1, 2, 3]),
+      release: (ref) => {
+        released.push(ref.id)
+      },
+    }
+  )
+  t.after(async () => await root.dispose())
+  const binding = await host.openBinding(
+    'test.provider',
+    'test.provider-package',
+    'attachment-failure',
+    RESUME_BINDING
+  )
+
+  await assert.rejects(
+    binding.exchange({
+      exchangeId: 'exchange-attachment-failure',
+      conversationId: 'conversation-1',
+      messages: [{ role: 'user', content: 'fail' }],
+      attachments: [attachment],
+    }),
+    /exchange creation failed/
+  )
+  assert.deepEqual(released, [attachment.id])
+})
+
 test('ProviderHost reports both exchange and cancellation cleanup failures', async (t) => {
   const { host, root } = createHost(async () => async () => ({
     events: (async function* (): AsyncGenerator<ProviderEvent> {})(),
@@ -316,7 +447,8 @@ test('ProviderHost reports both exchange and cancellation cleanup failures', asy
   const binding = await host.openBinding(
     'test.provider',
     'test.provider-package',
-    'cleanup-failure'
+    'cleanup-failure',
+    RESUME_BINDING
   )
   const exchange = await binding.exchange({
     exchangeId: 'exchange-cleanup-failure',

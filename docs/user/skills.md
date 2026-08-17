@@ -119,7 +119,7 @@ These checks reduce accidental damage; they do not prove that a skill is safe.
 
 ## Runtime lifecycle
 
-When a new agent thread, chat thread, or spawned runtime is created:
+When a new agent thread or spawned runtime is created:
 
 1. Portal reads registered Skills and enabled state from
    `state/skills.json`.
@@ -127,15 +127,15 @@ When a new agent thread, chat thread, or spawned runtime is created:
    name, sanitized description, and absolute `SKILL.md` path.
 3. Agent threads and spawned runtimes include that metadata under `## Skills`
    in the full setup prompt. The manifest body and resources are not injected.
-4. Chat threads retain the local snapshot without advertising it because they
-   send only the minimal handshake.
+4. Chat threads do not request the Skill snapshot because their Prompt plugin
+   sends only the minimal handshake.
 
-An active runtime keeps its catalog membership and metadata. Adding, enabling,
-disabling, removing, or editing a Skill requires a new runtime before the setup
-catalog changes. A resumed conversation creates a current local snapshot, but
-`setupMode: 'skip'` does not send a new setup turn to the existing provider
-conversation. Newly enabled names are therefore reliably advertised only by
-creating a new agent thread or spawned runtime.
+An active Prompt session keeps its catalog membership and metadata. Adding,
+enabling, disabling, removing, or editing a Skill requires a new Agent thread
+before the setup catalog changes. A resumed conversation opens no Prompt
+session and sends no new setup turn to the existing provider conversation.
+Newly enabled names are therefore advertised only by creating a new agent
+thread or spawned runtime.
 
 ## Resources
 

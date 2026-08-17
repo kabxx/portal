@@ -60,6 +60,10 @@ export interface CommandRouteSpec {
   readonly help: readonly CommandHelpRow[]
 }
 
+export interface CommandRouteProjection {
+  isRouteEnabled(commandId: ContributionId, routeId: string): boolean
+}
+
 export interface CommandContribution {
   readonly id: ContributionId
   readonly primaryName: CommandName

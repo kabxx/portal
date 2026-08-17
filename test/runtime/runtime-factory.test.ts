@@ -18,22 +18,91 @@ import { SkillLibrary } from '../../src/skills/skill-library.ts'
 import { createTestSkill } from '../helpers/skills.ts'
 import { loadProjectInstructions } from '../../src/instructions/project-instructions.ts'
 import { createBrowserContextStub } from '../helpers/fakes.ts'
-import { SETUP_HANDSHAKE_PROMPT } from '../../src/runtime/setup-handshake.ts'
 import { PORTAL_ACTION_PROTOCOL } from '../../src/providers/portal-action-protocol.ts'
 import { createTestToolHost } from '../helpers/tool-host.ts'
+import {
+  buildPortalAgentPrompt,
+  buildPortalChatPrompt,
+} from '../../src/prompts/portal-prompt-plugin.ts'
+import { hasReadyHandshakeToken } from '../../src/agents/portal-agent-plugin.ts'
+import type { AgentSession } from '../../src/agents/agent-extension.ts'
+import type { PromptSkillMetadata } from '../../src/skills/skill-services.ts'
 
-type TestRuntimeFactoryOptions = Omit<RuntimeFactoryOptions, 'toolHost'> &
-  Partial<Pick<RuntimeFactoryOptions, 'toolHost'>>
+type TestRuntimeFactoryOptions = Omit<
+  RuntimeFactoryOptions,
+  'toolHost' | 'createAgentSession'
+> &
+  Partial<Pick<RuntimeFactoryOptions, 'toolHost' | 'createAgentSession'>> & {
+    setupMode?: 'full' | 'handshake' | 'inline' | 'skip'
+    skills?: readonly PromptSkillMetadata[]
+    projectInstructions?: string | null
+  }
 
 async function createRuntimeFromAdapter(
   adapter: ProviderAdapter,
   options: TestRuntimeFactoryOptions
 ) {
-  const { toolHost, ...runtimeOptions } = options
+  const {
+    toolHost,
+    setupMode = 'full',
+    skills = [],
+    projectInstructions = null,
+    createAgentSession,
+    ...runtimeOptions
+  } = options
   return await createProductionRuntimeFromAdapter(adapter, {
     ...runtimeOptions,
     toolHost: toolHost ?? createTestToolHost(adapter, []),
+    createAgentSession:
+      createAgentSession ??
+      (async ({ tools, textToolProtocol }) =>
+        createTestAgentSession({
+          setupMode,
+          skills,
+          projectInstructions,
+          workingDirectory: runtimeOptions.workingDirectory ?? process.cwd(),
+          tools,
+          textToolProtocol,
+        })),
   })
+}
+
+function createTestAgentSession(options: {
+  readonly setupMode: 'full' | 'handshake' | 'inline' | 'skip'
+  readonly skills: readonly PromptSkillMetadata[]
+  readonly projectInstructions: string | null
+  readonly workingDirectory: string
+  readonly tools: string | null
+  readonly textToolProtocol: RuntimeFactoryOptions['textToolProtocol']
+}): AgentSession | null {
+  if (options.setupMode === 'skip') return null
+  const promptRequest = {
+    tools: options.tools,
+    textToolProtocol: options.textToolProtocol ?? null,
+    workingDirectory: options.workingDirectory,
+  }
+  const render = (task?: string) =>
+    options.setupMode === 'handshake'
+      ? buildPortalChatPrompt(options.workingDirectory, task)
+      : buildPortalAgentPrompt({
+          request: promptRequest,
+          skills: options.skills,
+          projectInstructions: options.projectInstructions,
+          ...(task === undefined ? {} : { task }),
+        })
+  let inlinePending = options.setupMode === 'inline'
+  return {
+    initialization:
+      options.setupMode === 'inline'
+        ? null
+        : { prompt: render(), accepts: hasReadyHandshakeToken },
+    previewInput: async (input) => (inlinePending ? render(input) : input),
+    prepareInput: async (input) => {
+      if (!inlinePending) return input
+      inlinePending = false
+      return render(input)
+    },
+  }
 }
 
 interface FakeAdapterOptions {
@@ -199,7 +268,9 @@ test('createRuntimeFromAdapter can send only the setup handshake for chat thread
     setupMode: 'handshake',
   })
 
-  assert.deepEqual(adapter.attachedTexts, [SETUP_HANDSHAKE_PROMPT])
+  assert.deepEqual(adapter.attachedTexts, [
+    buildPortalChatPrompt(process.cwd()),
+  ])
 })
 
 test('createRuntimeFromAdapter keeps the default tool setup compact', async () => {
@@ -225,6 +296,23 @@ test('generic Runtime does not inject a product Tool catalog', async () => {
     adapter.attachedTexts[0] ?? '',
     /## Portal Action Protocol/
   )
+})
+
+test('Runtime preserves an API Provider decision to use no text Tool protocol', async () => {
+  const adapter = new FakeAdapter()
+  let selectedProtocol: RuntimeFactoryOptions['textToolProtocol'] = undefined
+
+  await createRuntimeFromAdapter(adapter, {
+    model: null,
+    textToolProtocol: null,
+    createAgentSession: async ({ textToolProtocol }) => {
+      selectedProtocol = textToolProtocol
+      return null
+    },
+  })
+
+  assert.equal(selectedProtocol, null)
+  assert.deepEqual(adapter.attachedTexts, [])
 })
 
 test('createRuntimeFromAdapter includes project instructions in setup', async () => {

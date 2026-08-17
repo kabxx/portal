@@ -6,6 +6,7 @@ import type {
 import type { ThreadLifecycleService } from '../threads/thread-lifecycle-service.ts'
 import type { ThreadOperationCoordinator } from '../threads/thread-operation-coordinator.ts'
 import type { ProviderHost } from '../providers/provider-host.ts'
+import type { AgentHost } from '../agents/agent-host.ts'
 import type { TurnItem } from '../threads/thread-registry.ts'
 import type {
   SurfaceCreateThreadInput,
@@ -23,17 +24,20 @@ export class PortalSurfacePort implements SurfacePortActions {
   readonly #lifecycle: ThreadLifecycleService
   readonly #operations: ThreadOperationCoordinator
   readonly #providers: ProviderHost
+  readonly #agents: AgentHost
 
   public constructor(options: {
     readonly threadManager: ThreadManager
     readonly threadLifecycle: ThreadLifecycleService
     readonly threadOperations: ThreadOperationCoordinator
     readonly providerHost: ProviderHost
+    readonly agentHost: AgentHost
   }) {
     this.#threads = options.threadManager
     this.#lifecycle = options.threadLifecycle
     this.#operations = options.threadOperations
     this.#providers = options.providerHost
+    this.#agents = options.agentHost
   }
 
   public listThreads(): readonly SurfaceThread[] {
@@ -61,10 +65,17 @@ export class PortalSurfacePort implements SurfacePortActions {
     return Object.freeze(this.#providers.list().map(({ id }) => id))
   }
 
+  public listAgentModes(): readonly ('chat' | 'agent')[] {
+    return Object.freeze(
+      this.#agents.list().map(({ descriptor }) => descriptor.mode)
+    )
+  }
+
   public async createThread(
     input: SurfaceCreateThreadInput,
     signal: AbortSignal
   ): Promise<SurfaceProvisionResult> {
+    this.#agents.resolveMode(input.mode)
     const provider = this.#providers.resolveProviderId(input.provider)
     if (provider === null)
       throw new Error(`Unsupported provider: ${input.provider}`)
@@ -164,20 +175,30 @@ export class PortalSurfacePort implements SurfacePortActions {
       }
     })
     if (!start.accepted) return start
+    const operation =
+      start.operation.settled === undefined
+        ? start.operation
+        : Object.freeze({
+            ...start.operation,
+            done: Promise.all([
+              start.operation.done,
+              start.operation.settled,
+            ]).then(() => undefined),
+          })
     if (signal !== undefined) {
       const cancel = () => {
-        void start.operation.cancel()
+        void start.operation.cancel().catch(() => undefined)
       }
       if (signal.aborted) cancel()
       else {
         signal.addEventListener('abort', cancel, { once: true })
-        void start.operation.done.then(
+        void operation.done.then(
           () => signal.removeEventListener('abort', cancel),
           () => signal.removeEventListener('abort', cancel)
         )
       }
     }
-    return Object.freeze({ accepted: true, operation: start.operation })
+    return Object.freeze({ accepted: true, operation })
   }
 
   public async cancelThread(threadId: string): Promise<boolean> {

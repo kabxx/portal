@@ -26,6 +26,16 @@ const contributionSchema = z
     point: stableIdSchema,
     id: stableIdSchema,
     version: z.number().int().positive(),
+    dependencies: z.array(
+      z
+        .object({
+          packageId: stableIdSchema,
+          point: stableIdSchema,
+          id: stableIdSchema,
+          version: z.number().int().positive(),
+        })
+        .strict()
+    ),
   })
   .strict()
 const manifestSchema = z
@@ -84,6 +94,24 @@ export function parsePluginManifest(raw: unknown): PluginManifest {
       throw new PluginManifestError(`Duplicate contribution: ${key}`)
     }
     seenContributions.add(key)
+    const seenDependencies = new Set<string>()
+    for (const dependency of contribution.dependencies) {
+      const dependencyKey = `${dependency.packageId}:${dependency.point}:${dependency.id}:${dependency.version}`
+      if (seenDependencies.has(dependencyKey)) {
+        throw new PluginManifestError(
+          `Duplicate contribution dependency: ${dependencyKey}`
+        )
+      }
+      seenDependencies.add(dependencyKey)
+      if (
+        dependency.packageId !== value.id &&
+        !value.dependencies.some(({ id }) => id === dependency.packageId)
+      ) {
+        throw new PluginManifestError(
+          `Contribution ${key} requires package dependency ${dependency.packageId}.`
+        )
+      }
+    }
   }
   if (new Set(value.capabilities).size !== value.capabilities.length) {
     throw new PluginManifestError(

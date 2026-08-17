@@ -29,7 +29,8 @@ import {
 import type { ConversationHistoryResult } from './conversation-history.ts'
 import type { ResolvedProviderModel } from './provider-model-catalog.ts'
 import type { ProviderEvent } from './provider-exchange.ts'
-import type { RuntimeSetupMode } from '../runtime/setup-handshake.ts'
+import type { AgentMode, AgentStartup } from '../agents/agent-extension.ts'
+import type { AgentHost } from '../agents/agent-host.ts'
 
 export class ProviderHostError extends Error {
   public constructor(message: string) {
@@ -67,10 +68,11 @@ export interface ProviderBinding {
 }
 
 export interface ProviderBindingOpenOptions {
+  readonly agentMode: AgentMode | null
+  readonly agentStartup: AgentStartup
+  readonly workingDirectory?: string
   readonly conversationUrl?: string | null
   readonly model?: ResolvedProviderModel | null
-  readonly setupMode?: RuntimeSetupMode
-  readonly workingDirectory?: string
   readonly spawnDepth?: number
   readonly sessionKey?: string | null
   readonly onEvent?: (event: ProviderEvent) => void | Promise<void>
@@ -81,17 +83,20 @@ export class ProviderHost {
   readonly #parent: ResourceScope
   readonly #services: ServiceContainer | null
   readonly #serviceScope: ExtensionResourceScope | null
+  readonly #agents: AgentHost | null
   #attachmentReader: AttachmentReader
 
   public constructor(options: {
     readonly graph: ResolvedExtensionGraph
     readonly parent: ResourceScope
+    readonly agents?: AgentHost
     readonly attachmentReader?: AttachmentReader
     readonly services?: ServiceContainer
     readonly serviceScope?: ExtensionResourceScope
   }) {
     this.#graph = options.graph
     this.#parent = options.parent
+    this.#agents = options.agents ?? null
     this.#services = options.services ?? null
     this.#serviceScope = options.serviceScope ?? null
     this.#attachmentReader =
@@ -190,7 +195,7 @@ export class ProviderHost {
     providerId: string,
     ownerId: string,
     selectionRevision: string,
-    options: ProviderBindingOpenOptions = {}
+    options: ProviderBindingOpenOptions
   ): Promise<ProviderBinding> {
     const contribution = this.#findContribution(providerId)
     if (contribution.owner !== ownerId) {
@@ -212,24 +217,65 @@ export class ProviderHost {
     const scope = this.#parent.createChild(
       `provider-binding:${providerId}:${selectionRevision}`
     )
-    const services = this.#createServiceAccessor(contribution, scope)
+    const extensionScope = new ExtensionResourceScope(
+      'provider-session',
+      providerId,
+      scope,
+      this.#serviceScope
+    )
+    const services = this.#createServiceAccessor(contribution, extensionScope)
     try {
+      const { agentMode, agentStartup } = options
+      if (
+        (agentStartup === 'resume' && agentMode !== null) ||
+        (agentStartup !== 'resume' && agentMode === null)
+      ) {
+        throw new ProviderHostError(
+          `Provider ${providerId} received an invalid Agent startup selection.`
+        )
+      }
+      const agents = this.#agents
+      let openAgentSession: Parameters<ProviderEndpointFactory>[0]['openAgentSession']
+      if (agentStartup !== 'resume') {
+        if (agents === null || agentMode === null) {
+          throw new ProviderHostError(
+            `Provider ${providerId} has no Agent Host for ${agentStartup} startup.`
+          )
+        }
+        agents.resolveMode(agentMode)
+        openAgentSession = async ({ tools, textToolProtocol }) =>
+          await agents.open(
+            {
+              mode: agentMode,
+              startup: agentStartup,
+              tools,
+              textToolProtocol,
+              workingDirectory: options.workingDirectory ?? process.cwd(),
+            },
+            extensionScope,
+            scope.signal
+          )
+      } else {
+        openAgentSession = async () => null
+      }
       const endpointPromise = Promise.resolve().then(
         async () =>
           await binding.binding({
             providerId,
+            agentMode,
+            agentStartup,
             scope,
             signal: scope.signal,
             readAttachment: async (ref) =>
               await this.#attachmentReader.read(ref),
             conversationUrl: options.conversationUrl ?? null,
             model: options.model ?? null,
-            setupMode: options.setupMode ?? 'full',
             workingDirectory: options.workingDirectory ?? process.cwd(),
             spawnDepth: options.spawnDepth ?? 0,
             sessionKey: options.sessionKey ?? null,
             emit: options.onEvent ?? (() => undefined),
             services,
+            openAgentSession,
           })
       )
       let endpointAdopted = false
@@ -303,7 +349,7 @@ export class ProviderHost {
 
   #createServiceAccessor(
     contribution: ResolvedContribution<ProviderContribution>,
-    scope: ResourceScope
+    scope: ExtensionResourceScope
   ): ServiceAccessor {
     if (contribution.requiredServices.length === 0) {
       return unavailableServiceAccessor
@@ -313,16 +359,10 @@ export class ProviderHost {
         `Provider ${contribution.value.id} requires services, but ProviderHost has no service runtime.`
       )
     }
-    const providerScope = new ExtensionResourceScope(
-      'provider-session',
-      contribution.value.id,
-      scope,
-      this.#serviceScope
-    )
     return this.#services.createAccessor({
-      scope: providerScope,
+      scope,
       allowedServices: contribution.requiredServices,
-      signal: scope.signal,
+      signal: scope.resourceScope.signal,
       deadline: Number.POSITIVE_INFINITY,
     })
   }
@@ -407,48 +447,27 @@ class ProviderBindingRuntime implements ProviderBinding {
   ): Promise<{
     readonly status: 'unknown' | 'within_limit' | 'over_limit'
   }> {
-    return (
-      (await this.#endpoint.session?.preflightInput(input, signal)) ?? {
-        status: 'unknown',
-      }
-    )
+    return await this.requireSession().preflightInput(input, signal)
   }
 
   public async restore(signal?: AbortSignal): Promise<void> {
-    if (this.#endpoint.session === undefined) {
-      throw new ProviderHostError(
-        `Provider ${this.providerId} does not support session restore.`
-      )
-    }
-    await this.#endpoint.session.restore(signal)
+    await this.requireSession().restore(signal)
   }
 
   public async loadHistory(
     signal?: AbortSignal
   ): Promise<ConversationHistoryResult> {
-    if (this.#endpoint.session === undefined) {
-      return Object.freeze({
-        messages: [],
-        complete: false,
-        warning: 'This Provider does not expose conversation history.',
-      })
-    }
-    return await this.#endpoint.session.loadHistory(signal)
+    return await this.requireSession().loadHistory(signal)
   }
 
   public onUnexpectedClose(listener: () => void): () => void {
-    return this.#endpoint.session?.onUnexpectedClose(listener) ?? (() => {})
+    return this.requireSession().onUnexpectedClose(listener)
   }
 
   public async listCapabilities(
     signal: AbortSignal
   ): Promise<ProviderCapabilityCatalog> {
-    return (
-      (await this.#endpoint.session?.listCapabilities(signal)) ?? {
-        capabilities: Object.freeze([]),
-        usage: '/thread capability <capability>',
-      }
-    )
+    return await this.requireSession().listCapabilities(signal)
   }
 
   public async executeCapability(
@@ -456,12 +475,17 @@ class ProviderBindingRuntime implements ProviderBinding {
     args: readonly string[],
     signal: AbortSignal
   ): Promise<ProviderCapabilityResult> {
-    return (
-      (await this.#endpoint.session?.executeCapability(name, args, signal)) ?? {
-        status: 'unsupported-provider',
-        message: `Provider ${this.providerId} does not expose manageable capabilities.`,
-      }
-    )
+    return await this.requireSession().executeCapability(name, args, signal)
+  }
+
+  private requireSession() {
+    const session = this.#endpoint.session
+    if (session === undefined) {
+      throw new ProviderHostError(
+        `Provider ${this.providerId} does not expose the requested session capability.`
+      )
+    }
+    return session
   }
 
   public async exchange(
@@ -478,6 +502,16 @@ class ProviderBindingRuntime implements ProviderBinding {
       exchangeScope,
       signal
     )
+    let attachmentsReleased = false
+    const releaseAttachments = async (): Promise<void> => {
+      if (attachmentsReleased) return
+      attachmentsReleased = true
+      await Promise.all(
+        input.attachments.map(
+          async (ref) => await this.#attachmentReader.release?.(ref)
+        )
+      )
+    }
     let handle: ProviderExchangeHandle
     try {
       const endpointPromise = Promise.resolve().then(
@@ -491,12 +525,15 @@ class ProviderBindingRuntime implements ProviderBinding {
           })
       )
       let endpointAdopted = false
-      const lateCleanup = endpointPromise.then(async (lateEndpoint) => {
-        if (endpointAdopted || !exchangeScope.signal.aborted) return
-        assertExchangeHandle(lateEndpoint, this.providerId)
-        void Promise.resolve(lateEndpoint.completion).catch(() => undefined)
-        await lateEndpoint.cancel(exchangeScope.signal.reason)
-      })
+      const lateCleanup = endpointPromise.then(
+        async (lateEndpoint) => {
+          if (endpointAdopted || !exchangeScope.signal.aborted) return
+          assertExchangeHandle(lateEndpoint, this.providerId)
+          void Promise.resolve(lateEndpoint.completion).catch(() => undefined)
+          await lateEndpoint.cancel(exchangeScope.signal.reason)
+        },
+        () => undefined
+      )
       void lateCleanup.catch(() => undefined)
       this.scope.defer(
         `late exchange cleanup:${input.exchangeId}`,
@@ -514,13 +551,22 @@ class ProviderBindingRuntime implements ProviderBinding {
       })
     } catch (error) {
       externalCancellation.remove()
+      const cleanupErrors: unknown[] = []
       try {
         await exchangeScope.dispose({ reason: error })
       } catch (cleanupError) {
+        cleanupErrors.push(cleanupError)
+      }
+      try {
+        await releaseAttachments()
+      } catch (releaseError) {
+        cleanupErrors.push(releaseError)
+      }
+      if (cleanupErrors.length > 0) {
         throw new AggregateError(
-          [error, cleanupError],
+          [error, ...cleanupErrors],
           `Provider ${this.providerId} exchange creation and cleanup both failed.`,
-          { cause: cleanupError }
+          { cause: error }
         )
       }
       throw error
@@ -554,11 +600,7 @@ class ProviderBindingRuntime implements ProviderBinding {
       externalCancellation.completion,
     ]).finally(async () => {
       externalCancellation.remove()
-      await Promise.all(
-        input.attachments.map(
-          async (ref) => await this.#attachmentReader.release?.(ref)
-        )
-      )
+      await releaseAttachments()
     })
     void completion.catch(() => undefined)
     return Object.freeze({

@@ -43,6 +43,7 @@ import {
 } from '../../src/skills/skill-services.ts'
 import type { PluginManager } from '../../src/extensions/plugin-manager.ts'
 import { createPluginsRegistration } from '../../src/bootstrap/plugins-plugin.ts'
+import { registerMcpCommand } from '../../src/mcp-server/mcp-command-plugin.ts'
 
 export interface BuiltinCommandTestRuntime {
   readonly host: ExtensionTestHost
@@ -92,6 +93,15 @@ export function createBuiltinCommandTestRuntime(
     portalCommandDefinitions
   )
   host.register(registration.descriptor, registration.module)
+  host.register(
+    {
+      id: 'test.mcp-command',
+      version: '1.0.0',
+      dependencies: ['portal.commands'],
+      capabilities: ['portal.command.mcp.manage'],
+    },
+    { register: registerMcpCommand }
+  )
   const defaultSkills: CommandSkillService = {
     add: async (source) => ({
       skills: [{ name: source, directory: `C:\\skills\\${source}` }],
@@ -143,6 +153,7 @@ export function createBuiltinCommandTestRuntime(
     },
     catalog: { list: () => session.catalog },
     threads: {
+      listAgentModes: () => ['agent', 'chat'],
       create: async () => ({ ok: true }),
       list: () => [],
       history: async () => ({ ok: true, entries: [] }),

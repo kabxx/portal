@@ -26,13 +26,14 @@ import {
 import {
   createPortalCommandServices,
   portalCommandCompletionSnapshot,
+  portalCommandRouteProjection,
 } from './portal-command-services.ts'
 import type { CommandSessionRuntime } from '../cli-commands/core/command-runtime.ts'
 import { ExtensionResourceScope } from '../extensions/scope-registration.ts'
 import type { BrowserLaunch } from '../platform/browser-cdp-launcher.ts'
 import { launchBrowser } from '../platform/browser-cdp-launcher.ts'
 import { resolvePortalDataDirectory } from '../platform/portal-data-directory.ts'
-import type { RuntimeSetupMode } from '../runtime/setup-handshake.ts'
+import type { AgentStartup } from '../agents/agent-extension.ts'
 import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
 import { ResourceScope } from '../shared/resource-scope.ts'
 import type { ThreadCreationMode } from '../threads/thread-creation-mode.ts'
@@ -48,7 +49,6 @@ import {
 } from '../config/portal-config.ts'
 import {
   createPortalRuntimeSettings,
-  runtimeSetupModeForThreadCreation,
   type PortalRuntimeSettings,
 } from '../runtime/runtime-settings.ts'
 import { createWebChildConversationService } from '../threads/web-child-conversation-service.ts'
@@ -112,6 +112,7 @@ export interface PortalHostPreparedServices {
   readonly pluginManager: PluginManager
   readonly pluginPlan: KernelPluginPlan
   readonly providerHost: import('../providers/provider-host.ts').ProviderHost
+  readonly agentHost: import('../agents/agent-host.ts').AgentHost
   readonly toolHost: import('../tools/tool-host.ts').ToolHost
   readonly conversationHost: import('../threads/conversation-host.ts').ConversationHost
   readonly childConversations: ChildConversationServiceHost
@@ -285,6 +286,7 @@ export class PortalHost {
         pluginManager,
         pluginPlan,
         providerHost: domainRuntime.providers,
+        agentHost: domainRuntime.agents,
         toolHost: domainRuntime.tools,
         conversationHost: domainRuntime.conversations,
         childConversations,
@@ -327,7 +329,9 @@ export class PortalHost {
         `Command session is unavailable in state "${this.#state}".`
       )
     }
-    return this.#commandHost.openSession(this.#portalScope, resourceId)
+    return this.#commandHost.openSession(this.#portalScope, resourceId, {
+      routeProjection: portalCommandRouteProjection(this.#domainRuntime.agents),
+    })
   }
 
   /** @internal Completes the late binding after Portal resources are ready. */
@@ -342,11 +346,23 @@ export class PortalHost {
 
   /** @internal Returns immutable command metadata for a host-owned surface. */
   public commandCatalog(): readonly import('../cli-commands/core/command-contracts.ts').CommandDescriptor[] {
-    return this.#commandHost.catalog()
+    return this.#commandHost.catalog(
+      portalCommandRouteProjection(this.#domainRuntime.agents)
+    )
   }
 
   public surfaceCatalog() {
     return this.#domainRuntime.surfaces.list()
+  }
+
+  /** @internal Returns the effective Prompt catalog for diagnostics and tests. */
+  public promptCatalog() {
+    return this.#domainRuntime.prompts.list()
+  }
+
+  /** @internal Returns Agents whose referenced Prompt is active. */
+  public agentCatalog() {
+    return this.#domainRuntime.agents.list()
   }
 
   public subscribeSurfaceEvents(
@@ -493,7 +509,11 @@ export class PortalHost {
             selectionRevision: this.prepared.pluginPlan.generation,
             conversationUrl,
             model,
-            setupMode: resolveSetupMode(this.prepared.sessionIntent, mode),
+            agentMode: mode === 'resume' ? null : mode,
+            agentStartup: resolveAgentStartup(
+              this.prepared.sessionIntent,
+              mode
+            ),
             workingDirectory: this.prepared.cwd,
             spawnDepth: 0,
             sessionKey: threadId,
@@ -512,7 +532,10 @@ export class PortalHost {
           onEvent: async (event) => {
             this.#emitSurfaceEvent({
               type: 'thread.lifecycle',
-              event: projectSurfaceThreadEvent(event),
+              event: projectSurfaceThreadEvent(
+                event,
+                this.#domainRuntime.agents
+              ),
             })
           },
         },
@@ -543,7 +566,11 @@ export class PortalHost {
         threadLifecycle: lifecycle,
         threadOperations: this.prepared.threadOperations,
         providerHost: this.prepared.providerHost,
+        agentHost: this.#domainRuntime.agents,
       })
+      const commandRouteProjection = portalCommandRouteProjection(
+        this.#domainRuntime.agents
+      )
       this.#surfaceKernelUnbind = this.#domainRuntime.surfaces.bindKernel({
         port: surfacePort,
         events: {
@@ -554,15 +581,19 @@ export class PortalHost {
         },
         commands: {
           openSession: (resourceId) =>
-            this.#commandHost.openSession(this.#portalScope, resourceId),
-          catalog: () => this.#commandHost.catalog(),
+            this.#commandHost.openSession(this.#portalScope, resourceId, {
+              routeProjection: commandRouteProjection,
+            }),
+          catalog: () => this.#commandHost.catalog(commandRouteProjection),
           completionSnapshot: () =>
             portalCommandCompletionSnapshot(this.prepared.providerHost),
           bindPresentation: (presentation) =>
             this.#commandServices.bind(
               createPortalCommandServices(
                 { started: services, ...presentation },
-                { list: () => this.#commandHost.catalog() }
+                {
+                  list: () => this.#commandHost.catalog(commandRouteProjection),
+                }
               )
             ),
         },
@@ -851,17 +882,18 @@ async function runWithTimeout(
   }
 }
 
-function resolveSetupMode(
+function resolveAgentStartup(
   sessionIntent: PortalSessionIntent,
   mode: ThreadCreationMode | 'resume'
-): RuntimeSetupMode {
-  if (mode === 'resume') return 'skip'
+): AgentStartup {
+  if (mode === 'resume') return 'resume'
   if (sessionIntent === 'batch') return 'inline'
-  return runtimeSetupModeForThreadCreation(mode)
+  return 'interactive'
 }
 
 function projectSurfaceThreadEvent(
-  event: ThreadLifecycleEvent
+  event: ThreadLifecycleEvent,
+  agents: import('../agents/agent-host.ts').AgentHost
 ): SurfaceThreadLifecycleEvent {
   if (event.type === 'provision.started') return { ...event }
   if (event.type === 'provision.warning') {
@@ -873,7 +905,7 @@ function projectSurfaceThreadEvent(
     return {
       ...event,
       history: Object.freeze({
-        messages: Object.freeze([...event.history.messages]),
+        messages: agents.projectHistory(event.history.messages),
         complete: event.history.complete,
         warning: event.history.warning,
       }),

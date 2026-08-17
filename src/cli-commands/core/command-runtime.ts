@@ -11,6 +11,7 @@ import type {
   CommandDescriptor,
   CommandInputAnalysis,
   CommandResult,
+  CommandRouteProjection,
   CommandTraceSink,
   PreparedCommandInvocation,
 } from './command-contracts.ts'
@@ -48,7 +49,10 @@ export class CommandRuntime {
 
   public openSession(
     parent: ExtensionResourceScope,
-    resourceId: string
+    resourceId: string,
+    options: {
+      readonly routeProjection?: CommandRouteProjection
+    } = {}
   ): CommandSessionRuntime {
     if (parent.kind !== 'portal') {
       throw new CommandPlanError(
@@ -66,7 +70,12 @@ export class CommandRuntime {
       }),
       parent
     )
-    return new CommandSessionRuntime(this.plan, this.#executor, scope)
+    return new CommandSessionRuntime(
+      this.plan,
+      this.#executor,
+      scope,
+      options.routeProjection
+    )
   }
 }
 
@@ -74,22 +83,23 @@ export class CommandSessionRuntime {
   public constructor(
     private readonly plan: ResolvedCommandPlan,
     private readonly executor: CommandExecutor,
-    private readonly scope: ExtensionResourceScope
+    private readonly scope: ExtensionResourceScope,
+    private readonly routeProjection?: CommandRouteProjection
   ) {}
 
   public get catalog(): readonly CommandDescriptor[] {
-    return this.plan.catalog
+    return this.plan.projectCatalog(this.routeProjection)
   }
 
   public analyze(
     input: string,
     completionSnapshot?: CommandCompletionSnapshot
   ): CommandInputAnalysis {
-    return this.plan.analyze(input, completionSnapshot)
+    return this.plan.analyze(input, completionSnapshot, this.routeProjection)
   }
 
   public prepare(input: string): CommandInputAnalysis {
-    return this.plan.prepare(input)
+    return this.plan.prepare(input, this.routeProjection)
   }
 
   public canExecute(

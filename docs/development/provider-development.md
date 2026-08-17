@@ -65,7 +65,7 @@ sequenceDiagram
     Runtime-->>App: initialized runtime
 ```
 
-`READY` is a Runtime handshake, not a DOM readiness signal. The response must contain `READY` as a case-insensitive whole word. The adapter must prove that the page is ready before the Runtime writes either setup prompt.
+`READY` is the first-party Agent plugin's initialization acknowledgement, not a DOM readiness signal. The adapter must prove that the page is ready before the Runtime submits the resolved Agent initialization Prompt.
 
 ### Resumed conversation
 
@@ -82,8 +82,8 @@ sequenceDiagram
     Adapter->>Adapter: super.init()
     Adapter->>Page: install response/CDP history capture
     Adapter->>Page: restore conversation URL
-    App->>Runtime: createRuntimeFromAdapter(setupMode=skip)
-    Runtime-->>App: runtime ready without a new setup message
+    App->>Runtime: createRuntimeFromAdapter(agentSession=null)
+    Runtime-->>App: runtime ready without Agent initialization
     App->>Runtime: loadHistory()
     Runtime->>Adapter: loadHistory()
     Adapter-->>Runtime: normalized display-only messages
@@ -92,7 +92,7 @@ sequenceDiagram
     App-->>UI: render messages and warning
 ```
 
-Resume snapshots current Skills and the process-wide project instructions, but it does not send a new setup catalog or instruction text into the existing conversation. Spawned children receive the same immutable startup instruction snapshot. Remote history is shown in the terminal only: it is not submitted to the model again, inserted into runtime turns, or persisted as transcript data.
+Resume opens no Agent or Prompt session and does not send a new setup catalog or instruction text into the existing conversation. Spawned children open a new Agent session and receive a new immutable startup instruction snapshot. Remote history is shown in the terminal only: it is not submitted to the model again, inserted into runtime turns, or persisted as transcript data.
 
 ## 3. Reconnaissance and privacy
 

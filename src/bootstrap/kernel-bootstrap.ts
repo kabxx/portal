@@ -81,8 +81,12 @@ export class KernelBootstrap {
       )
     }
     const snapshot = await this.#manager.resolveEnabled()
+    const nonBlockingDiagnostics = new Set([
+      'disabled-dependency',
+      'disabled-contribution-dependency',
+    ])
     const blockingDiagnostics = snapshot.diagnostics.filter(
-      (diagnostic) => diagnostic.code !== 'disabled-dependency'
+      (diagnostic) => !nonBlockingDiagnostics.has(diagnostic.code)
     )
     if (blockingDiagnostics.length > 0) {
       throw new PluginBootstrapError(
@@ -203,9 +207,6 @@ function filterAndVerifyModule(
       contributionKey(item.point, item.id, item.version)
     )
   )
-  const disabledIds = new Set(
-    record.disabledContributions.map((item) => item.id)
-  )
   return Object.freeze({
     register(api: ExtensionRegistrationApi): unknown {
       const actual = new Set<string>()
@@ -238,8 +239,12 @@ function filterAndVerifyModule(
           ref: ExecutableBindingRef<Binding>,
           registration: ExecutableBindingRegistration<Binding>
         ): void {
-          if (!disabledIds.has(registration.targetId))
-            api.bind(ref, registration)
+          const targetKey = contributionKey(
+            ref.targetContribution.id,
+            registration.targetId,
+            ref.targetContribution.version
+          )
+          if (!disabled.has(targetKey)) api.bind(ref, registration)
         },
         handle<Input, Output, Mode extends HookMode>(
           ref: HookRef<Input, Output, Mode>,

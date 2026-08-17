@@ -11,7 +11,6 @@ import type { ServiceRef } from '../extensions/extension-contracts.ts'
 import {
   commandCatalogService,
   commandKeybindingService,
-  commandMcpService,
   commandOutputService,
   commandProviderService,
   commandSkillService,
@@ -53,16 +52,9 @@ const SKILL_HELP: readonly CommandHelpRow[] = Object.freeze([
   help('remove <name>', 'Remove a registered skill.'),
 ])
 
-const MCP_HELP: readonly CommandHelpRow[] = Object.freeze([
-  help('start', 'Start the Portal MCP Server.'),
-  help('status', 'Show Portal MCP Server status.'),
-  help('stop', 'Stop the Portal MCP Server.'),
-  help('token', 'Show the Portal MCP token state.'),
-])
-
 const commandRoutes = {
   thread: Object.freeze([
-    route('root', [], 'always', [], [], THREAD_HELP),
+    route('root', [], 'always', [], [], THREAD_HELP.slice(2)),
     route(
       'agent',
       ['agent'],
@@ -168,13 +160,6 @@ const commandRoutes = {
       [SKILL_HELP[6]!]
     ),
   ]),
-  mcp: Object.freeze([
-    route('root', [], 'always', [], [], MCP_HELP),
-    route('start', ['start'], 'always', [], [], [MCP_HELP[0]!]),
-    route('status', ['status'], 'always', [], [], [MCP_HELP[1]!]),
-    route('stop', ['stop'], 'always', [], [], [MCP_HELP[2]!]),
-    route('token', ['token'], 'always', [], [], [MCP_HELP[3]!]),
-  ]),
 } as const
 
 const HELP_COMMAND: CommandContribution = command(
@@ -215,14 +200,6 @@ const SKILL_COMMAND: CommandContribution = command(
   'Manage registered skills.',
   '/skill <subcommand>',
   commandRoutes.skill
-)
-
-const MCP_COMMAND: CommandContribution = command(
-  'commands.mcp',
-  '/mcp',
-  'Manage the Portal MCP Server.',
-  '/mcp <start|status|stop|token>',
-  commandRoutes.mcp
 )
 
 const KEYBINDING_COMMAND: CommandContribution = command(
@@ -274,12 +251,6 @@ export const portalCommandDefinitions: readonly BuiltinCommandDefinition[] =
         'portal.command.thread.manage',
         'portal.command.provider.capability.manage',
       ]
-    ),
-    definition(
-      MCP_COMMAND,
-      mcpHandler,
-      [commandOutputService, commandMcpService],
-      ['portal.command.mcp.manage']
     ),
     definition(
       KEYBINDING_COMMAND,
@@ -356,7 +327,15 @@ async function threadHandler(
   const args = invocation.arguments.positionals
   switch (invocation.routeId) {
     case 'root':
-      return writeHelp(output, '/thread', THREAD_HELP)
+      return writeHelp(
+        output,
+        '/thread',
+        THREAD_HELP.filter(
+          (_row, index) =>
+            index > 1 ||
+            threads.listAgentModes().includes(index === 0 ? 'agent' : 'chat')
+        )
+      )
     case 'agent':
     case 'chat': {
       const provider = providers.resolve(scalar(args.provider) ?? '')
@@ -591,48 +570,6 @@ async function skillHandler(
     default:
       return writeWarning(output, '/skill', 'Unknown skill command route.')
   }
-}
-
-async function mcpHandler(
-  invocation: Readonly<PreparedCommandInvocation>,
-  context: CommandExecutionContext
-): Promise<CommandResult> {
-  const output = await getService(context, commandOutputService)
-  const mcp = await getService(context, commandMcpService)
-  const action = invocation.routeId
-  try {
-    if (action === 'start') {
-      await mcp.start(context.signal)
-      return writeSuccess(output, '/mcp start', 'MCP Server started.')
-    }
-    if (action === 'stop') {
-      await mcp.stop(context.signal)
-      return writeSuccess(output, '/mcp stop', 'MCP Server stopped.')
-    }
-  } catch (error) {
-    rethrowIfAborted(context.signal)
-    return writeError(output, `/mcp ${action}`, getErrorMessage(error))
-  }
-  if (action === 'status' || action === 'token') {
-    const status = mcp.status()
-    if (action === 'token')
-      return writeInfo(
-        output,
-        '/mcp token',
-        status.auth ? 'Authentication configured.' : 'Authentication disabled.'
-      )
-    const authentication = status.auth
-      ? status.running
-        ? 'enabled'
-        : 'configured'
-      : 'disabled'
-    return writeInfo(output, '/mcp status', [
-      `Running: ${status.running ? 'yes' : 'no'}`,
-      `Address: ${status.address ?? '-'}`,
-      `Authentication: ${authentication}`,
-    ])
-  }
-  return writeHelp(output, '/mcp', MCP_HELP)
 }
 
 async function keybindingHandler(

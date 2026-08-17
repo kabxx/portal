@@ -17,7 +17,9 @@ inbound Portal MCP Server.
 | Configuration | `src/config/`                                               | Resolve sparse overrides and atomically update `config.yaml`                                          |
 | Browser       | `src/platform/`                                             | Launch Chromium, connect over CDP, and own process lifetime                                           |
 | Providers     | `src/providers/provider-host.ts`, `src/providers/`          | Resolve Provider bindings in Kernel; implement web communication, login, retry, and codecs in plugins |
-| Runtime       | `src/runtime/`                                              | Render setup documents and support the first-party web Provider implementation                        |
+| Prompts       | `src/prompts/`                                              | Resolve Prompt renderers in Kernel; own setup document content in plugins                             |
+| Agents        | `src/agents/`                                               | Resolve Agent sessions and initialization policy in Kernel; implement policies in plugins             |
+| Runtime       | `src/runtime/`                                              | Execute the first-party web Provider session using resolved Agent input                               |
 | Threads       | `src/threads/`                                              | Run Conversation/Tool legs, admit operations, and persist conversation metadata                       |
 | Tools         | `src/tools/`, `src/processes/`                              | Resolve Tool bindings; plugin packages own execution, process jobs, and management features           |
 | Skills        | `src/skills/`                                               | Install and validate Skill directories and snapshot enabled metadata                                  |
@@ -32,6 +34,9 @@ The inbound MCP server is Portal's external automation interface.
 resolves configuration, synchronizes installed first-party records, resolves
 one immutable plugin generation, creates Kernel domain hosts, and opens the
 Thread store without launching a browser. Disabled packages are not loaded.
+Contribution dependencies are resolved transitively, so disabling a Prompt or
+Agent contribution also removes only the higher-level contributions that
+require it; derived disablement is not persisted.
 `start()` invokes lifecycle Hooks and launches Chromium. `close()` first closes
 active Surfaces, then Thread admission, Provider/Tool operations, browser
 resources, and SQLite in bounded order. Plugin-owned cleanup runs through
@@ -53,10 +58,13 @@ later resume.
 
 ## Setup prompt
 
-`src/runtime/setup-prompt.ts` renders structured setup documents. A Provider
-selects its model-facing call protocol. Browser Providers use Portal Action
-Protocol; API Providers translate native tool calls without receiving this
-text protocol. A full browser-provider prompt has this order:
+`PromptHost` resolves `prompts.collect` contributions and same-owner renderer
+bindings. `AgentHost` resolves one effective `agents.collect` contribution for
+the requested `agent` or `chat` mode and opens its referenced Prompt in the
+same scoped generation. A Provider supplies only its model-facing Tool
+presentation when opening the Agent session. Browser Providers use Portal
+Action Protocol; API Providers translate native tool calls without receiving
+this text protocol. A full browser-provider prompt has this order:
 
 1. `# Portal Agent`;
 2. `## Portal Action Protocol`;
@@ -76,12 +84,13 @@ actions receive an object payload, freeform actions receive raw text, and the
 next user message carries the Action Result. Portal internals remain named
 Tool, ToolRequest, and ToolResult.
 
-TUI agent creation and spawned runtimes submit the full setup and require a
-case-insensitive whole-word `READY` response. Chat creation sends only the
-shared initialization handshake. `portal exec` replaces Initialization with
-`## Task`, so setup and the first task are submitted in one provider message.
-Resume sends no setup because the existing provider conversation already owns
-its context.
+The first-party Prompt plugins own the exact sections and Skill snapshot. The
+first-party Agent plugins own READY acceptance, interactive initialization,
+and first-input inline policy. TUI agent creation and spawned runtimes submit
+the full setup. Chat creation sends only the chat Prompt handshake. `portal
+exec` renders the full Prompt with `## Task` in the first provider message.
+Resume opens no Agent session because the existing provider conversation
+already owns its context.
 
 ## Thread lifecycle
 
@@ -122,11 +131,12 @@ Provider adapter or child Runtime directly.
 ## Skills
 
 The `portal.skills` package owns Skill storage and project-instruction loading.
-It snapshots each enabled Skill's name, sanitized description, and absolute
-`SKILL.md` path when a Provider binding is created. Full setup prompts list
-only that metadata; manifest bodies and resource files are not injected. There
-is no `load_skill` tool or per-turn manual Skill activation. Registry changes
-affect new bindings, not existing snapshots. The separate
+The `portal.prompt.agent` plugin requests one immutable snapshot containing
+each enabled Skill's name, sanitized description, and absolute `SKILL.md` path
+when its Prompt session opens. Full setup prompts list only that metadata;
+manifest bodies and resource files are not injected. There is no `load_skill`
+tool or per-turn manual Skill activation. Registry changes affect new Prompt
+sessions, not existing snapshots. The separate
 `portal.command.skills` package contributes `/skill`; disabling that command or
 package does not remove Prompt Skill data from Providers.
 

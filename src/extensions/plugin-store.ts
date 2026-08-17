@@ -331,7 +331,11 @@ function parseDisabledContributions(
       )
     }
     seen.add(key)
-    return declaration
+    return Object.freeze({
+      point: declaration.point,
+      id: declaration.id,
+      version: declaration.version,
+    })
   })
   return Object.freeze(result)
 }

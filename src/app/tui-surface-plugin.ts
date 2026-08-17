@@ -18,7 +18,10 @@ import {
   createIdempotentAsyncTask,
   type StopTarget,
 } from './app-lifecycle.ts'
-import { createTuiThreadInputHandler } from './app-tui-thread-input-handler.ts'
+import {
+  createTuiThreadInputHandler,
+  noActiveThreadMessage,
+} from './app-tui-thread-input-handler.ts'
 import {
   clearInteractiveTerminal,
   clearTerminalBeforeRender,
@@ -56,7 +59,7 @@ const TUI_ACTIVATOR_ID = `${TUI_SURFACE_ID}.activator`
 
 interface TuiSurfaceActivationOptions {
   readonly version: string
-  readonly mcp: CommandMcpService
+  readonly mcp?: CommandMcpService
   readonly input: typeof import('node:process').stdin
   readonly output: typeof import('node:process').stdout
   readonly renderTerminal?: typeof render
@@ -119,7 +122,7 @@ async function activateTuiSurface(
   const commandCompletionSnapshot = context.commands.completionSnapshot()
   context.commands.bindPresentation({
     output: createTuiCommandOutput(ui, surface),
-    mcp: options.mcp,
+    ...(options.mcp === undefined ? {} : { mcp: options.mcp }),
     keybindings: createTuiKeybindingService(keybindings),
     setThreadBusy: (threadId, busy) => ui.setThreadBusy(threadId, busy),
   })
@@ -293,10 +296,7 @@ async function activateTuiSurface(
         ).trim()
         if (exitRequested) return
         if (value === '') {
-          ui.renderWarning(
-            'portal',
-            'No active thread. Use /thread agent to create one, or /help to see commands.'
-          )
+          ui.renderWarning('portal', noActiveThreadMessage(surface))
           continue
         }
         try {
@@ -495,8 +495,9 @@ function assertTuiOptions(input: unknown): TuiSurfaceActivationOptions {
     typeof input !== 'object' ||
     !('version' in input) ||
     typeof input.version !== 'string' ||
-    !('mcp' in input) ||
-    !isMcpSurfaceApi(input.mcp) ||
+    ('mcp' in input &&
+      input.mcp !== undefined &&
+      !isMcpSurfaceApi(input.mcp)) ||
     !('input' in input) ||
     !isTerminalInput(input.input) ||
     !('output' in input) ||
@@ -512,7 +513,7 @@ function assertTuiOptions(input: unknown): TuiSurfaceActivationOptions {
   }
   return {
     version: input.version,
-    mcp: input.mcp,
+    ...('mcp' in input && isMcpSurfaceApi(input.mcp) ? { mcp: input.mcp } : {}),
     input: input.input,
     output: input.output,
     ...('renderTerminal' in input && isRenderTerminal(input.renderTerminal)

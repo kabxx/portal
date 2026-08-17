@@ -278,8 +278,8 @@ test('initializeRuntimeWithLoginWait closes a real factory adapter exactly once 
       createRuntime: async (currentAdapter) =>
         await createRuntimeFromAdapter(currentAdapter, {
           model: { key: 'gpt-test', option: null },
-          setupMode: 'skip',
           toolHost: createTestToolHost(currentAdapter, []),
+          createAgentSession: async () => null,
         }),
       onWarning: async () => {},
       onLoginWait: async () => {},
@@ -311,6 +311,14 @@ test('initializeRuntimeWithLoginWait closes a real factory adapter exactly once 
           model: null,
           signal: controller.signal,
           toolHost: createTestToolHost(currentAdapter, []),
+          createAgentSession: async () => ({
+            initialization: {
+              prompt: 'agent initialization',
+              accepts: () => true,
+            },
+            previewInput: async (input: string) => input,
+            prepareInput: async (input: string) => input,
+          }),
         }),
       onWarning: async () => {},
       onLoginWait: async () => {},

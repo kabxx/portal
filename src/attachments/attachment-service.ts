@@ -15,7 +15,10 @@ export class AttachmentServiceError extends Error {
 export class AttachmentFileService {
   readonly #maxBytes: number
   readonly #maxTotalBytes: number
-  readonly #contents = new Map<string, Uint8Array>()
+  readonly #contents = new Map<
+    string,
+    { readonly bytes: Uint8Array; references: number }
+  >()
   #totalBytes = 0
 
   public constructor(
@@ -67,13 +70,19 @@ export class AttachmentFileService {
       sizeBytes: bytes.byteLength,
       sha256,
     }
-    if (!this.#contents.has(result.id)) {
+    const existing = this.#contents.get(result.id)
+    if (existing !== undefined) {
+      existing.references += 1
+    } else {
       if (this.#totalBytes + bytes.byteLength > this.#maxTotalBytes) {
         throw new AttachmentServiceError(
           `Attachments exceed the ${this.#maxTotalBytes} byte total size limit.`
         )
       }
-      this.#contents.set(result.id, new Uint8Array(bytes))
+      this.#contents.set(result.id, {
+        bytes: new Uint8Array(bytes),
+        references: 1,
+      })
       this.#totalBytes += bytes.byteLength
     }
     freezeImmutableData(result)
@@ -81,23 +90,25 @@ export class AttachmentFileService {
   }
 
   public async read(ref: AttachmentRef): Promise<Uint8Array> {
-    const bytes = this.#contents.get(ref.id)
+    const entry = this.#contents.get(ref.id)
     if (
-      bytes === undefined ||
+      entry === undefined ||
       ref.sha256 !== ref.id.slice('attachment:'.length)
     ) {
       throw new AttachmentServiceError(
         `Attachment is not available: ${ref.id}.`
       )
     }
-    return new Uint8Array(bytes)
+    return new Uint8Array(entry.bytes)
   }
 
   public release(ref: AttachmentRef): void {
-    const bytes = this.#contents.get(ref.id)
-    if (bytes === undefined) return
+    const entry = this.#contents.get(ref.id)
+    if (entry === undefined) return
+    entry.references -= 1
+    if (entry.references > 0) return
     this.#contents.delete(ref.id)
-    this.#totalBytes -= bytes.byteLength
+    this.#totalBytes -= entry.bytes.byteLength
   }
 
   public clear(): void {

@@ -12,7 +12,8 @@ external MCP servers or expose MCP host tools to web models.
 
 ## Start and stop
 
-The server is disabled by default. Manage it from the TUI:
+The listener is stopped by default. When the MCP Surface plugin is enabled,
+manage it from the TUI:
 
 ```text
 /mcp start
@@ -46,9 +47,12 @@ Portal targets non-browser MCP clients. Requests containing any
 
 ## Tools
 
-The thread tools are always supplied by the MCP Surface. `portal_list_jobs` and
-`portal_stop_job` are contributed by the `run_command` plugin and appear only
-when that plugin and its MCP management contribution are enabled.
+The MCP tools are contributed by the enabled MCP Surface and its active
+feature contributions. The MCP Surface can be disabled independently; when it
+is disabled, the MCP listener, `/mcp` command, and all MCP tools are absent.
+`portal_list_jobs` and `portal_stop_job` are contributed by the `run_command`
+plugin and appear only when that plugin and its MCP management contribution are
+enabled.
 
 | Tool                    | Purpose                                                  |
 | ----------------------- | -------------------------------------------------------- |
@@ -64,8 +68,10 @@ when that plugin and its MCP management contribution are enabled.
 | `portal_wait_message`   | Long-poll a message operation for up to 30 seconds       |
 | `portal_cancel_message` | Cancel the exact MCP-owned message operation             |
 
-`portal_create_thread` accepts an optional `mode` of `"agent"` or `"chat"` and
-defaults to `"agent"`. Chat creation sends only the shared `READY` handshake,
+`portal_create_thread` accepts the currently enabled Agent modes. When both
+first-party modes are enabled, the optional `mode` is `"agent"` or `"chat"`
+and defaults to `"agent"`; with one mode enabled, the schema exposes only that
+mode and uses it as the default. Chat creation sends only the shared `READY` handshake,
 using a case-insensitive whole-word match, instead of the full portal setup
 prompt. It still creates a normal local runtime with configured tools, Skills,
 and local runtime services, so chat mode is not a sandbox.

@@ -45,6 +45,7 @@ function createHandlers(calls: string[] = []): PortalMcpHandlers {
   }
   return {
     listProviders: () => ({ providers: ['chatgpt', 'gemini'] }),
+    listAgentModes: () => ['agent', 'chat'],
     listJobs: () => ({
       jobs: [
         {
@@ -204,6 +205,52 @@ test('PortalMcpServer initializes, lists, and calls its fixed tools', async () =
   } finally {
     await client.close()
     await server.stop()
+  }
+})
+
+test('PortalMcpServer projects only enabled Agent modes', async () => {
+  const noModeHandlers = createHandlers()
+  noModeHandlers.listAgentModes = () => []
+  const noModeServer = new PortalMcpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: null,
+    handlers: noModeHandlers,
+  })
+  await noModeServer.start()
+  const noModeClient = await connectClient(noModeServer.address()!)
+  try {
+    assert.equal(
+      (await noModeClient.listTools()).tools.some(
+        ({ name }) => name === 'portal_create_thread'
+      ),
+      false
+    )
+  } finally {
+    await noModeClient.close()
+    await noModeServer.stop()
+  }
+
+  const calls: string[] = []
+  const chatHandlers = createHandlers(calls)
+  chatHandlers.listAgentModes = () => ['chat']
+  const chatServer = new PortalMcpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: null,
+    handlers: chatHandlers,
+  })
+  await chatServer.start()
+  const chatClient = await connectClient(chatServer.address()!)
+  try {
+    await chatClient.callTool({
+      name: 'portal_create_thread',
+      arguments: { provider: 'chatgpt' },
+    })
+    assert.deepEqual(calls, ['create:chatgpt:::chat'])
+  } finally {
+    await chatClient.close()
+    await chatServer.stop()
   }
 })
 

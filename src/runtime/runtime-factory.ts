@@ -6,23 +6,23 @@ import { isProviderAdapterError } from '../providers/adapters/adapter-base.ts'
 import { ToolRegistry } from '../tools/core/tool-registry.ts'
 import { RuntimeCore, type RuntimeCoreOptions } from './runtime-core.ts'
 import { throwIfAborted } from './runtime-cancellation.ts'
-import type { SetupSkill } from './setup-prompt.ts'
-import type { RuntimeSetupMode } from './setup-handshake.ts'
 import { DEFAULT_TEXT_TOOL_PROTOCOL } from '../tools/core/text-tool-protocol.ts'
 import type { TextToolProtocol } from '../tools/core/text-tool-protocol.ts'
 import type { ToolRuntimeService } from '../tools/tool-runtime-service.ts'
 import type { AttachmentReader } from '../attachments/attachment-contracts.ts'
+import type { AgentSession } from '../agents/agent-extension.ts'
 
 export interface RuntimeFactoryOptions extends ProviderAdapterOptions {
-  setupMode?: RuntimeSetupMode
   toolHost: ToolRuntimeService
-  skills?: readonly SetupSkill[]
-  projectInstructions?: string | null
+  createAgentSession: (request: {
+    readonly tools: string | null
+    readonly textToolProtocol: TextToolProtocol | null
+  }) => Promise<AgentSession | null>
   allowedTools?: readonly string[] | null
   advertiseSpawnTool?: boolean
   requestAttemptLimit?: number
   workingDirectory?: string
-  textToolProtocol?: TextToolProtocol
+  textToolProtocol?: TextToolProtocol | null
   providerId?: string
   currentSpawnDepth?: number
   attachmentReader?: AttachmentReader
@@ -36,6 +36,7 @@ export async function createRuntimeFromAdapter(
   options: RuntimeFactoryOptions
 ): Promise<RuntimeCore> {
   const { signal } = options
+  let agentSession: AgentSession | null = null
   try {
     const allowedTools = options.allowedTools ?? null
     const graphToolNames = options.toolHost
@@ -71,11 +72,22 @@ export async function createRuntimeFromAdapter(
             },
           }),
     })
+    throwIfAborted(signal)
+    if (options.model !== null) {
+      await adapter.changeModel(options.model)
+    }
+    throwIfAborted(signal)
+    agentSession = await options.createAgentSession({
+      tools: toolRegistry.prompt.trim() === '' ? null : toolRegistry.prompt,
+      textToolProtocol:
+        options.textToolProtocol === undefined
+          ? toolRegistry.protocol
+          : options.textToolProtocol,
+    })
+    throwIfAborted(signal)
     const runtime = new RuntimeCore(adapter, toolRegistry, {
-      skills: options.skills ?? [],
-      projectInstructions: options.projectInstructions ?? null,
+      agentSession,
       requestAttemptLimit: options.requestAttemptLimit ?? 3,
-      workingDirectory: options.workingDirectory ?? process.cwd(),
       ...(options.attachmentReader === undefined
         ? {}
         : { attachmentReader: options.attachmentReader }),
@@ -84,20 +96,21 @@ export async function createRuntimeFromAdapter(
         : { exchangeDelegate: options.exchangeDelegate }),
       ...(options.onClose === undefined ? {} : { onClose: options.onClose }),
     })
-    throwIfAborted(signal)
-    if (options.model !== null) {
-      await adapter.changeModel(options.model)
-    }
-    throwIfAborted(signal)
-    const setupMode = options.setupMode ?? 'full'
-    if (setupMode === 'inline') {
-      runtime.enableInlineSetup()
-    } else if (setupMode !== 'skip') {
-      await runtime.init({ signal, setupMode })
-    }
+    await runtime.init({ signal })
     throwIfAborted(signal)
     return runtime
   } catch (error) {
+    if (agentSession !== null) {
+      try {
+        await agentSession.close?.(error)
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          'Agent session initialization and cleanup both failed.',
+          { cause: cleanupError }
+        )
+      }
+    }
     if (isProviderAdapterError(error) && error.kind === 'auth') {
       error.adapter = adapter
     }

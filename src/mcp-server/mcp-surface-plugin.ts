@@ -32,6 +32,7 @@ import {
   MCP_SURFACE_ID,
   isMcpJobManagementFeature,
 } from './mcp-surface-contracts.ts'
+import { registerMcpCommand } from './mcp-command-plugin.ts'
 
 export const MCP_SURFACE_PACKAGE_ID = 'portal.surface.mcp'
 export { MCP_SURFACE_ID } from './mcp-surface-contracts.ts'
@@ -56,11 +57,12 @@ export function createMcpSurfaceRegistration(): PortalExtensionRegistration {
   const descriptor: ExtensionDescriptor = Object.freeze({
     id: MCP_SURFACE_PACKAGE_ID,
     version: '1.0.0',
-    dependencies: Object.freeze([]),
-    capabilities: Object.freeze([]),
+    dependencies: Object.freeze(['portal.commands']),
+    capabilities: Object.freeze(['portal.command.mcp.manage']),
   })
   const module: ExtensionModule = Object.freeze({
     register(api: ExtensionRegistrationApi): void {
+      registerMcpCommand(api)
       api.contribute(surfaceContributions, {
         id: MCP_SURFACE_ID,
         value: Object.freeze({

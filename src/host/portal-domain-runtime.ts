@@ -35,6 +35,10 @@ import { defineSurfaceHost } from '../surfaces/surface-extension.ts'
 import { SurfaceHost } from '../surfaces/surface-host.ts'
 import { portalBrowserSessionService } from '../platform/browser-session-service.ts'
 import { toolRuntimeService } from '../tools/tool-runtime-service.ts'
+import { definePromptHost } from '../prompts/prompt-extension.ts'
+import { PromptHost } from '../prompts/prompt-host.ts'
+import { defineAgentHost } from '../agents/agent-extension.ts'
+import { AgentHost } from '../agents/agent-host.ts'
 
 export class PortalDomainRuntime {
   readonly #portalScope: ExtensionResourceScope
@@ -44,6 +48,8 @@ export class PortalDomainRuntime {
   public readonly commands: CommandHost
   public readonly graph: ResolvedExtensionGraph
   public readonly providers: ProviderHost
+  public readonly prompts: PromptHost
+  public readonly agents: AgentHost
   public readonly tools: ToolHost
   public readonly conversations: ConversationHost
   public readonly surfaces: SurfaceHost
@@ -66,6 +72,8 @@ export class PortalDomainRuntime {
     registry.defineHook(portalBeforeStopSpec)
     registry.defineHook(portalStoppedSpec)
     defineCommandHost(registry)
+    definePromptHost(registry)
+    defineAgentHost(registry)
     defineProviderHost(registry, {
       allowedServices: Object.freeze([
         portalBrowserSessionService,
@@ -92,9 +100,21 @@ export class PortalDomainRuntime {
         : { traceSink: options.traceSink }),
     })
     this.commands = new CommandHost(this.graph, services, clock)
+    this.prompts = new PromptHost({
+      graph: this.graph,
+      parent: options.parentScope,
+      services,
+    })
+    this.agents = new AgentHost({
+      graph: this.graph,
+      parent: options.parentScope,
+      services,
+      prompts: this.prompts,
+    })
     this.providers = new ProviderHost({
       graph: this.graph,
       parent: options.parentScope.resourceScope,
+      agents: this.agents,
       services,
       serviceScope: options.parentScope,
     })

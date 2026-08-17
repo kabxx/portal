@@ -87,6 +87,7 @@ export interface SurfaceProvisionResult {
 
 export interface SurfacePortActions extends SurfacePort {
   listProviders(): readonly string[]
+  listAgentModes(): readonly ('chat' | 'agent')[]
   createThread(
     input: SurfaceCreateThreadInput,
     signal: AbortSignal

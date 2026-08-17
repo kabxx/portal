@@ -109,6 +109,7 @@ export function createMcpHandlers({
 
   return {
     listProviders: () => ({ providers: [...surface.listProviders()] }),
+    listAgentModes: () => surface.listAgentModes(),
     ...(runCommandJobs === undefined
       ? {}
       : {

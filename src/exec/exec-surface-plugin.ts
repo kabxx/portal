@@ -15,7 +15,6 @@ import type {
   ExecProgressEvent,
   PortalExecSessionOptions,
 } from './exec-types.ts'
-
 export const EXEC_SURFACE_PACKAGE_ID = 'portal.surface.exec'
 export const EXEC_SURFACE_ID = 'portal.exec'
 const EXEC_ACTIVATOR_ID = `${EXEC_SURFACE_ID}.activator`
@@ -24,11 +23,15 @@ export interface ExecSurfaceApi {
   run(task: string, signal: AbortSignal): Promise<string>
 }
 
-export function createExecSurfaceRegistration(): PortalExtensionRegistration {
+export function createExecSurfaceRegistration(
+  options: {
+    readonly dependencies?: readonly string[]
+  } = {}
+): PortalExtensionRegistration {
   const descriptor: ExtensionDescriptor = Object.freeze({
     id: EXEC_SURFACE_PACKAGE_ID,
     version: '1.0.0',
-    dependencies: Object.freeze([]),
+    dependencies: Object.freeze([...(options.dependencies ?? [])]),
     capabilities: Object.freeze([]),
   })
   const module: ExtensionModule = Object.freeze({

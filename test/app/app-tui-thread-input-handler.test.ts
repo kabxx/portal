@@ -11,7 +11,10 @@ test('TUI input handler reports the missing active-thread boundary', async () =>
   // This focused fake implements only the no-active-thread path.
   // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
   const dependencies = {
-    surface: { getActiveThread: () => null },
+    surface: {
+      getActiveThread: () => null,
+      listAgentModes: () => ['chat'],
+    },
     ui: {
       renderWarning: (title: string, message: unknown) => {
         warnings.push({ title, message })
@@ -26,8 +29,31 @@ test('TUI input handler reports the missing active-thread boundary', async () =>
     {
       title: 'portal',
       message:
-        'No active thread. Use /thread agent to create one, or /help to see commands.',
+        'No active thread. Use /thread chat to create one, or /help to see commands.',
     },
+  ])
+})
+
+test('TUI input handler does not advertise a disabled Agent mode', async () => {
+  const warnings: unknown[] = []
+  // This focused fake implements only the no-Agent path.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  const dependencies = {
+    surface: {
+      getActiveThread: () => null,
+      listAgentModes: () => [],
+    },
+    ui: {
+      renderWarning: (_title: string, message: unknown) => {
+        warnings.push(message)
+      },
+    },
+  } as unknown as TuiThreadInputDependencies
+
+  await createTuiThreadInputHandler(dependencies)('hello')
+
+  assert.deepEqual(warnings, [
+    'No active thread. No Agent mode is enabled; use /plugins list to inspect plugins.',
   ])
 })
 

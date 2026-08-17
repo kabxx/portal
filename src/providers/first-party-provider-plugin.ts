@@ -14,10 +14,6 @@ import {
   providerEndpointBindings,
   type ProviderEndpointFactory,
 } from './provider-exchange.ts'
-import {
-  PORTAL_SKILLS_PACKAGE_ID,
-  promptSkillService,
-} from '../skills/skill-services.ts'
 import { portalBrowserSessionService } from '../platform/browser-session-service.ts'
 import { toolRuntimeService } from '../tools/tool-runtime-service.ts'
 import { createWebProviderEndpointFactory } from './web-provider-endpoint.ts'
@@ -37,7 +33,7 @@ export function createFirstPartyProviderRegistration(
   const descriptor: ExtensionDescriptor = Object.freeze({
     id: packageId,
     version: '1.0.0',
-    dependencies: Object.freeze([PORTAL_SKILLS_PACKAGE_ID]),
+    dependencies: Object.freeze([]),
     capabilities: Object.freeze([PROVIDER_ATTACHMENT_CAPABILITY]),
   })
   const module: ExtensionModule = Object.freeze({
@@ -59,7 +55,6 @@ export function createFirstPartyProviderRegistration(
           conversationUrlBindingId,
         },
         requiredServices: Object.freeze([
-          promptSkillService,
           portalBrowserSessionService,
           toolRuntimeService,
         ]),

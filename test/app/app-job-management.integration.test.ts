@@ -88,6 +88,7 @@ function createFocusedMcpHandlers(manager: RunCommandJobManager) {
   const dependencies = {
     surface: {
       listProviders: () => [],
+      listAgentModes: () => [],
     },
     runCommandJobs: {
       list: () => manager.list(),

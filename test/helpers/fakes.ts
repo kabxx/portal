@@ -147,7 +147,9 @@ class FakeRuntime extends RuntimeCore {
 
   public constructor(private readonly fakeOptions: FakeRuntimeOptions) {
     const adapter = fakeOptions.adapter ?? createProviderAdapterStub()
-    super(adapter, createTestToolRegistry(adapter, []))
+    super(adapter, createTestToolRegistry(adapter, []), {
+      agentSession: null,
+    })
     this.adapter = adapter
   }
 
@@ -157,10 +159,6 @@ class FakeRuntime extends RuntimeCore {
 
   public override get conversationUrl(): string {
     return this.fakeOptions.conversationUrl ?? 'https://example.com/thread'
-  }
-
-  public override get prompt(): string {
-    return ''
   }
 
   public override getAdapter(): ProviderAdapter {

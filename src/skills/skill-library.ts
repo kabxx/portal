@@ -13,7 +13,7 @@ import { readSkillManifest, validateSkillName } from './skill-manifest.ts'
 import { listSkillResources } from './skill-files.ts'
 import { DEFAULT_SKILL_POLICY, type SkillPolicy } from './skill-policy.ts'
 import { stripVTControlCharacters } from 'node:util'
-import type { SetupSkill } from '../runtime/setup-prompt.ts'
+import type { PromptSkillMetadata } from './skill-services.ts'
 import {
   readSkillRegistry,
   resolveSkillDirectory,
@@ -87,7 +87,7 @@ export class SkillCatalogSnapshot {
     return [...this.skillsByName.keys()]
   }
 
-  public get setupSkills(): readonly SetupSkill[] {
+  public get setupSkills(): readonly PromptSkillMetadata[] {
     return [...this.skillsByName.values()].map(
       ({ name, description, directory }) => ({
         name,

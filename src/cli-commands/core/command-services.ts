@@ -66,6 +66,7 @@ export interface CommandProviderCapabilityResult {
 }
 
 export interface CommandThreadService {
+  listAgentModes(): readonly ('agent' | 'chat')[]
   create(input: {
     readonly provider: string
     readonly modelKey: string | null
@@ -277,7 +278,6 @@ export const portalCommandCapabilities = Object.freeze([
   'portal.command.thread.read',
   'portal.command.thread.manage',
   'portal.command.provider.capability.manage',
-  'portal.command.mcp.manage',
   'portal.command.job.read',
   'portal.command.job.manage',
   'portal.command.keybinding.manage',
@@ -285,6 +285,7 @@ export const portalCommandCapabilities = Object.freeze([
 
 export const commandCapabilities = Object.freeze([
   ...portalCommandCapabilities,
+  'portal.command.mcp.manage',
   'portal.command.skill.read',
   'portal.command.skill.manage',
   'portal.command.plugin.read',
@@ -296,7 +297,7 @@ export interface CommandServiceBundle {
   readonly catalog: CommandCatalogService
   readonly threads: CommandThreadService
   readonly providers: CommandProviderService
-  readonly mcp: CommandMcpService
+  readonly mcp?: CommandMcpService
   readonly keybindings: CommandKeybindingService
 }
 
@@ -324,7 +325,12 @@ export class CommandServiceHost {
     if (ref === commandCatalogService) return bundle.catalog
     if (ref === commandThreadService) return bundle.threads
     if (ref === commandProviderService) return bundle.providers
-    if (ref === commandMcpService) return bundle.mcp
+    if (ref === commandMcpService) {
+      if (bundle.mcp === undefined) {
+        throw new Error('The Portal MCP command service is not available.')
+      }
+      return bundle.mcp
+    }
     if (ref === commandKeybindingService) return bundle.keybindings
     throw new Error(`Unknown command service: ${ref.id}`)
   }

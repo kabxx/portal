@@ -9,7 +9,9 @@ import type { ThreadOperationHandle } from '../threads/thread-operation-coordina
 import type {
   CommandCompletionSnapshot,
   CommandCompletionCandidate,
+  CommandRouteProjection,
 } from '../cli-commands/core/command-contracts.ts'
+import type { AgentHost } from '../agents/agent-host.ts'
 import type {
   CommandCatalogService,
   CommandKeybindingService,
@@ -30,7 +32,7 @@ export interface PortalCommandServiceOptions {
   readonly keybindings: {
     reset(signal?: AbortSignal): Promise<unknown>
   }
-  readonly mcp: CommandMcpService
+  readonly mcp?: CommandMcpService
   readonly setThreadBusy?: (threadId: string, busy: boolean) => void
 }
 
@@ -38,6 +40,19 @@ export function portalCommandCompletionSnapshot(
   providers: ProviderHost
 ): CommandCompletionSnapshot {
   return createCommandCompletionSnapshot(providers)
+}
+
+export function portalCommandRouteProjection(
+  agents: AgentHost
+): CommandRouteProjection {
+  const modes = new Set(agents.list().map(({ descriptor }) => descriptor.mode))
+  return Object.freeze({
+    isRouteEnabled(commandId: string, routeId: string): boolean {
+      if (commandId !== 'commands.thread') return true
+      if (routeId !== 'agent' && routeId !== 'chat') return true
+      return modes.has(routeId)
+    },
+  })
 }
 
 export function createPortalCommandServices(
@@ -50,8 +65,18 @@ export function createPortalCommandServices(
   )
 
   const threads: CommandThreadService = {
+    listAgentModes: () =>
+      Object.freeze(
+        started.agentHost.list().map(({ descriptor }) => descriptor.mode)
+      ),
     async create(input) {
       throwIfAborted(input.signal)
+      if (!threads.listAgentModes().includes(input.mode)) {
+        return {
+          ok: false,
+          message: `Agent mode is not available: ${input.mode}.`,
+        }
+      }
       const provider = started.providerHost.resolveProviderId(input.provider)
       if (provider === null)
         return { ok: false, message: `Unknown provider: ${input.provider}` }
@@ -252,7 +277,7 @@ export function createPortalCommandServices(
       if (active === null)
         return {
           ok: false,
-          message: 'No active thread. Use /thread agent <provider> first.',
+          message: noActiveCommandThreadMessage(threads),
         }
       return {
         ok: true,
@@ -269,7 +294,7 @@ export function createPortalCommandServices(
         return {
           status: 'no-active-thread',
           title: '/thread capability',
-          body: 'No active thread. Use /thread agent <provider> first.',
+          body: noActiveCommandThreadMessage(threads),
           format: 'plain',
         }
       return await executePortalCommandCapability(
@@ -288,17 +313,20 @@ export function createPortalCommandServices(
     completionSnapshot: () => commandCompletionSnapshot,
   }
 
-  const mcpService: CommandMcpService = {
-    start: async (signal) => {
-      throwIfAborted(signal)
-      await abortable(mcp.start(signal), signal)
-    },
-    stop: async (signal) => {
-      throwIfAborted(signal)
-      await abortable(mcp.stop(signal), signal)
-    },
-    status: () => mcp.status(),
-  }
+  const mcpService: CommandMcpService | undefined =
+    mcp === undefined
+      ? undefined
+      : {
+          start: async (signal) => {
+            throwIfAborted(signal)
+            await abortable(mcp.start(signal), signal)
+          },
+          stop: async (signal) => {
+            throwIfAborted(signal)
+            await abortable(mcp.stop(signal), signal)
+          },
+          status: () => mcp.status(),
+        }
   const keybindingService: CommandKeybindingService = {
     reset: async (signal) => {
       throwIfAborted(signal)
@@ -310,9 +338,16 @@ export function createPortalCommandServices(
     catalog,
     threads,
     providers,
-    mcp: mcpService,
+    ...(mcpService === undefined ? {} : { mcp: mcpService }),
     keybindings: keybindingService,
   })
+}
+
+function noActiveCommandThreadMessage(threads: CommandThreadService): string {
+  const mode = threads.listAgentModes()[0]
+  return mode === undefined
+    ? 'No active thread. No Agent mode is enabled.'
+    : `No active thread. Use /thread ${mode} <provider> first.`
 }
 
 function clearThreadBusyOnSettlement(

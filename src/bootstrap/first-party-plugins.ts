@@ -12,6 +12,18 @@ import { FIRST_PARTY_PROVIDER_PACKAGE_PREFIX } from '../providers/first-party-pr
 import { PROVIDER_ATTACHMENT_CAPABILITY } from '../providers/provider-exchange.ts'
 import { PORTAL_SKILLS_PACKAGE_ID } from '../skills/skill-services.ts'
 import { PORTAL_SKILL_COMMAND_PACKAGE_ID } from '../skills/skill-command-plugin.ts'
+import {
+  PORTAL_AGENT_PROMPT_PACKAGE_ID,
+  PORTAL_AGENT_PROMPT_ID,
+  PORTAL_CHAT_PROMPT_PACKAGE_ID,
+  PORTAL_CHAT_PROMPT_ID,
+} from '../prompts/portal-prompt-plugin.ts'
+import {
+  PORTAL_AGENT_PACKAGE_ID,
+  PORTAL_AGENT_ID,
+  PORTAL_CHAT_AGENT_PACKAGE_ID,
+  PORTAL_CHAT_AGENT_ID,
+} from '../agents/portal-agent-plugin.ts'
 
 const PORTAL_COMMANDS = 'portal.commands'
 const ATTACH_IMAGE = 'portal.tool.attach-image'
@@ -31,7 +43,6 @@ const FIRST_PARTY_MANIFESTS: readonly PluginManifest[] = Object.freeze([
       'portal.command.thread.read',
       'portal.command.thread.manage',
       'portal.command.provider.capability.manage',
-      'portal.command.mcp.manage',
       'portal.command.job.read',
       'portal.command.job.manage',
       'portal.command.keybinding.manage',
@@ -39,13 +50,52 @@ const FIRST_PARTY_MANIFESTS: readonly PluginManifest[] = Object.freeze([
     [
       contribution('commands.collect', 'commands.help'),
       contribution('commands.collect', 'commands.thread'),
-      contribution('commands.collect', 'commands.mcp'),
       contribution('commands.collect', 'commands.providers'),
       contribution('commands.collect', 'commands.keybinding'),
       contribution('commands.collect', 'commands.exit'),
     ]
   ),
   manifest(PORTAL_SKILLS_PACKAGE_ID, [], [], []),
+  manifest(
+    PORTAL_AGENT_PROMPT_PACKAGE_ID,
+    [{ id: PORTAL_SKILLS_PACKAGE_ID, versionRange: '^1.0.0' }],
+    [],
+    [contribution('prompts.collect', 'portal.prompt.agent')]
+  ),
+  manifest(
+    PORTAL_CHAT_PROMPT_PACKAGE_ID,
+    [],
+    [],
+    [contribution('prompts.collect', 'portal.prompt.chat')]
+  ),
+  manifest(
+    PORTAL_AGENT_PACKAGE_ID,
+    [{ id: PORTAL_AGENT_PROMPT_PACKAGE_ID, versionRange: '^1.0.0' }],
+    [],
+    [
+      contribution('agents.collect', PORTAL_AGENT_ID, [
+        contributionDependency(
+          PORTAL_AGENT_PROMPT_PACKAGE_ID,
+          'prompts.collect',
+          PORTAL_AGENT_PROMPT_ID
+        ),
+      ]),
+    ]
+  ),
+  manifest(
+    PORTAL_CHAT_AGENT_PACKAGE_ID,
+    [{ id: PORTAL_CHAT_PROMPT_PACKAGE_ID, versionRange: '^1.0.0' }],
+    [],
+    [
+      contribution('agents.collect', PORTAL_CHAT_AGENT_ID, [
+        contributionDependency(
+          PORTAL_CHAT_PROMPT_PACKAGE_ID,
+          'prompts.collect',
+          PORTAL_CHAT_PROMPT_ID
+        ),
+      ]),
+    ]
+  ),
   manifest(
     PORTAL_SKILL_COMMAND_PACKAGE_ID,
     [
@@ -75,7 +125,20 @@ const FIRST_PARTY_MANIFESTS: readonly PluginManifest[] = Object.freeze([
     ]
   ),
   manifest(APPLY_PATCH, [], [], [contribution('tools.collect', APPLY_PATCH)]),
-  manifest(SPAWN, [], [], [contribution('tools.collect', SPAWN)]),
+  manifest(
+    SPAWN,
+    [{ id: PORTAL_AGENT_PACKAGE_ID, versionRange: '^1.0.0' }],
+    [],
+    [
+      contribution('tools.collect', SPAWN, [
+        contributionDependency(
+          PORTAL_AGENT_PACKAGE_ID,
+          'agents.collect',
+          PORTAL_AGENT_ID
+        ),
+      ]),
+    ]
+  ),
   manifest(
     PLUGINS,
     [{ id: PORTAL_COMMANDS, versionRange: '^1.0.0' }],
@@ -90,20 +153,33 @@ const FIRST_PARTY_MANIFESTS: readonly PluginManifest[] = Object.freeze([
   ),
   manifest(
     EXEC_SURFACE,
+    [{ id: PORTAL_AGENT_PACKAGE_ID, versionRange: '^1.0.0' }],
     [],
-    [],
-    [contribution('surfaces.collect', 'portal.exec')]
+    [
+      contribution('surfaces.collect', 'portal.exec', [
+        contributionDependency(
+          PORTAL_AGENT_PACKAGE_ID,
+          'agents.collect',
+          PORTAL_AGENT_ID
+        ),
+      ]),
+    ]
   ),
   manifest(
     MCP_SURFACE,
-    [],
-    [],
-    [contribution('surfaces.collect', 'portal.mcp')]
+    [{ id: PORTAL_COMMANDS, versionRange: '^1.0.0' }],
+    ['portal.command.mcp.manage'],
+    [
+      contribution('commands.collect', 'commands.mcp', [
+        contributionDependency(MCP_SURFACE, 'surfaces.collect', 'portal.mcp'),
+      ]),
+      contribution('surfaces.collect', 'portal.mcp'),
+    ]
   ),
   ...FIRST_PARTY_PROVIDER_IDS.map((providerId) =>
     manifest(
       `${FIRST_PARTY_PROVIDER_PACKAGE_PREFIX}${providerId}`,
-      [{ id: PORTAL_SKILLS_PACKAGE_ID, versionRange: '^1.0.0' }],
+      [],
       [PROVIDER_ATTACHMENT_CAPABILITY],
       [contribution('providers.collect', providerId)]
     )
@@ -179,6 +255,38 @@ export function createFirstPartyPluginDefinitions(options: {
         ...createSkillPluginRegistration(),
       }
     }),
+    definition(PORTAL_AGENT_PROMPT_PACKAGE_ID, async () => {
+      const { createPortalAgentPromptRegistration } =
+        await import('../prompts/portal-prompt-plugin.ts')
+      return {
+        packageId: PORTAL_AGENT_PROMPT_PACKAGE_ID,
+        ...createPortalAgentPromptRegistration(),
+      }
+    }),
+    definition(PORTAL_CHAT_PROMPT_PACKAGE_ID, async () => {
+      const { createPortalChatPromptRegistration } =
+        await import('../prompts/portal-prompt-plugin.ts')
+      return {
+        packageId: PORTAL_CHAT_PROMPT_PACKAGE_ID,
+        ...createPortalChatPromptRegistration(),
+      }
+    }),
+    definition(PORTAL_AGENT_PACKAGE_ID, async () => {
+      const { createPortalAgentRegistration } =
+        await import('../agents/portal-agent-plugin.ts')
+      return {
+        packageId: PORTAL_AGENT_PACKAGE_ID,
+        ...createPortalAgentRegistration(),
+      }
+    }),
+    definition(PORTAL_CHAT_AGENT_PACKAGE_ID, async () => {
+      const { createPortalChatAgentRegistration } =
+        await import('../agents/portal-agent-plugin.ts')
+      return {
+        packageId: PORTAL_CHAT_AGENT_PACKAGE_ID,
+        ...createPortalChatAgentRegistration(),
+      }
+    }),
     definition(PORTAL_SKILL_COMMAND_PACKAGE_ID, async () => {
       const { createSkillCommandRegistration } =
         await import('../skills/skill-command-plugin.ts')
@@ -208,7 +316,9 @@ export function createFirstPartyPluginDefinitions(options: {
     definition(SPAWN, async () => {
       const { createSpawnPlugin } =
         await import('../tools/builtins/spawn-plugin.ts')
-      const plugin = createSpawnPlugin()
+      const plugin = createSpawnPlugin({
+        dependencies: [PORTAL_AGENT_PACKAGE_ID],
+      })
       return { packageId: SPAWN, ...plugin }
     }),
     definition(PLUGINS, async () => {
@@ -231,7 +341,9 @@ export function createFirstPartyPluginDefinitions(options: {
         await import('../exec/exec-surface-plugin.ts')
       return {
         packageId: EXEC_SURFACE,
-        ...createExecSurfaceRegistration(),
+        ...createExecSurfaceRegistration({
+          dependencies: [PORTAL_AGENT_PACKAGE_ID],
+        }),
       }
     }),
     definition(MCP_SURFACE, async () => {
@@ -268,6 +380,12 @@ function manifest(
   contributions: readonly {
     readonly point: string
     readonly id: string
+    readonly dependencies?: readonly {
+      readonly packageId: string
+      readonly point: string
+      readonly id: string
+      readonly version?: number
+    }[]
   }[] = []
 ): PluginManifest {
   return Object.freeze({
@@ -277,8 +395,20 @@ function manifest(
     entry: 'built-in',
     dependencies: Object.freeze(dependencies),
     contributions: Object.freeze(
-      contributions.map(({ point, id: contributionId }) =>
-        Object.freeze({ point, id: contributionId, version: 1 })
+      contributions.map(({ point, id: contributionId, dependencies = [] }) =>
+        Object.freeze({
+          point,
+          id: contributionId,
+          version: 1,
+          dependencies: Object.freeze(
+            dependencies.map((dependency) =>
+              Object.freeze({
+                ...dependency,
+                version: dependency.version ?? 1,
+              })
+            )
+          ),
+        })
       )
     ),
     capabilities: Object.freeze([...capabilities]),
@@ -287,7 +417,44 @@ function manifest(
 
 function contribution(
   point: string,
-  id: string
-): { readonly point: string; readonly id: string } {
-  return Object.freeze({ point, id })
+  id: string,
+  dependencies: readonly {
+    readonly packageId: string
+    readonly point: string
+    readonly id: string
+    readonly version?: number
+  }[] = []
+): {
+  readonly point: string
+  readonly id: string
+  readonly dependencies: readonly {
+    readonly packageId: string
+    readonly point: string
+    readonly id: string
+    readonly version: number
+  }[]
+} {
+  return Object.freeze({
+    point,
+    id,
+    dependencies: Object.freeze(
+      dependencies.map((dependency) =>
+        Object.freeze({ ...dependency, version: dependency.version ?? 1 })
+      )
+    ),
+  })
+}
+
+function contributionDependency(
+  packageId: string,
+  point: string,
+  id: string,
+  version = 1
+): {
+  readonly packageId: string
+  readonly point: string
+  readonly id: string
+  readonly version: number
+} {
+  return Object.freeze({ packageId, point, id, version })
 }
