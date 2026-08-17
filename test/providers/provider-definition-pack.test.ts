@@ -9,9 +9,9 @@ import {
   type ProviderDefinitionInput,
 } from '../../src/providers/provider-definition-pack.ts'
 import {
-  PROVIDER_IDS,
-  type ProviderId,
-} from '../../src/providers/provider-id.ts'
+  FIRST_PARTY_PROVIDER_IDS as PROVIDER_IDS,
+  type FirstPartyProviderId as ProviderId,
+} from '../../src/providers/first-party-provider-id.ts'
 
 test('provider definitions form one complete frozen domain snapshot', () => {
   assert.deepEqual(Object.keys(PROVIDER_DEFINITIONS), PROVIDER_IDS)

@@ -4,6 +4,7 @@ import type {
   Capability,
   ContributionSpec,
   ExecutableBindingSpec,
+  ServiceAccessor,
 } from '../extensions/extension-contracts.ts'
 import {
   createContributionRef,
@@ -11,14 +12,21 @@ import {
 } from '../extensions/extension-contracts.ts'
 import type { ExtensionRegistry } from '../extensions/extension-registry.ts'
 import type { ResolvedExtensionGraph } from '../extensions/extension-registry.ts'
-import { ResourceScope } from '../shared/resource-scope.ts'
+import type { ServiceContainer } from '../extensions/service-container.ts'
+import type { ExtensionResourceScope } from '../extensions/scope-registration.ts'
 import { PROVIDER_ATTACHMENT_CAPABILITY } from '../providers/provider-exchange.ts'
+import { attachmentStoreService } from '../attachments/attachment-contracts.ts'
+import {
+  childConversationService,
+  type ChildConversationParent,
+} from '../threads/child-conversation-service.ts'
 
 export interface ToolContribution {
   readonly id: string
   readonly descriptor: {
     readonly name: string
     readonly description: string
+    readonly inputFormat?: 'json' | 'freeform'
     readonly inputSchema: Record<string, unknown>
   }
   readonly requiredCapabilities: readonly Capability[]
@@ -36,7 +44,18 @@ export interface ToolHandlerContext {
   readonly signal: AbortSignal
   readonly scope: { readonly name: string; readonly signal: AbortSignal }
   readonly capabilities: readonly Capability[]
+  readonly services: ServiceAccessor
+  readonly invocation: ChildConversationParent | null
+  readonly onProgress?: (event: ToolProgressEvent) => void
 }
+
+export type ToolProgressEvent =
+  | { readonly type: 'start'; readonly startedAt: number }
+  | {
+      readonly type: 'output'
+      readonly stream: 'stdout' | 'stderr'
+      readonly text: string
+    }
 
 export type ToolHandler = (
   input: Record<string, unknown> | string,
@@ -62,6 +81,7 @@ const toolContributionSchema = z
       .object({
         name: stableId,
         description: z.string().trim().min(1),
+        inputFormat: z.enum(['json', 'freeform']).optional(),
         inputSchema: z.record(z.string(), z.unknown()),
       })
       .strict(),
@@ -87,6 +107,9 @@ export const toolContributionSpec: ContributionSpec<ToolContribution> =
           descriptor: Object.freeze({
             name: parsed.descriptor.name,
             description: parsed.descriptor.description,
+            ...(parsed.descriptor.inputFormat === undefined
+              ? {}
+              : { inputFormat: parsed.descriptor.inputFormat }),
             inputSchema: Object.freeze({ ...parsed.descriptor.inputSchema }),
           }),
           requiredCapabilities: Object.freeze([...parsed.requiredCapabilities]),
@@ -99,7 +122,10 @@ export const toolContributionSpec: ContributionSpec<ToolContribution> =
     maxPerConflictKey: 1,
     selection: 'all',
     ordering: 'dependency-edges',
-    allowedServices: Object.freeze([]),
+    allowedServices: Object.freeze([
+      childConversationService,
+      attachmentStoreService,
+    ]),
     allowedCapabilities: Object.freeze([PROVIDER_ATTACHMENT_CAPABILITY]),
   })
 
@@ -118,6 +144,8 @@ export const toolHandlerBindingSpec: ExecutableBindingSpec<ToolHandler> =
   })
 
 export function defineToolHost(registry: ExtensionRegistry): void {
+  registry.defineService(childConversationService)
+  registry.defineService(attachmentStoreService)
   registry.defineContribution(toolContributionSpec)
   registry.defineExecutableBinding(toolHandlerBindingSpec)
 }
@@ -131,14 +159,17 @@ export class ToolHostError extends Error {
 
 export class ToolHost {
   readonly #graph: ResolvedExtensionGraph
-  readonly #parent: ResourceScope
+  readonly #parent: ExtensionResourceScope
+  readonly #services: ServiceContainer
 
   public constructor(options: {
     readonly graph: ResolvedExtensionGraph
-    readonly parent: ResourceScope
+    readonly parent: ExtensionResourceScope
+    readonly services: ServiceContainer
   }) {
     this.#graph = options.graph
     this.#parent = options.parent
+    this.#services = options.services
   }
 
   public list(): readonly ToolContribution[] {
@@ -156,6 +187,8 @@ export class ToolHost {
     options: {
       readonly signal?: AbortSignal
       readonly availableCapabilities?: readonly Capability[]
+      readonly onProgress?: (event: ToolProgressEvent) => void
+      readonly invocation?: ChildConversationParent
     } = {}
   ): Promise<ToolResult> {
     const contribution = this.#graph
@@ -183,33 +216,45 @@ export class ToolHost {
         `Tool ${name} requires unavailable capabilities: ${missing.join(', ')}.`
       )
     }
-    const scope = this.#parent.createChild(`tool:${name}:${requestId}`)
+    const scope = this.#parent.createChild('tool', `${name}:${requestId}`)
     const externalSignal = options.signal
     const abortScope = () => {
-      void scope.dispose({ reason: externalSignal?.reason })
+      void scope.resourceScope.dispose({ reason: externalSignal?.reason })
     }
     if (externalSignal?.aborted === true) abortScope()
     else externalSignal?.addEventListener('abort', abortScope, { once: true })
     try {
-      if (scope.signal.aborted) throw scope.signal.reason
+      if (scope.resourceScope.signal.aborted)
+        throw scope.resourceScope.signal.reason
+      const services = this.#services.createAccessor({
+        scope,
+        allowedServices: contribution.requiredServices,
+        signal: scope.resourceScope.signal,
+        deadline: Number.POSITIVE_INFINITY,
+      })
       const handler = Promise.resolve(
         binding.binding(input, {
           requestId,
-          signal: scope.signal,
-          scope,
+          signal: scope.resourceScope.signal,
+          scope: scope.resourceScope,
           capabilities: Object.freeze([...availableCapabilities]),
+          services,
+          invocation: options.invocation ?? null,
+          ...(options.onProgress === undefined
+            ? {}
+            : { onProgress: options.onProgress }),
         })
       )
       void handler.catch(() => undefined)
       const result = await raceWithAbort(
         handler,
-        scope.signal,
+        scope.resourceScope.signal,
         `Tool ${name} execution canceled.`
       )
       return normalizeToolResult(result, name)
     } finally {
       externalSignal?.removeEventListener('abort', abortScope)
-      await scope.dispose({ reason: 'tool-complete' })
+      await scope.resourceScope.dispose({ reason: 'tool-complete' })
     }
   }
 }
@@ -221,14 +266,8 @@ async function raceWithAbort<T>(
 ): Promise<T> {
   if (signal.aborted) throw toToolError(signal.reason, message)
   let remove = () => {}
-  let timeout: ReturnType<typeof setTimeout> | null = null
   const aborted = new Promise<never>((_, reject) => {
-    const onAbort = () => {
-      timeout = setTimeout(
-        () => reject(toToolError(signal.reason, message)),
-        TOOL_CANCELLATION_GRACE_MS
-      )
-    }
+    const onAbort = () => reject(toToolError(signal.reason, message))
     signal.addEventListener('abort', onAbort, { once: true })
     remove = () => signal.removeEventListener('abort', onAbort)
   })
@@ -236,7 +275,6 @@ async function raceWithAbort<T>(
     return await Promise.race([operation, aborted])
   } finally {
     remove()
-    if (timeout !== null) clearTimeout(timeout)
   }
 }
 
@@ -245,8 +283,6 @@ function toToolError(reason: unknown, fallback: string): ToolHostError {
     reason instanceof Error && reason.message !== '' ? reason.message : fallback
   )
 }
-
-const TOOL_CANCELLATION_GRACE_MS = 100
 
 function normalizeToolResult(value: ToolResult, name: string): ToolResult {
   if (

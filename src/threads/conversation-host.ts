@@ -111,14 +111,27 @@ export class ConversationHostError extends Error {
 export interface ConversationOpenOptions {
   readonly providerId: string
   readonly providerOwnerId: string
-  readonly conversationId: string
+  readonly conversationId?: string | null
   readonly selectionRevision: string
+  readonly conversationUrl?: string | null
+  readonly model?:
+    | import('../providers/provider-model-catalog.ts').ResolvedProviderModel
+    | null
+  readonly setupMode?: import('../runtime/setup-handshake.ts').RuntimeSetupMode
+  readonly workingDirectory?: string
+  readonly spawnDepth?: number
+  readonly sessionKey?: string | null
+  readonly threadId?: string
+  readonly onProviderEvent?: (event: ProviderEvent) => void | Promise<void>
 }
 
 export interface ConversationSendOptions {
   readonly signal?: AbortSignal
   readonly attachments?: readonly AttachmentRef[]
   readonly maxToolLoops?: number
+  readonly onProviderEvent?: (event: ProviderEvent) => void | Promise<void>
+  readonly onToolProgress?: import('../tools/tool-host.ts').ToolHandlerContext['onProgress']
+  readonly invocation?: import('./child-conversation-service.ts').ChildConversationParent
 }
 
 export class ConversationHost {
@@ -127,6 +140,10 @@ export class ConversationHost {
   readonly #store: ConversationStore
   readonly #root: ResourceScope
   readonly #bindings = new Map<string, ProviderBinding>()
+  readonly #activeExchanges = new Map<
+    string,
+    { cancel(reason?: unknown): void | Promise<void> }
+  >()
   readonly #busy = new Set<string>()
 
   public constructor(options: {
@@ -147,31 +164,131 @@ export class ConversationHost {
     const binding = await this.#providerHost.openBinding(
       options.providerId,
       options.providerOwnerId,
-      options.selectionRevision
+      options.selectionRevision,
+      {
+        conversationUrl: options.conversationUrl ?? null,
+        model: options.model ?? null,
+        setupMode: options.setupMode ?? 'full',
+        workingDirectory: options.workingDirectory ?? process.cwd(),
+        spawnDepth: options.spawnDepth ?? 0,
+        sessionKey: options.sessionKey ?? null,
+        ...(options.onProviderEvent === undefined
+          ? {}
+          : { onEvent: options.onProviderEvent }),
+      }
     )
-    const id = `conversation-${randomUUID()}`
+    const id = options.threadId ?? `conversation-${randomUUID()}`
     try {
       const thread = this.#store.create({
         id,
         providerId: options.providerId,
-        conversationId: options.conversationId,
+        conversationId: binding.conversationId ?? options.conversationId ?? id,
       })
       this.#bindings.set(id, binding)
       return thread
     } catch (error) {
-      await binding.close(error).catch(() => undefined)
+      try {
+        await binding.close(error)
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          `Conversation ${id} creation and Provider cleanup both failed.`,
+          { cause: cleanupError }
+        )
+      }
       throw error
     }
   }
 
   public async close(threadId: string, reason?: unknown): Promise<void> {
+    const errors: unknown[] = []
+    try {
+      await this.stopGeneration(threadId, reason)
+    } catch (error) {
+      errors.push(error)
+    }
     const binding = this.#bindings.get(threadId)
     this.#bindings.delete(threadId)
-    await binding?.close(reason)
+    try {
+      await binding?.close(reason)
+    } catch (error) {
+      errors.push(error)
+    }
+    if (errors.length === 1) throw errors[0]
+    if (errors.length > 1) {
+      throw new AggregateError(
+        errors,
+        `Conversation ${threadId} failed to close cleanly.`
+      )
+    }
   }
 
   public get(threadId: string): ConversationThread | null {
     return this.#store.get(threadId)
+  }
+
+  public identity(threadId: string): {
+    readonly conversationId: string | null
+    readonly conversationUrl: string | null
+  } | null {
+    const binding = this.#bindings.get(threadId)
+    return binding === undefined
+      ? null
+      : Object.freeze({
+          conversationId: binding.conversationId,
+          conversationUrl: binding.conversationUrl,
+        })
+  }
+
+  public async preflight(
+    threadId: string,
+    input: string,
+    signal?: AbortSignal
+  ): Promise<{
+    readonly status: 'unknown' | 'within_limit' | 'over_limit'
+  }> {
+    return await this.#requireBinding(threadId).preflightInput(input, signal)
+  }
+
+  public async restore(threadId: string, signal?: AbortSignal): Promise<void> {
+    await this.#requireBinding(threadId).restore(signal)
+  }
+
+  public async loadHistory(
+    threadId: string,
+    signal?: AbortSignal
+  ): Promise<
+    import('../providers/conversation-history.ts').ConversationHistoryResult
+  > {
+    return await this.#requireBinding(threadId).loadHistory(signal)
+  }
+
+  public onUnexpectedClose(threadId: string, listener: () => void): () => void {
+    return this.#requireBinding(threadId).onUnexpectedClose(listener)
+  }
+
+  public async stopGeneration(
+    threadId: string,
+    reason?: unknown
+  ): Promise<void> {
+    await this.#activeExchanges.get(threadId)?.cancel(reason)
+  }
+
+  public async listCapabilities(threadId: string, signal: AbortSignal) {
+    return await this.#requireBinding(threadId).listCapabilities(signal)
+  }
+
+  public async executeCapability(
+    threadId: string,
+    name: string,
+    args: readonly string[],
+    signal: AbortSignal
+  ) {
+    return await this.#requireBinding(threadId).executeCapability(
+      name,
+      args,
+      signal
+    )
   }
 
   public async send(
@@ -206,9 +323,14 @@ export class ConversationHost {
     let activeExchange: {
       cancel(reason?: unknown): void | Promise<void>
     } | null = null
+    let cancellation: Promise<void> | null = null
     const cancel = () => {
-      void operationScope.dispose({ reason: options.signal?.reason })
-      void activeExchange?.cancel(options.signal?.reason)
+      cancellation ??= cancelConversationOperation(
+        operationScope,
+        activeExchange,
+        options.signal?.reason
+      )
+      void cancellation.catch(() => undefined)
     }
     if (options.signal?.aborted === true) cancel()
     else options.signal?.addEventListener('abort', cancel, { once: true })
@@ -238,8 +360,16 @@ export class ConversationHost {
           operationScope.signal
         )
         activeExchange = exchange
-        const leg = await consumeExchange(exchange, operationScope.signal)
+        this.#activeExchanges.set(threadId, exchange)
+        const leg = await consumeExchange(
+          exchange,
+          operationScope.signal,
+          options.onProviderEvent
+        )
         activeExchange = null
+        if (this.#activeExchanges.get(threadId) === exchange) {
+          this.#activeExchanges.delete(threadId)
+        }
         if (leg.completion.status !== 'completed') {
           thread = this.#appendTurnItem(
             thread,
@@ -288,6 +418,12 @@ export class ConversationHost {
           {
             signal: operationScope.signal,
             availableCapabilities: binding.capabilities,
+            ...(options.onToolProgress === undefined
+              ? {}
+              : { onProgress: options.onToolProgress }),
+            ...(options.invocation === undefined
+              ? {}
+              : { invocation: options.invocation }),
           }
         )
         thread = this.#appendTurnItem(thread, turnId, {
@@ -328,9 +464,18 @@ export class ConversationHost {
       return thread
     } finally {
       options.signal?.removeEventListener('abort', cancel)
-      await operationScope.dispose({ reason: 'conversation-complete' })
       this.#busy.delete(threadId)
+      this.#activeExchanges.delete(threadId)
+      await settleConversationCleanup(threadId, operationScope, cancellation)
     }
+  }
+
+  #requireBinding(threadId: string): ProviderBinding {
+    const binding = this.#bindings.get(threadId)
+    if (binding === undefined) {
+      throw new ConversationHostError(`Conversation is not open: ${threadId}`)
+    }
+    return binding
   }
 
   #appendTurnItem(
@@ -350,12 +495,55 @@ export class ConversationHost {
   }
 }
 
+async function settleConversationCleanup(
+  threadId: string,
+  operationScope: ResourceScope,
+  cancellation: Promise<void> | null
+): Promise<void> {
+  const tasks: Promise<void>[] = [
+    operationScope.dispose({ reason: 'conversation-complete' }),
+  ]
+  if (cancellation !== null) tasks.push(cancellation)
+  const cleanup = await Promise.allSettled(tasks)
+  const errors = cleanup.flatMap((outcome) =>
+    outcome.status === 'rejected' ? [outcome.reason as unknown] : []
+  )
+  if (errors.length === 1) throw errors[0]
+  if (errors.length > 1) {
+    throw new AggregateError(
+      errors,
+      `Conversation ${threadId} cancellation or cleanup failed.`
+    )
+  }
+}
+
+async function cancelConversationOperation(
+  scope: ResourceScope,
+  exchange: { cancel(reason?: unknown): void | Promise<void> } | null,
+  reason: unknown
+): Promise<void> {
+  const outcomes = await Promise.allSettled([
+    scope.dispose({ reason }),
+    ...(exchange === null
+      ? []
+      : [Promise.resolve().then(async () => await exchange.cancel(reason))]),
+  ])
+  const errors = outcomes.flatMap((outcome) =>
+    outcome.status === 'rejected' ? [outcome.reason as unknown] : []
+  )
+  if (errors.length === 1) throw errors[0]
+  if (errors.length > 1) {
+    throw new AggregateError(errors, 'Conversation cancellation failed.')
+  }
+}
+
 async function consumeExchange(
   exchange: {
     readonly events: AsyncIterable<ProviderEvent>
     readonly completion: Promise<ProviderCompletion>
   },
-  signal: AbortSignal
+  signal: AbortSignal,
+  onEvent?: (event: ProviderEvent) => void | Promise<void>
 ): Promise<{
   readonly completion: ProviderCompletion
   readonly toolRequest: Extract<
@@ -368,37 +556,21 @@ async function consumeExchange(
     { readonly type: 'tool.request' }
   > | null = null
   const iterator = exchange.events[Symbol.asyncIterator]()
-  const completion = exchange.completion.then((value) => ({
-    kind: 'completion' as const,
-    value,
-  }))
+  let removeAbort = () => {}
   const aborted = new Promise<never>((_, reject) => {
-    if (signal.aborted) {
-      reject(toConversationError(signal.reason))
-      return
+    const onAbort = () => reject(toConversationError(signal.reason))
+    if (signal.aborted) onAbort()
+    else {
+      signal.addEventListener('abort', onAbort, { once: true })
+      removeAbort = () => signal.removeEventListener('abort', onAbort)
     }
-    signal.addEventListener(
-      'abort',
-      () => reject(toConversationError(signal.reason)),
-      {
-        once: true,
-      }
-    )
   })
   try {
     while (true) {
-      const next = await Promise.race([
-        iterator.next().then((result) => ({ kind: 'event' as const, result })),
-        completion,
-        aborted,
-      ])
-      if (next.kind === 'completion') {
-        return { completion: next.value, toolRequest }
-      }
-      if (next.result.done) {
-        return { completion: await exchange.completion, toolRequest }
-      }
-      const event = next.result.value
+      const next = await Promise.race([iterator.next(), aborted])
+      if (next.done) break
+      const event = next.value
+      await onEvent?.(event)
       if (event.type === 'tool.request') {
         if (toolRequest !== null)
           throw new ConversationHostError(
@@ -407,7 +579,12 @@ async function consumeExchange(
         toolRequest = event
       }
     }
+    return {
+      completion: await Promise.race([exchange.completion, aborted]),
+      toolRequest,
+    }
   } finally {
+    removeAbort()
     void Promise.resolve(iterator.return?.()).catch(() => undefined)
   }
 }
@@ -430,7 +607,9 @@ function messagesFor(thread: ConversationThread): readonly ProviderMessage[] {
         messages.push({
           role: 'tool',
           toolCallId: item.toolCallId,
+          toolName: item.name,
           content: JSON.stringify(item.result.output),
+          toolResult: item.result,
         })
       }
     }

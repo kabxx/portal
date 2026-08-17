@@ -26,6 +26,7 @@ import {
 import { HookRunner } from './hook-runner.ts'
 import { ExtensionResourceScope } from './scope-registration.ts'
 import { ServiceContainer } from './service-container.ts'
+import { defineSurfaceHost } from '../surfaces/surface-extension.ts'
 
 export class ExtensionTestHost {
   readonly #rootResourceScope: ResourceScope
@@ -67,6 +68,14 @@ export class ExtensionTestHost {
 
   public defineService<Service>(ref: ServiceRef<Service>): void {
     this.#registry.defineService(ref)
+  }
+
+  public defineSurfaceHost(
+    options: {
+      readonly allowedFeatureServices?: readonly ServiceRef<unknown>[]
+    } = {}
+  ): void {
+    defineSurfaceHost(this.#registry, options)
   }
 
   public defineContribution<Value>(spec: ContributionSpec<Value>): void {

@@ -1,4 +1,7 @@
-import { PROVIDER_IDS, type ProviderId } from '../provider-id.ts'
+import {
+  FIRST_PARTY_PROVIDER_IDS as PROVIDER_IDS,
+  type FirstPartyProviderId as ProviderId,
+} from '../first-party-provider-id.ts'
 
 export type ProviderModelOptionDefinition = {
   readonly key: string

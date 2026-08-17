@@ -170,10 +170,13 @@ content is available before relying on it.
 
 ## Shared setup
 
-Every provider receives the same centrally rendered Tool Protocol and setup
-structure. Portal does not inject provider-specific constraint text. Chat
-creation sends only the shared initialization handshake, while `portal exec`
-sends setup and the first task in one user message without a `READY` roundtrip.
+Every browser Provider receives the same centrally rendered Portal Action
+Protocol and setup structure. The Action text format is translated back into
+Portal's internal Tool request/result contracts inside the Provider plugin.
+API Providers use their native tool-call format instead of this text protocol.
+Portal does not inject provider-specific constraint text. Chat creation sends
+only the shared initialization handshake, while `portal exec` sends setup and
+the first task in one user message without a `READY` roundtrip.
 
 Maintenance rules, selector guidance, test requirements, and the real-profile
 smoke checklist live in

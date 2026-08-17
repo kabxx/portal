@@ -38,14 +38,14 @@ test('runExecCli writes only the final answer to stdout', async () => {
   assert.equal(harness.closeCalls(), 1)
 })
 
-test('runExecCli supports explicit stdin and validates provider/model input', async () => {
+test('runExecCli supports explicit stdin and defers Provider validation to the graph-backed session', async () => {
   const harness = createHarness(async (task) => {
     assert.equal(task, 'stdin task')
     return 'ok'
   })
   harness.dependencies.input = pipedInput('stdin task')
   assert.equal(
-    await runExecCli(['--provider', 'gpt', '-'], harness.dependencies),
+    await runExecCli(['--provider', 'chatgpt', '-'], harness.dependencies),
     EXEC_EXIT_SUCCESS
   )
 
@@ -62,9 +62,9 @@ test('runExecCli supports explicit stdin and validates provider/model input', as
       ['--provider', 'chatgpt', '--model', 'missing', 'question'],
       invalid.dependencies
     ),
-    EXEC_EXIT_USAGE
+    EXEC_EXIT_SUCCESS
   )
-  assert.match(invalid.stderr.value, /does not support model/)
+  assert.equal(invalid.stdout.value, 'unused\n')
 })
 
 test('runExecCli maps runtime failures and always closes the session', async () => {

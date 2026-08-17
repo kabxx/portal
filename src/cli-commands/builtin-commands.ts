@@ -10,7 +10,6 @@ import type {
 import type { ServiceRef } from '../extensions/extension-contracts.ts'
 import {
   commandCatalogService,
-  commandJobService,
   commandKeybindingService,
   commandMcpService,
   commandOutputService,
@@ -226,31 +225,6 @@ const MCP_COMMAND: CommandContribution = command(
   commandRoutes.mcp
 )
 
-const JOB_COMMAND: CommandContribution = command(
-  'commands.job',
-  '/job',
-  'List or stop running command jobs.',
-  '/job [stop <job-id>]',
-  [
-    route(
-      'root',
-      [],
-      'always',
-      [],
-      [],
-      [help('[stop <job-id>]', 'List or stop running command jobs.')]
-    ),
-    route(
-      'stop',
-      ['stop'],
-      'always',
-      [required('job-id')],
-      [],
-      [help('stop <job-id>', 'Stop a running command job.')]
-    ),
-  ]
-)
-
 const KEYBINDING_COMMAND: CommandContribution = command(
   'commands.keybinding',
   '/keybinding',
@@ -276,7 +250,14 @@ const KEYBINDING_COMMAND: CommandContribution = command(
   ]
 )
 
-export const builtinCommandDefinitions: readonly BuiltinCommandDefinition[] =
+export const skillCommandDefinition: BuiltinCommandDefinition = definition(
+  SKILL_COMMAND,
+  skillHandler,
+  [commandOutputService, commandSkillService],
+  ['portal.command.skill.read', 'portal.command.skill.manage']
+)
+
+export const portalCommandDefinitions: readonly BuiltinCommandDefinition[] =
   Object.freeze([
     definition(
       HELP_COMMAND,
@@ -295,22 +276,10 @@ export const builtinCommandDefinitions: readonly BuiltinCommandDefinition[] =
       ]
     ),
     definition(
-      SKILL_COMMAND,
-      skillHandler,
-      [commandOutputService, commandSkillService],
-      ['portal.command.skill.read', 'portal.command.skill.manage']
-    ),
-    definition(
       MCP_COMMAND,
       mcpHandler,
       [commandOutputService, commandMcpService],
       ['portal.command.mcp.manage']
-    ),
-    definition(
-      JOB_COMMAND,
-      jobHandler,
-      [commandOutputService, commandJobService],
-      ['portal.command.job.read', 'portal.command.job.manage']
     ),
     definition(
       KEYBINDING_COMMAND,
@@ -325,6 +294,13 @@ export const builtinCommandDefinitions: readonly BuiltinCommandDefinition[] =
       []
     ),
     definition(EXIT_COMMAND, exitHandler, [], []),
+  ])
+
+export const builtinCommandDefinitions: readonly BuiltinCommandDefinition[] =
+  Object.freeze([
+    ...portalCommandDefinitions.slice(0, 2),
+    skillCommandDefinition,
+    ...portalCommandDefinitions.slice(2),
   ])
 
 async function helpHandler(
@@ -657,31 +633,6 @@ async function mcpHandler(
     ])
   }
   return writeHelp(output, '/mcp', MCP_HELP)
-}
-
-async function jobHandler(
-  invocation: Readonly<PreparedCommandInvocation>,
-  context: CommandExecutionContext
-): Promise<CommandResult> {
-  const output = await getService(context, commandOutputService)
-  const jobs = await getService(context, commandJobService)
-  if (invocation.routeId === 'root') {
-    const rows = jobs.list()
-    if (rows.length === 0)
-      return writeWarning(output, '/job', 'No run_command jobs are running.')
-    return writeInfo(output, '/job', formatJobs(rows))
-  }
-  const id = scalar(invocation.arguments.positionals['job-id']) ?? ''
-  const result = await jobs.stop(id, context.signal)
-  if (result === 'not-found')
-    return writeWarning(output, '/job stop', `Unknown or finished job: ${id}`)
-  if (result === 'timeout')
-    return writeWarning(
-      output,
-      '/job stop',
-      `Timed out waiting for ${id} to stop.`
-    )
-  return writeSuccess(output, '/job stop', `Stopped ${id}.`)
 }
 
 async function keybindingHandler(
@@ -1048,43 +999,4 @@ function formatRemoteSource(source: string): string {
     /* non-URL source keeps the sanitized fallback */
   }
   return display.length <= 160 ? display : `${display.slice(0, 157)}...`
-}
-
-function formatJobs(
-  jobs: readonly {
-    id: string
-    pid: number | null
-    state: string
-    startedAt: number
-    shell: string
-    cwd: string
-    command: string
-  }[]
-): string[] {
-  const now = Date.now()
-  return [
-    'Jobs:',
-    ...jobs.flatMap((job, index) => {
-      const lines = [
-        `${job.id}  pid=${job.pid}  ${job.state}  ${Math.max(0, Math.floor((now - job.startedAt) / 1000))}s  ${job.shell}`,
-        `  cwd: ${sanitize(job.cwd)}`,
-        `  command: ${sanitize(job.command)}`,
-      ]
-      return index === jobs.length - 1 ? lines : [...lines, '']
-    }),
-  ]
-}
-
-function sanitize(value: string): string {
-  const normalized = [...value]
-    .map((character) => {
-      const code = character.codePointAt(0) ?? 0
-      return code < 32 || (code >= 127 && code <= 159) ? ' ' : character
-    })
-    .join('')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return normalized.length <= 120
-    ? normalized
-    : `${normalized.slice(0, 117)}...`
 }

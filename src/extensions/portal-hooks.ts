@@ -21,7 +21,7 @@ import {
 import type { ResolvedExtensionGraph } from './extension-registry.ts'
 import type { ServiceContainer } from './service-container.ts'
 
-export type PortalSessionIntent = 'interactive' | 'batch'
+export type PortalSessionIntent = 'interactive' | 'batch' | 'automation'
 export type PortalShutdownPreviousState =
   'resolved' | 'starting' | 'ready' | 'failed'
 
@@ -253,7 +253,11 @@ function parseStoppedInput(value: unknown): PortalStoppedInput {
 }
 
 function parseSessionIntent(value: unknown): PortalSessionIntent {
-  return parseLiteral(value, ['interactive', 'batch'] as const, 'sessionIntent')
+  return parseLiteral(
+    value,
+    ['interactive', 'batch', 'automation'] as const,
+    'sessionIntent'
+  )
 }
 
 function parseShutdownState(value: unknown): PortalShutdownPreviousState {

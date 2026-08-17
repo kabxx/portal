@@ -1,5 +1,3 @@
-import type { ProviderId } from '../providers/provider-id.ts'
-
 /** State of a thread after it has been admitted to the runtime registry. */
 export type ThreadState =
   'idle' | 'running' | 'cancelling' | 'closing' | 'closed'
@@ -10,7 +8,7 @@ export type ThreadSource = 'tui' | 'mcp' | 'exec' | 'spawn' | 'system'
 
 export interface ThreadSnapshot {
   id: string
-  provider: ProviderId
+  provider: string
   origin: ThreadOrigin
   source: ThreadSource
   state: ThreadState
@@ -30,7 +28,7 @@ export type HistoryQuality =
 export interface PreparedThread<TRuntime = unknown> {
   id: string
   reservationOwnerId?: string
-  provider: ProviderId
+  provider: string
   runtime: TRuntime
   origin: ThreadOrigin
   source: ThreadSource

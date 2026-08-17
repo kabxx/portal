@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import type { KeybindingCatalog } from '../../src/keybindings/keybinding-catalog.ts'
-import type { PortalMcpServer } from '../../src/mcp-server/mcp-server.ts'
+import type {
+  CommandOutputMessage,
+  CommandOutputService,
+} from '../../src/cli-commands/core/command-services.ts'
 import { listProviderModels } from '../../src/providers/provider-model-catalog.ts'
 import {
   createPortalCommandServices,
@@ -17,6 +19,50 @@ import {
   createProviderAdapterStub,
 } from '../helpers/fakes.ts'
 import { createTestSurfacePort } from '../helpers/surface-port.ts'
+import { createTestProviderHost } from '../helpers/provider-host.ts'
+
+function withProviderHost(value: object): PortalHostStartedServices {
+  // Tests exercise one private adapter port at a time.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  return {
+    ...value,
+    providerHost: createTestProviderHost(),
+  } as unknown as PortalHostStartedServices
+}
+
+function testPresentation(
+  ui: import('../../src/terminal-ui/terminal-controller.ts').TerminalController
+) {
+  const output: CommandOutputService = {
+    write: (message: CommandOutputMessage) => {
+      const format = message.format ?? 'plain'
+      if (message.level === 'info')
+        ui.renderInfo(message.title, message.body, format)
+      else if (message.level === 'success')
+        ui.renderSuccess(message.title, message.body, format)
+      else if (message.level === 'warning')
+        ui.renderWarning(message.title, message.body, format)
+      else ui.renderError(message.title, message.body, format)
+    },
+    navigate: (event) => {
+      if (event.kind === 'show-home') ui.showHomeTimeline()
+      else if (event.kind === 'show-thread')
+        ui.showThreadTimeline(event.threadId)
+      else ui.removeThreadTimeline(event.threadId)
+    },
+  }
+  return {
+    output,
+    keybindings: { reset: async () => {} },
+    mcp: {
+      start: async () => {},
+      stop: async () => {},
+      status: () => ({ running: false, address: null, auth: false }),
+    },
+    setThreadBusy: (threadId: string, busy: boolean) =>
+      ui.setThreadBusy(threadId, busy),
+  }
+}
 
 test('portal Command thread adapter validates model selection before lifecycle creation', async () => {
   const creations: unknown[] = []
@@ -32,13 +78,9 @@ test('portal Command thread adapter validates model selection before lifecycle c
   const services = createPortalCommandServices(
     {
       // These tests exercise the private host adapter one port at a time.
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      started: started as unknown as PortalHostStartedServices,
-      ui,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      keybindings: {} as KeybindingCatalog,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      mcp: {} as PortalMcpServer,
+
+      started: withProviderHost(started),
+      ...testPresentation(ui),
     },
     { list: () => [] }
   )
@@ -82,13 +124,8 @@ test('portal Command output maps structured messages and discovery is deeply fro
   const ui = new TerminalController()
   const services = createPortalCommandServices(
     {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      started: {} as PortalHostStartedServices,
-      ui,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      keybindings: {} as KeybindingCatalog,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      mcp: {} as PortalMcpServer,
+      started: withProviderHost({}),
+      ...testPresentation(ui),
     },
     { list: () => [] }
   )
@@ -106,7 +143,7 @@ test('portal Command output maps structured messages and discovery is deeply fro
     format: 'plain',
   })
 
-  const snapshot = portalCommandCompletionSnapshot()
+  const snapshot = portalCommandCompletionSnapshot(createTestProviderHost())
   assert.equal(Object.isFrozen(snapshot), true)
   assert.equal(Object.isFrozen(snapshot.entries), true)
   assert.equal(
@@ -154,8 +191,7 @@ test('portal Command reload owns the Thread operation and bridges cancellation',
   ui.showThreadTimeline(thread.id)
   const services = createPortalCommandServices(
     {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      started: {
+      started: withProviderHost({
         threadManager,
         lifecycle: {
           startOperation: (
@@ -164,12 +200,8 @@ test('portal Command reload owns the Thread operation and bridges cancellation',
             stopTarget: Parameters<ThreadOperationCoordinator['tryStart']>[1]
           ) => operations.tryStart(threadId, stopTarget, runner),
         },
-      } as unknown as PortalHostStartedServices,
-      ui,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      keybindings: {} as KeybindingCatalog,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      mcp: {} as PortalMcpServer,
+      }),
+      ...testPresentation(ui),
     },
     { list: () => [] }
   )
@@ -209,8 +241,7 @@ test('portal Command reload remains busy until an abort-ignoring operation settl
   ui.showThreadTimeline(thread.id)
   const services = createPortalCommandServices(
     {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      started: {
+      started: withProviderHost({
         threadManager,
         lifecycle: {
           startOperation: (
@@ -219,12 +250,8 @@ test('portal Command reload remains busy until an abort-ignoring operation settl
             stopTarget: Parameters<ThreadOperationCoordinator['tryStart']>[1]
           ) => operations.tryStart(threadId, stopTarget, runner),
         },
-      } as unknown as PortalHostStartedServices,
-      ui,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      keybindings: {} as KeybindingCatalog,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      mcp: {} as PortalMcpServer,
+      }),
+      ...testPresentation(ui),
     },
     { list: () => [] }
   )
@@ -262,8 +289,7 @@ test('portal Command reload rejects a concurrent Thread operation', async () => 
   ui.bindSurfacePort(createTestSurfacePort(threadManager))
   const services = createPortalCommandServices(
     {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      started: {
+      started: withProviderHost({
         threadManager,
         lifecycle: {
           startOperation: (
@@ -272,12 +298,8 @@ test('portal Command reload rejects a concurrent Thread operation', async () => 
             stopTarget: Parameters<ThreadOperationCoordinator['tryStart']>[1]
           ) => operations.tryStart(threadId, stopTarget, runner),
         },
-      } as unknown as PortalHostStartedServices,
-      ui,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      keybindings: {} as KeybindingCatalog,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      mcp: {} as PortalMcpServer,
+      }),
+      ...testPresentation(ui),
     },
     { list: () => [] }
   )
@@ -309,8 +331,7 @@ test('portal Command close reports logical removal when runtime cleanup fails', 
   const ui = new TerminalController()
   const services = createPortalCommandServices(
     {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      started: {
+      started: withProviderHost({
         threadManager,
         lifecycle: {
           close: async (threadId: string) => {
@@ -318,12 +339,8 @@ test('portal Command close reports logical removal when runtime cleanup fails', 
             return { ok: true, threadId, closed: true }
           },
         },
-      } as unknown as PortalHostStartedServices,
-      ui,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      keybindings: {} as KeybindingCatalog,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      mcp: {} as PortalMcpServer,
+      }),
+      ...testPresentation(ui),
     },
     { list: () => [] }
   )
@@ -355,18 +372,13 @@ test('portal Command close propagates cancellation and observes late settlement'
   const ui = new TerminalController()
   const services = createPortalCommandServices(
     {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      started: {
+      started: withProviderHost({
         threadManager,
         lifecycle: {
           close: async () => await closeFinished.promise,
         },
-      } as unknown as PortalHostStartedServices,
-      ui,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      keybindings: {} as KeybindingCatalog,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      mcp: {} as PortalMcpServer,
+      }),
+      ...testPresentation(ui),
     },
     { list: () => [] }
   )

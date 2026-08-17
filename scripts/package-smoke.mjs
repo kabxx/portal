@@ -231,6 +231,44 @@ try {
     false,
     'CLI metadata commands must not create workspace data'
   )
+  const pluginDataDirectory = path.join(workspaceDirectory, 'plugin-probe')
+  const pluginList = runInstalledPortal(
+    portalBin,
+    ['plugins', '--data-dir', pluginDataDirectory, '--json', 'list'],
+    { cwd: workspaceDirectory, env: installEnvironment }
+  )
+  const installedPlugins = JSON.parse(pluginList.stdout)
+  assert.ok(
+    installedPlugins.some(
+      (record) =>
+        record.manifest?.id === 'portal.tool.run-command' &&
+        record.enabled === true
+    )
+  )
+  const disablePlugin = runInstalledPortal(
+    portalBin,
+    [
+      'plugins',
+      '--data-dir',
+      pluginDataDirectory,
+      'disable',
+      'portal.tool.run-command',
+    ],
+    { cwd: workspaceDirectory, env: installEnvironment }
+  )
+  assert.match(disablePlugin.stdout, /Disabled portal\.tool\.run-command/)
+  const enablePlugin = runInstalledPortal(
+    portalBin,
+    [
+      'plugins',
+      '--data-dir',
+      pluginDataDirectory,
+      'enable',
+      'portal.tool.run-command',
+    ],
+    { cwd: workspaceDirectory, env: installEnvironment }
+  )
+  assert.match(enablePlugin.stdout, /Enabled portal\.tool\.run-command/)
 
   const installedMetadata = JSON.parse(
     await readFile(path.join(installedPackage, 'package.json'), 'utf8')
@@ -407,9 +445,8 @@ function auditPack(pack) {
   assert.equal(pack.name, '@kabxx/portal')
   assert.equal(pack.version, packageMetadata.version)
   assert.deepEqual(pack.bundled ?? [], [])
-  assert.equal(pack.entryCount, 145)
-
   const allowedFiles = pack.files.map(({ path: filePath }) => filePath)
+  assert.equal(pack.entryCount, allowedFiles.length)
   for (const required of [
     'LICENSE',
     'README.md',
@@ -418,13 +455,25 @@ function auditPack(pack) {
     'dist/cli-commands/builtin-commands.js',
     'dist/cli-commands/core/command-plan.js',
     'dist/cli-commands/core/command-runtime.js',
+    'dist/bootstrap/first-party-plugins.js',
+    'dist/bootstrap/kernel-bootstrap.js',
+    'dist/bootstrap/plugins-command.js',
     'dist/exec/exec-command.js',
+    'dist/exec/exec-surface-plugin.js',
     'dist/extensions/extension-registry.js',
+    'dist/extensions/plugin-manager.js',
+    'dist/extensions/plugin-store.js',
     'dist/extensions/portal-hooks.js',
     'dist/host/portal-host.js',
     'dist/host/portal-command-services.js',
     'dist/index.js',
     'dist/mcp-server/mcp-server.js',
+    'dist/mcp-server/mcp-surface-plugin.js',
+    'dist/providers/portal-action-protocol.js',
+    'dist/providers/provider-host.js',
+    'dist/skills/skill-plugin.js',
+    'dist/surfaces/surface-host.js',
+    'dist/tools/tool-host.js',
     'dist/vendor/ink.js',
     'dist/vendor/markdansi.js',
     'package.json',

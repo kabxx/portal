@@ -1,4 +1,4 @@
-import type { ProviderId } from './provider-id.ts'
+import type { FirstPartyProviderId as ProviderId } from './first-party-provider-id.ts'
 import {
   getProviderDefinition,
   type ProviderModelDefinition,

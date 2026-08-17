@@ -144,13 +144,14 @@ Remote messages loaded by resume are display-only and do not increase the local 
 | `/providers`        | List supported provider ids                          |
 | `/thread ...`       | Create, resume, switch, inspect, detach, and close   |
 | `/skill ...`        | Add, list, enable, disable, and remove Skills        |
+| `/plugins ...`      | Install, inspect, diagnose, and change plugins       |
 | `/mcp ...`          | Start and manage the Portal MCP Server               |
 | `/job`              | List running `run_command` jobs                      |
 | `/job stop ...`     | Stop one running `run_command` job                   |
 | `/keybinding reset` | Restore and save platform-default terminal shortcuts |
 | `/exit`             | Shut down portal                                     |
 
-The live `/help` output is the source of truth for commands available in the current build. Detailed behavior is documented under [Skills](skills.md) and [Portal MCP Server](mcp-server.md).
+The live `/help` output is the source of truth for commands available in the current plugin generation. `/skill`, `/job`, and their related capabilities are absent when their owning plugins or contributions are disabled. Plugin changes apply to the next Portal generation. The normal command supports `/plugins list`, `inspect`, `add`, `update`, `enable`, `disable`, `remove`, and `diagnose`, plus contribution enablement. The recovery CLI also exposes `portal plugins list|inspect|add|update|enable|disable|remove|enable-contribution|disable-contribution|diagnose|repair`. Detailed behavior is documented under [Skills](skills.md) and [Portal MCP Server](mcp-server.md).
 
 ## Input controls
 
@@ -175,7 +176,7 @@ automatically. See [Configuration](configuration.md#keybindings).
 
 `run_command` displays a small live stdout/stderr tail in a temporary terminal bubble, then replaces it with a compact completion summary. The complete bounded structured result is still returned to the web model.
 
-Cancelling the current turn with `Ctrl+C` detaches that turn's waiter but leaves the command running as a portal job. Use `/job` to inspect active jobs and `/job stop <job-id>` to stop one. Controlled shutdown stops all jobs. Jobs are not persisted across portal restarts, and forcibly killing portal can bypass cleanup guarantees.
+Cancelling the current turn with `Ctrl+C` stops the active `run_command` process tree and waits for bounded cleanup. `/job` lists other active jobs owned by the enabled `run_command` plugin, and `/job stop <job-id>` stops one explicitly. Controlled shutdown stops all jobs. Jobs are not persisted across Portal restarts, and forcibly killing Portal can bypass cleanup guarantees.
 
 ## Browser and shutdown behavior
 

@@ -46,6 +46,10 @@ Portal targets non-browser MCP clients. Requests containing any
 
 ## Tools
 
+The thread tools are always supplied by the MCP Surface. `portal_list_jobs` and
+`portal_stop_job` are contributed by the `run_command` plugin and appear only
+when that plugin and its MCP management contribution are enabled.
+
 | Tool                    | Purpose                                                  |
 | ----------------------- | -------------------------------------------------------- |
 | `portal_list_providers` | List supported provider ids                              |
@@ -80,13 +84,13 @@ error instead of being queued. Different threads can run concurrently. Closing
 a thread is explicitly destructive and can cancel work started through another
 Portal interface.
 
-Cancelling an MCP message detaches its waiter from an already running
-`run_command` job; it does not stop that process. Use `portal_list_jobs` to
-discover active jobs and `portal_stop_job` to stop one. Job summaries include
+Cancelling an MCP message cancels the owning Tool scope; an active
+`run_command` invocation stops its process tree. Use `portal_list_jobs` to
+discover other active jobs and `portal_stop_job` to stop one. Job summaries include
 the command and working directory, which may contain sensitive data, but do not
 include buffered stdout or stderr. Unknown or already finished job ids return a
-Tool error. The TUI `/job` commands and controlled Portal shutdown remain
-available for the same process-local jobs.
+Tool error. When `run_command` is enabled, the TUI `/job` commands and
+controlled Portal shutdown use the same plugin-owned process-local jobs.
 
 ## Security
 

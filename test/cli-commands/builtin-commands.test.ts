@@ -23,12 +23,12 @@ test('built-in catalog drives help, providers, and exit', async (t) => {
     [
       '/help',
       '/thread',
-      '/skill',
       '/mcp',
-      '/job',
       '/keybinding',
       '/providers',
       '/exit',
+      '/skill',
+      '/job',
     ]
   )
   assert.match(bodyText(help?.body), /\/thread <subcommand>/)

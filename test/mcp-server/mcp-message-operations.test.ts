@@ -112,3 +112,17 @@ test('message operation store cancels running handles on stop', async () => {
   assert.equal(cancelled, true)
   assert.throws(() => store.get(operation.operationId), /Unknown MCP message/)
 })
+
+test('message operation store reports cancellation failures on stop', async () => {
+  const store = new McpMessageOperationStore()
+  const operation = store.begin('thread-1')
+  store.attachHandle(
+    operation.operationId,
+    createHandle(async () => {
+      throw new Error('cancel failed')
+    })
+  )
+
+  await assert.rejects(store.stopAll(), /failed to cancel/)
+  assert.throws(() => store.get(operation.operationId), /Unknown MCP message/)
+})

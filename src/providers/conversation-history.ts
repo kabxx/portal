@@ -1,4 +1,8 @@
-import { extractToolCall } from '../tools/core/tool-registry.ts'
+import {
+  extractToolCall,
+  isToolCallAtResponseEnd,
+} from '../tools/core/tool-registry.ts'
+import { PORTAL_ACTION_PROTOCOL } from './portal-action-protocol.ts'
 import { normalizeChatGptEntityMarkers } from './chatgpt-response-parser.ts'
 
 export type ConversationHistoryRole = 'user' | 'assistant'
@@ -10,6 +14,13 @@ export interface ConversationHistoryMessage {
   text: string
   format: 'plain' | 'markdown'
   createdAt: number | null
+  toolCall?: {
+    readonly name: string
+    readonly rawPayload: string
+    readonly leadingText: string
+    readonly trailingText: string
+  }
+  toolResult?: true
 }
 
 export interface ConversationHistoryResult {
@@ -660,7 +671,10 @@ export function parseChatGptHistory(raw: string): ConversationHistoryResult {
         return null
       }
       const rawText = readText(content?.parts)
-      const toolCall = role === 'assistant' ? extractToolCall(rawText) : null
+      const toolCall =
+        role === 'assistant'
+          ? extractToolCall(rawText, PORTAL_ACTION_PROTOCOL)
+          : null
       const text =
         role === 'assistant' && toolCall === null
           ? normalizeChatGptEntityMarkers(rawText)
@@ -968,10 +982,30 @@ function historyMessage(
   input: Omit<ConversationHistoryMessage, 'format' | 'createdAt'> &
     Partial<Pick<ConversationHistoryMessage, 'format' | 'createdAt'>>
 ): ConversationHistoryMessage {
+  const action =
+    input.role === 'assistant'
+      ? extractToolCall(input.text, PORTAL_ACTION_PROTOCOL)
+      : null
+  const toolCall =
+    action !== null &&
+    action.declaredToolName !== null &&
+    isToolCallAtResponseEnd(action)
+      ? Object.freeze({
+          name: action.declaredToolName,
+          rawPayload: action.rawPayload,
+          leadingText: action.leadingText,
+          trailingText: action.trailingText,
+        })
+      : null
   return {
     ...input,
     format: input.format ?? (input.role === 'assistant' ? 'markdown' : 'plain'),
     createdAt: input.createdAt ?? null,
+    ...(toolCall === null ? {} : { toolCall }),
+    ...(input.role === 'user' &&
+    input.text.trimStart().startsWith(PORTAL_ACTION_PROTOCOL.resultHeading)
+      ? { toolResult: true as const }
+      : {}),
   }
 }
 

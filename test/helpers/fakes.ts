@@ -10,7 +10,7 @@ import {
 } from '../../src/providers/adapters/adapter-base.ts'
 import type { ConversationHistoryResult } from '../../src/providers/conversation-history.ts'
 import type { CDPSession, Page } from 'playwright'
-import { ToolRegistry } from '../../src/tools/core/tool-registry.ts'
+import { createTestToolRegistry } from './tool-host.ts'
 
 export interface FakeRuntimeOptions {
   conversationId?: string | null
@@ -147,7 +147,7 @@ class FakeRuntime extends RuntimeCore {
 
   public constructor(private readonly fakeOptions: FakeRuntimeOptions) {
     const adapter = fakeOptions.adapter ?? createProviderAdapterStub()
-    super(adapter, new ToolRegistry(adapter, []))
+    super(adapter, createTestToolRegistry(adapter, []))
     this.adapter = adapter
   }
 

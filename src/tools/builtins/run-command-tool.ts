@@ -77,7 +77,21 @@ class RunCommandTool extends Tool<RunCommandInput, ToolOutput> {
     let result: RunCommandResult
     try {
       const job = jobs.start(input, options.onProgress)
-      result = await job.wait(options.signal)
+      let stopPromise: Promise<unknown> | null = null
+      const stopOnAbort = () => {
+        stopPromise ??= jobs.stop(job.id)
+      }
+      if (options.signal?.aborted === true) stopOnAbort()
+      else
+        options.signal?.addEventListener('abort', stopOnAbort, { once: true })
+      try {
+        result = await job.wait(options.signal)
+      } finally {
+        options.signal?.removeEventListener('abort', stopOnAbort)
+        if (options.signal?.aborted === true) {
+          await (stopPromise ?? jobs.stop(job.id))
+        }
+      }
     } catch (error) {
       if (error instanceof RunCommandEncodingError) {
         return createToolError(error.message)

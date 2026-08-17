@@ -9,7 +9,7 @@ import {
   type AbortOptions,
   type ProviderTimingOptions,
 } from '../../src/providers/adapters/adapter-base.ts'
-import { ToolRegistry } from '../../src/tools/core/tool-registry.ts'
+import { PORTAL_ACTION_PROTOCOL } from '../../src/providers/portal-action-protocol.ts'
 import {
   Tool,
   defineToolMetadata,
@@ -28,9 +28,9 @@ import {
   abortable,
   PortalAbortError,
 } from '../../src/runtime/runtime-cancellation.ts'
-import { ProjectInstructions } from '../../src/instructions/project-instructions.ts'
 import { createBrowserContextStub } from '../helpers/fakes.ts'
 import { SETUP_HANDSHAKE_PROMPT } from '../../src/runtime/setup-handshake.ts'
+import { createTestToolRegistry } from '../helpers/tool-host.ts'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -294,7 +294,7 @@ function createRuntimeForRetryTests(
   adapter: ProviderAdapter,
   tools: ToolConstructor[] = []
 ): RuntimeCore {
-  return new RuntimeCore(adapter, new ToolRegistry(adapter, tools), {
+  return new RuntimeCore(adapter, createTestToolRegistry(adapter, tools), {
     requestAttemptLimit: 3,
   })
 }
@@ -417,7 +417,7 @@ test('RuntimeCore executes a terminal tool call after leading assistant text', a
     ].join('\n\n'),
     'Inspection complete.',
   ])
-  const runtime = new RuntimeCore(adapter, new ToolRegistry(adapter, []))
+  const runtime = new RuntimeCore(adapter, createTestToolRegistry(adapter, []))
   const events: string[] = []
 
   const assistant = await runtime.submitUserInput('Inspect the repo.', {
@@ -443,6 +443,21 @@ test('RuntimeCore executes a terminal tool call after leading assistant text', a
   assert.match(adapter.attachedTexts[1] ?? '', /^### Tool Result ###\n/)
 })
 
+test('RuntimeCore maps a web Action call to an internal ToolResult and returns Action Result text', async () => {
+  const adapter = new FakeAdapter([
+    '<action name="missing_tool">{"value":"input"}</action>',
+    'Done.',
+  ])
+  const runtime = new RuntimeCore(
+    adapter,
+    createTestToolRegistry(adapter, [], { protocol: PORTAL_ACTION_PROTOCOL })
+  )
+
+  assert.equal(await runtime.submitUserInput('Run the action.'), 'Done.')
+  assert.match(adapter.attachedTexts[1] ?? '', /^### Action Result ###\n/)
+  assert.match(adapter.attachedTexts[1] ?? '', /"action": "missing_tool"/)
+})
+
 test('RuntimeCore treats a non-terminal tool block as ordinary assistant text', async () => {
   const response = [
     'I will inspect the workspace first.',
@@ -450,7 +465,7 @@ test('RuntimeCore treats a non-terminal tool block as ordinary assistant text', 
     'Then I will summarize the result.',
   ].join('\n\n')
   const adapter = new FakeAdapter([response])
-  const runtime = new RuntimeCore(adapter, new ToolRegistry(adapter, []))
+  const runtime = new RuntimeCore(adapter, createTestToolRegistry(adapter, []))
   const assistantMessages: string[] = []
   let toolCalls = 0
 
@@ -476,7 +491,7 @@ test('RuntimeCore executes named freeform tool payloads without JSON parsing', a
   ])
   const runtime = new RuntimeCore(
     adapter,
-    new ToolRegistry(adapter, [FreeformTool])
+    createTestToolRegistry(adapter, [FreeformTool])
   )
 
   const assistant = await runtime.submitUserInput('Use the freeform tool.')
@@ -492,7 +507,7 @@ test('RuntimeCore executes named JSON tool payloads as direct params', async () 
   ])
   const runtime = new RuntimeCore(
     adapter,
-    new ToolRegistry(adapter, [StructuredTool])
+    createTestToolRegistry(adapter, [StructuredTool])
   )
   let observedToolCall: unknown = null
 
@@ -517,7 +532,7 @@ test('RuntimeCore forwards transient tool progress without changing tool results
   ])
   const runtime = new RuntimeCore(
     adapter,
-    new ToolRegistry(adapter, [ProgressTool])
+    createTestToolRegistry(adapter, [ProgressTool])
   )
   const progress: string[] = []
   const toolCallIds: string[] = []
@@ -553,7 +568,7 @@ test('RuntimeCore forwards transient tool progress without changing tool results
 
 test('RuntimeCore forwards assistant stream snapshots before the final assistant message', async () => {
   const adapter = new FakeAdapter(['Streaming complete.'])
-  const runtime = new RuntimeCore(adapter, new ToolRegistry(adapter, []))
+  const runtime = new RuntimeCore(adapter, createTestToolRegistry(adapter, []))
   const streamSnapshots: string[] = []
   const finalMessages: string[] = []
 
@@ -574,7 +589,7 @@ test('RuntimeCore forwards assistant stream snapshots before the final assistant
 
 test('RuntimeCore propagates submit aborts to the adapter watchdog signal', async () => {
   const adapter = new FakeAdapter(['Done.'])
-  const runtime = new RuntimeCore(adapter, new ToolRegistry(adapter, []))
+  const runtime = new RuntimeCore(adapter, createTestToolRegistry(adapter, []))
   const controller = new AbortController()
 
   await runtime.submitUserInput('Say done.', {
@@ -652,7 +667,7 @@ test('RuntimeCore re-sends a completed tool result without executing the tool tw
 
 test('RuntimeCore cancels an adapter restore during retry recovery', async () => {
   const adapter = new RetryRestoreAdapter(['Done.'])
-  const runtime = new RuntimeCore(adapter, new ToolRegistry(adapter, []))
+  const runtime = new RuntimeCore(adapter, createTestToolRegistry(adapter, []))
   const controller = new AbortController()
   const submission = runtime.submitUserInput('Say done.', {
     signal: controller.signal,
@@ -693,7 +708,7 @@ test('RuntimeCore renders the unified setup structure', () => {
   const adapter = new FakeAdapter(['READY'])
   const runtime = new RuntimeCore(
     adapter,
-    new ToolRegistry(adapter, [StructuredTool]),
+    createTestToolRegistry(adapter, [StructuredTool]),
     {
       skills: [
         {
@@ -702,7 +717,7 @@ test('RuntimeCore renders the unified setup structure', () => {
           manifestPath: 'C:\\skills\\review\\SKILL.md',
         },
       ],
-      projectInstructions: new ProjectInstructions('Project rule.'),
+      projectInstructions: 'Project rule.',
       workingDirectory: 'C:\\workspace',
     }
   )
@@ -727,14 +742,14 @@ test('RuntimeCore renders the unified setup structure', () => {
 
 test('RuntimeCore accepts a case-insensitive READY token with extra text', async () => {
   const adapter = new FakeAdapter(['rEaDy - setup complete'])
-  const runtime = new RuntimeCore(adapter, new ToolRegistry(adapter, []))
+  const runtime = new RuntimeCore(adapter, createTestToolRegistry(adapter, []))
 
   await runtime.init()
 })
 
 test('RuntimeCore handshake mode sends only the shared handshake prompt', async () => {
   const adapter = new FakeAdapter(['Ready, initialized.'])
-  const runtime = new RuntimeCore(adapter, new ToolRegistry(adapter, []))
+  const runtime = new RuntimeCore(adapter, createTestToolRegistry(adapter, []))
 
   await runtime.init({ setupMode: 'handshake' })
 
@@ -743,7 +758,7 @@ test('RuntimeCore handshake mode sends only the shared handshake prompt', async 
 
 test('RuntimeCore rejects a setup handshake without a READY token', async () => {
   const adapter = new FakeAdapter(['Initialization complete.'])
-  const runtime = new RuntimeCore(adapter, new ToolRegistry(adapter, []))
+  const runtime = new RuntimeCore(adapter, createTestToolRegistry(adapter, []))
 
   await assert.rejects(runtime.init(), /response did not contain READY\./)
 })
@@ -752,7 +767,7 @@ test('RuntimeCore cancels while waiting for a tool result without feeding it bac
   const adapter = new FakeAdapter(['<tool name="slow_tool">{}</tool>'])
   const runtime = new RuntimeCore(
     adapter,
-    new ToolRegistry(adapter, [SlowTool])
+    createTestToolRegistry(adapter, [SlowTool])
   )
   const controller = new AbortController()
   const toolResults: unknown[] = []
@@ -779,7 +794,7 @@ test('RuntimeCore rejects named JSON tool calls with a non-object payload', asyn
   ])
   const runtime = new RuntimeCore(
     adapter,
-    new ToolRegistry(adapter, [SlowTool])
+    createTestToolRegistry(adapter, [SlowTool])
   )
   const toolResults: unknown[] = []
 
@@ -806,7 +821,7 @@ test('RuntimeCore rejects named JSON tool calls with a non-object payload', asyn
   assert.deepEqual(
     JSON.parse(resultMessage.slice('### Tool Result ###\n'.length)),
     {
-      tool: 'unknown',
+      tool: 'slow_tool',
       outcome: 'error',
       result: {
         message:
@@ -823,7 +838,7 @@ test('RuntimeCore sends full structured tool content to the model and forwards d
   ])
   const runtime = new RuntimeCore(
     adapter,
-    new ToolRegistry(adapter, [StructuredTool])
+    createTestToolRegistry(adapter, [StructuredTool])
   )
   const results: Array<{
     outcome: string
@@ -885,7 +900,7 @@ test('RuntimeCore preserves every original tool outcome when a large result is n
     )
     const runtime = new RuntimeCore(
       adapter,
-      new ToolRegistry(adapter, [OversizedOutcomeTool])
+      createTestToolRegistry(adapter, [OversizedOutcomeTool])
     )
     const localResults: Array<Record<string, unknown>> = []
 
@@ -935,7 +950,7 @@ test('RuntimeCore does not attach an over-limit delivery replacement', async () 
   )
   const runtime = new RuntimeCore(
     adapter,
-    new ToolRegistry(adapter, [OversizedOutcomeTool])
+    createTestToolRegistry(adapter, [OversizedOutcomeTool])
   )
 
   await assert.rejects(runtime.submitUserInput('x'), ComposerLimitExceededError)
@@ -960,7 +975,7 @@ test('RuntimeCore keeps an over-limit delivery stable across submit recovery wit
   )
   const runtime = new RuntimeCore(
     adapter,
-    new ToolRegistry(adapter, [OversizedOutcomeTool])
+    createTestToolRegistry(adapter, [OversizedOutcomeTool])
   )
   oversizedOutcomeToolCalls = 0
   let localResultCalls = 0
@@ -1004,7 +1019,7 @@ test('RuntimeCore reuses one over-limit delivery across a bounded retry without 
   )
   const runtime = new RuntimeCore(
     adapter,
-    new ToolRegistry(adapter, [OversizedOutcomeTool]),
+    createTestToolRegistry(adapter, [OversizedOutcomeTool]),
     { requestAttemptLimit: 3 }
   )
   const localResults: Array<Record<string, unknown>> = []

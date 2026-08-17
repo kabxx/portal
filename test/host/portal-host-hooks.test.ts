@@ -45,7 +45,7 @@ test('PortalHost invokes lifecycle Hooks around core resources in exact order', 
   try {
     host = await PortalHost.prepare(
       {
-        profile: 'exec',
+        entrySurfaceId: 'portal.exec',
         cwd: fixture.cwd,
         dataDirectory: fixture.dataDirectory,
       },
@@ -161,7 +161,7 @@ test('portal.beforeStart failure rolls back its resources without launching a br
   try {
     host = await PortalHost.prepare(
       {
-        profile: 'tui',
+        entrySurfaceId: 'portal.tui',
         cwd: fixture.cwd,
         dataDirectory: fixture.dataDirectory,
       },
@@ -228,7 +228,7 @@ test('a cancelled portal.ready Handler cannot publish services after shutdown', 
   try {
     host = await PortalHost.prepare(
       {
-        profile: 'exec',
+        entrySurfaceId: 'portal.exec',
         cwd: fixture.cwd,
         dataDirectory: fixture.dataDirectory,
       },
@@ -279,7 +279,7 @@ test('portal.ready failure prevents publication and closes the acquired browser 
   try {
     host = await PortalHost.prepare(
       {
-        profile: 'exec',
+        entrySurfaceId: 'portal.exec',
         cwd: fixture.cwd,
         dataDirectory: fixture.dataDirectory,
       },
@@ -322,7 +322,7 @@ test('portal.beforeStop aggregates every Handler failure and continues cleanup',
   try {
     host = await PortalHost.prepare(
       {
-        profile: 'exec',
+        entrySurfaceId: 'portal.exec',
         cwd: fixture.cwd,
         dataDirectory: fixture.dataDirectory,
       },
@@ -381,7 +381,7 @@ test('portal.stopped reports core cleanup failures without suppressing close err
   try {
     host = await PortalHost.prepare(
       {
-        profile: 'exec',
+        entrySurfaceId: 'portal.exec',
         cwd: fixture.cwd,
         dataDirectory: fixture.dataDirectory,
       },
@@ -428,7 +428,7 @@ test('portal.beforeStop Handlers share one absolute shutdown deadline', async ()
   try {
     host = await PortalHost.prepare(
       {
-        profile: 'exec',
+        entrySurfaceId: 'portal.exec',
         cwd: fixture.cwd,
         dataDirectory: fixture.dataDirectory,
       },
@@ -476,7 +476,7 @@ test('portal.stopped isolates Handler failure and reports close from resolved st
   try {
     host = await PortalHost.prepare(
       {
-        profile: 'tui',
+        entrySurfaceId: 'portal.tui',
         cwd: fixture.cwd,
         dataDirectory: fixture.dataDirectory,
       },
@@ -532,7 +532,7 @@ test('closing during portal.beforeStart cancels startup and still emits shutdown
   try {
     host = await PortalHost.prepare(
       {
-        profile: 'exec',
+        entrySurfaceId: 'portal.exec',
         cwd: fixture.cwd,
         dataDirectory: fixture.dataDirectory,
       },

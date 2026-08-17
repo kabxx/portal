@@ -87,8 +87,14 @@ function createFocusedMcpHandlers(manager: RunCommandJobManager) {
   // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
   const dependencies = {
     surface: {
-      listJobs: () => manager.list(),
-      stopJob: async (jobId: string) => await manager.stop(jobId),
+      listProviders: () => [],
+    },
+    runCommandJobs: {
+      list: () => manager.list(),
+      stop: async (id: string) => {
+        const result = await manager.stop(id)
+        return result === 'not_found' ? 'not-found' : result
+      },
     },
   } as unknown as McpHandlerDependencies
   return createMcpHandlers(dependencies)

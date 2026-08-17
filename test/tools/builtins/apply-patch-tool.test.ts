@@ -8,12 +8,10 @@ import {
   ApplyPatchTool,
   parsePatch,
 } from '../../../src/tools/builtins/apply-patch-tool.ts'
-import {
-  formatToolResultMessage,
-  ToolRegistry,
-} from '../../../src/tools/core/tool-registry.ts'
+import { formatToolResultMessage } from '../../../src/tools/core/tool-registry.ts'
 import type { ToolOutput } from '../../../src/tools/core/tool-definition.ts'
 import { createProviderAdapterStub } from '../../helpers/fakes.ts'
+import { createTestToolRegistry } from '../../helpers/tool-host.ts'
 
 function expectSuccess(output: ToolOutput) {
   assert.notEqual(output.outcome, 'error')
@@ -184,9 +182,8 @@ test('ApplyPatchTool preserves resolved paths in the Tool Result JSON', async ()
     `portal-missing-${process.pid}-${Date.now()}`,
     'target.txt'
   )
-  const registry = new ToolRegistry(createProviderAdapterStub(), [
-    ApplyPatchTool,
-  ])
+  const adapter = createProviderAdapterStub()
+  const registry = createTestToolRegistry(adapter, [ApplyPatchTool])
   const result = await registry.executeToolCall(
     [
       '*** Begin Patch',

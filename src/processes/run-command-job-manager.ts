@@ -182,11 +182,26 @@ export class RunCommandJobManager implements RunCommandJobService {
 
   public async stopAll(): Promise<void> {
     this.beginShutdown()
-    await Promise.allSettled(
+    const outcomes = await Promise.allSettled(
       [...this.jobs.values()].map(async (job) => {
-        await job.stop('shutdown')
+        return await job.stop('shutdown')
       })
     )
+    const failures: unknown[] = []
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') failures.push(outcome.reason)
+      else if (outcome.value === 'timeout') {
+        failures.push(
+          new Error('A run_command job did not stop before timeout.')
+        )
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        'One or more run_command jobs failed to stop.'
+      )
+    }
   }
 }
 

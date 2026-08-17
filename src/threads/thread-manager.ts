@@ -1,24 +1,22 @@
 import type { ToolCall } from '../tools/core/tool-registry.ts'
 import type { ToolProgressEvent } from '../tools/core/tool-definition.ts'
-import type { RuntimeCore } from '../runtime/runtime-core.ts'
 import {
   isAbortError,
   throwIfAborted,
 } from '../runtime/runtime-cancellation.ts'
-import type { ProviderId } from '../providers/provider-id.ts'
 import {
   ThreadRegistry,
   type ThreadRecord,
   type TurnItem,
   type TurnRecord,
 } from './thread-registry.ts'
-import { ComposerLimitExceededError } from '../providers/composer-limit.ts'
 import { ThreadSelectionController } from './thread-selection.ts'
+import type { ThreadRuntime } from './thread-runtime.ts'
 
 export interface ThreadHandle {
   id: string
-  provider: ProviderId
-  runtime: RuntimeCore
+  provider: string
+  runtime: ThreadRuntime
   title: string | null
   turnCount: number
   createdAt: number
@@ -27,8 +25,8 @@ export interface ThreadHandle {
 
 interface CreateThreadInput {
   id: string
-  provider: ProviderId
-  runtime: RuntimeCore
+  provider: string
+  runtime: ThreadRuntime
   createdAt: number
   origin?: 'new' | 'resumed'
   activate?: boolean
@@ -268,7 +266,7 @@ export class ThreadManager {
       handlers.signal
     )
     if (preflight.status === 'over_limit') {
-      throw new ComposerLimitExceededError(preflight, 'user')
+      throw new Error('Message exceeds the provider input limit.')
     }
     const turn = this.threads.beginTurn(thread.id, input)
     if (turn === null) {
@@ -304,10 +302,10 @@ export class ThreadManager {
             createdAt: Date.now(),
           })
         },
-        onToolCall: async (toolCall: ToolCall | null, rawPayload, metadata) => {
+        onToolCall: async (toolCall: ToolCall, rawPayload, metadata) => {
           await emitTurnItem({
             kind: 'tool_call',
-            toolName: toolCall?.tool ?? 'unknown',
+            toolName: toolCall.tool,
             rawPayload,
             ...(metadata === undefined
               ? {}
@@ -321,7 +319,7 @@ export class ThreadManager {
         onToolResult: async (toolResult, toolCall, metadata) => {
           await emitTurnItem({
             kind: 'tool_result',
-            toolName: toolCall?.tool ?? 'unknown',
+            toolName: toolCall.tool,
             outcome: toolResult.outcome,
             result: toolResult.result,
             ...(toolResult.displayText !== undefined

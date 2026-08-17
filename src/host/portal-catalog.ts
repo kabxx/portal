@@ -1,55 +1,40 @@
-import type { PortalExtensionRegistration } from '../extensions/portal-hooks.ts'
 import { ExtensionCatalogBuilder } from '../extensions/extension-catalog.ts'
-import {
-  createPortalCommandsRegistration,
-  portalCommandsDescriptor,
-  type BuiltinCommandDefinition,
-} from '../cli-commands/command-extension.ts'
-import { CommandServiceHost } from '../cli-commands/core/command-services.ts'
-import { createAttachImagePlugin } from '../tools/builtins/attach-image-plugin.ts'
-import { AttachmentFileService } from '../attachments/attachment-service.ts'
+import type { PortalExtensionRegistration } from '../extensions/portal-hooks.ts'
+import type { ChildConversationService } from '../threads/child-conversation-service.ts'
+import { createPortalKernelServicesRegistration } from './portal-kernel-services.ts'
+import type { PortalWorkspaceContext } from '../extensions/portal-workspace-service.ts'
+import type { PortalBrowserSessionService } from '../platform/browser-session-service.ts'
+import type { ToolRuntimeService } from '../tools/tool-runtime-service.ts'
 
-// First-party and installed packages enter the same catalog path. The command
-// package is compiled into Portal for now; it no longer has a special registry path.
+/** Compose only already-resolved packages plus the non-plugin Kernel service bridge. */
 export function buildPortalExtensionCatalog(options: {
-  readonly commandServices: CommandServiceHost
-  readonly commandDefinitions: readonly BuiltinCommandDefinition[]
-  readonly installed: readonly PortalExtensionRegistration[]
+  readonly resolved: readonly PortalExtensionRegistration[]
   readonly testExtensions?: readonly PortalExtensionRegistration[]
-  readonly attachments?: AttachmentFileService
+  readonly childConversations: ChildConversationService
+  readonly workspace: PortalWorkspaceContext
+  readonly browserSession: PortalBrowserSessionService
+  readonly tools: ToolRuntimeService
 }): readonly PortalExtensionRegistration[] {
   const builder = new ExtensionCatalogBuilder()
-  const commandRegistration = createPortalCommandsRegistration(
-    options.commandServices,
-    options.commandDefinitions
-  )
-  builder.add({
-    packageId: portalCommandsDescriptor.id,
-    descriptor: commandRegistration.descriptor,
-    module: commandRegistration.module,
-  })
-  const attachImage = createAttachImagePlugin(
-    options.attachments ?? new AttachmentFileService()
-  )
-  builder.add({
-    packageId: attachImage.descriptor.id,
-    descriptor: attachImage.descriptor,
-    module: attachImage.module,
-  })
-  for (const registration of options.installed) {
+  const add = (registration: PortalExtensionRegistration) => {
     builder.add({
       packageId: registration.descriptor.id,
       descriptor: registration.descriptor,
       module: registration.module,
     })
   }
-  for (const registration of options.testExtensions ?? []) {
-    builder.add({
-      packageId: registration.descriptor.id,
-      descriptor: registration.descriptor,
-      module: registration.module,
+
+  add(
+    createPortalKernelServicesRegistration({
+      childConversations: options.childConversations,
+      workspace: options.workspace,
+      browserSession: options.browserSession,
+      tools: options.tools,
     })
-  }
+  )
+  for (const registration of options.resolved) add(registration)
+  for (const registration of options.testExtensions ?? []) add(registration)
+
   return Object.freeze(
     builder
       .build()

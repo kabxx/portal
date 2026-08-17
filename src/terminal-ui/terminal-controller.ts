@@ -5,12 +5,6 @@ import type {
   ToolOutcome,
   ToolProgressEvent,
 } from '../tools/core/tool-definition.ts'
-import {
-  extractToolCall,
-  isToolCallAtResponseEnd,
-  parseToolCallPayload,
-  projectStreamingAssistantText,
-} from '../tools/core/tool-registry.ts'
 import { getDefaultShell } from '../platform/platform-defaults.ts'
 import { hasReadyHandshakeToken } from '../runtime/setup-handshake.ts'
 import { isPortalSetupPrompt } from '../runtime/setup-prompt.ts'
@@ -498,7 +492,7 @@ export class TerminalController {
 
   public renderAssistantStream(thread: ThreadHandle, message: string) {
     const view = this.getThreadTimelineView(thread.id)
-    const displayMessage = projectStreamingAssistantText(message)
+    const displayMessage = message
     if (!displayMessage) {
       if (view.liveAssistant !== null) {
         this.discardLiveAssistant(view)
@@ -603,43 +597,37 @@ export class TerminalController {
       if (hiddenIndexes.has(index)) {
         continue
       }
-      if (message.role === 'user' && isToolResultMessage(message.text)) {
+      if (message.role === 'user' && message.toolResult === true) {
         continue
       }
 
-      if (message.role === 'assistant') {
-        const extracted = extractToolCall(message.text)
-        if (extracted !== null && isToolCallAtResponseEnd(extracted)) {
-          this.appendHistoryAssistantEntry(
-            entries,
+      if (message.role === 'assistant' && message.toolCall !== undefined) {
+        const toolCall = message.toolCall
+        this.appendHistoryAssistantEntry(
+          entries,
+          thread,
+          message,
+          toolCall.leadingText
+        )
+        const toolName = toolCall.name
+        entries.push({
+          id: this.allocateTimelineEntryId(),
+          tone: 'tool_call',
+          label: `${toolName} · call`,
+          body: this.summarizeToolCall(
             thread,
-            message,
-            extracted.leadingText
-          )
-          const toolCall = parseToolCallPayload(
-            extracted.rawPayload,
-            extracted.declaredToolName
-          )
-          const toolName = toolCall?.tool ?? 'unknown'
-          entries.push({
-            id: this.allocateTimelineEntryId(),
-            tone: 'tool_call',
-            label: `${toolName} · call`,
-            body: this.summarizeToolCall(
-              thread,
-              toolName,
-              extracted.rawPayload
-            ).join('\n'),
-            format: 'plain',
-          })
-          this.appendHistoryAssistantEntry(
-            entries,
-            thread,
-            message,
-            extracted.trailingText
-          )
-          continue
-        }
+            toolName,
+            toolCall.rawPayload
+          ).join('\n'),
+          format: 'plain',
+        })
+        this.appendHistoryAssistantEntry(
+          entries,
+          thread,
+          message,
+          toolCall.trailingText
+        )
+        continue
       }
 
       entries.push({
@@ -1256,10 +1244,6 @@ function isInitialSetupMessage(
     (message.text.trimStart().startsWith('# System') ||
       isPortalSetupPrompt(message.text))
   )
-}
-
-function isToolResultMessage(text: string): boolean {
-  return text.trimStart().startsWith('### Tool Result ###')
 }
 
 function toBodyText(body: string | readonly string[]): string {

@@ -4,6 +4,7 @@ import type {
   ExtensionModule,
   ExtensionRegistrationApi,
 } from '../../extensions/extension-contracts.ts'
+import { attachmentStoreService } from '../../attachments/attachment-contracts.ts'
 import { AttachmentFileService } from '../../attachments/attachment-service.ts'
 import { PROVIDER_ATTACHMENT_CAPABILITY } from '../../providers/provider-exchange.ts'
 import {
@@ -49,21 +50,30 @@ export function createAttachImagePlugin(
     }),
     module: Object.freeze({
       register(api: ExtensionRegistrationApi): void {
+        api.provide(attachmentStoreService, {
+          dependencies: Object.freeze([]),
+          create: async (context) => {
+            context.scope.defer('attachment storage', () => attachments.clear())
+            return attachments
+          },
+        })
         api.contribute(toolContributions, {
           id: attachImageContribution.id,
           value: attachImageContribution,
-          requiredServices: [],
+          requiredServices: [attachmentStoreService],
           requiredCapabilities: [PROVIDER_ATTACHMENT_CAPABILITY],
         })
         api.bind(toolHandlerBindings, {
           id: attachImageContribution.handlerBindingId,
           targetId: attachImageContribution.id,
           binding: async (
-            input: Record<string, unknown> | string
+            input: Record<string, unknown> | string,
+            context
           ): Promise<ToolResult> => {
             try {
               const { path } = attachImageInput.parse(input)
-              const attachment = await attachments.createRef(path)
+              const store = await context.services.get(attachmentStoreService)
+              const attachment = await store.createRef(path)
               return {
                 status: 'success' as const,
                 output: { attachment },

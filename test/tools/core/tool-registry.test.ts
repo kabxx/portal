@@ -16,10 +16,11 @@ import {
   isToolCallAtResponseEnd,
   parseToolCallPayload,
   projectStreamingAssistantText,
-  ToolRegistry,
   type ToolResult,
 } from '../../../src/tools/core/tool-registry.ts'
 import { createProviderAdapterStub } from '../../helpers/fakes.ts'
+import { PORTAL_ACTION_PROTOCOL } from '../../../src/providers/portal-action-protocol.ts'
+import { createTestToolRegistry } from '../../helpers/tool-host.ts'
 
 @defineToolMetadata({
   name: 'base_metadata',
@@ -104,6 +105,60 @@ test('named payload parsing follows the declared tool input format', () => {
   assert.equal(
     parseToolCallPayload('{"tool":"json_echo","params":{"value":"legacy"}}'),
     null
+  )
+})
+
+test('Portal Action Protocol converts JSON and freeform actions into internal ToolCalls', async () => {
+  const registry = createTestToolRegistry(
+    createProviderAdapterStub(),
+    [JsonEchoTool, FreeformEchoTool],
+    { protocol: PORTAL_ACTION_PROTOCOL }
+  )
+
+  const json = await registry.extractToolCall(
+    'Before\n<action name="json_echo">{"value":"json"}</action>'
+  )
+  assert.deepEqual(json, {
+    leadingText: 'Before\n',
+    declaredToolName: 'json_echo',
+    rawPayload: '{"value":"json"}',
+    trailingText: '',
+  })
+  assert.deepEqual(
+    registry.parseToolCallPayload(
+      json?.rawPayload ?? '',
+      json?.declaredToolName
+    ),
+    { tool: 'json_echo', params: { value: 'json' } }
+  )
+
+  const freeform = await registry.extractToolCall(
+    '<action name="freeform_echo">raw payload</action>'
+  )
+  assert.deepEqual(
+    registry.parseToolCallPayload(
+      freeform?.rawPayload ?? '',
+      freeform?.declaredToolName
+    ),
+    { tool: 'freeform_echo', params: 'raw payload' }
+  )
+
+  const result = registry.formatToolResultMessage('json_echo', {
+    outcome: 'success',
+    result: { value: 'done' },
+  })
+  assert.equal(
+    result,
+    '### Action Result ###\n' +
+      JSON.stringify(
+        {
+          action: 'json_echo',
+          outcome: 'success',
+          result: { value: 'done' },
+        },
+        null,
+        2
+      )
   )
 })
 
@@ -227,7 +282,7 @@ test('ToolRegistry keeps JSON tools and executes named freeform tools', async ()
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-tool-registry-'))
   const filePath = path.join(root, 'created.txt')
   const adapter = createProviderAdapterStub()
-  const registry = new ToolRegistry(adapter, [ApplyPatchTool])
+  const registry = createTestToolRegistry(adapter, [ApplyPatchTool])
 
   try {
     assert.match(registry.prompt, /^### apply_patch/)
@@ -253,11 +308,10 @@ test('ToolRegistry keeps JSON tools and executes named freeform tools', async ()
 })
 
 test('ToolRegistry can hide a registered tool from its prompt', async () => {
-  const registry = new ToolRegistry(
+  const registry = createTestToolRegistry(
     createProviderAdapterStub(),
     [JsonEchoTool],
-    {},
-    ['json_echo']
+    { hiddenToolNames: ['json_echo'] }
   )
 
   assert.doesNotMatch(registry.prompt, /### json_echo/)
@@ -271,7 +325,7 @@ test('ToolRegistry can hide a registered tool from its prompt', async () => {
 })
 
 test('ToolRegistry advertises only names, descriptions, and parameters', async () => {
-  const registry = new ToolRegistry(createProviderAdapterStub(), [
+  const registry = createTestToolRegistry(createProviderAdapterStub(), [
     JsonEchoTool,
     FreeformEchoTool,
   ])

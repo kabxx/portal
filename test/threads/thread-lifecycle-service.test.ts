@@ -1,10 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { ProjectInstructions } from '../../src/instructions/project-instructions.ts'
 import type { ConversationHistoryResult } from '../../src/providers/conversation-history.ts'
 import type { RuntimeCore } from '../../src/runtime/runtime-core.ts'
-import { ProviderAdapterError } from '../../src/providers/adapters/adapter-base.ts'
 import {
   ThreadCloseCleanupError,
   ThreadManager,
@@ -20,19 +18,19 @@ import {
   type ThreadLifecycleEvent,
 } from '../../src/threads/thread-lifecycle-service.ts'
 import { ThreadRuntimeRegistry } from '../../src/threads/thread-runtime-registry.ts'
+import type { ThreadRuntime } from '../../src/threads/thread-runtime.ts'
 import {
   ThreadStore,
   type CreateThreadHistoryEntryInput,
   type ThreadHistoryEntry,
 } from '../../src/threads/thread-store.ts'
-import {
-  createFakeRuntime,
-  createProviderAdapterStub,
-} from '../helpers/fakes.ts'
+import { createFakeRuntime } from '../helpers/fakes.ts'
 
 interface HarnessOptions {
   runtime?: RuntimeCore
-  runtimeFactory?: () => Promise<RuntimeCore>
+  runtimeFactory?: (
+    input: Parameters<ThreadLifecycleDependencies['openRuntime']>[0]
+  ) => Promise<ThreadRuntime>
   cancelWaitTimeoutMs?: number
 }
 
@@ -40,7 +38,7 @@ interface Harness {
   service: ThreadLifecycleService
   manager: ThreadManager
   operations: ThreadOperationCoordinator
-  registry: ThreadRuntimeRegistry<RuntimeCore>
+  registry: ThreadRuntimeRegistry<ThreadRuntime>
   store: TestThreadStore
   events: ThreadLifecycleEvent[]
 }
@@ -78,10 +76,9 @@ function createHarness(options: HarnessOptions = {}): Harness {
   const operations = new ThreadOperationCoordinator(
     options.cancelWaitTimeoutMs ?? 25
   )
-  const registry = new ThreadRuntimeRegistry<RuntimeCore>()
+  const registry = new ThreadRuntimeRegistry<ThreadRuntime>()
   const events: ThreadLifecycleEvent[] = []
   const runtime = options.runtime ?? createFakeRuntime()
-  const adapter = createProviderAdapterStub()
   const store = new TestThreadStore()
 
   const dependencies: ThreadLifecycleDependencies = {
@@ -89,8 +86,6 @@ function createHarness(options: HarnessOptions = {}): Harness {
     threadOperations: operations,
     threadStore: store,
     runtimeRegistry: registry,
-    browserProfileDir: 'test-profile',
-    initializationAttemptLimit: 1,
     resolveConversationUrl: (value) => {
       try {
         const url = new URL(value)
@@ -101,13 +96,10 @@ function createHarness(options: HarnessOptions = {}): Harness {
         return null
       }
     },
-    projectInstructions: new ProjectInstructions(null),
-    createAdapter: async () => adapter,
-    createRuntime: async () =>
+    openRuntime: async (input) =>
       options.runtimeFactory === undefined
         ? runtime
-        : await options.runtimeFactory(),
-    waitForLogin: async () => {},
+        : await options.runtimeFactory(input),
     observer: {
       onEvent: (event) => {
         events.push(event)
@@ -125,7 +117,11 @@ function createHarness(options: HarnessOptions = {}): Harness {
   }
 }
 
-function admitThread(harness: Harness, runtime: RuntimeCore, id = 't-1'): void {
+function admitThread(
+  harness: Harness,
+  runtime: ThreadRuntime,
+  id = 't-1'
+): void {
   harness.registry.commitPrepared({
     id,
     provider: 'chatgpt',
@@ -233,18 +229,21 @@ test('clean thread resume emits no warning before ready and history', async () =
   )
 })
 
-test('login-required provisioning emits only one warning', async () => {
-  let attempts = 0
+test('provider-owned login attention emits only one warning', async () => {
   const harness = createHarness({
-    runtimeFactory: async () => {
-      attempts += 1
-      if (attempts === 1) {
-        throw new ProviderAdapterError('restore', 'Login required.', {
-          kind: 'auth',
-          recovery: 'none',
-          retryable: false,
-        })
-      }
+    runtimeFactory: async ({ onProviderEvent }) => {
+      await onProviderEvent({
+        type: 'attention.request',
+        requestId: 'login-1',
+        kind: 'login',
+        prompt: 'Login required.',
+      })
+      await onProviderEvent({
+        type: 'attention.request',
+        requestId: 'login-1',
+        kind: 'login',
+        prompt: 'Login required.',
+      })
       return createFakeRuntime()
     },
   })

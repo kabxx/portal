@@ -8,15 +8,13 @@ import type {
 } from '../extensions/extension-contracts.ts'
 import type { PortalExtensionRegistration } from '../extensions/portal-hooks.ts'
 import {
-  commandCapabilities,
+  portalCommandCapabilities,
   commandCatalogService,
-  commandJobService,
   commandKeybindingService,
   commandMcpService,
   commandOutputService,
   commandProviderService,
   commandServiceRefs,
-  commandSkillService,
   commandThreadService,
   CommandServiceHost,
 } from './core/command-services.ts'
@@ -40,7 +38,7 @@ export const portalCommandsDescriptor: ExtensionDescriptor = Object.freeze({
   id: 'portal.commands',
   version: '1.0.0',
   dependencies: Object.freeze([]),
-  capabilities: commandCapabilities,
+  capabilities: portalCommandCapabilities,
 })
 
 export function createPortalCommandsRegistration(
@@ -53,9 +51,7 @@ export function createPortalCommandsRegistration(
       provideService(api, commandCatalogService, serviceHost)
       provideService(api, commandThreadService, serviceHost)
       provideService(api, commandProviderService, serviceHost)
-      provideService(api, commandSkillService, serviceHost)
       provideService(api, commandMcpService, serviceHost)
-      provideService(api, commandJobService, serviceHost)
       provideService(api, commandKeybindingService, serviceHost)
 
       for (const [index, definition] of definitions.entries()) {

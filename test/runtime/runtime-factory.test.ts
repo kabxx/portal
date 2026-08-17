@@ -6,7 +6,10 @@ import {
   type AbortOptions,
   ProviderAdapterError,
 } from '../../src/providers/adapters/adapter-base.ts'
-import { createRuntimeFromAdapter } from '../../src/runtime/runtime-factory.ts'
+import {
+  createRuntimeFromAdapter as createProductionRuntimeFromAdapter,
+  type RuntimeFactoryOptions,
+} from '../../src/runtime/runtime-factory.ts'
 import { PortalAbortError } from '../../src/runtime/runtime-cancellation.ts'
 import { mkdtemp, rm, writeFile } from 'fs/promises'
 import os from 'os'
@@ -16,6 +19,22 @@ import { createTestSkill } from '../helpers/skills.ts'
 import { loadProjectInstructions } from '../../src/instructions/project-instructions.ts'
 import { createBrowserContextStub } from '../helpers/fakes.ts'
 import { SETUP_HANDSHAKE_PROMPT } from '../../src/runtime/setup-handshake.ts'
+import { PORTAL_ACTION_PROTOCOL } from '../../src/providers/portal-action-protocol.ts'
+import { createTestToolHost } from '../helpers/tool-host.ts'
+
+type TestRuntimeFactoryOptions = Omit<RuntimeFactoryOptions, 'toolHost'> &
+  Partial<Pick<RuntimeFactoryOptions, 'toolHost'>>
+
+async function createRuntimeFromAdapter(
+  adapter: ProviderAdapter,
+  options: TestRuntimeFactoryOptions
+) {
+  const { toolHost, ...runtimeOptions } = options
+  return await createProductionRuntimeFromAdapter(adapter, {
+    ...runtimeOptions,
+    toolHost: toolHost ?? createTestToolHost(adapter, []),
+  })
+}
 
 interface FakeAdapterOptions {
   failChangeModel?: boolean
@@ -183,7 +202,7 @@ test('createRuntimeFromAdapter can send only the setup handshake for chat thread
   assert.deepEqual(adapter.attachedTexts, [SETUP_HANDSHAKE_PROMPT])
 })
 
-test('createRuntimeFromAdapter keeps the default four-tool setup compact', async () => {
+test('createRuntimeFromAdapter keeps the default tool setup compact', async () => {
   const adapter = new FakeAdapter()
 
   await createRuntimeFromAdapter(adapter, {
@@ -194,6 +213,18 @@ test('createRuntimeFromAdapter keeps the default four-tool setup compact', async
   const setup = adapter.attachedTexts[0] ?? ''
   assert.ok(setup.length <= 1_400, `setup is ${setup.length} characters`)
   assert.doesNotMatch(setup, /Examples?:|```/)
+})
+
+test('generic Runtime does not inject a product Tool catalog', async () => {
+  const adapter = new FakeAdapter()
+
+  await createRuntimeFromAdapter(adapter, { model: null })
+
+  assert.doesNotMatch(adapter.attachedTexts[0] ?? '', /## Tool Protocol/)
+  assert.doesNotMatch(
+    adapter.attachedTexts[0] ?? '',
+    /## Portal Action Protocol/
+  )
 })
 
 test('createRuntimeFromAdapter includes project instructions in setup', async () => {
@@ -215,7 +246,7 @@ test('createRuntimeFromAdapter includes project instructions in setup', async ()
 
     await createRuntimeFromAdapter(adapter, {
       model: null,
-      projectInstructions: instructions,
+      projectInstructions: instructions.prompt,
     })
 
     assert.match(adapter.attachedTexts[0] ?? '', /# Project Instructions/)
@@ -225,13 +256,12 @@ test('createRuntimeFromAdapter includes project instructions in setup', async ()
   }
 })
 
-test('createRuntimeFromAdapter includes the spawn tool in setup', async () => {
+test('createRuntimeFromAdapter does not advertise an unregistered spawn tool', async () => {
   const adapter = new FakeAdapter()
 
   await createRuntimeFromAdapter(adapter, { model: null })
 
-  assert.match(adapter.attachedTexts[0] ?? '', /### spawn/)
-  assert.match(adapter.attachedTexts[0] ?? '', /prompt: string/)
+  assert.doesNotMatch(adapter.attachedTexts[0] ?? '', /### spawn/)
 })
 
 test('createRuntimeFromAdapter can omit the spawn tool from setup', async () => {
@@ -243,37 +273,27 @@ test('createRuntimeFromAdapter can omit the spawn tool from setup', async () => 
   })
 
   assert.doesNotMatch(adapter.attachedTexts[0] ?? '', /### spawn/)
-  assert.match(adapter.attachedTexts[0] ?? '', /### run_command/)
+  assert.doesNotMatch(adapter.attachedTexts[0] ?? '', /### run_command/)
 })
 
-test('a spawn hidden from setup remains guarded for stale calls', async () => {
+test('a spawn absent from the graph remains unavailable for stale calls', async () => {
   const adapter = new FakeAdapter({
     responses: [
       'READY',
-      '<tool name="spawn">{"prompt":"stale call"}</tool>',
+      '<action name="spawn">{"prompt":"stale call"}</action>',
       'Stopped at the configured depth.',
     ],
   })
-  let spawnCalls = 0
   const runtime = await createRuntimeFromAdapter(adapter, {
     model: null,
     advertiseSpawnTool: false,
-    toolServices: {
-      spawnTask: async () => {
-        spawnCalls += 1
-        return {
-          kind: 'error',
-          message: 'SPAWN_DEPTH_LIMIT_REACHED: test limit reached',
-        }
-      },
-    },
+    textToolProtocol: PORTAL_ACTION_PROTOCOL,
   })
 
   const output = await runtime.submitUserInput('Continue an older context.')
 
   assert.equal(output, 'Stopped at the configured depth.')
-  assert.equal(spawnCalls, 1)
-  assert.match(adapter.attachedTexts.at(-1) ?? '', /SPAWN_DEPTH_LIMIT_REACHED/)
+  assert.match(adapter.attachedTexts.at(-1) ?? '', /Tool not found: spawn/)
 })
 
 test('createRuntimeFromAdapter catalogs enabled skill metadata and paths', async () => {
@@ -290,10 +310,12 @@ test('createRuntimeFromAdapter catalogs enabled skill metadata and paths', async
   })
 
   try {
+    const enabledSkills = (await skillLibrary.createCatalogSnapshot())
+      .setupSkills
     const enabledAdapter = new FakeAdapter()
     await createRuntimeFromAdapter(enabledAdapter, {
       model: null,
-      skillLibrary,
+      skills: enabledSkills,
     })
     const enabledPrompt = enabledAdapter.attachedTexts[0] ?? ''
     assert.match(enabledPrompt, /## Skills/)
@@ -317,10 +339,12 @@ test('createRuntimeFromAdapter catalogs enabled skill metadata and paths', async
     )
 
     await skillLibrary.disable('runtime-skill')
+    const disabledSkills = (await skillLibrary.createCatalogSnapshot())
+      .setupSkills
     const disabledAdapter = new FakeAdapter()
     await createRuntimeFromAdapter(disabledAdapter, {
       model: null,
-      skillLibrary,
+      skills: disabledSkills,
     })
     const disabledPrompt = disabledAdapter.attachedTexts[0] ?? ''
     assert.doesNotMatch(disabledPrompt, /## Skills/)

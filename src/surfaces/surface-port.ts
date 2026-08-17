@@ -9,16 +9,6 @@ export interface SurfaceThread {
   readonly updatedAt?: number
 }
 
-export interface SurfaceJob {
-  readonly id: string
-  readonly pid: number | null
-  readonly command: string
-  readonly cwd: string
-  readonly shell: 'powershell' | 'cmd' | 'bash' | 'zsh' | 'fish' | 'sh'
-  readonly startedAt: number
-  readonly state: 'running' | 'stopping'
-}
-
 export interface SurfacePort {
   listThreads(): readonly SurfaceThread[]
   getThread(threadId: string): SurfaceThread | null
@@ -97,8 +87,6 @@ export interface SurfaceProvisionResult {
 
 export interface SurfacePortActions extends SurfacePort {
   listProviders(): readonly string[]
-  listJobs(): readonly SurfaceJob[]
-  stopJob(jobId: string): Promise<'stopped' | 'not_found' | 'timeout'>
   createThread(
     input: SurfaceCreateThreadInput,
     signal: AbortSignal

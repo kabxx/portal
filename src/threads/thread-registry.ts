@@ -1,5 +1,4 @@
-import type { RuntimeCore } from '../runtime/runtime-core.ts'
-import type { ProviderId } from '../providers/provider-id.ts'
+import type { ThreadRuntime } from './thread-runtime.ts'
 import type { ToolOutcome } from '../tools/core/tool-definition.ts'
 
 export type TurnStatus = 'running' | 'completed' | 'failed' | 'canceled'
@@ -55,8 +54,8 @@ export interface TurnRecord {
 
 export interface ThreadRecord {
   id: string
-  provider: ProviderId
-  runtime: RuntimeCore
+  provider: string
+  runtime: ThreadRuntime
   title: string | null
   createdAt: number
   updatedAt: number

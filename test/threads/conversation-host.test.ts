@@ -2,13 +2,19 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { ExtensionRegistry } from '../../src/extensions/extension-registry.ts'
+import { ServiceContainer } from '../../src/extensions/service-container.ts'
+import { ExtensionResourceScope } from '../../src/extensions/scope-registration.ts'
 import { ResourceScope } from '../../src/shared/resource-scope.ts'
 import {
   defineProviderHost,
   providerContributions,
+  providerConversationUrlBindings,
   providerEndpointBindings,
 } from '../../src/providers/provider-exchange.ts'
-import { ProviderHost } from '../../src/providers/provider-host.ts'
+import {
+  ProviderHost,
+  type ProviderBinding,
+} from '../../src/providers/provider-host.ts'
 import { ConversationHost } from '../../src/threads/conversation-host.ts'
 import {
   defineToolHost,
@@ -42,8 +48,14 @@ test('ConversationHost owns the commit and promotes a Provider Tool request into
           id: 'test.provider',
           value: {
             id: 'test.provider',
-            descriptor: { label: 'Test Provider', capabilities: [] },
+            descriptor: {
+              label: 'Test Provider',
+              aliases: [],
+              models: [],
+              capabilities: [],
+            },
             endpointBindingId: 'test.provider.endpoint',
+            conversationUrlBindingId: 'test.provider.conversation-url',
           },
           requiredServices: [],
           requiredCapabilities: [],
@@ -83,6 +95,11 @@ test('ConversationHost owns the commit and promotes a Provider Tool request into
             }
           },
         })
+        api.bind(providerConversationUrlBindings, {
+          id: 'test.provider.conversation-url',
+          targetId: 'test.provider',
+          binding: () => null,
+        })
         api.contribute(toolContributions, {
           id: 'test.echo-tool',
           value: {
@@ -108,8 +125,17 @@ test('ConversationHost owns the commit and promotes a Provider Tool request into
   )
   const graph = registry.freeze()
   const root = new ResourceScope('conversation-test-root')
+  const portalScope = new ExtensionResourceScope(
+    'portal',
+    'conversation-test',
+    root
+  )
   const providerHost = new ProviderHost({ graph, parent: root })
-  const toolHost = new ToolHost({ graph, parent: root })
+  const toolHost = new ToolHost({
+    graph,
+    parent: portalScope,
+    services: new ServiceContainer(graph.servicePlan),
+  })
   const conversations = new ConversationHost({ providerHost, toolHost, root })
   t.after(async () => await root.dispose())
 
@@ -131,4 +157,150 @@ test('ConversationHost owns the commit and promotes a Provider Tool request into
     result.turns[0]?.items.map((item) => item.kind),
     ['user', 'assistant', 'tool.request', 'tool.result', 'assistant']
   )
+})
+
+test('ConversationHost reports both generation stop and Provider close failures', async (t) => {
+  const root = new ResourceScope('conversation-close-test')
+  t.after(async () => await root.dispose().catch(() => undefined))
+  const exchangeStarted = Promise.withResolvers<void>()
+  const eventStream = Promise.withResolvers<void>()
+  const completion =
+    Promise.withResolvers<
+      import('../../src/providers/provider-exchange.ts').ProviderCompletion
+    >()
+  const binding: ProviderBinding = {
+    providerId: 'test.provider',
+    capabilities: [],
+    scope: root.createChild('provider-binding'),
+    conversationId: 'remote-close',
+    conversationUrl: null,
+    preflightInput: async () => ({ status: 'unknown' }),
+    restore: async () => undefined,
+    loadHistory: async () => ({ messages: [], complete: false, warning: null }),
+    onUnexpectedClose: () => () => {},
+    listCapabilities: async () => ({ capabilities: [], usage: '' }),
+    executeCapability: async () => ({
+      status: 'unsupported-provider',
+      message: 'unsupported',
+    }),
+    exchange: async () => {
+      exchangeStarted.resolve()
+      return {
+        events: {
+          [Symbol.asyncIterator]() {
+            return {
+              next: async () => {
+                await eventStream.promise
+                return { value: undefined, done: true as const }
+              },
+            }
+          },
+        },
+        completion: completion.promise,
+        cancel: () => {
+          throw new Error('generation stop failed')
+        },
+      }
+    },
+    close: async () => {
+      throw new Error('Provider close failed')
+    },
+  }
+  const providerHost = {
+    openBinding: async () => binding,
+  }
+  const conversations = new ConversationHost({
+    // Focused structural fakes exercise only ConversationHost ownership here.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    providerHost: providerHost as unknown as ProviderHost,
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    toolHost: {} as unknown as ToolHost,
+    root,
+  })
+  const thread = await conversations.open({
+    providerId: 'test.provider',
+    providerOwnerId: 'test.provider-package',
+    selectionRevision: 'close-failure',
+  })
+  const sending = conversations.send(thread.id, 'wait')
+  await exchangeStarted.promise
+
+  await assert.rejects(conversations.close(thread.id), (error: unknown) => {
+    assert.ok(error instanceof AggregateError)
+    assert.match(String(error.errors[0]), /generation stop failed/)
+    assert.match(String(error.errors[1]), /Provider close failed/)
+    return true
+  })
+
+  eventStream.resolve()
+  completion.resolve({
+    status: 'canceled',
+    message: 'closed',
+    delivery: 'unknown',
+  })
+  await sending
+})
+
+test('ConversationHost reports Provider cancellation failure to the sender', async (t) => {
+  const root = new ResourceScope('conversation-cancel-test')
+  t.after(async () => await root.dispose().catch(() => undefined))
+  const exchangeStarted = Promise.withResolvers<void>()
+  const binding: ProviderBinding = {
+    providerId: 'test.provider',
+    capabilities: [],
+    scope: root.createChild('provider-binding'),
+    conversationId: 'remote-cancel',
+    conversationUrl: null,
+    preflightInput: async () => ({ status: 'unknown' }),
+    restore: async () => undefined,
+    loadHistory: async () => ({ messages: [], complete: false, warning: null }),
+    onUnexpectedClose: () => () => {},
+    listCapabilities: async () => ({ capabilities: [], usage: '' }),
+    executeCapability: async () => ({
+      status: 'unsupported-provider',
+      message: 'unsupported',
+    }),
+    exchange: async () => {
+      exchangeStarted.resolve()
+      return {
+        events: {
+          [Symbol.asyncIterator]() {
+            return {
+              next: async () => await new Promise(() => undefined),
+            }
+          },
+        },
+        completion: new Promise(() => undefined),
+        cancel: () => {
+          throw new Error('Provider cancellation failed')
+        },
+      }
+    },
+    close: async () => undefined,
+  }
+  const conversations = new ConversationHost({
+    // Focused structural fakes exercise only ConversationHost ownership here.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    providerHost: {
+      openBinding: async () => binding,
+    } as unknown as ProviderHost,
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    toolHost: {} as unknown as ToolHost,
+    root,
+  })
+  const thread = await conversations.open({
+    providerId: 'test.provider',
+    providerOwnerId: 'test.provider-package',
+    selectionRevision: 'cancel-failure',
+  })
+  const controller = new AbortController()
+  const sending = conversations.send(thread.id, 'wait', {
+    signal: controller.signal,
+  })
+  await exchangeStarted.promise
+
+  controller.abort(new Error('user canceled'))
+
+  await assert.rejects(sending, /Provider cancellation failed/)
+  assert.equal(conversations.get(thread.id)?.turns[0]?.status, 'canceled')
 })

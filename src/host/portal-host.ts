@@ -4,6 +4,7 @@ import {
   KernelBootstrap,
   type KernelPluginPlan,
 } from '../bootstrap/kernel-bootstrap.ts'
+import { createFirstPartyPluginDefinitions } from '../bootstrap/first-party-plugins.ts'
 import type {
   HookRuntimeClock,
   HookTraceSink,
@@ -17,30 +18,25 @@ import {
 } from '../extensions/portal-hooks.ts'
 import { CommandHost } from '../cli-commands/core/command-host.ts'
 import { PortalDomainRuntime } from './portal-domain-runtime.ts'
-import { builtinCommandDefinitions } from '../cli-commands/builtin-commands.ts'
+import { portalCommandDefinitions } from '../cli-commands/builtin-commands.ts'
 import {
   CommandServiceHost,
   type CommandServiceBundle,
 } from '../cli-commands/core/command-services.ts'
+import {
+  createPortalCommandServices,
+  portalCommandCompletionSnapshot,
+} from './portal-command-services.ts'
 import type { CommandSessionRuntime } from '../cli-commands/core/command-runtime.ts'
 import { ExtensionResourceScope } from '../extensions/scope-registration.ts'
 import type { BrowserLaunch } from '../platform/browser-cdp-launcher.ts'
 import { launchBrowser } from '../platform/browser-cdp-launcher.ts'
 import { resolvePortalDataDirectory } from '../platform/portal-data-directory.ts'
-import { RunCommandJobManager } from '../processes/run-command-job-manager.ts'
-import { resolveConversationUrl } from '../providers/provider-conversation-url.ts'
-import type { RuntimeCore } from '../runtime/runtime-core.ts'
-import { createRuntimeFromAdapter } from '../runtime/runtime-factory.ts'
 import type { RuntimeSetupMode } from '../runtime/setup-handshake.ts'
 import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
 import { ResourceScope } from '../shared/resource-scope.ts'
-import { sleepWithAbortAsync } from '../shared/sleep.ts'
-import { SkillLibrary } from '../skills/skill-library.ts'
 import type { ThreadCreationMode } from '../threads/thread-creation-mode.ts'
-import {
-  ThreadLifecycleService,
-  type ThreadLifecycleObserver,
-} from '../threads/thread-lifecycle-service.ts'
+import { ThreadLifecycleService } from '../threads/thread-lifecycle-service.ts'
 import { ThreadManager } from '../threads/thread-manager.ts'
 import { ThreadOperationCoordinator } from '../threads/thread-operation-coordinator.ts'
 import { ThreadRuntimeRegistry } from '../threads/thread-runtime-registry.ts'
@@ -51,31 +47,34 @@ import {
   type PortalConfigDocument,
 } from '../config/portal-config.ts'
 import {
-  loadProjectInstructions,
-  type ProjectInstructions,
-} from '../instructions/project-instructions.ts'
-import {
   createPortalRuntimeSettings,
   runtimeSetupModeForThreadCreation,
   type PortalRuntimeSettings,
 } from '../runtime/runtime-settings.ts'
-import { createToolServices } from '../tools/spawn-tool-services.ts'
-import { createAdapterForProvider } from '../providers/provider-catalog.ts'
+import { createWebChildConversationService } from '../threads/web-child-conversation-service.ts'
 import { buildPortalExtensionCatalog } from './portal-catalog.ts'
 import { PluginManager } from '../extensions/plugin-manager.ts'
 import { JsonPluginStore } from '../extensions/plugin-store.ts'
-import { AttachmentFileService } from '../attachments/attachment-service.ts'
+import { ChildConversationServiceHost } from '../threads/child-conversation-service.ts'
+import { PortalBrowserSessionHost } from '../platform/browser-session-service.ts'
+import { ToolRuntimeServiceHost } from '../tools/tool-runtime-service.ts'
+import { createConversationRuntimeBridge } from '../threads/conversation-runtime-bridge.ts'
+import type { ThreadLifecycleEvent } from '../threads/thread-lifecycle-service.ts'
+import type { ThreadRuntime } from '../threads/thread-runtime.ts'
+import { PortalSurfacePort } from './portal-surface-port.ts'
+import type {
+  SurfaceHostEvent,
+  SurfaceThreadLifecycleEvent,
+} from '../surfaces/surface-extension.ts'
 
-const LOGIN_CHECK_INTERVAL_MS = 1000
 const HOST_OPERATION_TIMEOUT_MS = 3000
 const PORTAL_ACTIVATION_HOOK_TIMEOUT_MS = 5000
 const PORTAL_SHUTDOWN_HOOK_TIMEOUT_MS = 3000
-export type PortalHostProfile = 'tui' | 'exec'
 export type PortalHostState =
   'resolved' | 'starting' | 'ready' | 'stopping' | 'stopped' | 'failed'
 
 export interface PortalHostOptions {
-  readonly profile: PortalHostProfile
+  readonly entrySurfaceId: string
   readonly cwd: string
   readonly dataDirectory?: string
   readonly browserExecutablePath?: string
@@ -83,8 +82,6 @@ export interface PortalHostOptions {
 
 export interface PortalHostDependencies {
   readonly launchBrowser?: typeof launchBrowser
-  readonly createProviderAdapter?: typeof createAdapterForProvider
-  readonly createRuntime?: typeof createRuntimeFromAdapter
   readonly extensionClock?: HookRuntimeClock
   readonly extensionTraceSink?: HookTraceSink
   readonly [portalHostTestExtensions]?: readonly PortalExtensionRegistration[]
@@ -92,37 +89,32 @@ export interface PortalHostDependencies {
 
 interface ResolvedPortalHostDependencies {
   readonly launchBrowser: typeof launchBrowser
-  readonly createProviderAdapter: typeof createAdapterForProvider
-  readonly createRuntime: typeof createRuntimeFromAdapter
 }
 
 export interface PortalHostStartOptions {
   readonly signal?: AbortSignal
-  readonly observer?: ThreadLifecycleObserver
-  readonly onPageCloseCleanupError?: (error: unknown, threadId: string) => void
 }
 
 export interface PortalHostPreparedServices {
-  readonly profile: PortalHostProfile
+  readonly entrySurfaceId: string
+  readonly sessionIntent: PortalSessionIntent
   readonly cwd: string
   readonly dataDirectory: string
   readonly configPath: string
   readonly config: PortalConfigDocument
   readonly settings: PortalRuntimeSettings
-  readonly skillLibrary: SkillLibrary
-  readonly projectInstructions: ProjectInstructions
   readonly browserExecutablePath: string
   readonly browserProfileDir: string
   readonly threadStore: ThreadStore
   readonly threadManager: ThreadManager
   readonly threadOperations: ThreadOperationCoordinator
-  readonly runtimeRegistry: ThreadRuntimeRegistry<RuntimeCore>
-  readonly runCommandJobs: RunCommandJobManager
+  readonly runtimeRegistry: ThreadRuntimeRegistry<ThreadRuntime>
   readonly pluginManager: PluginManager
   readonly pluginPlan: KernelPluginPlan
   readonly providerHost: import('../providers/provider-host.ts').ProviderHost
   readonly toolHost: import('../tools/tool-host.ts').ToolHost
   readonly conversationHost: import('../threads/conversation-host.ts').ConversationHost
+  readonly childConversations: ChildConversationServiceHost
 }
 
 export interface PortalHostStartedServices extends PortalHostPreparedServices {
@@ -147,6 +139,12 @@ export class PortalHost {
   #browserScope: ResourceScope | null = null
   #runtimeScope: ResourceScope | null = null
   #startedServices: PortalHostStartedServices | null = null
+  #surfaceKernelUnbind: (() => void) | null = null
+  readonly #surfaceListeners = new Set<
+    (event: SurfaceHostEvent) => void | Promise<void>
+  >()
+  readonly #domainRuntime: PortalDomainRuntime
+  readonly #browserSession: PortalBrowserSessionHost
 
   private constructor(
     public readonly prepared: PortalHostPreparedServices,
@@ -157,7 +155,9 @@ export class PortalHost {
     hooks: PortalHookRuntime,
     commandHost: CommandHost,
     commandServices: CommandServiceHost,
-    dependencies: ResolvedPortalHostDependencies
+    dependencies: ResolvedPortalHostDependencies,
+    domainRuntime: PortalDomainRuntime,
+    browserSession: PortalBrowserSessionHost
   ) {
     this.#rootScope = rootScope
     this.#extensionActivationScope = extensionActivationScope
@@ -167,13 +167,15 @@ export class PortalHost {
     this.#commandHost = commandHost
     this.#commandServices = commandServices
     this.#dependencies = dependencies
+    this.#domainRuntime = domainRuntime
+    this.#browserSession = browserSession
   }
 
   public static async prepare(
     options: PortalHostOptions,
     dependencies: PortalHostDependencies = {}
   ): Promise<PortalHost> {
-    const rootScope = new ResourceScope(`portal:${options.profile}`, {
+    const rootScope = new ResourceScope(`portal:${options.entrySurfaceId}`, {
       ...(dependencies.extensionClock === undefined
         ? {}
         : { clock: dependencies.extensionClock }),
@@ -185,7 +187,7 @@ export class PortalHost {
       const coreScope = rootScope.createChild('portal core')
       const portalScope = new ExtensionResourceScope(
         'portal',
-        `portal:${options.profile}`,
+        `portal:${options.entrySurfaceId}`,
         coreScope
       )
       const cwd = path.resolve(options.cwd)
@@ -195,52 +197,69 @@ export class PortalHost {
           ? {}
           : { dataDirectory: options.dataDirectory }),
       })
-      const pluginManager = new PluginManager({
-        store: new JsonPluginStore(
-          path.join(dataDirectory, 'plugins', 'installed.json')
-        ),
-      })
-      const pluginPlan = await new KernelBootstrap({
-        manager: pluginManager,
-      }).prepare()
-      const commandServices = new CommandServiceHost()
-      const attachmentService = new AttachmentFileService()
-      const catalog = buildPortalExtensionCatalog({
-        commandServices,
-        commandDefinitions: builtinCommandDefinitions,
-        installed: pluginPlan.extensions,
-        attachments: attachmentService,
-        ...(dependencies[portalHostTestExtensions] === undefined
-          ? {}
-          : { testExtensions: dependencies[portalHostTestExtensions] }),
-      })
-      const domainRuntime = new PortalDomainRuntime({
-        extensions: catalog,
-        parentScope: coreScope,
-        ...(dependencies.extensionClock === undefined
-          ? {}
-          : { clock: dependencies.extensionClock }),
-        ...(dependencies.extensionTraceSink === undefined
-          ? {}
-          : { traceSink: dependencies.extensionTraceSink }),
-        attachmentReader: attachmentService,
-      })
       const configPath = path.join(dataDirectory, 'config.yaml')
       const config = await ensurePortalConfig(
         configPath,
         createDefaultPortalConfig(dataDirectory)
       )
       const settings = createPortalRuntimeSettings()
-      const skillLibrary = new SkillLibrary({
-        skillsDirectory: path.join(dataDirectory, 'skills'),
-        tempDirectory: path.join(dataDirectory, 'temp', 'skill-install'),
-        registryPath: path.join(dataDirectory, 'state', 'skills.json'),
+      const pluginManager = new PluginManager({
+        store: new JsonPluginStore(
+          path.join(dataDirectory, 'plugins', 'installed.json')
+        ),
       })
-      await skillLibrary.initialize()
-      const projectInstructions = await loadProjectInstructions({
-        cwd,
-        enabled: config.projectInstructions,
+      const commandServices = new CommandServiceHost()
+      const childConversations = new ChildConversationServiceHost()
+      const browserSession = new PortalBrowserSessionHost()
+      const tools = new ToolRuntimeServiceHost()
+      const testExtensions = dependencies[portalHostTestExtensions] ?? []
+      const firstParty = createFirstPartyPluginDefinitions({
+        commandServices,
+        pluginManager,
+        commandDefinitions: portalCommandDefinitions,
       })
+      const pluginPlan = await new KernelBootstrap({
+        manager: pluginManager,
+        builtIns: firstParty,
+      }).prepare({
+        excludedPackageIds: testExtensions.map(
+          ({ descriptor }) => descriptor.id
+        ),
+      })
+      const catalog = buildPortalExtensionCatalog({
+        resolved: pluginPlan.extensions,
+        childConversations,
+        workspace: Object.freeze({
+          cwd,
+          dataDirectory,
+          projectInstructionsEnabled: config.projectInstructions,
+        }),
+        browserSession,
+        tools,
+        ...(testExtensions.length === 0 ? {} : { testExtensions }),
+      })
+      const domainRuntime = new PortalDomainRuntime({
+        extensions: catalog,
+        parentScope: portalScope,
+        ...(dependencies.extensionClock === undefined
+          ? {}
+          : { clock: dependencies.extensionClock }),
+        ...(dependencies.extensionTraceSink === undefined
+          ? {}
+          : { traceSink: dependencies.extensionTraceSink }),
+      })
+      const attachmentReader = await domainRuntime.resolveAttachmentReader()
+      domainRuntime.providers.setAttachmentReader(attachmentReader)
+      const unbindTools = tools.bind(domainRuntime.tools)
+      coreScope.defer('Tool runtime service', () => unbindTools())
+      const sessionIntent = domainRuntime.surfaces.sessionIntent(
+        options.entrySurfaceId
+      )
+      if (sessionIntent === null) {
+        throw new Error(
+          `Unknown or disabled entry Surface: ${options.entrySurfaceId}`
+        )
+      }
       const threadStore = await coreScope.acquire(
         'thread store',
         async () =>
@@ -248,14 +267,13 @@ export class PortalHost {
         (store) => store.close()
       )
       const prepared: PortalHostPreparedServices = {
-        profile: options.profile,
+        entrySurfaceId: options.entrySurfaceId,
+        sessionIntent,
         cwd,
         dataDirectory,
         configPath,
         config,
         settings,
-        skillLibrary,
-        projectInstructions,
         browserExecutablePath: path.resolve(
           options.browserExecutablePath ?? config.browser.executablePath
         ),
@@ -263,13 +281,13 @@ export class PortalHost {
         threadStore,
         threadManager: new ThreadManager(),
         threadOperations: new ThreadOperationCoordinator(),
-        runtimeRegistry: new ThreadRuntimeRegistry<RuntimeCore>(),
-        runCommandJobs: new RunCommandJobManager(),
+        runtimeRegistry: new ThreadRuntimeRegistry<ThreadRuntime>(),
         pluginManager,
         pluginPlan,
         providerHost: domainRuntime.providers,
         toolHost: domainRuntime.tools,
         conversationHost: domainRuntime.conversations,
+        childConversations,
       }
       return new PortalHost(
         prepared,
@@ -280,12 +298,9 @@ export class PortalHost {
         domainRuntime.lifecycle,
         domainRuntime.commands,
         commandServices,
-        {
-          launchBrowser: dependencies.launchBrowser ?? launchBrowser,
-          createProviderAdapter:
-            dependencies.createProviderAdapter ?? createAdapterForProvider,
-          createRuntime: dependencies.createRuntime ?? createRuntimeFromAdapter,
-        }
+        { launchBrowser: dependencies.launchBrowser ?? launchBrowser },
+        domainRuntime,
+        browserSession
       )
     } catch (error) {
       try {
@@ -328,6 +343,30 @@ export class PortalHost {
   /** @internal Returns immutable command metadata for a host-owned surface. */
   public commandCatalog(): readonly import('../cli-commands/core/command-contracts.ts').CommandDescriptor[] {
     return this.#commandHost.catalog()
+  }
+
+  public surfaceCatalog() {
+    return this.#domainRuntime.surfaces.list()
+  }
+
+  public subscribeSurfaceEvents(
+    listener: (event: SurfaceHostEvent) => void | Promise<void>
+  ): () => void {
+    this.#surfaceListeners.add(listener)
+    return () => this.#surfaceListeners.delete(listener)
+  }
+
+  public async activateSurface(
+    surfaceId: string,
+    input: unknown,
+    signal?: AbortSignal
+  ) {
+    if (this.#state !== 'ready') {
+      throw new Error(
+        `Surface activation is unavailable in state "${this.#state}".`
+      )
+    }
+    return await this.#domainRuntime.surfaces.activate(surfaceId, input, signal)
   }
 
   public get services(): PortalHostStartedServices {
@@ -381,7 +420,7 @@ export class PortalHost {
       const beforeStartScope = startScope.createChild('portal', 'before-start')
       await this.#hooks.beforeStart(
         {
-          sessionIntent: sessionIntentForProfile(this.prepared.profile),
+          sessionIntent: this.prepared.sessionIntent,
           previousState: 'resolved',
         },
         {
@@ -412,54 +451,71 @@ export class PortalHost {
       const runtimeScope = startScope.resourceScope.createChild('runtime')
       this.#runtimeScope = runtimeScope
       const context = browser.context
+      const unbindBrowserSession = this.#browserSession.bind({
+        context,
+        profileDirectory: this.prepared.browserProfileDir,
+      })
+      runtimeScope.defer('browser session service', () => {
+        unbindBrowserSession()
+      })
+      const unbindChildConversations = this.prepared.childConversations.bind(
+        createWebChildConversationService({
+          providers: this.prepared.providerHost,
+          conversations: this.prepared.conversationHost,
+          settings: this.prepared.settings,
+          generation: this.prepared.pluginPlan.generation,
+          workingDirectory: this.prepared.cwd,
+        })
+      )
+      runtimeScope.defer('child conversation service', () => {
+        unbindChildConversations()
+      })
       const lifecycle = new ThreadLifecycleService({
         threadManager: this.prepared.threadManager,
         threadOperations: this.prepared.threadOperations,
         threadStore: this.prepared.threadStore,
         runtimeRegistry: this.prepared.runtimeRegistry,
-        browserProfileDir: this.prepared.browserProfileDir,
-        resolveConversationUrl,
-        projectInstructions: this.prepared.projectInstructions,
-        createAdapter: async ({ provider, conversationUrl, signal }) =>
-          await this.#dependencies.createProviderAdapter(
-            context,
-            provider,
-            conversationUrl,
-            signal
-          ),
-        createRuntime: async ({
-          adapter,
+        resolveConversationUrl: (value) =>
+          this.prepared.providerHost.resolveConversationUrl(value),
+        openRuntime: async ({
+          threadId,
           provider,
+          conversationUrl,
           model,
           mode,
-          projectInstructions,
-          signal,
-        }) =>
-          await this.#dependencies.createRuntime(adapter, {
+          onProviderEvent,
+        }) => {
+          await this.prepared.conversationHost.open({
+            threadId,
+            providerId: provider,
+            providerOwnerId: this.prepared.providerHost.ownerOf(provider),
+            conversationId: threadId,
+            selectionRevision: this.prepared.pluginPlan.generation,
+            conversationUrl,
             model,
-            setupMode: resolveSetupMode(this.prepared.profile, mode),
-            skillLibrary: this.prepared.skillLibrary,
-            projectInstructions,
-            advertiseSpawnTool: this.prepared.settings.spawnDepthLimit > 0,
+            setupMode: resolveSetupMode(this.prepared.sessionIntent, mode),
             workingDirectory: this.prepared.cwd,
-            toolServices: createToolServices({
-              context,
-              provider,
-              model,
-              skillLibrary: this.prepared.skillLibrary,
-              projectInstructions,
-              runCommandJobs: this.prepared.runCommandJobs,
-              settings: this.prepared.settings,
-              currentSpawnDepth: 0,
-              workingDirectory: this.prepared.cwd,
-            }),
-            signal,
-          }),
-        waitForLogin: async (waitSignal) =>
-          await sleepWithAbortAsync(LOGIN_CHECK_INTERVAL_MS, waitSignal),
-        ...(options.observer === undefined
-          ? {}
-          : { observer: options.observer }),
+            spawnDepth: 0,
+            sessionKey: threadId,
+            onProviderEvent,
+          })
+          return createConversationRuntimeBridge({
+            host: this.prepared.conversationHost,
+            threadId,
+            providerId: provider,
+            model,
+            workingDirectory: this.prepared.cwd,
+            spawnDepth: 0,
+          })
+        },
+        observer: {
+          onEvent: async (event) => {
+            this.#emitSurfaceEvent({
+              type: 'thread.lifecycle',
+              event: projectSurfaceThreadEvent(event),
+            })
+          },
+        },
       })
       const unsubscribe = this.prepared.threadManager.onThreadPageClosed(
         (threadId) => {
@@ -467,17 +523,68 @@ export class PortalHost {
             .close(threadId, 'provider_page_closed')
             .catch((error) => {
               if (!context.isClosed()) {
-                options.onPageCloseCleanupError?.(error, threadId)
+                this.#emitSurfaceEvent({
+                  type: 'thread.cleanup_failed',
+                  threadId,
+                  message: String(error),
+                })
               }
             })
         }
       )
       runtimeScope.defer('thread page-close listener', () => unsubscribe())
+      const services: PortalHostStartedServices = {
+        ...this.prepared,
+        browser,
+        lifecycle,
+      }
+      const surfacePort = new PortalSurfacePort({
+        threadManager: this.prepared.threadManager,
+        threadLifecycle: lifecycle,
+        threadOperations: this.prepared.threadOperations,
+        providerHost: this.prepared.providerHost,
+      })
+      this.#surfaceKernelUnbind = this.#domainRuntime.surfaces.bindKernel({
+        port: surfacePort,
+        events: {
+          subscribe: (listener) => {
+            this.#surfaceListeners.add(listener)
+            return () => this.#surfaceListeners.delete(listener)
+          },
+        },
+        commands: {
+          openSession: (resourceId) =>
+            this.#commandHost.openSession(this.#portalScope, resourceId),
+          catalog: () => this.#commandHost.catalog(),
+          completionSnapshot: () =>
+            portalCommandCompletionSnapshot(this.prepared.providerHost),
+          bindPresentation: (presentation) =>
+            this.#commandServices.bind(
+              createPortalCommandServices(
+                { started: services, ...presentation },
+                { list: () => this.#commandHost.catalog() }
+              )
+            ),
+        },
+        snapshot: Object.freeze({
+          generation: this.prepared.pluginPlan.generation,
+          cwd: this.prepared.cwd,
+          dataDirectory: this.prepared.dataDirectory,
+          configPath: this.prepared.configPath,
+        }),
+        requestStop: async (_surfaceId, reason) => {
+          await this.close(reason)
+        },
+      })
+      runtimeScope.defer('surface kernel binding', () => {
+        this.#surfaceKernelUnbind?.()
+        this.#surfaceKernelUnbind = null
+      })
       throwIfAborted(signal)
 
       const readyScope = startScope.createChild('portal', 'ready')
       await this.#hooks.ready(
-        { sessionIntent: sessionIntentForProfile(this.prepared.profile) },
+        { sessionIntent: this.prepared.sessionIntent },
         {
           scopeAccess: 'active',
           scope: readyScope,
@@ -487,18 +594,27 @@ export class PortalHost {
       )
       throwIfAborted(signal)
 
-      const services: PortalHostStartedServices = {
-        ...this.prepared,
-        browser,
-        lifecycle,
-      }
       this.#startedServices = services
       this.#state = 'ready'
+      this.#emitSurfaceEvent({ type: 'host.status', status: 'ready' })
+      void browser.disconnected.then(
+        () =>
+          this.#emitSurfaceEvent({
+            type: 'runtime.disconnected',
+            message: 'Browser disconnected while the Portal was running.',
+          }),
+        () => undefined
+      )
       return services
     } catch (error) {
       if (this.#state === 'starting') {
         this.#state = 'failed'
       }
+      this.#emitSurfaceEvent({
+        type: 'host.status',
+        status: 'failed',
+        message: String(error),
+      })
       const cleanupErrors: unknown[] = []
       await this.#runClosePhase(cleanupErrors, async () => {
         await this.#startAttemptScope?.dispose({ reason: error })
@@ -518,12 +634,12 @@ export class PortalHost {
     if (this.#state === 'stopped') return
     const previousState = shutdownPreviousState(this.#state)
     this.#state = 'stopping'
+    this.#emitSurfaceEvent({ type: 'host.status', status: 'stopping' })
     this.#startupController.abort(reason)
     const errors: unknown[] = []
     const coreCleanupErrors: unknown[] = []
     const servicesAtShutdown = this.#startedServices
     servicesAtShutdown?.lifecycle.beginShutdown(reason)
-    this.prepared.runCommandJobs.beginShutdown()
     const provisioningShutdown =
       servicesAtShutdown?.lifecycle.waitForProvisioning() ?? null
     void provisioningShutdown?.catch(() => {})
@@ -552,7 +668,7 @@ export class PortalHost {
     await this.#runClosePhase(errors, async () => {
       await this.#hooks.beforeStop(
         {
-          sessionIntent: sessionIntentForProfile(this.prepared.profile),
+          sessionIntent: this.prepared.sessionIntent,
           previousState,
         },
         {
@@ -565,8 +681,12 @@ export class PortalHost {
 
     const services = this.#startedServices
     if (services !== null) {
+      await this.#runClosePhase(
+        errors,
+        async () => await this.#domainRuntime.surfaces.closeAll(reason),
+        coreCleanupErrors
+      )
       services.lifecycle.beginShutdown(reason)
-      services.runCommandJobs.beginShutdown()
       await this.#runClosePhase(
         errors,
         async () => {
@@ -592,13 +712,6 @@ export class PortalHost {
         },
         coreCleanupErrors
       )
-      await this.#runClosePhase(
-        errors,
-        async () => {
-          await services.runCommandJobs.stopAll()
-        },
-        coreCleanupErrors
-      )
       for (const thread of services.threadManager.listThreads()) {
         await this.#runClosePhase(
           errors,
@@ -620,13 +733,6 @@ export class PortalHost {
         },
         coreCleanupErrors
       )
-      await this.#runClosePhase(
-        errors,
-        async () => {
-          await this.prepared.runCommandJobs.stopAll()
-        },
-        coreCleanupErrors
-      )
     }
 
     await this.#runClosePhase(
@@ -639,16 +745,24 @@ export class PortalHost {
     await this.#runClosePhase(
       errors,
       async () => {
+        this.prepared.threadStore.close()
+      },
+      coreCleanupErrors
+    )
+    await this.#runClosePhase(
+      errors,
+      async () => {
         await this.#coreScope.dispose({ reason })
       },
       coreCleanupErrors
     )
     this.#state = 'stopped'
+    this.#emitSurfaceEvent({ type: 'host.status', status: 'stopped' })
 
     await this.#runClosePhase(errors, async () => {
       await this.#hooks.stopped(
         {
-          sessionIntent: sessionIntentForProfile(this.prepared.profile),
+          sessionIntent: this.prepared.sessionIntent,
           previousState,
           coreCleanup: {
             status: coreCleanupErrors.length === 0 ? 'clean' : 'errors',
@@ -688,6 +802,12 @@ export class PortalHost {
     } catch (error) {
       errors.push(error)
       if (category !== undefined && category !== errors) category.push(error)
+    }
+  }
+
+  #emitSurfaceEvent(event: SurfaceHostEvent): void {
+    for (const listener of this.#surfaceListeners) {
+      void Promise.resolve(listener(event)).catch(() => undefined)
     }
   }
 }
@@ -732,18 +852,35 @@ async function runWithTimeout(
 }
 
 function resolveSetupMode(
-  profile: PortalHostProfile,
+  sessionIntent: PortalSessionIntent,
   mode: ThreadCreationMode | 'resume'
 ): RuntimeSetupMode {
   if (mode === 'resume') return 'skip'
-  if (profile === 'exec') return 'inline'
+  if (sessionIntent === 'batch') return 'inline'
   return runtimeSetupModeForThreadCreation(mode)
 }
 
-function sessionIntentForProfile(
-  profile: PortalHostProfile
-): PortalSessionIntent {
-  return profile === 'tui' ? 'interactive' : 'batch'
+function projectSurfaceThreadEvent(
+  event: ThreadLifecycleEvent
+): SurfaceThreadLifecycleEvent {
+  if (event.type === 'provision.started') return { ...event }
+  if (event.type === 'provision.warning') {
+    return { ...event, lines: Object.freeze([...event.lines]) }
+  }
+  if (event.type === 'provision.login_wait') return { ...event }
+  if (event.type === 'thread.ready') return { ...event }
+  if (event.type === 'thread.history') {
+    return {
+      ...event,
+      history: Object.freeze({
+        messages: Object.freeze([...event.history.messages]),
+        complete: event.history.complete,
+        warning: event.history.warning,
+      }),
+    }
+  }
+  if (event.type === 'thread.closed') return { ...event }
+  return { ...event }
 }
 
 function shutdownPreviousState(

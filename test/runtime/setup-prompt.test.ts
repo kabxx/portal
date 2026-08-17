@@ -7,6 +7,10 @@ import {
   isPortalSetupPrompt,
   TOOL_PROTOCOL_PROMPT,
 } from '../../src/runtime/setup-prompt.ts'
+import {
+  PORTAL_ACTION_PROTOCOL,
+  PORTAL_ACTION_PROTOCOL_PROMPT,
+} from '../../src/providers/portal-action-protocol.ts'
 
 const tools = [
   '### run_command',
@@ -108,6 +112,30 @@ test('setup prompt omits empty dynamic sections and supports inline tasks', () =
     true
   )
   assert.equal(isPortalSetupPrompt('ordinary user input'), false)
+})
+
+test('web providers receive the exact Portal Action Protocol prompt', () => {
+  assert.equal(
+    PORTAL_ACTION_PROTOCOL_PROMPT,
+    [
+      '## Portal Action Protocol',
+      '- Use the exact, complete format <action name="NAME">PAYLOAD</action>.',
+      '- The payload is a JSON object for JSON actions and raw text for freeform actions.',
+      '- Each assistant message may contain at most one action call as its final content.',
+      '- Action results are returned in the next user message.',
+    ].join('\n')
+  )
+
+  const prompt = buildSetupPrompt({
+    tools,
+    textToolProtocol: PORTAL_ACTION_PROTOCOL,
+    workingDirectory: '/workspace',
+  })
+
+  assert.match(prompt, /## Portal Action Protocol/)
+  assert.match(prompt, /## Actions/)
+  assert.match(prompt, /<action name="NAME">PAYLOAD<\/action>/)
+  assert.doesNotMatch(prompt, /## Tool Protocol|## Tools|<tool name=/)
 })
 
 test('setup prompt safely encodes paths containing structural characters', () => {

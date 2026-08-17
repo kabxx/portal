@@ -6,13 +6,19 @@ import test from 'node:test'
 import type { BrowserContext } from 'playwright'
 
 import { PortalApplicationCore } from '../../src/exec/portal-exec-session.ts'
-import type { RunCommandJobHandle } from '../../src/processes/run-command-job-manager.ts'
+import {
+  RunCommandJobManager,
+  type RunCommandJobHandle,
+} from '../../src/processes/run-command-job-manager.ts'
+import { RunCommandPlugin } from '../../src/tools/builtins/run-command-plugin.ts'
+import { portalHostTestExtensions } from '../../src/extensions/portal-hooks.ts'
 import { createDeferred } from '../../src/providers/adapters/adapter-base.ts'
 import { createThreadStore } from '../../src/threads/thread-store.ts'
 import {
   createFakeRuntime,
   createProviderAdapterStub,
 } from '../helpers/fakes.ts'
+import { createTestProviderExtensions } from '../helpers/provider-endpoint.ts'
 
 test(
   'PortalApplicationCore runs headlessly, persists the final URL, and shuts down resources',
@@ -26,6 +32,9 @@ test(
     let browserCloseCount = 0
     let runtimeCloseCount = 0
     const observed: { job?: RunCommandJobHandle } = {}
+    const runCommandPlugin = new RunCommandPlugin({
+      jobService: new RunCommandJobManager(),
+    })
     let core: PortalApplicationCore | null = null
 
     try {
@@ -58,27 +67,27 @@ test(
               },
             }
           },
-          createProviderAdapter: async () => adapter,
-          createRuntime: async (runtimeAdapter, options) => {
-            assert.equal(runtimeAdapter, adapter)
-            assert.equal(options?.setupMode, 'inline')
-            const jobs = options?.toolServices?.runCommandJobs
-            assert.ok(jobs !== undefined)
-            return createFakeRuntime({
-              adapter,
-              conversationId: 'portal-exec-test',
-              conversationUrl: 'https://chatgpt.com/c/portal-exec-test',
-              close: async () => {
-                runtimeCloseCount += 1
-              },
-              submitUserInput: async (input) => {
-                assert.equal(input, 'inspect portal')
-                observed.job = jobs.start(longRunningCommand(readyPath, cwd))
-                await waitForFile(readyPath)
-                return 'Portal inspected.'
-              },
-            })
-          },
+          [portalHostTestExtensions]: [
+            ...createTestProviderExtensions(async (_providerId, context) => {
+              assert.equal(context.setupMode, 'inline')
+              const jobs = runCommandPlugin.jobService
+              return createFakeRuntime({
+                adapter,
+                conversationId: 'portal-exec-test',
+                conversationUrl: 'https://chatgpt.com/c/portal-exec-test',
+                close: async () => {
+                  runtimeCloseCount += 1
+                },
+                submitUserInput: async (input) => {
+                  assert.equal(input, 'inspect portal')
+                  observed.job = jobs.start(longRunningCommand(readyPath, cwd))
+                  await waitForFile(readyPath)
+                  return 'Portal inspected.'
+                },
+              })
+            }),
+            runCommandPlugin.registration,
+          ],
         }
       )
       assert.equal(
@@ -91,7 +100,7 @@ test(
       await core.close()
       await assert.rejects(
         core.run('after close', new AbortController().signal),
-        /services are unavailable/
+        /exec Surface is closed/
       )
 
       assert.equal((await startedJob.wait()).terminationReason, 'shutdown')
@@ -149,12 +158,12 @@ test(
             disconnected: disconnected.promise,
             close: async () => {},
           }),
-          createProviderAdapter: async () => adapter,
-          createRuntime: async () =>
+          [portalHostTestExtensions]: createTestProviderExtensions(async () =>
             createFakeRuntime({
               adapter,
               submitUserInput: async () => await new Promise<never>(() => {}),
-            }),
+            })
+          ),
         }
       )
 

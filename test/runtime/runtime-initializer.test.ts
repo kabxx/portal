@@ -13,6 +13,7 @@ import {
   createBrowserContextStub,
   createFakeRuntime,
 } from '../helpers/fakes.ts'
+import { createTestToolHost } from '../helpers/tool-host.ts'
 
 class FakeAdapter extends ProviderAdapter {
   public restoreCalls = 0
@@ -278,6 +279,7 @@ test('initializeRuntimeWithLoginWait closes a real factory adapter exactly once 
         await createRuntimeFromAdapter(currentAdapter, {
           model: { key: 'gpt-test', option: null },
           setupMode: 'skip',
+          toolHost: createTestToolHost(currentAdapter, []),
         }),
       onWarning: async () => {},
       onLoginWait: async () => {},
@@ -308,6 +310,7 @@ test('initializeRuntimeWithLoginWait closes a real factory adapter exactly once 
         await createRuntimeFromAdapter(currentAdapter, {
           model: null,
           signal: controller.signal,
+          toolHost: createTestToolHost(currentAdapter, []),
         }),
       onWarning: async () => {},
       onLoginWait: async () => {},

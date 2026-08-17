@@ -8,6 +8,7 @@ import {
   throwIfAborted,
 } from '../runtime/runtime-cancellation.ts'
 import type { SurfacePortActions } from '../surfaces/surface-port.ts'
+import type { CommandJobService } from '../cli-commands/core/command-services.ts'
 import {
   stopMcpForegroundOperation,
   type McpForegroundOperation,
@@ -16,6 +17,7 @@ import {
 
 export interface McpHandlerDependencies {
   surface: SurfacePortActions
+  runCommandJobs?: CommandJobService
   messageOperations: McpMessageOperationStore
   foregroundOperations: Set<McpForegroundOperation>
   isForegroundOperationActive: () => boolean
@@ -30,6 +32,7 @@ export interface McpHandlerDependencies {
 
 export function createMcpHandlers({
   surface,
+  runCommandJobs,
   messageOperations,
   foregroundOperations,
   isForegroundOperationActive,
@@ -106,19 +109,23 @@ export function createMcpHandlers({
 
   return {
     listProviders: () => ({ providers: [...surface.listProviders()] }),
-    listJobs: () => ({
-      jobs: surface.listJobs().map((job) => ({ ...job })),
-    }),
-    stopJob: async (jobId) => {
-      if (jobId.trim() === '')
-        throw new Error('jobId must be a non-empty string.')
-      const result = await surface.stopJob(jobId)
-      if (result === 'not_found')
-        throw new Error(`Unknown or finished job: ${jobId}`)
-      if (result === 'timeout')
-        throw new Error(`Timed out waiting for ${jobId} to stop.`)
-      return { stopped: true, jobId }
-    },
+    ...(runCommandJobs === undefined
+      ? {}
+      : {
+          listJobs: () => ({
+            jobs: runCommandJobs.list().map((job) => ({ ...job })),
+          }),
+          stopJob: async (jobId: string, signal: AbortSignal) => {
+            if (jobId.trim() === '')
+              throw new Error('jobId must be a non-empty string.')
+            const result = await runCommandJobs.stop(jobId, signal)
+            if (result === 'not-found')
+              throw new Error(`Unknown or finished job: ${jobId}`)
+            if (result === 'timeout')
+              throw new Error(`Timed out waiting for ${jobId} to stop.`)
+            return { stopped: true, jobId }
+          },
+        }),
     listThreads: () => ({
       threads: surface
         .listThreads()

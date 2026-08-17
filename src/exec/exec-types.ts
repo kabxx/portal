@@ -1,6 +1,3 @@
-import type { ResolvedProviderModel } from '../providers/provider-model-catalog.ts'
-import type { ProviderId } from '../providers/provider-id.ts'
-
 export type ExecProgressEvent =
   | { type: 'status'; message: string }
   | { type: 'warning'; message: string }
@@ -10,8 +7,9 @@ export interface PortalExecSessionOptions {
   cwd: string
   dataDirectory?: string
   browserExecutablePath?: string
-  provider: ProviderId
-  model: ResolvedProviderModel | null
+  provider: string
+  model: string | null
+  option?: string | null
   signal: AbortSignal
   onProgress: (event: ExecProgressEvent) => void
 }

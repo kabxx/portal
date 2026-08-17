@@ -3,14 +3,6 @@ import { stdin, stderr, stdout } from 'node:process'
 import type { Readable } from 'node:stream'
 import { stripVTControlCharacters } from 'node:util'
 
-import {
-  normalizeProviderId,
-  PROVIDERS,
-} from '../providers/provider-catalog.ts'
-import {
-  ProviderModelSelectionError,
-  resolveProviderModel,
-} from '../providers/provider-model-catalog.ts'
 import { createPortalExecSession } from './portal-exec-session.ts'
 import {
   ExecUsageError,
@@ -70,26 +62,14 @@ export async function runExecCli(
     return EXEC_EXIT_USAGE
   }
 
-  const provider = normalizeProviderId(parsed.options.provider ?? '')
-  if (provider === null) {
+  const provider = parsed.options.provider?.trim() ?? ''
+  if (provider === '') {
     writeError(
       errorOutput,
       new ExecUsageError(
-        `--provider is required. Available providers: ${PROVIDERS.join(', ')}.`
+        '--provider is required. Use /providers or portal plugins list to inspect enabled providers.'
       )
     )
-    return EXEC_EXIT_USAGE
-  }
-
-  let model
-  try {
-    model = resolveProviderModel(
-      provider,
-      parsed.options.model ?? null,
-      parsed.options.option ?? null
-    )
-  } catch (error) {
-    writeError(errorOutput, error)
     return EXEC_EXIT_USAGE
   }
 
@@ -127,7 +107,8 @@ export async function runExecCli(
         ? {}
         : { browserExecutablePath: parsed.options.browserExecutablePath }),
       provider,
-      model,
+      model: parsed.options.model ?? null,
+      option: parsed.options.option ?? null,
       signal: controller.signal,
       onProgress: (event) => writeProgress(errorOutput, event),
     })
@@ -248,10 +229,7 @@ function writeProgress(output: TextWriter, event: ExecProgressEvent): void {
 }
 
 function writeError(output: TextWriter, error: unknown): void {
-  const message =
-    error instanceof ProviderModelSelectionError || error instanceof Error
-      ? error.message
-      : String(error)
+  const message = error instanceof Error ? error.message : String(error)
   output.write(`error: ${stripVTControlCharacters(message)}\n`)
 }
 

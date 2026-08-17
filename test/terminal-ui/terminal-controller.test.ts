@@ -372,17 +372,24 @@ test('TerminalController hides resume internals and restores tool calls', () => 
       id: 'tool-call',
       parentId: 'question',
       role: 'assistant',
-      text: 'I will inspect it.\n<tool name="run_command">{"command":"dir"}</tool>',
+      text: 'I will inspect it.\n<action name="run_command">{"command":"dir"}</action>',
       format: 'markdown',
       createdAt: 4,
+      toolCall: {
+        name: 'run_command',
+        rawPayload: '{"command":"dir"}',
+        leadingText: 'I will inspect it.',
+        trailingText: '',
+      },
     },
     {
       id: 'tool-result',
       parentId: 'tool-call',
       role: 'user',
-      text: '### Tool Result ###\n{"exitCode":0,"stdout":"ok"}',
+      text: '### Action Result ###\n{"exitCode":0,"stdout":"ok"}',
       format: 'plain',
       createdAt: 5,
+      toolResult: true,
     },
     {
       id: 'final',
@@ -1170,7 +1177,7 @@ test('TerminalController keeps a live assistant bubble until the final assistant
   assert.equal(state.timeline[0]?.format, 'markdown')
 })
 
-test('TerminalController does not render a tool-only stream as assistant text', () => {
+test('TerminalController discards an empty Runtime-projected assistant stream', () => {
   const manager = new ThreadManager()
   const thread = manager.addThread({
     id: manager.createThreadId(),
@@ -1180,15 +1187,12 @@ test('TerminalController does not render a tool-only stream as assistant text', 
   })
   const ui = new TerminalController()
 
-  ui.renderAssistantStream(
-    thread,
-    '<tool name="run_command">\n{"command":"dir"}\n</tool>'
-  )
+  ui.renderAssistantStream(thread, '')
 
   assert.equal(ui.getState().liveAssistant, null)
 })
 
-test('TerminalController keeps only assistant text before a streaming tool call', () => {
+test('TerminalController renders Runtime-projected assistant text', () => {
   const manager = new ThreadManager()
   const thread = manager.addThread({
     id: manager.createThreadId(),
@@ -1198,10 +1202,7 @@ test('TerminalController keeps only assistant text before a streaming tool call'
   })
   const ui = new TerminalController()
 
-  ui.renderAssistantStream(
-    thread,
-    'I will update the file.\n<tool name="apply_patch">\n*** Begin Patch\n</tool>'
-  )
+  ui.renderAssistantStream(thread, 'I will update the file.')
 
   assert.equal(ui.getState().liveAssistant?.body, 'I will update the file.')
 })

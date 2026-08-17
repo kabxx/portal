@@ -128,7 +128,7 @@ export class McpMessageOperationStore {
   }
 
   public async stopAll(): Promise<void> {
-    await Promise.allSettled(
+    const outcomes = await Promise.allSettled(
       [...this.operations.values()]
         .filter(
           (
@@ -140,6 +140,15 @@ export class McpMessageOperationStore {
         .map(async (operation) => await operation.handle.cancel())
     )
     this.operations.clear()
+    const errors = outcomes.flatMap((outcome) =>
+      outcome.status === 'rejected' ? [outcome.reason as unknown] : []
+    )
+    if (errors.length > 0) {
+      throw new AggregateError(
+        errors,
+        'One or more MCP message operations failed to cancel.'
+      )
+    }
   }
 
   private finish(

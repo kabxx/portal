@@ -24,6 +24,7 @@ import {
   JsonPluginStore,
   PluginStoreError,
 } from '../../src/extensions/plugin-store.ts'
+import { firstPartyPluginRecords } from '../../src/bootstrap/first-party-plugins.ts'
 
 function manifest(
   id: string,
@@ -133,6 +134,54 @@ test('plugin manager commits local installation and detects source tampering', a
   assert.equal((await manager.resolveEnabled()).packages.length, 0)
 })
 
+test('disabled damaged plugins remain diagnosable without blocking startup resolution', async (t) => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), 'portal-plugin-disabled-damaged-')
+  )
+  t.after(async () => await rm(root, { recursive: true, force: true }))
+
+  const packageDirectory = await createPlugin(root, 'test.damaged')
+  const manager = new PluginManager({
+    store: new JsonPluginStore(path.join(root, 'plugins.json')),
+  })
+  await manager.addLocalDirectory(packageDirectory)
+  await writeFile(path.join(packageDirectory, 'index.js'), 'tampered\n', 'utf8')
+
+  assert.equal(await manager.disable('test.damaged'), true)
+  assert.deepEqual(
+    (await manager.diagnose()).map(({ code }) => code),
+    ['digest-mismatch']
+  )
+  const resolved = await manager.resolveEnabled()
+  assert.deepEqual(resolved.packages, [])
+  assert.deepEqual(resolved.diagnostics, [])
+})
+
+test('plugin digest includes executable content under data directories', async (t) => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), 'portal-plugin-data-digest-')
+  )
+  t.after(async () => await rm(root, { recursive: true, force: true }))
+
+  const packageDirectory = await createPlugin(root, 'test.data-digest')
+  const dataDirectory = path.join(packageDirectory, 'data')
+  await mkdir(dataDirectory)
+  await writeFile(
+    path.join(dataDirectory, 'code.js'),
+    'export const value = 1\n',
+    'utf8'
+  )
+  const before = await digestDirectory(packageDirectory)
+  await writeFile(
+    path.join(dataDirectory, 'code.js'),
+    'export const value = 2\n',
+    'utf8'
+  )
+  const after = await digestDirectory(packageDirectory)
+
+  assert.notEqual(after, before)
+})
+
 test('plugin installation validates dependency closure, versions, and cycles atomically', async (t) => {
   const root = await mkdtemp(
     path.join(os.tmpdir(), 'portal-plugin-resolution-')
@@ -173,6 +222,32 @@ test('plugin installation validates dependency closure, versions, and cycles ato
   )
   assert.deepEqual(resolved.diagnostics, [])
   assert.equal((await manager.list()).length, 2)
+})
+
+test('plugin removal rejects installed dependents and preserves the store', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-plugin-remove-'))
+  t.after(async () => await rm(root, { recursive: true, force: true }))
+
+  const baseDirectory = await createPlugin(root, 'test.base')
+  const dependentDirectory = await createPlugin(root, 'test.dependent', {
+    dependencies: [{ id: 'test.base', versionRange: '^1.0.0' }],
+  })
+  const manager = new PluginManager({
+    store: new JsonPluginStore(path.join(root, 'plugins.json')),
+  })
+  await manager.addLocalDirectories([baseDirectory, dependentDirectory])
+
+  await assert.rejects(
+    manager.remove('test.base'),
+    /required by installed plugin\(s\): test\.dependent/
+  )
+  assert.deepEqual(
+    (await manager.list()).map(({ manifest: record }) => record.id),
+    ['test.base', 'test.dependent']
+  )
+  assert.equal(await manager.remove('test.dependent'), true)
+  assert.equal(await manager.remove('test.base'), true)
+  assert.equal(await manager.remove('test.missing'), false)
 })
 
 test('every plugin manifest declares one direct-load entry module', () => {
@@ -253,6 +328,31 @@ test('plugin store writes atomically and rejects malformed records', async (t) =
   await assert.rejects(store.read(), PluginStoreError)
 })
 
+test('plugin store repair preserves malformed input and restores an empty store', async (t) => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), 'portal-plugin-store-repair-')
+  )
+  t.after(async () => await rm(root, { recursive: true, force: true }))
+
+  const storePath = path.join(root, 'plugins.json')
+  const malformed = '{"schemaVersion":1,"packages":['
+  await writeFile(storePath, malformed, 'utf8')
+  const manager = new PluginManager({ store: new JsonPluginStore(storePath) })
+
+  assert.deepEqual(
+    (await manager.diagnose()).map(({ packageId, code }) => ({
+      packageId,
+      code,
+    })),
+    [{ packageId: '<store>', code: 'invalid-record' }]
+  )
+  const repaired = await manager.repairStore()
+  assert.notEqual(repaired.backupPath, null)
+  assert.equal(await readFile(repaired.backupPath!, 'utf8'), malformed)
+  assert.deepEqual(await manager.list(), [])
+  assert.match(await readFile(storePath, 'utf8'), /"packages": \[\]/)
+})
+
 test('plugin digest rejects symlinked package roots and entries', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'portal-plugin-digest-'))
   t.after(async () => await rm(root, { recursive: true, force: true }))
@@ -270,4 +370,28 @@ test('plugin digest rejects symlinked package roots and entries', async (t) => {
     throw error
   }
   await assert.rejects(digestDirectory(packageDirectory), PluginManagerError)
+})
+
+test('disabling a bundled dependency removes its dependents from the effective graph', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'portal-plugin-cascade-'))
+  t.after(async () => await rm(root, { recursive: true, force: true }))
+  const manager = new PluginManager({
+    store: new JsonPluginStore(path.join(root, 'plugins.json')),
+  })
+  await manager.synchronizeBuiltIns(firstPartyPluginRecords())
+
+  assert.equal(await manager.disable('portal.commands'), true)
+  const resolved = await manager.resolveEnabled()
+  const ids = resolved.packages.map(({ manifest }) => manifest.id)
+  assert.equal(ids.includes('portal.commands'), false)
+  assert.equal(ids.includes('portal.tool.run-command'), false)
+  assert.equal(ids.includes('portal.tool.apply-patch'), true)
+  assert.equal(
+    resolved.diagnostics.some(
+      ({ packageId, code }) =>
+        packageId === 'portal.tool.run-command' &&
+        code === 'disabled-dependency'
+    ),
+    true
+  )
 })

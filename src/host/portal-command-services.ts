@@ -1,23 +1,10 @@
 import { abortable, throwIfAborted } from '../runtime/runtime-cancellation.ts'
-import {
-  normalizeProviderId,
-  PROVIDERS,
-} from '../providers/provider-catalog.ts'
-import {
-  listProviderModelOptions,
-  listProviderModels,
-  resolveProviderModel,
-  ProviderModelSelectionError,
-} from '../providers/provider-model-catalog.ts'
+import { ProviderHost, ProviderHostError } from '../providers/provider-host.ts'
 import {
   parseThreadHistoryId,
   parseThreadHistoryLimit,
 } from '../threads/thread-store.ts'
-import { resolveConversationUrl } from '../providers/provider-conversation-url.ts'
 import type { PortalHostStartedServices } from './portal-host.ts'
-import type { TerminalController } from '../terminal-ui/terminal-controller.ts'
-import type { KeybindingCatalog } from '../keybindings/keybinding-catalog.ts'
-import type { PortalMcpServer } from '../mcp-server/mcp-server.ts'
 import type { ThreadOperationHandle } from '../threads/thread-operation-coordinator.ts'
 import type {
   CommandCompletionSnapshot,
@@ -25,13 +12,10 @@ import type {
 } from '../cli-commands/core/command-contracts.ts'
 import type {
   CommandCatalogService,
-  CommandJobService,
   CommandKeybindingService,
   CommandMcpService,
-  CommandOutputMessage,
   CommandOutputService,
   CommandProviderService,
-  CommandSkillService,
   CommandThreadService,
   CommandServiceBundle,
 } from '../cli-commands/core/command-services.ts'
@@ -42,65 +26,44 @@ import {
 
 export interface PortalCommandServiceOptions {
   readonly started: PortalHostStartedServices
-  readonly ui: TerminalController
-  readonly keybindings: KeybindingCatalog
-  readonly mcp: PortalMcpServer
+  readonly output: CommandOutputService
+  readonly keybindings: {
+    reset(signal?: AbortSignal): Promise<unknown>
+  }
+  readonly mcp: CommandMcpService
+  readonly setThreadBusy?: (threadId: string, busy: boolean) => void
 }
 
-const commandCompletionSnapshot = createCommandCompletionSnapshot()
-
-export function portalCommandCompletionSnapshot(): CommandCompletionSnapshot {
-  return commandCompletionSnapshot
+export function portalCommandCompletionSnapshot(
+  providers: ProviderHost
+): CommandCompletionSnapshot {
+  return createCommandCompletionSnapshot(providers)
 }
 
 export function createPortalCommandServices(
   options: PortalCommandServiceOptions,
   catalog: CommandCatalogService
 ): CommandServiceBundle {
-  const { started, ui, keybindings, mcp } = options
-  const output: CommandOutputService = {
-    write(message: CommandOutputMessage): void {
-      const body = message.body
-      const format = message.format ?? 'plain'
-      if (message.threadId !== undefined) {
-        const thread = started.threadManager.getThread(message.threadId)
-        if (thread !== null) {
-          if (message.level === 'warning') {
-            ui.renderThreadWarning(thread, message.title, body, format)
-          } else if (message.level === 'error') {
-            ui.renderThreadError(thread, message.title, body, format)
-          } else {
-            ui.renderThreadInfo(thread, message.title, body, format)
-          }
-          return
-        }
-      }
-      if (message.level === 'info') ui.renderInfo(message.title, body, format)
-      else if (message.level === 'success')
-        ui.renderSuccess(message.title, body, format)
-      else if (message.level === 'warning')
-        ui.renderWarning(message.title, body, format)
-      else ui.renderError(message.title, body, format)
-    },
-    navigate(event): void {
-      if (event.kind === 'show-home') ui.showHomeTimeline()
-      else if (event.kind === 'show-thread')
-        ui.showThreadTimeline(event.threadId)
-      else ui.removeThreadTimeline(event.threadId)
-    },
-  }
+  const { started, output, keybindings, mcp } = options
+  const commandCompletionSnapshot = createCommandCompletionSnapshot(
+    started.providerHost
+  )
 
   const threads: CommandThreadService = {
     async create(input) {
       throwIfAborted(input.signal)
-      const provider = normalizeProviderId(input.provider)
+      const provider = started.providerHost.resolveProviderId(input.provider)
       if (provider === null)
         return { ok: false, message: `Unknown provider: ${input.provider}` }
       let model
       try {
-        model = resolveProviderModel(provider, input.modelKey, input.optionKey)
+        model = started.providerHost.resolveModel(
+          provider,
+          input.modelKey,
+          input.optionKey
+        )
       } catch (error) {
-        if (error instanceof ProviderModelSelectionError) {
+        if (error instanceof ProviderHostError) {
           return { ok: false, message: error.message }
         }
         throw error
@@ -162,7 +125,7 @@ export function createPortalCommandServices(
       if (historyId !== null && historyEntry === null) {
         return { ok: false, message: `History entry not found: #${historyId}` }
       }
-      const resolved = resolveConversationUrl(
+      const resolved = started.providerHost.resolveConversationUrl(
         historyEntry?.conversationUrl ?? target
       )
       if (resolved === null) {
@@ -220,8 +183,12 @@ export function createPortalCommandServices(
           threadId: thread.id,
         }
       }
-      ui.setThreadBusy(thread.id, true)
-      clearThreadBusyOnSettlement(ui, thread.id, startResult.operation)
+      options.setThreadBusy?.(thread.id, true)
+      clearThreadBusyOnSettlement(
+        options.setThreadBusy,
+        thread.id,
+        startResult.operation
+      )
       try {
         await waitForThreadOperation(startResult.operation, signal)
         return { ok: true }
@@ -316,54 +283,26 @@ export function createPortalCommandServices(
   }
 
   const providers: CommandProviderService = {
-    list: () => [...PROVIDERS],
-    resolve: (value) => normalizeProviderId(value),
+    list: () => started.providerHost.list().map(({ id }) => id),
+    resolve: (value) => started.providerHost.resolveProviderId(value),
     completionSnapshot: () => commandCompletionSnapshot,
-  }
-
-  const skills: CommandSkillService = {
-    add: async (source, input) =>
-      await abortable(
-        started.skillLibrary.add(source, {
-          ...(input.registryUrl === undefined
-            ? {}
-            : { registryUrl: input.registryUrl }),
-          signal: input.signal,
-        }),
-        input.signal
-      ),
-    list: async (signal) =>
-      await abortable(started.skillLibrary.list(), signal),
-    enable: async (name, signal) =>
-      await abortable(started.skillLibrary.enable(name), signal),
-    disable: async (name, signal) =>
-      await abortable(started.skillLibrary.disable(name), signal),
-    remove: async (name, signal) =>
-      await abortable(started.skillLibrary.remove(name), signal),
   }
 
   const mcpService: CommandMcpService = {
     start: async (signal) => {
       throwIfAborted(signal)
-      await abortable(mcp.start(), signal)
+      await abortable(mcp.start(signal), signal)
     },
     stop: async (signal) => {
       throwIfAborted(signal)
-      await abortable(mcp.stop(), signal)
+      await abortable(mcp.stop(signal), signal)
     },
     status: () => mcp.status(),
-  }
-  const jobs: CommandJobService = {
-    list: () => started.runCommandJobs.list().map((job) => ({ ...job })),
-    stop: async (id, signal) => {
-      const result = await abortable(started.runCommandJobs.stop(id), signal)
-      return result === 'not_found' ? 'not-found' : result
-    },
   }
   const keybindingService: CommandKeybindingService = {
     reset: async (signal) => {
       throwIfAborted(signal)
-      await abortable(keybindings.reset(), signal)
+      await abortable(keybindings.reset(signal), signal)
     },
   }
   return Object.freeze({
@@ -371,18 +310,17 @@ export function createPortalCommandServices(
     catalog,
     threads,
     providers,
-    skills,
     mcp: mcpService,
-    jobs,
     keybindings: keybindingService,
   })
 }
 
 function clearThreadBusyOnSettlement(
-  ui: TerminalController,
+  setThreadBusy: ((threadId: string, busy: boolean) => void) | undefined,
   threadId: string,
   operation: ThreadOperationHandle
 ): void {
+  if (setThreadBusy === undefined) return
   const settled =
     operation.settled ??
     operation.done.then(
@@ -391,8 +329,8 @@ function clearThreadBusyOnSettlement(
     )
   void settled
     .then(
-      () => ui.setThreadBusy(threadId, false),
-      () => ui.setThreadBusy(threadId, false)
+      () => setThreadBusy(threadId, false),
+      () => setThreadBusy(threadId, false)
     )
     .catch(() => undefined)
 }
@@ -421,36 +359,46 @@ async function waitForThreadOperation(
   }
 }
 
-function createCommandCompletionSnapshot(): CommandCompletionSnapshot {
+function createCommandCompletionSnapshot(
+  providers: ProviderHost
+): CommandCompletionSnapshot {
+  const contributions = providers.list()
   const entries: CommandCompletionSnapshot['entries'][number][] = [
     Object.freeze({
       sourceId: 'portal.command.providers',
       dependencies: Object.freeze({}),
       candidates: Object.freeze(
-        PROVIDERS.map((value): CommandCompletionCandidate =>
-          Object.freeze({ value, description: value })
+        contributions.map(({ id, descriptor }): CommandCompletionCandidate =>
+          Object.freeze({ value: id, description: descriptor.label })
         )
       ),
     }),
   ]
-  for (const provider of PROVIDERS) {
-    const models = listProviderModels(provider)
+  for (const provider of contributions) {
+    const models = provider.descriptor.models.map(({ key }) => key)
     entries.push(
       Object.freeze({
         sourceId: 'portal.command.models',
-        dependencies: Object.freeze({ provider }),
+        dependencies: Object.freeze({ provider: provider.id }),
         candidates: Object.freeze(
           models.map((value) => Object.freeze({ value, description: value }))
         ),
       })
     )
     for (const modelKey of models) {
+      const model = provider.descriptor.models.find(
+        ({ key }) => key === modelKey
+      )
+      if (model === undefined) continue
       entries.push(
         Object.freeze({
           sourceId: 'portal.command.model-options',
-          dependencies: Object.freeze({ provider, 'model-key': modelKey }),
+          dependencies: Object.freeze({
+            provider: provider.id,
+            'model-key': modelKey,
+          }),
           candidates: Object.freeze(
-            listProviderModelOptions(provider, modelKey).map((value) =>
+            model.options.map((value) =>
               Object.freeze({ value, description: value })
             )
           ),

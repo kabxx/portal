@@ -1,4 +1,3 @@
-import type { ProviderId } from '../providers/provider-id.ts'
 import {
   type PreparedThread,
   type ThreadSnapshot,
@@ -7,7 +6,7 @@ import {
 
 export interface ThreadRuntimeEntry<TRuntime = unknown> {
   readonly snapshot: ThreadSnapshot
-  readonly provider: ProviderId
+  readonly provider: string
   readonly runtime: TRuntime
 }
 

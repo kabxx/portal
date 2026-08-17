@@ -1,4 +1,5 @@
 import type { BrowserContext } from 'playwright'
+
 import {
   type ProviderAdapter,
   type ProviderTimingOptions,
@@ -11,41 +12,10 @@ import { GlmAdapter } from './adapters/adapter-glm.ts'
 import { GrokAdapter } from './adapters/adapter-grok.ts'
 import { KimiAdapter } from './adapters/adapter-kimi.ts'
 import { QwenAdapter } from './adapters/adapter-qwen.ts'
-import type { ProviderId } from './provider-id.ts'
+import type { FirstPartyProviderId as ProviderId } from './first-party-provider-id.ts'
 
-export const PROVIDERS: ProviderId[] = [
-  'chatgpt',
-  'gemini',
-  'deepseek',
-  'doubao',
-  'grok',
-  'glm',
-  'qwen',
-  'kimi',
-]
-
-export function normalizeProviderId(value: string): ProviderId | null {
-  const normalized = value.trim().toLowerCase()
-  if (!normalized) {
-    return null
-  }
-
-  const aliases: Record<string, ProviderId> = {
-    chatgpt: 'chatgpt',
-    gpt: 'chatgpt',
-    gemini: 'gemini',
-    deepseek: 'deepseek',
-    doubao: 'doubao',
-    grok: 'grok',
-    glm: 'glm',
-    qwen: 'qwen',
-    kimi: 'kimi',
-  }
-
-  return aliases[normalized] ?? null
-}
-
-export async function createAdapterForProvider(
+/** Private factory used only by the bundled web Provider packages. */
+export async function createFirstPartyWebProviderAdapter(
   context: BrowserContext,
   provider: ProviderId,
   conversationUrl: string | null = null,

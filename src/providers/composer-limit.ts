@@ -6,7 +6,7 @@ import {
   throwIfAborted,
 } from '../runtime/runtime-cancellation.ts'
 import type { ProviderPage } from './adapters/adapter-base.ts'
-import type { ProviderId } from './provider-id.ts'
+import type { FirstPartyProviderId as ProviderId } from './first-party-provider-id.ts'
 
 export type ComposerLimitUnit =
   'utf16_code_units' | 'unicode_code_points' | 'utf8_bytes'

@@ -5,12 +5,7 @@ import type {
 } from '../threads/thread-manager.ts'
 import type { ThreadLifecycleService } from '../threads/thread-lifecycle-service.ts'
 import type { ThreadOperationCoordinator } from '../threads/thread-operation-coordinator.ts'
-import type { RunCommandJobManager } from '../processes/run-command-job-manager.ts'
-import {
-  normalizeProviderId,
-  PROVIDERS,
-} from '../providers/provider-catalog.ts'
-import { resolveProviderModel } from '../providers/provider-model-catalog.ts'
+import type { ProviderHost } from '../providers/provider-host.ts'
 import type { TurnItem } from '../threads/thread-registry.ts'
 import type {
   SurfaceCreateThreadInput,
@@ -18,7 +13,6 @@ import type {
   SurfaceOperation,
   SurfacePortActions,
   SurfaceProvisionResult,
-  SurfaceJob,
   SurfaceStartResult,
   SurfaceThread,
   SurfaceTurnItem,
@@ -28,18 +22,18 @@ export class PortalSurfacePort implements SurfacePortActions {
   readonly #threads: ThreadManager
   readonly #lifecycle: ThreadLifecycleService
   readonly #operations: ThreadOperationCoordinator
-  readonly #jobs: Pick<RunCommandJobManager, 'list' | 'stop'>
+  readonly #providers: ProviderHost
 
   public constructor(options: {
     readonly threadManager: ThreadManager
     readonly threadLifecycle: ThreadLifecycleService
     readonly threadOperations: ThreadOperationCoordinator
-    readonly runCommandJobs: Pick<RunCommandJobManager, 'list' | 'stop'>
+    readonly providerHost: ProviderHost
   }) {
     this.#threads = options.threadManager
     this.#lifecycle = options.threadLifecycle
     this.#operations = options.threadOperations
-    this.#jobs = options.runCommandJobs
+    this.#providers = options.providerHost
   }
 
   public listThreads(): readonly SurfaceThread[] {
@@ -64,30 +58,20 @@ export class PortalSurfacePort implements SurfacePortActions {
   }
 
   public listProviders(): readonly string[] {
-    return Object.freeze([...PROVIDERS])
-  }
-
-  public listJobs(): readonly SurfaceJob[] {
-    return Object.freeze([...this.#jobs.list()])
-  }
-
-  public async stopJob(
-    jobId: string
-  ): Promise<'stopped' | 'not_found' | 'timeout'> {
-    return await this.#jobs.stop(jobId)
+    return Object.freeze(this.#providers.list().map(({ id }) => id))
   }
 
   public async createThread(
     input: SurfaceCreateThreadInput,
     signal: AbortSignal
   ): Promise<SurfaceProvisionResult> {
-    const provider = normalizeProviderId(input.provider)
+    const provider = this.#providers.resolveProviderId(input.provider)
     if (provider === null)
       throw new Error(`Unsupported provider: ${input.provider}`)
     const provision = await this.#lifecycle.create(
       {
         provider,
-        model: resolveProviderModel(
+        model: this.#providers.resolveModel(
           provider,
           typeof input.model === 'string' || input.model === null
             ? input.model

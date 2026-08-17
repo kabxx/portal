@@ -68,39 +68,47 @@ export function createPortalMcpProtocolServer(
     async () => await runTool(async () => await handlers.listThreads())
   )
 
-  server.registerTool(
-    'portal_list_jobs',
-    {
-      title: 'List Portal Command Jobs',
-      description:
-        'List active run_command jobs in the running Portal process. Command and working-directory values may be sensitive.',
-      outputSchema: z.object({ jobs: z.array(jobSchema) }),
-      annotations: readOnlyAnnotations,
-    },
-    async () => await runTool(async () => await handlers.listJobs())
-  )
-
-  server.registerTool(
-    'portal_stop_job',
-    {
-      title: 'Stop Portal Command Job',
-      description:
-        'Stop one active run_command job and wait for its process tree to settle.',
-      inputSchema: z.object({ jobId: z.string().regex(/\S/) }),
-      outputSchema: z.object({
-        stopped: z.literal(true),
-        jobId: z.string(),
-      }),
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
-        openWorldHint: true,
+  if (handlers.listJobs !== undefined && handlers.stopJob !== undefined) {
+    server.registerTool(
+      'portal_list_jobs',
+      {
+        title: 'List Portal Command Jobs',
+        description:
+          'List active run_command jobs in the running Portal process. Command and working-directory values may be sensitive.',
+        outputSchema: z.object({ jobs: z.array(jobSchema) }),
+        annotations: readOnlyAnnotations,
       },
-    },
-    async ({ jobId }) =>
-      await runTool(async () => await handlers.stopJob(jobId))
-  )
+      async () => await runTool(async () => await handlers.listJobs!())
+    )
+
+    server.registerTool(
+      'portal_stop_job',
+      {
+        title: 'Stop Portal Command Job',
+        description:
+          'Stop one active run_command job and wait for its process tree to settle.',
+        inputSchema: z.object({ jobId: z.string().regex(/\S/) }),
+        outputSchema: z.object({
+          stopped: z.literal(true),
+          jobId: z.string(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: true,
+        },
+      },
+      async ({ jobId }, extra) =>
+        await runTool(
+          async () =>
+            await handlers.stopJob!(
+              jobId,
+              AbortSignal.any([requestSignal, extra.signal])
+            )
+        )
+    )
+  }
 
   server.registerTool(
     'portal_get_thread',

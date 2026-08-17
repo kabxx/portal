@@ -1,5 +1,6 @@
 import type { ServiceRef } from '../../extensions/extension-contracts.ts'
 import { createServiceRef } from '../../extensions/extension-contracts.ts'
+import { pluginManagementService } from '../../extensions/plugin-management-service.ts'
 import type {
   CommandCompletionSnapshot,
   CommandDescriptor,
@@ -268,19 +269,26 @@ export const commandServiceRefs: readonly ServiceRef<unknown>[] = Object.freeze(
     commandMcpService,
     commandJobService,
     commandKeybindingService,
+    pluginManagementService,
   ]
 )
 
-export const commandCapabilities = Object.freeze([
+export const portalCommandCapabilities = Object.freeze([
   'portal.command.thread.read',
   'portal.command.thread.manage',
   'portal.command.provider.capability.manage',
-  'portal.command.skill.read',
-  'portal.command.skill.manage',
   'portal.command.mcp.manage',
   'portal.command.job.read',
   'portal.command.job.manage',
   'portal.command.keybinding.manage',
+])
+
+export const commandCapabilities = Object.freeze([
+  ...portalCommandCapabilities,
+  'portal.command.skill.read',
+  'portal.command.skill.manage',
+  'portal.command.plugin.read',
+  'portal.command.plugin.manage',
 ])
 
 export interface CommandServiceBundle {
@@ -288,9 +296,7 @@ export interface CommandServiceBundle {
   readonly catalog: CommandCatalogService
   readonly threads: CommandThreadService
   readonly providers: CommandProviderService
-  readonly skills: CommandSkillService
   readonly mcp: CommandMcpService
-  readonly jobs: CommandJobService
   readonly keybindings: CommandKeybindingService
 }
 
@@ -318,9 +324,7 @@ export class CommandServiceHost {
     if (ref === commandCatalogService) return bundle.catalog
     if (ref === commandThreadService) return bundle.threads
     if (ref === commandProviderService) return bundle.providers
-    if (ref === commandSkillService) return bundle.skills
     if (ref === commandMcpService) return bundle.mcp
-    if (ref === commandJobService) return bundle.jobs
     if (ref === commandKeybindingService) return bundle.keybindings
     throw new Error(`Unknown command service: ${ref.id}`)
   }

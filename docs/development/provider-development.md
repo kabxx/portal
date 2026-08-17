@@ -22,11 +22,14 @@ A first-class Provider is complete only when all applicable paths below work:
 
 An adapter can be merged with an intentionally unsupported feature, but it cannot silently omit an abstract method or claim support that was not verified.
 
-Application-level Provider registration belongs in
-`src/providers/provider-catalog.ts`: the Provider list, aliases, Provider-specific
-adapter imports, and adapter factory dispatch stay together there. Provider DOM
+Provider registration belongs to the Provider package and its manifest. The
+package contributes one Provider descriptor, conversation URL resolver, and
+endpoint binding to the extension graph. `ProviderHost` resolves those graph
+entries and owns binding scope, cancellation, and exchange delivery; it does
+not import a Provider adapter or a static Provider catalog. Provider DOM
 selectors and interactions still belong exclusively in `src/providers/ui/`,
-and semantic browser/protocol behavior stays in `src/providers/adapters/`.
+and semantic browser/protocol behavior stays in the Provider package's
+`src/providers/adapters/` implementation.
 
 ## 2. Adapter lifecycle
 
@@ -124,20 +127,24 @@ Check the states that are safely available: signed in and signed out, new and ex
 
 ## 4. Registration checklist
 
-Adding the adapter file is only one part of registration. Search for exhaustive `ProviderId` unions, arrays, records, switches, and schema enums before considering registration complete.
+Adding the adapter file is only one part of registration. Register the package
+manifest, graph contribution, endpoint binding, URL resolver, model
+projection, and tests before considering registration complete. Kernel and
+Surface code must remain string- and graph-driven; a first-party package may
+use a local literal union internally when dispatching its own implementations.
 
 | Area               | Required change                                                                                                                                                                          |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Adapter            | Add `src/providers/adapters/adapter-<id>.ts`, delegate page behavior to Provider UI components, and add focused semantic tests under `test/providers/adapters/`.                         |
 | Provider UI        | Add Provider-local components under `src/providers/ui/<id>/`; keep selector candidates, DOM scoping, uniqueness, waits, actions, and page state inside this boundary.                    |
-| Provider type      | Add the id to `src/providers/provider-id.ts`.                                                                                                                                            |
-| Provider registry  | In `src/providers/provider-catalog.ts`, add the import, `PROVIDERS` entry, normalized name/aliases, and `createAdapterForProvider` case.                                                 |
+| Provider package   | Add a manifest and package registration with one `providers.collect` contribution, endpoint binding, and conversation URL binding.                                                       |
+| Provider identity  | Keep the canonical id and any useful aliases in the package contribution. Do not add it to a Kernel-wide Provider union or static catalog.                                               |
 | Resume URL         | Add strict HTTPS host/path recognition and canonicalization in `src/providers/provider-conversation-url.ts`, with positive, alias, malformed-encoding, wrong-host, and wrong-path tests. |
-| Spawn              | Update the Provider list in the `spawn` description and input-schema enum in `src/tools/builtins/spawn-tool.ts`; update `test/tools/builtins/spawn-tool.test.ts`.                        |
-| Model argument     | Add the Provider's named models and per-model options to `src/providers/definitions/<id>.ts`; cover mapping and rejected forms in manifest, catalog, and command tests.                  |
+| Spawn              | Let the graph-backed child-conversation service resolve the Provider id; do not add a static Provider enum to the Tool or Surface.                                                       |
+| Model argument     | Add the Provider's named models and per-model options to the package contribution; cover mapping and rejected forms in graph, projection, and command tests.                             |
 | Capabilities       | Put only static capability keys, descriptions, and kinds in the Provider definition; keep live discovery and dispatch behavior in the Provider UI component.                             |
 | User documentation | Keep root `README.md` and `README.zh-CN.md` synchronized, and update the detailed matrix in [Providers](../user/providers.md).                                                           |
-| Integration tests  | Update Provider lists, command completion, MCP listing, and any exhaustive records surfaced by TypeScript or repository search.                                                          |
+| Integration tests  | Verify graph discovery, command completion, MCP listing, URL resolution, model projection, and enable/disable behavior without editing Kernel registration code.                         |
 
 Do not add an alias unless it is unambiguous and useful. Canonical conversation URLs must discard unrelated query/hash state and encode the conversation id exactly once.
 

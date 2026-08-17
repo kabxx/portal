@@ -361,10 +361,10 @@ for (const [name, marker] of [
   })
 }
 
-test('parseChatGptHistory keeps Portal tool calls from incomplete assistant turns', () => {
+test('parseChatGptHistory keeps Portal Action calls from incomplete assistant turns', () => {
   const entityMarker =
     '\uE200entity\uE202["known_celebrity","蔡徐坤","Chinese singer"]\uE201'
-  const toolCall = `<tool name="apply_patch">before ${entityMarker} after</tool>`
+  const toolCall = `<action name="apply_patch">before ${entityMarker} after</action>`
   const node = (
     id: string,
     parent: string | null,
@@ -393,7 +393,7 @@ test('parseChatGptHistory keeps Portal tool calls from incomplete assistant turn
         root: { id: 'root', parent: null, message: null },
         u1: node('u1', 'root', 'user', 'question'),
         a1: node('a1', 'u1', 'assistant', toolCall, { end_turn: false }),
-        u2: node('u2', 'a1', 'user', '### Tool Result ###\nok'),
+        u2: node('u2', 'a1', 'user', '### Action Result ###\nok'),
         a2: node('a2', 'u2', 'assistant', 'done'),
       },
     })
@@ -407,10 +407,12 @@ test('parseChatGptHistory keeps Portal tool calls from incomplete assistant turn
         role: 'assistant',
         text: toolCall,
       },
-      { role: 'user', text: '### Tool Result ###\nok' },
+      { role: 'user', text: '### Action Result ###\nok' },
       { role: 'assistant', text: 'done' },
     ]
   )
+  assert.equal(result.messages[1]?.toolCall?.name, 'apply_patch')
+  assert.equal(result.messages[2]?.toolResult, true)
 })
 
 test('parseChatGptHistory marks a missing parent as incomplete', () => {

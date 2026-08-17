@@ -9,48 +9,42 @@ inbound Portal MCP Server.
 
 ## Component map
 
-| Area          | Main files                                                    | Responsibility                                                                                     |
-| ------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Entry points  | `src/index.ts`, `src/cli-entry.ts`, `src/app.ts`, `src/exec/` | Dispatch the TUI or headless command and compose its surface                                       |
-| Host          | `src/host/`, `src/shared/resource-scope.ts`                   | Compose shared process services and own startup, rollback, and ordered shutdown                    |
-| Extensions    | `src/extensions/`, `src/cli-commands/core/`                   | Resolve typed contributions, services, lifecycle Hooks, and Commands into one immutable generation |
-| Configuration | `src/config/`                                                 | Resolve sparse overrides and atomically update `config.yaml`                                       |
-| Browser       | `src/platform/`                                               | Launch Chromium, connect over CDP, and own process lifetime                                        |
-| Providers     | `src/providers/`                                              | Implement page readiness, submission, response capture, models, capabilities, and history          |
-| Runtime       | `src/runtime/`                                                | Render setup prompts, initialize conversations, run the tool loop, retry, and cancel               |
-| Threads       | `src/threads/`                                                | Admit create/resume/send/close operations and persist conversation metadata                        |
-| Tools         | `src/tools/`, `src/processes/`                                | Advertise and validate tools, execute them, stream progress, and track command jobs                |
-| Skills        | `src/skills/`                                                 | Install and validate Skill directories and snapshot enabled metadata                               |
-| Instructions  | `src/instructions/`                                           | Optionally snapshot the startup directory's `AGENTS.md`                                            |
-| TUI           | `src/terminal-ui/`, `src/cli-commands/`                       | Render timelines, edit input, and dispatch slash commands                                          |
-| MCP Server    | `src/mcp-server/`, `src/app/app-mcp-handlers.ts`              | Expose selected thread and job operations over Streamable HTTP MCP                                 |
+| Area          | Main files                                                  | Responsibility                                                                                        |
+| ------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Entry points  | `src/index.ts`, `src/cli-entry.ts`, `src/app.ts`            | Select a Surface and invoke bootstrap or recovery commands                                            |
+| Host          | `src/host/`, `src/shared/resource-scope.ts`                 | Compose Kernel domain hosts and own startup, rollback, and ordered shutdown                           |
+| Extensions    | `src/extensions/`, `src/bootstrap/`                         | Persist enablement and resolve packages, services, contributions, bindings, and Hooks                 |
+| Configuration | `src/config/`                                               | Resolve sparse overrides and atomically update `config.yaml`                                          |
+| Browser       | `src/platform/`                                             | Launch Chromium, connect over CDP, and own process lifetime                                           |
+| Providers     | `src/providers/provider-host.ts`, `src/providers/`          | Resolve Provider bindings in Kernel; implement web communication, login, retry, and codecs in plugins |
+| Runtime       | `src/runtime/`                                              | Render setup documents and support the first-party web Provider implementation                        |
+| Threads       | `src/threads/`                                              | Run Conversation/Tool legs, admit operations, and persist conversation metadata                       |
+| Tools         | `src/tools/`, `src/processes/`                              | Resolve Tool bindings; plugin packages own execution, process jobs, and management features           |
+| Skills        | `src/skills/`                                               | Install and validate Skill directories and snapshot enabled metadata                                  |
+| Instructions  | `src/instructions/`                                         | Optionally snapshot the startup directory's `AGENTS.md`                                               |
+| Surfaces      | `src/surfaces/`, `src/app/`, `src/exec/`, `src/mcp-server/` | Activate TUI, one-shot exec, and MCP through typed Surface bindings                                   |
 
 The inbound MCP server is Portal's external automation interface.
 
 ## Process composition
 
-`PortalHost` under `src/host/` is the shared composition root for the TUI and
-`portal exec`. `prepare()` resolves configuration, initializes the Skill and
-project-instruction snapshots, and opens the Thread store without launching a
-browser. It also synchronously registers and freezes the internal extension
-generation. `start()` invokes the Portal activation Hooks, launches Chromium,
-and constructs the shared Thread lifecycle and Runtime factory. `close()` first
-closes Thread admission, invokes the shutdown Hook, waits for provisioning to
-settle, then cancels operations and closes jobs, Threads, browser resources,
-and SQLite in a bounded order. Terminal `portal.stopped` runs after core
-resources close and before extension activation resources and the Portal root
-are released. `ResourceScope` owns startup rollback and late-arriving
-resources; it does not replace this domain shutdown sequence.
+`PortalHost` under `src/host/` is the shared composition root. `prepare()`
+resolves configuration, synchronizes installed first-party records, resolves
+one immutable plugin generation, creates Kernel domain hosts, and opens the
+Thread store without launching a browser. Disabled packages are not loaded.
+`start()` invokes lifecycle Hooks and launches Chromium. `close()` first closes
+active Surfaces, then Thread admission, Provider/Tool operations, browser
+resources, and SQLite in bounded order. Plugin-owned cleanup runs through
+scopes and Hooks; `PortalHost` does not construct specific Providers, Tools,
+Skills, command jobs, or MCP handlers.
 
-The TUI in `app.ts` adds only surface resources: the terminal controller, Ink,
-keybindings, a Host-owned Command session, and the optional inbound MCP Server.
+`app.ts` activates graph-resolved TUI and MCP Surfaces. The TUI package owns
+the terminal controller, Ink, keybindings, and its Command session.
 All in-session built-ins are first-party `commands.collect` contributions. One
 resolved plan drives their parsing, help, hints, completion, syntax,
 thread-busy admission, and execution. Handlers resolve narrow command services
 instead of receiving the terminal controller, stores, managers, or a mutable
-application context. The TUI's single shutdown coordinator stops its surface
-resources around `PortalHost.close()`.
-`portal exec` uses the same Host through a UI-independent facade under
+application context. `portal exec` activates the batch Surface under
 `src/exec/`; its module graph does not load React, Ink, or terminal UI modules.
 It creates one inactive agent Thread, sends an inline setup plus task, writes
 progress to stderr and the final answer to stdout, records the conversation
@@ -59,12 +53,14 @@ later resume.
 
 ## Setup prompt
 
-`src/runtime/setup-prompt.ts` is the single renderer for setup documents. The
-full TUI/spawned-agent prompt has this fixed order:
+`src/runtime/setup-prompt.ts` renders structured setup documents. A Provider
+selects its model-facing call protocol. Browser Providers use Portal Action
+Protocol; API Providers translate native tool calls without receiving this
+text protocol. A full browser-provider prompt has this order:
 
 1. `# Portal Agent`;
-2. `## Tool Protocol`;
-3. `## Tools`;
+2. `## Portal Action Protocol`;
+3. `## Actions`;
 4. optional `## Skills`;
 5. optional `## Project Instructions`;
 6. `## Runtime`;
@@ -74,9 +70,11 @@ Every tool entry contains only its name, description, and parameters. The setup
 contains no tool-call examples or provider-specific constraints. Hidden or
 disallowed tools are omitted by the registry.
 
-The Tool Protocol permits at most one terminal tool block per assistant
-message. JSON tools receive an object payload, freeform tools receive raw text,
-and the next user message carries the Tool Result.
+Portal Action Protocol permits at most one terminal
+`<action name="NAME">PAYLOAD</action>` block per assistant message. JSON
+actions receive an object payload, freeform actions receive raw text, and the
+next user message carries the Action Result. Portal internals remain named
+Tool, ToolRequest, and ToolResult.
 
 TUI agent creation and spawned runtimes submit the full setup and require a
 case-insensitive whole-word `READY` response. Chat creation sends only the
@@ -88,18 +86,14 @@ its context.
 ## Thread lifecycle
 
 `ThreadLifecycleService` owns create, resume, send, cancel, and close admission
-for every surface. A provision operation reserves the conversation identity,
-creates an adapter and runtime, waits for login when necessary, records the
-conversation URL, and commits the thread only after initialization succeeds.
-Failures clean up partially created adapters, pages, registry claims, and
-pending UI state.
-
-The runtime executes a model response as a tool loop:
+for every Surface. Provisioning resolves a Provider contribution and opens a
+Kernel `ProviderBinding`. The Provider plugin owns login, Page/session setup,
+recovery, and model conversion. `ConversationHost` owns canonical Thread turns
+and executes each model response as a Tool loop:
 
 1. submit the current user or Tool Result text;
 2. capture the provider response;
-3. treat a single complete `<tool name="NAME">PAYLOAD</tool>` at the textual end
-   as a tool request;
+3. receive an internal ToolRequest translated by the Provider plugin;
 4. validate Tool parameters and host-owned capability and safety rules;
 5. execute the tool and send its structured result in the next user message;
 6. stop when the provider produces an ordinary assistant response.
@@ -110,27 +104,31 @@ browser connection shuts down the process.
 
 ## Tools and jobs
 
-The default agent tool set is `attach_image`, `run_command`, `apply_patch`, and
-`spawn`. `ToolRegistry` renders the compact catalog, parses calls, validates
-input, and rejects calls to hidden or unavailable tools.
+The first-party Tool packages are `attach_image`, `run_command`, `apply_patch`,
+and `spawn`. `ToolHost` resolves executable graph bindings, capabilities,
+services, scopes, and finalization. The browser Provider's text codec renders
+the compact Action catalog and converts valid text calls into internal
+ToolRequests.
 
-`run_command` jobs are process-local. A cancelled turn detaches its waiter but
-does not automatically terminate the command. The TUI and MCP Server share the
-same job manager; controlled shutdown stops all managed jobs. Output is bounded
-before it is retained or delivered to a provider.
+`run_command` owns its process-local jobs and management service. Cancelling its
+Tool scope stops the process tree. Its `/job` command and MCP Job feature are
+contributions from the same package, so all disappear when the package is
+disabled. Controlled shutdown stops all managed jobs. Output is bounded before
+it is retained or delivered to a Provider.
 
-`spawn` creates a temporary child conversation in the existing browser context,
-uses the same Skill and project-instruction snapshots, enforces the fixed depth
-limit, runs one task, returns its provider URL and output, and closes the child
-runtime.
+`spawn` invokes the Kernel child-conversation service. It does not construct a
+Provider adapter or child Runtime directly.
 
 ## Skills
 
-The Skill library snapshots each enabled Skill's name, sanitized description,
-and absolute `SKILL.md` path when a runtime is created. Full setup prompts list
+The `portal.skills` package owns Skill storage and project-instruction loading.
+It snapshots each enabled Skill's name, sanitized description, and absolute
+`SKILL.md` path when a Provider binding is created. Full setup prompts list
 only that metadata; manifest bodies and resource files are not injected. There
 is no `load_skill` tool or per-turn manual Skill activation. Registry changes
-affect new runtimes, not existing snapshots.
+affect new bindings, not existing snapshots. The separate
+`portal.command.skills` package contributes `/skill`; disabling that command or
+package does not remove Prompt Skill data from Providers.
 
 ## Project instructions
 
@@ -151,9 +149,10 @@ implemented.
 
 ## Portal MCP Server
 
-`src/mcp-server/` is an inbound integration surface. `/mcp start` creates a
-Streamable HTTP server backed directly by the shared thread lifecycle and job
-manager. `/mcp status`, `/mcp token`, and `/mcp stop` inspect or control it.
+`src/mcp-server/` is an inbound Surface package. `/mcp start` creates a
+Streamable HTTP server that invokes typed Surface actions. `run_command`
+optionally contributes Job management as a Surface feature. `/mcp status`,
+`/mcp token`, and `/mcp stop` inspect or control the listener.
 Stopping the server cancels MCP-owned operations and closes transports without
 cancelling unrelated TUI work.
 
@@ -161,8 +160,9 @@ cancelling unrelated TUI work.
 
 `threads.db` stores provider, URL, title, and timestamps, not transcripts.
 Provider history remains authoritative and is loaded for display during resume.
-Browser login state lives under `<data-dir>/profiles/chromium`. Skill registry
-state lives separately under `<data-dir>/state/skills.json`.
+Browser login state lives under `<data-dir>/profiles/chromium`. Installed plugin
+enablement and grants live under `<data-dir>/plugins/installed.json`. Skill
+registry state lives separately under `<data-dir>/state/skills.json`.
 
 Portal accepts only the documented sparse configuration. Skill registry state
 is stored separately from user configuration.

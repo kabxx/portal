@@ -21,12 +21,15 @@ import type {
   RunCommandJobHandle,
   RunCommandJobService,
 } from '../../src/processes/run-command-job-manager.ts'
+import { RunCommandPlugin } from '../../src/tools/builtins/run-command-plugin.ts'
+import { portalHostTestExtensions } from '../../src/extensions/portal-hooks.ts'
 import { getAbortError } from '../../src/runtime/runtime-cancellation.ts'
 import { TerminalController } from '../../src/terminal-ui/terminal-controller.ts'
 import {
   createFakeRuntime,
   createProviderAdapterStub,
 } from '../helpers/fakes.ts'
+import { createTestProviderExtensions } from '../helpers/provider-endpoint.ts'
 
 test(
   'run composes local resources and closes them after browser disconnect',
@@ -47,6 +50,7 @@ test(
       runCommandJobs?: RunCommandJobService
       job?: RunCommandJobHandle
     } = {}
+    const runCommandPlugin = new RunCommandPlugin()
     let adapterCloseCount = 0
     let browserCloseCount = 0
     let runtimeCloseCount = 0
@@ -88,32 +92,31 @@ test(
           },
         }
       },
-      createProviderAdapter: async () => adapter,
-      createRuntime: async (runtimeAdapter, options) => {
-        assert.equal(runtimeAdapter, adapter)
-        assert.ok(options !== undefined)
-        const runCommandJobs = options.toolServices?.runCommandJobs
-        assert.ok(runCommandJobs !== undefined)
-        observed.runCommandJobs = runCommandJobs
-        return createFakeRuntime({
-          adapter,
-          close: async () => {
-            runtimeCloseCount += 1
-            await adapter.close()
-            adapterCloseCount += 1
-          },
-          submitUserInput: async (_input, handlers) => {
-            assert.ok(handlers !== undefined)
-            const startedJob = runCommandJobs.start(
-              longRunningCommand(readyPath, cwd)
-            )
-            observed.job = startedJob
-            await waitForJobReady(startedJob, readyPath)
-            operationStarted.resolve()
-            return await waitForAbort(handlers.signal)
-          },
-        })
-      },
+      [portalHostTestExtensions]: [
+        ...createTestProviderExtensions(async () => {
+          const runCommandJobs = runCommandPlugin.jobService
+          observed.runCommandJobs = runCommandJobs
+          return createFakeRuntime({
+            adapter,
+            close: async () => {
+              runtimeCloseCount += 1
+              await adapter.close()
+              adapterCloseCount += 1
+            },
+            submitUserInput: async (_input, handlers) => {
+              assert.ok(handlers !== undefined)
+              const startedJob = runCommandJobs.start(
+                longRunningCommand(readyPath, cwd)
+              )
+              observed.job = startedJob
+              await waitForJobReady(startedJob, readyPath)
+              operationStarted.resolve()
+              return await waitForAbort(handlers.signal)
+            },
+          })
+        }),
+        runCommandPlugin.registration,
+      ],
     }
 
     const runPromise = run(
@@ -167,6 +170,7 @@ test('run rolls back the prepared host when the TUI surface fails', async () => 
   const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-app-surface-fail-'))
   const dataDirectory = path.join(cwd, 'portal-state')
   let browserLaunchCount = 0
+  let browserCloseCount = 0
   try {
     await assert.rejects(
       run([process.execPath, 'portal', '--data-dir', dataDirectory], {
@@ -177,12 +181,30 @@ test('run rolls back the prepared host when the TUI surface fails', async () => 
         },
         launchBrowser: async () => {
           browserLaunchCount += 1
-          throw new Error('browser should not launch')
+          return {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+            context: {} as BrowserContext,
+            disconnected: new Promise<void>(() => {}),
+            close: async () => {
+              browserCloseCount += 1
+            },
+          }
         },
       }),
-      /render failed/
+      (error: unknown) => {
+        assert.ok(error instanceof Error)
+        assert.ok(error.cause instanceof AggregateError)
+        assert.ok(
+          error.cause.errors.some(
+            (cause) =>
+              cause instanceof Error && cause.message === 'render failed'
+          )
+        )
+        return true
+      }
     )
-    assert.equal(browserLaunchCount, 0)
+    assert.equal(browserLaunchCount, 1)
+    assert.equal(browserCloseCount, 1)
   } finally {
     rmSync(cwd, { recursive: true, force: true })
   }
@@ -243,8 +265,11 @@ test('run stops an active MCP surface before exiting through /exit', async () =>
             browserCloseCount += 1
           },
         }),
-        createMcpServer: (options: PortalMcpServerOptions) =>
-          new TestPortalMcpServer(options),
+        createMcpServer: (options: PortalMcpServerOptions) => {
+          assert.equal(typeof options.handlers.listJobs, 'function')
+          assert.equal(typeof options.handlers.stopJob, 'function')
+          return new TestPortalMcpServer(options)
+        },
       }
     )
 

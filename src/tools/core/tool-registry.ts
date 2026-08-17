@@ -1,14 +1,15 @@
-import { Tool } from './tool-definition.ts'
-import type { ProviderAdapter } from '../../providers/adapters/adapter-base.ts'
 import { isAbortError } from '../../runtime/runtime-cancellation.ts'
 import type {
-  ToolConstructor,
   ToolExecutionOptions,
   ToolInputFormat,
   ToolOutcome,
-  ToolServices,
 } from './tool-definition.ts'
-import { createToolError, type ToolOutput } from './tool-definition.ts'
+import {
+  DEFAULT_TEXT_TOOL_PROTOCOL,
+  type TextToolProtocol,
+} from './text-tool-protocol.ts'
+import type { ToolRuntimeService } from '../tool-runtime-service.ts'
+import type { ChildConversationParent } from '../../threads/child-conversation-service.ts'
 
 export interface ExtractedToolCall {
   leadingText: string
@@ -35,8 +36,6 @@ export interface ToolResultDelivery {
   [key: string]: unknown
 }
 
-const TOOL_TAG_PREFIX = '<tool'
-
 export type PreparedToolCall =
   | {
       ok: true
@@ -45,9 +44,16 @@ export type PreparedToolCall =
     }
   | { ok: false; toolCall: ToolCall | null; result: ToolResult }
 
-export function extractToolCall(response: string): ExtractedToolCall | null {
+export function extractToolCall(
+  response: string,
+  protocol: TextToolProtocol = DEFAULT_TEXT_TOOL_PROTOCOL
+): ExtractedToolCall | null {
+  const tag = escapeRegExp(protocol.tagName)
   const match = response.match(
-    /([\s\S]*?)<tool(?:\s+name\s*=\s*(?:"([^"]+)"|'([^']+)'))?\s*>([\s\S]*?)<\/tool>([\s\S]*)/i
+    new RegExp(
+      `([\\s\\S]*?)<${tag}(?:\\s+name\\s*=\\s*(?:"([^"]+)"|'([^']+)'))?\\s*>([\\s\\S]*?)<\\/${tag}>([\\s\\S]*)`,
+      'i'
+    )
   )
   if (!match) {
     return null
@@ -65,24 +71,28 @@ export function isToolCallAtResponseEnd(extracted: ExtractedToolCall): boolean {
   return extracted.trailingText.trim() === ''
 }
 
-export function projectStreamingAssistantText(response: string): string {
-  const extracted = extractToolCall(response)
+export function projectStreamingAssistantText(
+  response: string,
+  protocol: TextToolProtocol = DEFAULT_TEXT_TOOL_PROTOCOL
+): string {
+  const extracted = extractToolCall(response, protocol)
   if (extracted !== null) {
     return isToolCallAtResponseEnd(extracted)
       ? extracted.leadingText.trim()
       : response
   }
 
+  const tagPrefix = `<${protocol.tagName}`.toLowerCase()
   const normalized = maskMarkdownCode(response).toLowerCase()
   let searchFrom = 0
 
   while (searchFrom < normalized.length) {
-    const toolStart = normalized.indexOf(TOOL_TAG_PREFIX, searchFrom)
+    const toolStart = normalized.indexOf(tagPrefix, searchFrom)
     if (toolStart === -1) {
       break
     }
 
-    const nextCharacter = normalized[toolStart + TOOL_TAG_PREFIX.length]
+    const nextCharacter = normalized[toolStart + tagPrefix.length]
     if (
       nextCharacter === undefined ||
       nextCharacter === '>' ||
@@ -91,15 +101,29 @@ export function projectStreamingAssistantText(response: string): string {
       return response.slice(0, toolStart).trim()
     }
 
-    searchFrom = toolStart + TOOL_TAG_PREFIX.length
+    searchFrom = toolStart + tagPrefix.length
   }
 
-  for (let length = TOOL_TAG_PREFIX.length - 1; length > 0; length -= 1) {
-    if (normalized.endsWith(TOOL_TAG_PREFIX.slice(0, length))) {
+  for (let length = tagPrefix.length - 1; length > 0; length -= 1) {
+    if (normalized.endsWith(tagPrefix.slice(0, length))) {
       return response.slice(0, -length).trim()
     }
   }
 
+  return response
+}
+
+export function projectStreamingAssistantTextForProtocols(
+  response: string,
+  protocols: readonly TextToolProtocol[]
+): string {
+  for (const protocol of protocols) {
+    const extracted = extractToolCall(response, protocol)
+    const projected = projectStreamingAssistantText(response, protocol)
+    if (extracted !== null || projected !== response) {
+      return projected
+    }
+  }
   return response
 }
 
@@ -160,34 +184,42 @@ export function parseToolCallPayload(
 }
 
 class ToolRegistry {
-  private readonly tools: Map<string, Tool>
-  private readonly promptedTools: readonly Tool[]
+  private readonly graphToolHost: ToolRuntimeService
+  private readonly availableCapabilities: readonly string[]
+  private readonly invocation: ChildConversationParent | null
+  private readonly promptedToolPrompts: readonly string[]
+  public readonly protocol: TextToolProtocol
 
   constructor(
-    providerAdapter: ProviderAdapter,
-    tools: ToolConstructor[],
-    services: ToolServices = {},
-    hiddenToolNames: readonly string[] = []
-  ) {
-    this.tools = new Map()
-    for (const ToolClass of tools) {
-      const tool = new ToolClass(providerAdapter, services)
-      this.tools.set(tool.name, tool)
+    provider: { readonly toolCapabilities: readonly string[] },
+    options: {
+      readonly toolHost: ToolRuntimeService
+      readonly hiddenToolNames?: readonly string[]
+      readonly protocol?: TextToolProtocol
+      readonly invocation?: ChildConversationParent
     }
-    const hiddenNames = new Set(hiddenToolNames)
-    this.promptedTools = [...this.tools.values()].filter(
-      (tool) => !hiddenNames.has(tool.name)
-    )
+  ) {
+    this.protocol = options.protocol ?? DEFAULT_TEXT_TOOL_PROTOCOL
+    this.graphToolHost = options.toolHost
+    this.availableCapabilities = provider.toolCapabilities
+    this.invocation = options.invocation ?? null
+    const hiddenNames = new Set(options.hiddenToolNames ?? [])
+    this.promptedToolPrompts = Object.freeze([
+      ...this.graphToolHost
+        .list()
+        .filter(({ descriptor }) => !hiddenNames.has(descriptor.name))
+        .map(({ descriptor }) => formatGraphToolPrompt(descriptor)),
+    ])
   }
 
   public get prompt(): string {
-    return this.promptedTools.map((tool) => tool.prompt).join('\n\n')
+    return this.promptedToolPrompts.join('\n\n')
   }
 
   public async extractToolCall(
     response: string
   ): Promise<ExtractedToolCall | null> {
-    return extractToolCall(response)
+    return extractToolCall(response, this.protocol)
   }
 
   public async extractToolCallPayload(
@@ -203,7 +235,7 @@ class ToolRegistry {
     const declaredInputFormat =
       declaredToolName === null
         ? undefined
-        : this.tools.get(declaredToolName)?.inputFormat
+        : this.inputFormatFor(declaredToolName)
     return parseToolCallPayload(
       toolCallPayload,
       declaredToolName,
@@ -220,6 +252,23 @@ class ToolRegistry {
     return prepared.ok ? await prepared.execute(options) : prepared.result
   }
 
+  public projectStreamingAssistantText(response: string): string {
+    return projectStreamingAssistantText(response, this.protocol)
+  }
+
+  public formatToolResultMessage(
+    toolName: string,
+    toolResult: ToolResult,
+    delivery?: ToolResultDelivery
+  ): string {
+    return formatToolResultMessage(
+      toolName,
+      toolResult,
+      delivery,
+      this.protocol
+    )
+  }
+
   public prepareToolCall(
     toolCallPayload: string,
     declaredToolName: string | null = null
@@ -229,7 +278,7 @@ class ToolRegistry {
         ok: false,
         toolCall: null,
         result: asErrorResult(
-          'Tool calls require <tool name="tool_name">PAYLOAD</tool>'
+          `${this.protocol.displayName} calls require <${this.protocol.tagName} name="tool_name">PAYLOAD</${this.protocol.tagName}>`
         ),
       }
     }
@@ -243,7 +292,7 @@ class ToolRegistry {
         const parsed: unknown = JSON.parse(toolCallPayload)
         if (
           declaredToolName !== null &&
-          this.tools.get(declaredToolName)?.inputFormat === 'json'
+          this.inputFormatFor(declaredToolName) === 'json'
         ) {
           if (!isRecord(parsed)) {
             parseError = `Tool ${declaredToolName} payload must be a JSON object`
@@ -266,21 +315,24 @@ class ToolRegistry {
     toolCall: ToolCall,
     namedInvocation: boolean
   ): PreparedToolCall {
-    const tool = this.tools.get(toolCall.tool)
-    if (!tool) {
+    const graphTool = this.graphToolHost
+      .list()
+      .find(({ descriptor }) => descriptor.name === toolCall.tool)
+    if (graphTool === undefined) {
       return {
         ok: false,
         toolCall,
         result: asErrorResult(`Tool not found: ${toolCall.tool}`),
       }
     }
-    if (tool.inputFormat === 'freeform') {
+    const inputFormat = graphTool.descriptor.inputFormat
+    if (inputFormat === 'freeform') {
       if (!namedInvocation) {
         return {
           ok: false,
           toolCall,
           result: asErrorResult(
-            `Tool ${toolCall.tool} requires <tool name="${toolCall.tool}"> with a freeform payload`
+            `${this.protocol.displayName} ${toolCall.tool} requires <${this.protocol.tagName} name="${toolCall.tool}"> with a freeform payload`
           ),
         }
       }
@@ -294,7 +346,7 @@ class ToolRegistry {
         }
       }
     }
-    if (tool.inputFormat === 'json' && typeof toolCall.params === 'string') {
+    if (inputFormat === 'json' && typeof toolCall.params === 'string') {
       return {
         ok: false,
         toolCall,
@@ -309,7 +361,30 @@ class ToolRegistry {
       toolCall,
       execute: async (options: ToolExecutionOptions = {}) => {
         try {
-          return normalizeToolOutput(await tool.call(toolCall.params, options))
+          const result = await this.graphToolHost.execute(
+            toolCall.tool,
+            toolCall.params,
+            options.toolCallId ?? `runtime-${toolCall.tool}`,
+            {
+              ...(options.signal === undefined
+                ? {}
+                : { signal: options.signal }),
+              availableCapabilities: this.availableCapabilities,
+              ...(this.invocation === null
+                ? {}
+                : { invocation: this.invocation }),
+              ...(options.onProgress === undefined
+                ? {}
+                : { onProgress: options.onProgress }),
+            }
+          )
+          return {
+            outcome: result.status,
+            result: result.output,
+            ...(result.displayText === undefined
+              ? {}
+              : { displayText: result.displayText }),
+          }
         } catch (error) {
           if (isAbortError(error)) throw error
           return asErrorResult(`Tool execution failed: ${String(error)}`)
@@ -317,65 +392,86 @@ class ToolRegistry {
       },
     }
   }
+
+  private inputFormatFor(toolName: string): ToolInputFormat | undefined {
+    return this.graphToolHost
+      .list()
+      .find(({ descriptor }) => descriptor.name === toolName)?.descriptor
+      .inputFormat
+  }
 }
 
-function normalizeToolOutput(output: ToolOutput): ToolResult {
-  if (
-    typeof output === 'object' &&
-    output !== null &&
-    isRecord(output.result) &&
-    typeof output.displayText === 'string'
-  ) {
-    const result = normalizeResult(output.result)
-    if (result === null) {
-      return asErrorResult('Tool returned a non-serializable result')
-    }
-    return {
-      outcome: isToolOutcome(output.outcome) ? output.outcome : 'success',
-      result,
-      displayText: output.displayText,
-    }
+function formatGraphToolPrompt(descriptor: {
+  readonly name: string
+  readonly description: string
+  readonly inputFormat?: ToolInputFormat
+  readonly inputSchema: Record<string, unknown>
+}): string {
+  const format = descriptor.inputFormat === 'freeform' ? 'freeform' : 'JSON'
+  const parameters =
+    descriptor.inputFormat === 'freeform'
+      ? 'raw text'
+      : renderJsonParameters(descriptor.inputSchema)
+  return [
+    `### ${descriptor.name}`,
+    `Description: ${descriptor.description.replace(/\s+/g, ' ').trim()}`,
+    `Parameters (${format}): ${parameters}`,
+  ].join('\n')
+}
+
+function renderJsonParameters(schema: Record<string, unknown>): string {
+  const properties = isRecord(schema.properties) ? schema.properties : {}
+  const required = new Set(
+    Array.isArray(schema.required)
+      ? schema.required.filter(
+          (value): value is string => typeof value === 'string'
+        )
+      : []
+  )
+  return `{${Object.entries(properties)
+    .map(
+      ([name, value]) =>
+        `${name}${required.has(name) ? '' : '?'}: ${renderJsonType(value)}`
+    )
+    .join('; ')}}`
+}
+
+function renderJsonType(schema: unknown): string {
+  if (!isRecord(schema)) return 'unknown'
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    return schema.enum.map((value) => JSON.stringify(value)).join(' | ')
   }
-  return asErrorResult('Tool returned an invalid result')
+  if (schema.type === 'array') return `${renderJsonType(schema.items)}[]`
+  return typeof schema.type === 'string' ? schema.type : 'unknown'
 }
 
 function asErrorResult(message: string): ToolResult {
-  return createToolError(message)
-}
-
-function normalizeResult(
-  result: Record<string, unknown>
-): Record<string, unknown> | null {
-  try {
-    const serialized = JSON.stringify(result)
-    if (serialized === undefined) {
-      return null
-    }
-    const normalized = JSON.parse(serialized) as unknown
-    return isRecord(normalized) ? normalized : null
-  } catch {
-    return null
+  return {
+    outcome: 'error',
+    result: { message },
+    displayText: message,
   }
-}
-
-function isToolOutcome(value: unknown): value is ToolOutcome {
-  return value === 'success' || value === 'error' || value === 'unknown'
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 function formatToolResultMessage(
   toolName: string,
   toolResult: ToolResult,
-  delivery?: ToolResultDelivery
+  delivery?: ToolResultDelivery,
+  protocol: TextToolProtocol = DEFAULT_TEXT_TOOL_PROTOCOL
 ): string {
   return [
-    '### Tool Result ###',
+    protocol.resultHeading,
     JSON.stringify(
       {
-        tool: toolName,
+        [protocol.resultField]: toolName,
         outcome: toolResult.outcome,
         result: delivery === undefined ? toolResult.result : null,
         ...(delivery === undefined ? {} : { delivery }),

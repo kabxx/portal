@@ -1,5 +1,5 @@
 import type { TerminalController } from '../terminal-ui/terminal-controller.ts'
-import type { ThreadManager } from '../threads/thread-manager.ts'
+import type { SurfacePort } from '../surfaces/surface-port.ts'
 
 const CLEAR_TERMINAL_ESCAPE = '\u001B[2J\u001B[3J\u001B[H'
 
@@ -35,10 +35,10 @@ export function shouldRenderFallbackThreadError({
 
 export function showPendingThreadTimeline(
   ui: TerminalController,
-  threadManager: ThreadManager,
+  surface: SurfacePort,
   threadId: string
 ): { keep(): void; discard(): void } {
-  const previousThreadId = threadManager.getActiveThread()?.id ?? null
+  const previousThreadId = surface.getActiveThread()?.id ?? null
   let settled = false
   ui.showThreadTimeline(threadId)
 
@@ -54,7 +54,7 @@ export function showPendingThreadTimeline(
       ui.removeThreadTimeline(threadId)
       if (
         previousThreadId !== null &&
-        threadManager.getThread(previousThreadId) !== null
+        surface.getThread(previousThreadId) !== null
       ) {
         ui.showThreadTimeline(previousThreadId)
       } else {

@@ -23,15 +23,18 @@ export async function closeWithTimeout(
   timeoutMs = SHUTDOWN_CLOSE_TIMEOUT_MS
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | null = null
+  const closing = Promise.resolve().then(close)
+  void closing.catch(() => undefined)
   try {
     await Promise.race([
-      close(),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, timeoutMs)
+      closing,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Close timed out after ${timeoutMs}ms.`)),
+          timeoutMs
+        )
       }),
     ])
-  } catch {
-    // Shutdown is best-effort; timeout cleanup still runs below.
   } finally {
     if (timer !== null) {
       clearTimeout(timer)
@@ -65,12 +68,12 @@ export async function stopMcpForegroundOperation(
   timeoutMs = SHUTDOWN_CLOSE_TIMEOUT_MS
 ): Promise<void> {
   operation.controller.abort()
-  operation.cancellation ??= Promise.allSettled([
-    Promise.resolve().then(
-      async () => await operation.stopTarget?.stopGeneration()
-    ),
+  operation.cancellation ??= Promise.all([
+    Promise.resolve().then(async () => {
+      await operation.stopTarget?.stopGeneration()
+    }),
     operation.done,
-  ]).then(() => {})
+  ]).then(() => undefined)
   await closeWithTimeout(async () => await operation.cancellation!, timeoutMs)
 }
 

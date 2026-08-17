@@ -9,7 +9,7 @@ import {
   resolveProviderModel,
 } from '../../src/providers/provider-model-catalog.ts'
 import { PROVIDER_DEFINITIONS } from '../../src/providers/provider-definition-pack.ts'
-import { PROVIDER_IDS } from '../../src/providers/provider-id.ts'
+import { FIRST_PARTY_PROVIDER_IDS as PROVIDER_IDS } from '../../src/providers/first-party-provider-id.ts'
 
 test('provider model catalog resolves names to semantic selections', () => {
   for (const provider of PROVIDER_IDS) {

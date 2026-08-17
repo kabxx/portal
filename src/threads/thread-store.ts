@@ -2,7 +2,6 @@ import fs from 'fs'
 import path from 'path'
 import Database from 'better-sqlite3'
 import type { Database as DatabaseType } from 'better-sqlite3'
-import type { ProviderId } from '../providers/provider-id.ts'
 import {
   ensurePrivateDirectorySync,
   ensurePrivateFileSync,
@@ -16,7 +15,7 @@ export const THREAD_STORE_SCHEMA_VERSION = 1
 
 export interface ThreadHistoryEntry {
   id: number
-  provider: ProviderId
+  provider: string
   conversationUrl: string
   title: string | null
   createdAt: string
@@ -24,7 +23,7 @@ export interface ThreadHistoryEntry {
 }
 
 export interface CreateThreadHistoryEntryInput {
-  provider: ProviderId
+  provider: string
   conversationUrl: string
   title?: string | null
   createdAt?: number | Date | string
@@ -33,7 +32,7 @@ export interface CreateThreadHistoryEntryInput {
 
 interface ThreadHistoryRow {
   id: number
-  provider: ProviderId
+  provider: string
   conversation_url: string
   title: string | null
   created_at: string

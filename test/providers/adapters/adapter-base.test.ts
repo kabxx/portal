@@ -1,8 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { access, readFile } from 'node:fs/promises'
 import { createContext, runInContext } from 'node:vm'
 import type { Response } from 'playwright'
+import type {
+  AttachmentReader,
+  AttachmentRef,
+} from '../../../src/attachments/attachment-contracts.ts'
 
 import {
   awaitWithTimeout,
@@ -28,6 +33,74 @@ import {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
+
+class AttachmentBridgeAdapter extends ProviderAdapter {
+  public attachedBytes: Uint8Array | null = null
+  public attachedPath: string | null = null
+
+  public constructor() {
+    super(createBrowserContextStub())
+  }
+
+  public async restore(): Promise<void> {}
+
+  public async isLoggedIn(): Promise<boolean> {
+    return true
+  }
+
+  public get conversationId(): string | null {
+    return null
+  }
+
+  public get conversationUrl(): string {
+    return 'https://example.com/thread'
+  }
+
+  public async changeModel(
+    _model: Parameters<ProviderAdapter['changeModel']>[0]
+  ): Promise<void> {}
+
+  public async attachText(_text: string): Promise<void> {}
+
+  public async attachFile(_path: string | readonly string[]): Promise<void> {}
+
+  public async attachImage(
+    filePath: string | readonly string[]
+  ): Promise<void> {
+    if (typeof filePath !== 'string') throw new TypeError('Expected one file.')
+    this.attachedPath = filePath
+    this.attachedBytes = new Uint8Array(await readFile(filePath))
+  }
+
+  public async submit(): Promise<string> {
+    return 'READY'
+  }
+}
+
+test('ProviderAdapter bridges an AttachmentRef through a reader and cleans up its temporary file', async () => {
+  const adapter = new AttachmentBridgeAdapter()
+  const ref: AttachmentRef = {
+    id: 'attachment:test-image',
+    mediaType: 'image/png',
+    sizeBytes: 4,
+    sha256: 'test-image',
+  }
+  const reader: AttachmentReader = {
+    async read(received) {
+      assert.deepEqual(received, ref)
+      return new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    },
+  }
+
+  await adapter.attachAttachment(ref, reader)
+
+  assert.deepEqual(
+    adapter.attachedBytes,
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+  )
+  assert.ok(adapter.attachedPath !== null)
+  await assert.rejects(access(adapter.attachedPath), { code: 'ENOENT' })
+})
 
 test('createDeferred preserves an early rejection for a later consumer', async () => {
   const deferred = createDeferred<void>()

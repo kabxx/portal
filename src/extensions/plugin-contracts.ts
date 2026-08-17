@@ -35,16 +35,22 @@ export interface PluginTrustGrant {
 }
 
 export interface PluginSourceRecord {
-  readonly kind: 'local-directory' | 'package-archive'
+  readonly kind: 'built-in' | 'local-directory' | 'package-archive'
   readonly locator: string
   readonly digest: string
 }
+
+export type BuiltInPluginRecord = Omit<
+  InstalledPluginRecord,
+  'enabled' | 'installedAt' | 'updatedAt'
+>
 
 export interface InstalledPluginRecord {
   readonly manifest: PluginManifest
   readonly source: PluginSourceRecord
   readonly trust: PluginTrustGrant
   readonly enabled: boolean
+  readonly disabledContributions: readonly PluginContributionDeclaration[]
   readonly installedAt: string
   readonly updatedAt: string
 }
@@ -52,6 +58,10 @@ export interface InstalledPluginRecord {
 export interface PluginStoreDocument {
   readonly schemaVersion: 1
   readonly packages: readonly InstalledPluginRecord[]
+}
+
+export interface PluginStoreRepairResult {
+  readonly backupPath: string | null
 }
 
 export interface PluginDiagnostic {
@@ -75,12 +85,13 @@ export interface PluginResolutionSnapshot {
 }
 
 export function pluginDescriptor(
-  manifest: PluginManifest
+  manifest: PluginManifest,
+  grantedCapabilities: readonly string[] = manifest.capabilities
 ): ExtensionDescriptor {
   return Object.freeze({
     id: manifest.id,
     version: manifest.version,
     dependencies: Object.freeze(manifest.dependencies.map((item) => item.id)),
-    capabilities: manifest.capabilities,
+    capabilities: Object.freeze([...grantedCapabilities]),
   })
 }

@@ -3,12 +3,16 @@ import test from 'node:test'
 
 import { ExtensionRegistry } from '../../src/extensions/extension-registry.ts'
 import { ResourceScope } from '../../src/shared/resource-scope.ts'
+import { PortalAbortError } from '../../src/runtime/runtime-cancellation.ts'
 import {
   providerContributionSpec,
   providerContributions,
+  providerConversationUrlBindingSpec,
+  providerConversationUrlBindings,
   providerEndpointBindingSpec,
   providerEndpointBindings,
   type ProviderCompletion,
+  type ProviderEndpoint,
   type ProviderEvent,
   type ProviderEndpointFactory,
   type ProviderExchangeHandle,
@@ -17,8 +21,12 @@ import {
   ProviderHost,
   ProviderHostError,
 } from '../../src/providers/provider-host.ts'
+import { promptSkillService } from '../../src/skills/skill-services.ts'
 
-function createHost(factory: ProviderEndpointFactory): {
+function createHost(
+  factory: ProviderEndpointFactory,
+  resolveConversationUrl: (value: string) => string | null = () => null
+): {
   readonly host: ProviderHost
   readonly root: ResourceScope
 } {
@@ -27,7 +35,9 @@ function createHost(factory: ProviderEndpointFactory): {
     policies: [],
   })
   registry.defineContribution(providerContributionSpec)
+  registry.defineService(promptSkillService)
   registry.defineExecutableBinding(providerEndpointBindingSpec)
+  registry.defineExecutableBinding(providerConversationUrlBindingSpec)
   registry.register(
     {
       id: 'test.provider-package',
@@ -43,9 +53,12 @@ function createHost(factory: ProviderEndpointFactory): {
             id: 'test.provider',
             descriptor: {
               label: 'Test Provider',
+              aliases: [],
+              models: [],
               capabilities: [],
             },
             endpointBindingId: 'test.provider.endpoint',
+            conversationUrlBindingId: 'test.provider.conversation-url',
           },
           requiredServices: [],
           requiredCapabilities: [],
@@ -54,6 +67,11 @@ function createHost(factory: ProviderEndpointFactory): {
           id: 'test.provider.endpoint',
           targetId: 'test.provider',
           binding: factory,
+        })
+        api.bind(providerConversationUrlBindings, {
+          id: 'test.provider.conversation-url',
+          targetId: 'test.provider',
+          binding: resolveConversationUrl,
         })
       },
     }
@@ -64,6 +82,89 @@ function createHost(factory: ProviderEndpointFactory): {
     root,
   }
 }
+
+test('ProviderHost resolves conversation URLs through the owning Provider binding', async (t) => {
+  const { host, root } = createHost(
+    async () => async () => ({
+      events: (async function* () {})(),
+      completion: Promise.resolve({
+        status: 'completed',
+        text: '',
+        delivery: 'not-sent',
+      }),
+      cancel: () => undefined,
+    }),
+    (value) => (value === 'provider://conversation/1' ? value : null)
+  )
+  t.after(async () => await root.dispose())
+
+  assert.deepEqual(host.resolveConversationUrl('provider://conversation/1'), {
+    provider: 'test.provider',
+    conversationUrl: 'provider://conversation/1',
+  })
+  assert.equal(host.resolveConversationUrl('provider://unknown'), null)
+})
+
+test('ProviderHost reports unknown preflight when a Provider has no session control', async (t) => {
+  const { host, root } = createHost(async () => async () => ({
+    events: (async function* (): AsyncGenerator<ProviderEvent> {})(),
+    completion: Promise.resolve({
+      status: 'completed',
+      text: '',
+      delivery: 'not-sent',
+    }),
+    cancel: () => undefined,
+  }))
+  t.after(async () => await root.dispose())
+  const binding = await host.openBinding(
+    'test.provider',
+    'test.provider-package',
+    'preflight'
+  )
+
+  assert.deepEqual(await binding.preflightInput('input'), { status: 'unknown' })
+})
+
+test('ProviderHost waits for and closes a late endpoint after binding cancellation', async () => {
+  const factoryStarted = Promise.withResolvers<void>()
+  const endpointDeferred = Promise.withResolvers<ProviderEndpoint>()
+  let closeCalls = 0
+  const { host, root } = createHost(async () => {
+    factoryStarted.resolve()
+    return await endpointDeferred.promise
+  })
+  const opening = host.openBinding(
+    'test.provider',
+    'test.provider-package',
+    '1'
+  )
+  void opening.catch(() => undefined)
+  await factoryStarted.promise
+  const reason = new PortalAbortError('cancel Provider binding')
+  const disposing = root.dispose({ reason })
+  endpointDeferred.resolve(
+    Object.assign(
+      async () => ({
+        events: (async function* () {})(),
+        completion: Promise.resolve({
+          status: 'completed' as const,
+          text: '',
+          delivery: 'not-sent' as const,
+        }),
+        cancel: () => undefined,
+      }),
+      {
+        close: async () => {
+          closeCalls += 1
+        },
+      }
+    )
+  )
+
+  await assert.rejects(opening, /cancel Provider binding/)
+  await disposing
+  assert.equal(closeCalls, 1)
+})
 
 test('ProviderHost binds one owner endpoint and closes an exchange after provider completion', async (t) => {
   const events: ProviderEvent[] = []
@@ -199,4 +300,44 @@ test('ProviderHost cancels exchange creation and disposes a late handle', async 
   })
   await new Promise<void>((resolve) => setImmediate(resolve))
   assert.equal(cancelCalls, 1)
+})
+
+test('ProviderHost reports both exchange and cancellation cleanup failures', async (t) => {
+  const { host, root } = createHost(async () => async () => ({
+    events: (async function* (): AsyncGenerator<ProviderEvent> {})(),
+    completion: Promise.reject<ProviderCompletion>(
+      new Error('provider exchange failed')
+    ),
+    cancel: () => {
+      throw new Error('provider cancellation failed')
+    },
+  }))
+  t.after(async () => await root.dispose().catch(() => undefined))
+  const binding = await host.openBinding(
+    'test.provider',
+    'test.provider-package',
+    'cleanup-failure'
+  )
+  const exchange = await binding.exchange({
+    exchangeId: 'exchange-cleanup-failure',
+    conversationId: 'conversation-1',
+    messages: [{ role: 'user', content: 'fail' }],
+    attachments: [],
+  })
+
+  await assert.rejects(exchange.completion, (error: unknown) => {
+    assert.ok(error instanceof AggregateError)
+    assert.match(String(error.errors[0]), /provider exchange failed/)
+    const cleanup: unknown = error.errors[1] as unknown
+    assert.ok(cleanup instanceof AggregateError)
+    assert.match(
+      cleanup.errors
+        .map((item) =>
+          item instanceof Error ? `${item} ${String(item.cause)}` : String(item)
+        )
+        .join('\n'),
+      /provider cancellation failed/
+    )
+    return true
+  })
 })

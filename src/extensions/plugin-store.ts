@@ -1,5 +1,15 @@
-import { readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import {
+  lstat,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import path from 'node:path'
+import { tryLock, unlock } from 'fs-native-extensions'
 
 import {
   ensurePrivateDirectory,
@@ -8,6 +18,7 @@ import {
 import { freezeImmutableData } from './immutable-data.ts'
 import type {
   InstalledPluginRecord,
+  PluginStoreRepairResult,
   PluginStoreDocument,
 } from './plugin-contracts.ts'
 import { parsePluginManifest } from './plugin-manifest.ts'
@@ -27,11 +38,16 @@ export interface PluginStore {
       packages: readonly InstalledPluginRecord[]
     ) => readonly InstalledPluginRecord[]
   ): Promise<readonly InstalledPluginRecord[]>
+  repair(): Promise<PluginStoreRepairResult>
 }
+
+const localTails = new Map<string, Promise<void>>()
+const LOCK_RETRY_MS = 25
+const LOCK_WAIT_MS = 5000
+const PRIVATE_FILE_MODE = 0o600
 
 export class JsonPluginStore implements PluginStore {
   readonly #filePath: string
-  #tail: Promise<void> = Promise.resolve()
 
   public constructor(filePath: string) {
     this.#filePath = path.resolve(filePath)
@@ -82,6 +98,12 @@ export class JsonPluginStore implements PluginStore {
   public async replace(
     packages: readonly InstalledPluginRecord[]
   ): Promise<void> {
+    await this.#withLock(async () => await this.#replaceUnlocked(packages))
+  }
+
+  async #replaceUnlocked(
+    packages: readonly InstalledPluginRecord[]
+  ): Promise<void> {
     const document: PluginStoreDocument = {
       schemaVersion: 1,
       packages: Object.freeze([...packages]),
@@ -114,15 +136,53 @@ export class JsonPluginStore implements PluginStore {
       packages: readonly InstalledPluginRecord[]
     ) => readonly InstalledPluginRecord[]
   ): Promise<readonly InstalledPluginRecord[]> {
-    let result: readonly InstalledPluginRecord[] = Object.freeze([])
-    const operation = this.#tail.then(async () => {
+    return await this.#withLock(async () => {
       const next = Object.freeze([...update(await this.read())])
-      await this.replace(next)
-      result = next
+      await this.#replaceUnlocked(next)
+      return next
     })
-    this.#tail = operation.catch(() => undefined)
-    await operation
-    return result
+  }
+
+  public async repair(): Promise<PluginStoreRepairResult> {
+    return await this.#withLock(async () => {
+      let backupPath: string | null = null
+      try {
+        await readFile(this.#filePath)
+        backupPath = `${this.#filePath}.corrupt.${Date.now()}`
+        await rename(this.#filePath, backupPath)
+      } catch (error) {
+        if (!isMissingFile(error)) {
+          throw new PluginStoreError(
+            `Unable to preserve plugin records: ${getErrorMessage(error)}`
+          )
+        }
+      }
+      await this.#replaceUnlocked(Object.freeze([]))
+      return Object.freeze({ backupPath })
+    })
+  }
+
+  async #withLock<T>(action: () => Promise<T>): Promise<T> {
+    const directory = path.dirname(this.#filePath)
+    await ensurePrivateDirectory(directory)
+    const lockDirectory = path.join(directory, '.locks')
+    await ensureSafeLockDirectory(lockDirectory)
+    const resolvedLockDirectory = await realpath(lockDirectory)
+    const lockPath = path.join(resolvedLockDirectory, 'plugins.lock')
+    const key = process.platform === 'win32' ? lockPath.toLowerCase() : lockPath
+    const previous = localTails.get(key) ?? Promise.resolve()
+    let release!: () => void
+    const current = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    localTails.set(key, current)
+    await previous
+    try {
+      return await withFileLock(lockPath, action)
+    } finally {
+      release()
+      if (localTails.get(key) === current) localTails.delete(key)
+    }
   }
 }
 
@@ -131,6 +191,7 @@ const RECORD_FIELDS = new Set([
   'source',
   'trust',
   'enabled',
+  'disabledContributions',
   'installedAt',
   'updatedAt',
 ])
@@ -149,7 +210,11 @@ function parseInstalledRecord(
   const record = strictRecord(value, RECORD_FIELDS, label)
   const manifest = parsePluginManifest(record.manifest)
   const source = strictRecord(record.source, SOURCE_FIELDS, `${label}.source`)
-  if (source.kind !== 'local-directory' && source.kind !== 'package-archive') {
+  if (
+    source.kind !== 'built-in' &&
+    source.kind !== 'local-directory' &&
+    source.kind !== 'package-archive'
+  ) {
     throw new PluginStoreError(`${label}.source.kind is unsupported.`)
   }
   if (typeof source.locator !== 'string' || source.locator.trim() === '') {
@@ -195,6 +260,11 @@ function parseInstalledRecord(
   if (typeof record.enabled !== 'boolean') {
     throw new PluginStoreError(`${label}.enabled must be a boolean.`)
   }
+  const disabledContributions = parseDisabledContributions(
+    record.disabledContributions,
+    manifest,
+    label
+  )
   const installedAt = timestamp(record.installedAt, `${label}.installedAt`)
   const updatedAt = timestamp(record.updatedAt, `${label}.updatedAt`)
   const parsed: InstalledPluginRecord = {
@@ -210,11 +280,123 @@ function parseInstalledRecord(
       capabilityExpansion: trust.capabilityExpansion,
     }),
     enabled: record.enabled,
+    disabledContributions,
     installedAt,
     updatedAt,
   }
   freezeImmutableData(parsed)
   return parsed
+}
+
+function parseDisabledContributions(
+  value: unknown,
+  manifest: InstalledPluginRecord['manifest'],
+  label: string
+): InstalledPluginRecord['disabledContributions'] {
+  if (value === undefined) return Object.freeze([])
+  if (!Array.isArray(value)) {
+    throw new PluginStoreError(
+      `${label}.disabledContributions must be an array.`
+    )
+  }
+  const declared = new Map(
+    manifest.contributions.map((item) => [`${item.point}\0${item.id}`, item])
+  )
+  const seen = new Set<string>()
+  const result = value.map((item, index) => {
+    const entry = strictRecord(
+      item,
+      new Set(['point', 'id', 'version']),
+      `${label}.disabledContributions[${index}]`
+    )
+    if (
+      typeof entry.point !== 'string' ||
+      typeof entry.id !== 'string' ||
+      typeof entry.version !== 'number'
+    ) {
+      throw new PluginStoreError(
+        `${label}.disabledContributions[${index}] is invalid.`
+      )
+    }
+    const key = `${entry.point}\0${entry.id}`
+    const declaration = declared.get(key)
+    if (declaration === undefined || declaration.version !== entry.version) {
+      throw new PluginStoreError(
+        `${label}.disabledContributions[${index}] is not declared by the manifest.`
+      )
+    }
+    if (seen.has(key)) {
+      throw new PluginStoreError(
+        `${label}.disabledContributions contains duplicate ${entry.point}:${entry.id}.`
+      )
+    }
+    seen.add(key)
+    return declaration
+  })
+  return Object.freeze(result)
+}
+
+async function ensureSafeLockDirectory(lockDirectory: string): Promise<void> {
+  try {
+    const existing = await lstat(lockDirectory)
+    if (!existing.isDirectory() || existing.isSymbolicLink()) {
+      throw new PluginStoreError(
+        'Plugin lock directory path must be a regular directory.'
+      )
+    }
+  } catch (error) {
+    if (!isMissingFile(error)) throw error
+  }
+  await ensurePrivateDirectory(lockDirectory)
+  const current = await lstat(lockDirectory)
+  if (!current.isDirectory() || current.isSymbolicLink()) {
+    throw new PluginStoreError(
+      'Plugin lock directory path must be a regular directory.'
+    )
+  }
+}
+
+async function withFileLock<T>(
+  lockPath: string,
+  action: () => Promise<T>
+): Promise<T> {
+  const flags =
+    constants.O_RDWR |
+    constants.O_CREAT |
+    constants.O_APPEND |
+    (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW)
+  const lockFile = await open(lockPath, flags, PRIVATE_FILE_MODE)
+  let acquired = false
+  try {
+    const [opened, linked] = await Promise.all([
+      lockFile.stat(),
+      lstat(lockPath),
+    ])
+    if (
+      !opened.isFile() ||
+      !linked.isFile() ||
+      linked.isSymbolicLink() ||
+      opened.dev !== linked.dev ||
+      opened.ino !== linked.ino
+    ) {
+      throw new PluginStoreError('Plugin lock path must be a regular file.')
+    }
+    const deadline = Date.now() + LOCK_WAIT_MS
+    while (!tryLock(lockFile.fd)) {
+      if (Date.now() >= deadline) {
+        throw new PluginStoreError('Timed out waiting for plugin store lock.')
+      }
+      await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS))
+    }
+    acquired = true
+    return await action()
+  } finally {
+    try {
+      if (acquired) unlock(lockFile.fd)
+    } finally {
+      await lockFile.close()
+    }
+  }
 }
 
 function strictRecord(

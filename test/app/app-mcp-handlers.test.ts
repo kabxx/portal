@@ -5,6 +5,7 @@ import {
   createMcpHandlers,
   type McpHandlerDependencies,
 } from '../../src/app/app-mcp-handlers.ts'
+import type { CommandJobService } from '../../src/cli-commands/core/command-services.ts'
 
 test('MCP handler factory exposes the provider catalog without eager work', async () => {
   // This focused fake implements only the catalog dependency path.
@@ -80,29 +81,41 @@ test('MCP handlers list and stop run_command jobs', async () => {
       state: 'running' as const,
     },
   ]
-  let stopResult: 'stopped' | 'not_found' | 'timeout' = 'stopped'
+  let stopResult: 'stopped' | 'not-found' | 'timeout' = 'stopped'
+  let receivedStopSignal: AbortSignal | null = null
   // This focused fake implements only the job dependencies exercised here.
   // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
   const dependencies = {
     surface: {
-      listJobs: () => jobs,
-      stopJob: async () => stopResult,
+      listProviders: () => [],
     },
+    runCommandJobs: {
+      list: () => jobs,
+      stop: async (_id, signal) => {
+        receivedStopSignal = signal
+        return stopResult
+      },
+    } satisfies CommandJobService,
     foregroundOperations: new Set(),
     isForegroundOperationActive: () => false,
   } as unknown as McpHandlerDependencies
   const handlers = createMcpHandlers(dependencies)
 
-  assert.deepEqual(await handlers.listJobs(), { jobs })
-  assert.deepEqual(await handlers.stopJob('j-1'), {
+  assert.deepEqual(await handlers.listJobs!(), { jobs })
+  const signal = new AbortController().signal
+  assert.deepEqual(await handlers.stopJob!('j-1', signal), {
     stopped: true,
     jobId: 'j-1',
   })
-  stopResult = 'not_found'
-  await assert.rejects(handlers.stopJob('j-1'), /Unknown or finished job: j-1/)
+  assert.equal(receivedStopSignal, signal)
+  stopResult = 'not-found'
+  await assert.rejects(
+    handlers.stopJob!('j-1', signal),
+    /Unknown or finished job: j-1/
+  )
   stopResult = 'timeout'
   await assert.rejects(
-    handlers.stopJob('j-1'),
+    handlers.stopJob!('j-1', signal),
     /Timed out waiting for j-1 to stop/
   )
 })

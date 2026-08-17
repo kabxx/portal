@@ -14,12 +14,28 @@ export class AttachmentServiceError extends Error {
 
 export class AttachmentFileService {
   readonly #maxBytes: number
+  readonly #maxTotalBytes: number
   readonly #contents = new Map<string, Uint8Array>()
+  #totalBytes = 0
 
-  public constructor(options: { readonly maxBytes?: number } = {}) {
+  public constructor(
+    options: {
+      readonly maxBytes?: number
+      readonly maxTotalBytes?: number
+    } = {}
+  ) {
     this.#maxBytes = options.maxBytes ?? 20 * 1024 * 1024
+    this.#maxTotalBytes = options.maxTotalBytes ?? 64 * 1024 * 1024
     if (!Number.isSafeInteger(this.#maxBytes) || this.#maxBytes <= 0) {
       throw new RangeError('Attachment size limit must be a positive integer.')
+    }
+    if (
+      !Number.isSafeInteger(this.#maxTotalBytes) ||
+      this.#maxTotalBytes < this.#maxBytes
+    ) {
+      throw new RangeError(
+        'Attachment total size limit must be an integer no smaller than the per-file limit.'
+      )
     }
   }
 
@@ -51,7 +67,15 @@ export class AttachmentFileService {
       sizeBytes: bytes.byteLength,
       sha256,
     }
-    this.#contents.set(result.id, new Uint8Array(bytes))
+    if (!this.#contents.has(result.id)) {
+      if (this.#totalBytes + bytes.byteLength > this.#maxTotalBytes) {
+        throw new AttachmentServiceError(
+          `Attachments exceed the ${this.#maxTotalBytes} byte total size limit.`
+        )
+      }
+      this.#contents.set(result.id, new Uint8Array(bytes))
+      this.#totalBytes += bytes.byteLength
+    }
     freezeImmutableData(result)
     return result
   }
@@ -67,6 +91,18 @@ export class AttachmentFileService {
       )
     }
     return new Uint8Array(bytes)
+  }
+
+  public release(ref: AttachmentRef): void {
+    const bytes = this.#contents.get(ref.id)
+    if (bytes === undefined) return
+    this.#contents.delete(ref.id)
+    this.#totalBytes -= bytes.byteLength
+  }
+
+  public clear(): void {
+    this.#contents.clear()
+    this.#totalBytes = 0
   }
 }
 

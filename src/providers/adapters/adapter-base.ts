@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import type { CDPSession, Locator, Page, Response } from 'playwright'
 import {
   abortable,
@@ -15,8 +18,15 @@ import {
   resolveProviderComposerLimit,
   type ComposerLimit,
 } from '../composer-limit.ts'
-import type { ProviderId } from '../provider-id.ts'
+import type { FirstPartyProviderId as ProviderId } from '../first-party-provider-id.ts'
 import type { ResolvedProviderModel } from '../provider-model-catalog.ts'
+import { PORTAL_ACTION_PROTOCOL } from '../portal-action-protocol.ts'
+import type { TextToolProtocol } from '../../tools/core/text-tool-protocol.ts'
+import type {
+  AttachmentReader,
+  AttachmentRef,
+} from '../../attachments/attachment-contracts.ts'
+import { PROVIDER_ATTACHMENT_CAPABILITY } from '../provider-exchange.ts'
 
 export type { AbortOptions } from '../../runtime/runtime-cancellation.ts'
 
@@ -589,6 +599,12 @@ export abstract class ProviderAdapter<
   TPage extends ProviderPage = Page,
   TSession extends ProviderCdpSession = CDPSession,
 > {
+  /** Web Provider packages expose Portal Tools to the model as text Actions. */
+  public readonly textToolProtocol: TextToolProtocol = PORTAL_ACTION_PROTOCOL
+  public readonly toolCapabilities = Object.freeze([
+    PROVIDER_ATTACHMENT_CAPABILITY,
+  ])
+
   protected get composerLimitProvider(): ProviderId | 'unknown' {
     return 'unknown'
   }
@@ -908,6 +924,34 @@ export abstract class ProviderAdapter<
   public abstract attachText(text: string): Promise<void>
   public abstract attachFile(path: string | readonly string[]): Promise<void>
   public abstract attachImage(path: string | readonly string[]): Promise<void>
+  public async attachAttachment(
+    ref: AttachmentRef,
+    reader: AttachmentReader
+  ): Promise<void> {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), 'portal-provider-attachment-')
+    )
+    const filePath = path.join(
+      directory,
+      `attachment${attachmentExtension(ref.mediaType)}`
+    )
+    try {
+      await writeFile(filePath, await reader.read(ref), { mode: 0o600 })
+      await this.attachImage(filePath)
+    } catch (error) {
+      try {
+        await rm(directory, { recursive: true, force: true })
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          'Provider attachment failed and its temporary directory could not be removed.',
+          { cause: cleanupError }
+        )
+      }
+      throw error
+    }
+    await rm(directory, { recursive: true, force: true })
+  }
   public abstract submit(options?: AbortOptions): Promise<string>
 
   protected async prepareRetrySubmitText(
@@ -1674,5 +1718,24 @@ export abstract class ProviderAdapter<
         cause: error,
       })
     }
+  }
+}
+
+function attachmentExtension(mediaType: string): string {
+  switch (mediaType) {
+    case 'image/jpeg':
+      return '.jpg'
+    case 'image/png':
+      return '.png'
+    case 'image/gif':
+      return '.gif'
+    case 'image/webp':
+      return '.webp'
+    case 'image/bmp':
+      return '.bmp'
+    case 'image/svg+xml':
+      return '.svg'
+    default:
+      return '.bin'
   }
 }

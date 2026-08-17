@@ -1,4 +1,4 @@
-import type { ProviderId } from './provider-id.ts'
+import type { FirstPartyProviderId as ProviderId } from './first-party-provider-id.ts'
 
 export interface ResolvedConversationUrl {
   provider: ProviderId
@@ -28,6 +28,14 @@ export function resolveConversationUrl(
     provider: resolved.provider,
     conversationUrl: resolved.conversationUrl,
   }
+}
+
+export function resolveProviderConversationUrl(
+  provider: ProviderId,
+  value: string
+): string | null {
+  const resolved = resolveConversationUrl(value)
+  return resolved?.provider === provider ? resolved.conversationUrl : null
 }
 
 function resolveProviderFromUrl(url: URL): ResolvedConversationUrl | null {

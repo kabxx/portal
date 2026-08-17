@@ -6,7 +6,6 @@ import test from 'node:test'
 
 import type { BrowserContext } from 'playwright'
 import type { ConversationHistoryResult } from '../../src/providers/conversation-history.ts'
-import { RuntimeInitializationCleanupError } from '../../src/runtime/runtime-initializer.ts'
 import {
   PortalHost,
   PortalHostOperationTimeoutError,
@@ -16,6 +15,20 @@ import {
   createFakeRuntime,
   createProviderAdapterStub,
 } from '../helpers/fakes.ts'
+import { createTestProviderExtensions } from '../helpers/provider-endpoint.ts'
+import { ThreadProvisionCleanupError } from '../../src/threads/thread-lifecycle-service.ts'
+import { createRuntimeFromAdapter } from '../../src/runtime/runtime-factory.ts'
+import { PORTAL_ACTION_PROTOCOL } from '../../src/providers/portal-action-protocol.ts'
+import { firstPartyPluginRecords } from '../../src/bootstrap/first-party-plugins.ts'
+import { PluginManager } from '../../src/extensions/plugin-manager.ts'
+import { JsonPluginStore } from '../../src/extensions/plugin-store.ts'
+import {
+  PortalMcpServer,
+  type PortalMcpServerOptions,
+} from '../../src/mcp-server/mcp-server.ts'
+import type { PortalMcpHandlers } from '../../src/mcp-server/mcp-server-types.ts'
+import { MCP_SURFACE_ID } from '../../src/mcp-server/mcp-surface-plugin.ts'
+import { portalHostTestExtensions } from '../../src/extensions/portal-hooks.ts'
 
 test('PortalHost owns the resolved built-in Command plan and session lifecycle', async () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-host-commands-'))
@@ -23,7 +36,7 @@ test('PortalHost owns the resolved built-in Command plan and session lifecycle',
   let host: PortalHost | null = null
   try {
     host = await PortalHost.prepare(
-      { profile: 'tui', cwd, dataDirectory },
+      { entrySurfaceId: 'portal.tui', cwd, dataDirectory },
       {
         launchBrowser: async () => ({
           // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
@@ -39,12 +52,13 @@ test('PortalHost owns the resolved built-in Command plan and session lifecycle',
       [
         '/help',
         '/thread',
-        '/skill',
         '/mcp',
-        '/job',
         '/keybinding',
         '/providers',
         '/exit',
+        '/skill',
+        '/plugins',
+        '/job',
       ]
     )
     assert.equal(Object.isFrozen(catalog), true)
@@ -79,6 +93,157 @@ test('PortalHost owns the resolved built-in Command plan and session lifecycle',
   }
 })
 
+test('disabling run_command removes its plugin-owned command surface', async () => {
+  const cwd = mkdtempSync(
+    path.join(os.tmpdir(), 'portal-host-run-command-off-')
+  )
+  let host: PortalHost | null = null
+  try {
+    const dataDirectory = path.join(cwd, 'data')
+    const manager = new PluginManager({
+      store: new JsonPluginStore(
+        path.join(dataDirectory, 'plugins', 'installed.json')
+      ),
+    })
+    await manager.synchronizeBuiltIns(firstPartyPluginRecords())
+    assert.equal(await manager.disable('portal.tool.run-command'), true)
+    host = await PortalHost.prepare(
+      {
+        entrySurfaceId: 'portal.exec',
+        cwd,
+        dataDirectory,
+      },
+      {
+        launchBrowser: async () => ({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+          context: { isClosed: () => false } as unknown as BrowserContext,
+          disconnected: new Promise(() => {}),
+          close: async () => undefined,
+        }),
+      }
+    )
+    assert.equal(
+      host.commandCatalog().some(({ primaryName }) => primaryName === '/job'),
+      false
+    )
+    assert.equal(
+      host.prepared.toolHost
+        .list()
+        .some(({ descriptor }) => descriptor.name === 'run_command'),
+      false
+    )
+    await host.start()
+    const handlerSnapshots: PortalMcpHandlers[] = []
+    await host.activateSurface(MCP_SURFACE_ID, {
+      host: '127.0.0.1',
+      port: 0,
+      createServer: (options: PortalMcpServerOptions) => {
+        handlerSnapshots.push(options.handlers)
+        return new PortalMcpServer(options)
+      },
+    })
+    const handlers = handlerSnapshots[0]
+    assert.ok(handlers !== undefined)
+    assert.equal(Object.hasOwn(handlers, 'listJobs'), false)
+    assert.equal(Object.hasOwn(handlers, 'stopJob'), false)
+  } finally {
+    await host?.close()
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('a disabled entry Surface is rejected before Browser activation', async () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-host-tui-off-'))
+  const dataDirectory = path.join(cwd, 'data')
+  let browserLaunchCount = 0
+  try {
+    const manager = new PluginManager({
+      store: new JsonPluginStore(
+        path.join(dataDirectory, 'plugins', 'installed.json')
+      ),
+    })
+    await manager.synchronizeBuiltIns(firstPartyPluginRecords())
+    assert.equal(await manager.disable('portal.surface.tui'), true)
+    await assert.rejects(
+      PortalHost.prepare(
+        { entrySurfaceId: 'portal.tui', cwd, dataDirectory },
+        {
+          launchBrowser: async () => {
+            browserLaunchCount += 1
+            throw new Error('Browser must not launch for a disabled Surface.')
+          },
+        }
+      ),
+      /Unknown or disabled entry Surface: portal\.tui/
+    )
+    assert.equal(browserLaunchCount, 0)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('disabling attach_image removes its Tool and plugin-owned attachment store', async () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-host-attach-off-'))
+  let host: PortalHost | null = null
+  try {
+    const dataDirectory = path.join(cwd, 'data')
+    const manager = new PluginManager({
+      store: new JsonPluginStore(
+        path.join(dataDirectory, 'plugins', 'installed.json')
+      ),
+    })
+    await manager.synchronizeBuiltIns(firstPartyPluginRecords())
+    assert.equal(await manager.disable('portal.tool.attach-image'), true)
+
+    host = await PortalHost.prepare({
+      entrySurfaceId: 'portal.exec',
+      cwd,
+      dataDirectory,
+    })
+
+    assert.equal(
+      host.prepared.toolHost
+        .list()
+        .some(({ descriptor }) => descriptor.name === 'attach_image'),
+      false
+    )
+  } finally {
+    await host?.close()
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('run_command graph ownership reaches the Runtime tool prompt', async () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-host-run-command-on-'))
+  let host: PortalHost | null = null
+  let runtime: Awaited<ReturnType<typeof createRuntimeFromAdapter>> | null =
+    null
+  try {
+    host = await PortalHost.prepare({
+      entrySurfaceId: 'portal.exec',
+      cwd,
+      dataDirectory: path.join(cwd, 'data'),
+    })
+    assert.equal(
+      host.prepared.toolHost
+        .list()
+        .some(({ descriptor }) => descriptor.name === 'run_command'),
+      true
+    )
+    runtime = await createRuntimeFromAdapter(createProviderAdapterStub(), {
+      model: null,
+      setupMode: 'skip',
+      textToolProtocol: PORTAL_ACTION_PROTOCOL,
+      toolHost: host.prepared.toolHost,
+    })
+    assert.match(runtime.prompt, /### run_command/)
+  } finally {
+    await runtime?.close().catch(() => {})
+    await host?.close()
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
 test('PortalHost prepares without launching a browser and starts once', async () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-host-'))
   const dataDirectory = path.join(cwd, 'data')
@@ -88,7 +253,7 @@ test('PortalHost prepares without launching a browser and starts once', async ()
   let closeCount = 0
   try {
     const host = await PortalHost.prepare(
-      { profile: 'exec', cwd, dataDirectory },
+      { entrySurfaceId: 'portal.exec', cwd, dataDirectory },
       {
         launchBrowser: async (_engine, _executable, _port, profile) => {
           launchCount += 1
@@ -107,11 +272,12 @@ test('PortalHost prepares without launching a browser and starts once', async ()
             },
           }
         },
-        createProviderAdapter: async () => adapter,
-        createRuntime: async (_adapter, options) => {
-          assert.equal(options?.setupMode, 'inline')
-          return createFakeRuntime({ adapter })
-        },
+        [portalHostTestExtensions]: createTestProviderExtensions(
+          async (_providerId, context) => {
+            assert.equal(context.setupMode, 'inline')
+            return createFakeRuntime({ adapter })
+          }
+        ),
       }
     )
     assert.equal(host.state, 'resolved')
@@ -146,7 +312,7 @@ test('PortalHost closes a browser that resolves after shutdown begins', async ()
   let closeCount = 0
   try {
     const host = await PortalHost.prepare(
-      { profile: 'tui', cwd, dataDirectory },
+      { entrySurfaceId: 'portal.tui', cwd, dataDirectory },
       {
         launchBrowser: async () => {
           launchStarted.resolve()
@@ -179,7 +345,7 @@ test('PortalHost rolls back prepared resources after browser startup fails', asy
   const dataDirectory = path.join(cwd, 'data')
   try {
     const host = await PortalHost.prepare(
-      { profile: 'exec', cwd, dataDirectory },
+      { entrySurfaceId: 'portal.exec', cwd, dataDirectory },
       {
         launchBrowser: async () => {
           throw new Error('launch failed')
@@ -202,7 +368,7 @@ test('PortalHost rolls back a browser when startup is aborted after acquisition'
   let closeCount = 0
   try {
     const host = await PortalHost.prepare(
-      { profile: 'exec', cwd, dataDirectory },
+      { entrySurfaceId: 'portal.exec', cwd, dataDirectory },
       {
         launchBrowser: async () => {
           controller.abort(new Error('stop startup'))
@@ -237,7 +403,7 @@ test('PortalHost reports thread cleanup failure after closing later resources', 
   const events: string[] = []
   try {
     const host = await PortalHost.prepare(
-      { profile: 'exec', cwd, dataDirectory },
+      { entrySurfaceId: 'portal.exec', cwd, dataDirectory },
       {
         launchBrowser: async () => ({
           // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
@@ -247,15 +413,15 @@ test('PortalHost reports thread cleanup failure after closing later resources', 
             events.push('browser close')
           },
         }),
-        createProviderAdapter: async () => adapter,
-        createRuntime: async () =>
+        [portalHostTestExtensions]: createTestProviderExtensions(async () =>
           createFakeRuntime({
             adapter,
             close: async () => {
               events.push('runtime close')
               throw new Error('runtime cleanup failed')
             },
-          }),
+          })
+        ),
       }
     )
     const services = await host.start()
@@ -270,7 +436,7 @@ test('PortalHost reports thread cleanup failure after closing later resources', 
       assert.ok(error instanceof AggregateError)
       assert.match(
         String(error.errors[0]),
-        /runtime cleanup failed|failed to close cleanly/
+        /runtime cleanup failed|failed to close cleanly|failed to dispose cleanly/
       )
       return true
     })
@@ -290,7 +456,7 @@ test('PortalHost waits for late provisioning rollback before closing the browser
   const events: string[] = []
   try {
     const host = await PortalHost.prepare(
-      { profile: 'exec', cwd, dataDirectory },
+      { entrySurfaceId: 'portal.exec', cwd, dataDirectory },
       {
         launchBrowser: async () => ({
           // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
@@ -300,11 +466,10 @@ test('PortalHost waits for late provisioning rollback before closing the browser
             events.push('browser close')
           },
         }),
-        createProviderAdapter: async () => adapter,
-        createRuntime: async () => {
+        [portalHostTestExtensions]: createTestProviderExtensions(async () => {
           runtimeRequested.resolve()
           return await runtimeDeferred.promise
-        },
+        }),
       }
     )
     const services = await host.start()
@@ -338,20 +503,16 @@ test('PortalHost waits for late provisioning rollback before closing the browser
   }
 })
 
-test('PortalHost closes a late provisioning adapter before the browser', async () => {
+test('PortalHost closes a late Provider endpoint before the browser', async () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-host-adapter-'))
   const dataDirectory = path.join(cwd, 'data')
-  const adapter = createProviderAdapterStub()
-  const adapterRequested = Promise.withResolvers<void>()
-  const adapterDeferred = Promise.withResolvers<typeof adapter>()
+  const endpointRequested = Promise.withResolvers<void>()
+  const runtimeDeferred =
+    Promise.withResolvers<ReturnType<typeof createFakeRuntime>>()
   const events: string[] = []
-  let createRuntimeCalls = 0
-  adapter.close = async () => {
-    events.push('adapter close')
-  }
   try {
     const host = await PortalHost.prepare(
-      { profile: 'exec', cwd, dataDirectory },
+      { entrySurfaceId: 'portal.exec', cwd, dataDirectory },
       {
         launchBrowser: async () => ({
           // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
@@ -361,14 +522,10 @@ test('PortalHost closes a late provisioning adapter before the browser', async (
             events.push('browser close')
           },
         }),
-        createProviderAdapter: async () => {
-          adapterRequested.resolve()
-          return await adapterDeferred.promise
-        },
-        createRuntime: async () => {
-          createRuntimeCalls += 1
-          return createFakeRuntime()
-        },
+        [portalHostTestExtensions]: createTestProviderExtensions(async () => {
+          endpointRequested.resolve()
+          return await runtimeDeferred.promise
+        }),
       }
     )
     const services = await host.start()
@@ -378,37 +535,39 @@ test('PortalHost closes a late provisioning adapter before the browser', async (
       mode: 'agent',
       source: 'exec',
     })
-    await adapterRequested.promise
+    await endpointRequested.promise
     const closing = host.close()
-    adapterDeferred.resolve(adapter)
+    void closing.catch(() => undefined)
+    runtimeDeferred.resolve(
+      createFakeRuntime({
+        close: async () => {
+          events.push('runtime close')
+        },
+      })
+    )
 
     const result = await provisioning
     await closing
 
     assert.equal(result.ok, false)
     if (!result.ok) assert.equal(result.failure.code, 'cancelled')
-    assert.equal(createRuntimeCalls, 0)
-    assert.deepEqual(events, ['adapter close', 'browser close'])
+    assert.deepEqual(events, ['runtime close', 'browser close'])
     assert.deepEqual(services.threadManager.listThreads(), [])
   } finally {
     rmSync(cwd, { recursive: true, force: true })
   }
 })
 
-test('PortalHost reports late adapter cleanup failure and still closes the browser', async () => {
+test('PortalHost reports late endpoint cleanup failure and still closes the browser', async () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-host-adapter-fail-'))
   const dataDirectory = path.join(cwd, 'data')
-  const adapter = createProviderAdapterStub()
-  const adapterRequested = Promise.withResolvers<void>()
-  const adapterDeferred = Promise.withResolvers<typeof adapter>()
+  const endpointRequested = Promise.withResolvers<void>()
+  const runtimeDeferred =
+    Promise.withResolvers<ReturnType<typeof createFakeRuntime>>()
   const events: string[] = []
-  adapter.close = async () => {
-    events.push('adapter close')
-    throw new Error('adapter cleanup failed')
-  }
   try {
     const host = await PortalHost.prepare(
-      { profile: 'exec', cwd, dataDirectory },
+      { entrySurfaceId: 'portal.exec', cwd, dataDirectory },
       {
         launchBrowser: async () => ({
           // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
@@ -418,10 +577,10 @@ test('PortalHost reports late adapter cleanup failure and still closes the brows
             events.push('browser close')
           },
         }),
-        createProviderAdapter: async () => {
-          adapterRequested.resolve()
-          return await adapterDeferred.promise
-        },
+        [portalHostTestExtensions]: createTestProviderExtensions(async () => {
+          endpointRequested.resolve()
+          return await runtimeDeferred.promise
+        }),
       }
     )
     const services = await host.start()
@@ -431,16 +590,30 @@ test('PortalHost reports late adapter cleanup failure and still closes the brows
       mode: 'agent',
       source: 'exec',
     })
-    await adapterRequested.promise
+    await endpointRequested.promise
     const closing = host.close()
-    adapterDeferred.resolve(adapter)
+    void closing.catch(() => undefined)
+    runtimeDeferred.resolve(
+      createFakeRuntime({
+        close: async () => {
+          events.push('runtime close')
+          throw new Error('endpoint cleanup failed')
+        },
+      })
+    )
 
-    await assert.rejects(provisioning, RuntimeInitializationCleanupError)
+    await assert.rejects(provisioning, ThreadProvisionCleanupError)
     await assert.rejects(closing, AggregateError)
-    assert.deepEqual(events, ['adapter close', 'browser close'])
+    assert.deepEqual(events, ['runtime close', 'browser close'])
     assert.deepEqual(services.threadManager.listThreads(), [])
+    services.threadStore.close()
   } finally {
-    rmSync(cwd, { recursive: true, force: true })
+    rmSync(cwd, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 50,
+    })
   }
 })
 
@@ -465,7 +638,7 @@ test(
     })
     try {
       const host = await PortalHost.prepare(
-        { profile: 'exec', cwd, dataDirectory },
+        { entrySurfaceId: 'portal.exec', cwd, dataDirectory },
         {
           launchBrowser: async () => ({
             // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
@@ -475,8 +648,9 @@ test(
               events.push('browser close')
             },
           }),
-          createProviderAdapter: async () => createProviderAdapterStub(),
-          createRuntime: async () => runtime,
+          [portalHostTestExtensions]: createTestProviderExtensions(
+            async () => runtime
+          ),
         }
       )
       const services = await host.start()
@@ -495,7 +669,7 @@ test(
         )
         return true
       })
-      assert.deepEqual(events, ['browser close'])
+      assert.deepEqual(events, ['browser close', 'runtime close'])
       assert.equal(host.state, 'stopped')
 
       historyDeferred.resolve({

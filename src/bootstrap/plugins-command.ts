@@ -11,6 +11,7 @@ import type {
 } from '../extensions/plugin-contracts.ts'
 import { JsonPluginStore } from '../extensions/plugin-store.ts'
 import { resolvePortalDataDirectory } from '../platform/portal-data-directory.ts'
+import { firstPartyPluginRecords } from './first-party-plugins.ts'
 
 interface TextWriter {
   write(text: string): unknown
@@ -49,9 +50,22 @@ export async function runPluginsCli(
       writeErr: (text) => errorOutput.write(text),
     })
 
-  const manager = (): PluginManager =>
-    dependencies.manager ??
-    createPluginManager(program.opts<RootOptions>(), dependencies)
+  let rawManagerPromise: Promise<PluginManager> | null = null
+  let synchronizedManagerPromise: Promise<PluginManager> | null = null
+  const manager = (synchronize = true): Promise<PluginManager> => {
+    rawManagerPromise ??= Promise.resolve(
+      dependencies.manager ??
+        createPluginManager(program.opts<RootOptions>(), dependencies)
+    )
+    if (!synchronize || dependencies.manager !== undefined) {
+      return rawManagerPromise
+    }
+    synchronizedManagerPromise ??= rawManagerPromise.then(async (instance) => {
+      await instance.synchronizeBuiltIns(firstPartyPluginRecords())
+      return instance
+    })
+    return synchronizedManagerPromise
+  }
 
   program
     .command('list')
@@ -59,7 +73,7 @@ export async function runPluginsCli(
       'List installed plugins without resolving the normal plugin graph.'
     )
     .action(async () => {
-      const records = [...(await manager().list())].sort((a, b) =>
+      const records = [...(await (await manager()).list())].sort((a, b) =>
         a.manifest.id.localeCompare(b.manifest.id)
       )
       if (program.opts<RootOptions>().json === true) {
@@ -81,7 +95,7 @@ export async function runPluginsCli(
     .command('inspect <id>')
     .description('Show one installed plugin record and its persisted grants.')
     .action(async (id: string) => {
-      const record = await manager().inspect(id)
+      const record = await (await manager()).inspect(id)
       if (record === null) throw new Error(`Plugin is not installed: ${id}`)
       if (program.opts<RootOptions>().json === true) {
         writeJson(output, record)
@@ -133,10 +147,9 @@ export async function runPluginsCli(
             ? {}
             : { capabilities: options.capability }),
         }
-        const records = await manager().addLocalDirectories(
-          directories,
-          installOptions
-        )
+        const records = await (
+          await manager()
+        ).addLocalDirectories(directories, installOptions)
         if (program.opts<RootOptions>().json === true) {
           writeJson(output, records)
           return
@@ -153,7 +166,7 @@ export async function runPluginsCli(
     .command('enable <id>')
     .description('Enable a plugin for the next immutable generation.')
     .action(async (id: string) => {
-      if (!(await manager().enable(id)))
+      if (!(await (await manager()).enable(id)))
         throw new Error(`Plugin is not installed: ${id}`)
       output.write(`Enabled ${id} for the next Portal generation.\n`)
     })
@@ -162,10 +175,46 @@ export async function runPluginsCli(
     .command('disable <id>')
     .description('Disable a plugin for the next immutable generation.')
     .action(async (id: string) => {
-      if (!(await manager().disable(id)))
+      if (!(await (await manager()).disable(id)))
         throw new Error(`Plugin is not installed: ${id}`)
       output.write(`Disabled ${id} for the next Portal generation.\n`)
     })
+
+  program
+    .command('enable-contribution <package-id> <point> <contribution-id>')
+    .description('Enable one package contribution for the next generation.')
+    .action(
+      async (packageId: string, point: string, contributionId: string) => {
+        if (
+          !(await (
+            await manager()
+          ).setContributionEnabled(packageId, point, contributionId, true))
+        ) {
+          throw new Error(`Plugin is not installed: ${packageId}`)
+        }
+        output.write(
+          `Enabled ${point}:${contributionId} from ${packageId} for the next Portal generation.\n`
+        )
+      }
+    )
+
+  program
+    .command('disable-contribution <package-id> <point> <contribution-id>')
+    .description('Disable one package contribution for the next generation.')
+    .action(
+      async (packageId: string, point: string, contributionId: string) => {
+        if (
+          !(await (
+            await manager()
+          ).setContributionEnabled(packageId, point, contributionId, false))
+        ) {
+          throw new Error(`Plugin is not installed: ${packageId}`)
+        }
+        output.write(
+          `Disabled ${point}:${contributionId} from ${packageId} for the next Portal generation.\n`
+        )
+      }
+    )
 
   program
     .command('update <id>')
@@ -188,7 +237,9 @@ export async function runPluginsCli(
           readonly allowDowngrade?: boolean
         }
       ) => {
-        const record = await manager().updateLocalDirectory(id, {
+        const record = await (
+          await manager()
+        ).updateLocalDirectory(id, {
           ...(options.allowNewCapabilities === true
             ? { allowCapabilityExpansion: true }
             : {}),
@@ -205,7 +256,7 @@ export async function runPluginsCli(
     .command('remove <id>')
     .description('Remove an installed plugin record.')
     .action(async (id: string) => {
-      if (!(await manager().remove(id)))
+      if (!(await (await manager()).remove(id)))
         throw new Error(`Plugin is not installed: ${id}`)
       output.write(`Removed ${id}.\n`)
     })
@@ -216,7 +267,7 @@ export async function runPluginsCli(
       'Verify sources, digests, dependencies, and versions without activation.'
     )
     .action(async () => {
-      const diagnostics = await manager().diagnose()
+      const diagnostics = await (await manager(false)).diagnose()
       if (program.opts<RootOptions>().json === true) {
         writeJson(output, diagnostics)
         return
@@ -230,6 +281,24 @@ export async function runPluginsCli(
           `${diagnostic.packageId} [${diagnostic.code}] ${diagnostic.message}\n`
         )
       }
+    })
+
+  program
+    .command('repair')
+    .description(
+      'Preserve unreadable plugin records and rebuild a recoverable store.'
+    )
+    .action(async () => {
+      const instance = await manager(false)
+      const result = await instance.repairStore()
+      if (dependencies.manager === undefined) {
+        await instance.synchronizeBuiltIns(firstPartyPluginRecords())
+      }
+      output.write(
+        result.backupPath === null
+          ? 'Plugin records were reset.\n'
+          : `Plugin records were preserved at ${result.backupPath} and reset.\n`
+      )
     })
 
   try {

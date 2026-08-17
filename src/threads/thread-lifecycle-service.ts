@@ -1,18 +1,11 @@
-import type { ProjectInstructions } from '../instructions/project-instructions.ts'
-import type { ProviderAdapter } from '../providers/adapters/adapter-base.ts'
-import type { ProviderId } from '../providers/provider-id.ts'
 import type { ResolvedProviderModel } from '../providers/provider-model-catalog.ts'
-import {
-  initializeRuntimeWithLoginWait,
-  RuntimeInitializationCleanupError,
-} from '../runtime/runtime-initializer.ts'
 import {
   isAbortError,
   PortalAbortError,
   throwIfAborted,
 } from '../runtime/runtime-cancellation.ts'
-import type { RuntimeCore } from '../runtime/runtime-core.ts'
 import type { ConversationHistoryResult } from '../providers/conversation-history.ts'
+import type { ProviderEvent } from '../providers/provider-exchange.ts'
 import type { ThreadSource } from './thread-types.ts'
 import {
   ThreadOperationCoordinator,
@@ -35,6 +28,7 @@ import {
   ConversationReservationError,
   type ThreadRuntimeRegistry,
 } from './thread-runtime-registry.ts'
+import type { ThreadRuntime } from './thread-runtime.ts'
 
 export type ThreadLifecycleStage =
   | 'resolving'
@@ -63,14 +57,14 @@ export type ThreadLifecycleEvent =
       type: 'provision.login_wait'
       threadId: string
       source: ThreadLifecycleSource
-      provider: ProviderId
+      provider: string
     }
   | {
       type: 'thread.ready'
       threadId: string
       source: ThreadLifecycleSource
       origin: 'new' | 'resumed'
-      provider: ProviderId
+      provider: string
       conversationUrl: string
     }
   | {
@@ -106,28 +100,19 @@ export interface ThreadLifecycleDependencies {
   threadManager: ThreadManager
   threadOperations: ThreadOperationCoordinator
   threadStore: ThreadStore
-  runtimeRegistry: ThreadRuntimeRegistry<RuntimeCore>
-  browserProfileDir: string
-  initializationAttemptLimit?: number
+  runtimeRegistry: ThreadRuntimeRegistry<ThreadRuntime>
   resolveConversationUrl(
     value: string
-  ): { provider: ProviderId; conversationUrl: string } | null
-  projectInstructions: ProjectInstructions
-  createAdapter(input: {
-    provider: ProviderId
-    conversationUrl: string | null
+  ): { provider: string; conversationUrl: string } | null
+  openRuntime(input: {
     threadId: string
-    signal: AbortSignal
-  }): Promise<ProviderAdapter>
-  createRuntime(input: {
-    adapter: ProviderAdapter
-    provider: ProviderId
+    provider: string
+    conversationUrl: string | null
     model: ResolvedProviderModel | null
     mode: ThreadCreationMode | 'resume'
-    projectInstructions: ProjectInstructions
     signal: AbortSignal
-  }): Promise<RuntimeCore>
-  waitForLogin(signal: AbortSignal): Promise<void>
+    readonly onProviderEvent: (event: ProviderEvent) => void | Promise<void>
+  }): Promise<ThreadRuntime>
   observer?: ThreadLifecycleObserver
 }
 
@@ -163,7 +148,7 @@ export class ThreadProvisionCleanupError extends Error {
 export interface ThreadLifecycleResult {
   ok: true
   threadId: string
-  provider: ProviderId
+  provider: string
   conversationUrl: string
   createdAt: number
   history: ConversationHistoryResult | null
@@ -179,7 +164,7 @@ export type ProvisionResult =
   ThreadLifecycleResult | ThreadLifecycleFailureResult
 
 export interface CreateThreadCommand {
-  provider: ProviderId
+  provider: string
   model: ResolvedProviderModel | null
   mode: ThreadCreationMode
   source?: ThreadLifecycleSource
@@ -461,7 +446,7 @@ export class ThreadLifecycleService {
 
   public async recordActivity(input: {
     threadId?: string
-    provider: ProviderId
+    provider: string
     conversationUrl: string
     title: string | null
     createdAt?: number
@@ -499,7 +484,7 @@ export class ThreadLifecycleService {
     request:
       | {
           origin: 'new'
-          provider: ProviderId
+          provider: string
           model: ResolvedProviderModel | null
           mode: ThreadCreationMode
           source: ThreadLifecycleSource
@@ -541,7 +526,7 @@ export class ThreadLifecycleService {
     request:
       | {
           origin: 'new'
-          provider: ProviderId
+          provider: string
           model: ResolvedProviderModel | null
           mode: ThreadCreationMode
           source: ThreadLifecycleSource
@@ -558,8 +543,8 @@ export class ThreadLifecycleService {
   ): Promise<ProvisionResult> {
     const threadId = this.dependencies.runtimeRegistry.createThreadId()
     const warnings: string[] = []
-    let provider: ProviderId | null = null
-    let runtime: RuntimeCore | null = null
+    let provider: string | null = null
+    let runtime: ThreadRuntime | null = null
     let reservedUrl: string | null = null
     let history: ConversationHistoryResult | null = null
     let stage: ThreadLifecycleStage = 'resolving'
@@ -625,76 +610,53 @@ export class ThreadLifecycleService {
           }
 
           stage = 'preparing'
-          const projectInstructions = this.dependencies.projectInstructions
           throwIfAborted(signal)
 
           let loginWarningSent = false
           stage = 'building_runtime'
-          runtime = await initializeRuntimeWithLoginWait({
-            provider,
-            browserProfileDir: this.dependencies.browserProfileDir,
+          runtime = await this.dependencies.openRuntime({
             threadId,
-            createAdapter: async () => {
-              throwIfAborted(signal)
-              return await this.dependencies.createAdapter({
-                provider: provider!,
-                conversationUrl,
-                threadId,
-                signal,
-              })
-            },
-            createRuntime: async (adapter) => {
-              throwIfAborted(signal)
-              return await this.dependencies.createRuntime({
-                adapter,
-                provider: provider!,
-                model: request.origin === 'new' ? request.model : null,
-                mode: request.origin === 'new' ? request.mode : 'resume',
-                projectInstructions,
-                signal,
-              })
-            },
-            onWarning: async (plan) => {
-              if (plan.requiresLogin && loginWarningSent) {
-                return
-              }
-              if (plan.requiresLogin) {
-                loginWarningSent = true
-              }
-              await this.notify({
-                type: 'provision.warning',
-                threadId,
-                source: request.source,
-                title: plan.title,
-                lines: plan.lines,
-              })
-            },
-            onLoginWait: async () => {
-              if (!loginWarningSent) {
+            provider,
+            conversationUrl,
+            model: request.origin === 'new' ? request.model : null,
+            mode: request.origin === 'new' ? request.mode : 'resume',
+            signal,
+            onProviderEvent: async (event) => {
+              if (
+                event.type === 'attention.request' &&
+                event.kind === 'login'
+              ) {
+                if (loginWarningSent) return
                 loginWarningSent = true
                 await this.notify({
-                  type: 'provision.login_wait',
+                  type: 'provision.warning',
                   threadId,
                   source: request.source,
-                  provider: provider!,
+                  title: 'login required',
+                  lines: event.prompt.split('\n'),
+                })
+                return
+              }
+              if (event.type === 'attention.request') {
+                await this.notify({
+                  type: 'provision.warning',
+                  threadId,
+                  source: request.source,
+                  title: 'provider attention required',
+                  lines: event.prompt.split('\n'),
+                })
+              } else if (event.type === 'status') {
+                await this.notify({
+                  type: 'provision.warning',
+                  threadId,
+                  source: request.source,
+                  title: 'provider',
+                  lines: [event.message],
                 })
               }
             },
-            waitForLogin: async () =>
-              await this.dependencies.waitForLogin(signal),
-            signal,
-            maxRetryAttempts: this.dependencies.initializationAttemptLimit ?? 3,
           })
           throwIfAborted(signal)
-          if (runtime === null) {
-            return await this.failure(
-              threadId,
-              'provider_failure',
-              'preparing',
-              `Could not prepare ${provider} runtime.`,
-              request.source
-            )
-          }
 
           if (request.origin === 'resumed') {
             stage = 'loading_history'
@@ -821,7 +783,7 @@ export class ThreadLifecycleService {
             warnings,
           }
         } catch (error) {
-          if (error instanceof RuntimeInitializationCleanupError) {
+          if (signal.aborted && error instanceof AggregateError) {
             throw error
           }
           if (isAbortError(error)) {
@@ -1002,6 +964,6 @@ async function settleProvision(
   }
 }
 
-async function closeProvisionRuntime(runtime: RuntimeCore): Promise<void> {
+async function closeProvisionRuntime(runtime: ThreadRuntime): Promise<void> {
   await runtime.close()
 }

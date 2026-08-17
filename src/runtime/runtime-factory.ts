@@ -3,57 +3,46 @@ import type {
   ProviderAdapterOptions,
 } from '../providers/adapters/adapter-base.ts'
 import { isProviderAdapterError } from '../providers/adapters/adapter-base.ts'
-import type { ToolServices } from '../tools/core/tool-definition.ts'
 import { ToolRegistry } from '../tools/core/tool-registry.ts'
-import { AttachImageTool } from '../tools/builtins/attach-image-tool.ts'
-import { ApplyPatchTool } from '../tools/builtins/apply-patch-tool.ts'
-import { RunCommandTool } from '../tools/builtins/run-command-tool.ts'
-import { SpawnTool } from '../tools/builtins/spawn-tool.ts'
-import type { SkillLibrary } from '../skills/skill-library.ts'
-import { RuntimeCore } from './runtime-core.ts'
+import { RuntimeCore, type RuntimeCoreOptions } from './runtime-core.ts'
 import { throwIfAborted } from './runtime-cancellation.ts'
-import type { ProjectInstructions } from '../instructions/project-instructions.ts'
+import type { SetupSkill } from './setup-prompt.ts'
 import type { RuntimeSetupMode } from './setup-handshake.ts'
+import { DEFAULT_TEXT_TOOL_PROTOCOL } from '../tools/core/text-tool-protocol.ts'
+import type { TextToolProtocol } from '../tools/core/text-tool-protocol.ts'
+import type { ToolRuntimeService } from '../tools/tool-runtime-service.ts'
+import type { AttachmentReader } from '../attachments/attachment-contracts.ts'
 
 export interface RuntimeFactoryOptions extends ProviderAdapterOptions {
   setupMode?: RuntimeSetupMode
-  toolServices?: ToolServices
-  skillLibrary?: SkillLibrary
-  projectInstructions?: ProjectInstructions | null
+  toolHost: ToolRuntimeService
+  skills?: readonly SetupSkill[]
+  projectInstructions?: string | null
   allowedTools?: readonly string[] | null
   advertiseSpawnTool?: boolean
   requestAttemptLimit?: number
   workingDirectory?: string
+  textToolProtocol?: TextToolProtocol
+  providerId?: string
+  currentSpawnDepth?: number
+  attachmentReader?: AttachmentReader
+  exchangeDelegate?: RuntimeCoreOptions['exchangeDelegate']
+  onClose?: RuntimeCoreOptions['onClose']
 }
-
-const DEFAULT_TOOLS = [
-  AttachImageTool,
-  RunCommandTool,
-  ApplyPatchTool,
-  SpawnTool,
-]
 
 /** The caller owns the adapter until this function returns a RuntimeCore. */
 export async function createRuntimeFromAdapter(
   adapter: ProviderAdapter,
-  options: RuntimeFactoryOptions = { model: null }
+  options: RuntimeFactoryOptions
 ): Promise<RuntimeCore> {
   const { signal } = options
   try {
-    const skillCatalog = await options.skillLibrary?.createCatalogSnapshot()
-    const availableTools = [...DEFAULT_TOOLS]
     const allowedTools = options.allowedTools ?? null
-    const tools =
-      allowedTools === null
-        ? availableTools
-        : availableTools.filter((ToolClass) => {
-            const tool = new ToolClass(adapter, {})
-            return allowedTools.includes(tool.name)
-          })
+    const graphToolNames = options.toolHost
+      .list()
+      .map(({ descriptor }) => descriptor.name)
     if (allowedTools !== null) {
-      const selected = new Set(
-        tools.map((ToolClass) => new ToolClass(adapter, {}).name)
-      )
+      const selected = new Set(graphToolNames)
       const unavailable = allowedTools.filter((name) => !selected.has(name))
       if (unavailable.length > 0) {
         throw new Error(
@@ -61,20 +50,39 @@ export async function createRuntimeFromAdapter(
         )
       }
     }
-    const services: ToolServices = {
-      ...(options.toolServices ?? {}),
-    }
-    const toolRegistry = new ToolRegistry(
-      adapter,
-      tools,
-      services,
-      options.advertiseSpawnTool === false ? ['spawn'] : []
-    )
+    const hiddenToolNames = [
+      ...(options.advertiseSpawnTool === false ? ['spawn'] : []),
+      ...(allowedTools === null
+        ? []
+        : graphToolNames.filter((name) => !allowedTools.includes(name))),
+    ]
+    const toolRegistry = new ToolRegistry(adapter, {
+      toolHost: options.toolHost,
+      hiddenToolNames,
+      protocol: options.textToolProtocol ?? DEFAULT_TEXT_TOOL_PROTOCOL,
+      ...(options.providerId === undefined
+        ? {}
+        : {
+            invocation: {
+              providerId: options.providerId,
+              model: options.model,
+              spawnDepth: options.currentSpawnDepth ?? 0,
+              workingDirectory: options.workingDirectory ?? process.cwd(),
+            },
+          }),
+    })
     const runtime = new RuntimeCore(adapter, toolRegistry, {
-      skills: skillCatalog?.setupSkills ?? [],
+      skills: options.skills ?? [],
       projectInstructions: options.projectInstructions ?? null,
       requestAttemptLimit: options.requestAttemptLimit ?? 3,
       workingDirectory: options.workingDirectory ?? process.cwd(),
+      ...(options.attachmentReader === undefined
+        ? {}
+        : { attachmentReader: options.attachmentReader }),
+      ...(options.exchangeDelegate === undefined
+        ? {}
+        : { exchangeDelegate: options.exchangeDelegate }),
+      ...(options.onClose === undefined ? {} : { onClose: options.onClose }),
     })
     throwIfAborted(signal)
     if (options.model !== null) {

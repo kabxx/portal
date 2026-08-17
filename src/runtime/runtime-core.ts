@@ -4,16 +4,13 @@ import {
   ProviderAdapter,
   isProviderAdapterError,
 } from '../providers/adapters/adapter-base.ts'
-import {
-  formatToolResultMessage,
-  isToolCallAtResponseEnd,
-} from '../tools/core/tool-registry.ts'
+import { isToolCallAtResponseEnd } from '../tools/core/tool-registry.ts'
 import type {
+  PreparedToolCall,
   ToolCall,
   ToolRegistry,
   ToolResult,
 } from '../tools/core/tool-registry.ts'
-import type { ToolProgressEvent } from '../tools/core/tool-definition.ts'
 import { retryAsync } from '../shared/retry.ts'
 import {
   abortable,
@@ -22,7 +19,10 @@ import {
   throwIfAborted,
 } from './runtime-cancellation.ts'
 import type { ConversationHistoryResult } from '../providers/conversation-history.ts'
-import type { ProjectInstructions } from '../instructions/project-instructions.ts'
+import type {
+  AttachmentReader,
+  AttachmentRef,
+} from '../attachments/attachment-contracts.ts'
 import {
   checkComposerLimit,
   ComposerLimitExceededError,
@@ -39,37 +39,13 @@ import {
   buildSetupPrompt,
   type SetupSkill,
 } from './setup-prompt.ts'
+import type {
+  ThreadRuntimeHandlers,
+  ThreadToolCallMetadata,
+} from '../threads/thread-runtime.ts'
 
-export interface RuntimeCoreHandlers {
-  onAssistantStream?: (message: string) => void | Promise<void>
-  onAssistantStreamReset?: () => void | Promise<void>
-  onAssistantText?: (message: string) => void | Promise<void>
-  onStatus?: (message: string) => void | Promise<void>
-  onToolCall?: (
-    toolCall: ToolCall | null,
-    rawPayload: string,
-    metadata?: ToolCallMetadata
-  ) => void | Promise<void>
-  onToolResult?: (
-    toolResult: ToolResult,
-    toolCall: ToolCall | null,
-    metadata?: ToolCallMetadata
-  ) => void | Promise<void>
-  onToolProgress?: (
-    event: ToolProgressEvent,
-    toolCall: ToolCall | null,
-    toolCallId: string
-  ) => void
-  signal?: AbortSignal
-  maxToolCalls?: number
-}
-
-export interface ToolCallMetadata {
-  toolCallId: string
-  originalInput: Record<string, unknown> | string
-  effectiveInput: Record<string, unknown> | string
-  rewrittenBy: readonly string[]
-}
+export type RuntimeCoreHandlers = ThreadRuntimeHandlers
+export type ToolCallMetadata = ThreadToolCallMetadata
 
 interface OutboundToolResult {
   toolName: string
@@ -78,16 +54,25 @@ interface OutboundToolResult {
 
 export interface RuntimeCoreOptions {
   skills?: readonly SetupSkill[]
-  projectInstructions?: ProjectInstructions | null
+  projectInstructions?: string | null
   requestAttemptLimit?: number
   workingDirectory?: string
+  attachmentReader?: AttachmentReader
+  exchangeDelegate?: (
+    input: string,
+    handlers: RuntimeCoreHandlers
+  ) => Promise<string>
+  onClose?: () => void | Promise<void>
 }
 
 export class RuntimeCore {
   private readonly skills: readonly SetupSkill[]
-  private readonly projectInstructions: ProjectInstructions | null
+  private readonly projectInstructions: string | null
   private readonly requestAttemptLimit: number
   private readonly workingDirectory: string
+  private readonly attachmentReader: AttachmentReader | null
+  private readonly exchangeDelegate: RuntimeCoreOptions['exchangeDelegate']
+  private readonly onClose: RuntimeCoreOptions['onClose']
   private inlineSetupPending = false
 
   constructor(
@@ -99,6 +84,9 @@ export class RuntimeCore {
     this.projectInstructions = options.projectInstructions ?? null
     this.requestAttemptLimit = options.requestAttemptLimit ?? 3
     this.workingDirectory = options.workingDirectory ?? process.cwd()
+    this.attachmentReader = options.attachmentReader ?? null
+    this.exchangeDelegate = options.exchangeDelegate
+    this.onClose = options.onClose
   }
 
   public async init(
@@ -132,8 +120,9 @@ export class RuntimeCore {
   public get prompt(): string {
     return buildSetupPrompt({
       tools: this.toolRegistry.prompt,
+      textToolProtocol: this.toolRegistry.protocol,
       skills: this.skills,
-      projectInstructions: this.projectInstructions?.prompt ?? null,
+      projectInstructions: this.projectInstructions,
       workingDirectory: this.workingDirectory,
     })
   }
@@ -145,11 +134,18 @@ export class RuntimeCore {
   public buildInlineTaskPrompt(input: string): string {
     return buildSetupPrompt({
       tools: this.toolRegistry.prompt,
+      textToolProtocol: this.toolRegistry.protocol,
       skills: this.skills,
-      projectInstructions: this.projectInstructions?.prompt ?? null,
+      projectInstructions: this.projectInstructions,
       workingDirectory: this.workingDirectory,
       task: input,
     })
+  }
+
+  public prepareExchangeInput(input: string): string {
+    if (!this.inlineSetupPending) return input
+    this.inlineSetupPending = false
+    return this.buildInlineTaskPrompt(input)
   }
 
   public get conversationId(): string | null {
@@ -217,11 +213,10 @@ export class RuntimeCore {
     input: string,
     handlers: RuntimeCoreHandlers = {}
   ): Promise<string> {
-    let user = input
-    if (this.inlineSetupPending) {
-      user = this.buildInlineTaskPrompt(user)
-      this.inlineSetupPending = false
+    if (this.exchangeDelegate !== undefined) {
+      return await this.exchangeDelegate(input, handlers)
     }
+    let user = this.prepareExchangeInput(input)
     let outboundOrigin: ComposerTextOrigin = 'user'
     let outboundToolResult: OutboundToolResult | null = null
     let assistant: string
@@ -253,37 +248,33 @@ export class RuntimeCore {
         toolPayload,
         extractedToolCall.declaredToolName
       )
-      const toolCall = prepared.toolCall
+      const toolCall = requirePreparedToolCall(
+        prepared,
+        extractedToolCall.declaredToolName,
+        toolPayload
+      )
       await this.emitAssistantTextSegment(
         extractedToolCall.leadingText,
         handlers
       )
       const toolCallId = randomUUID()
-      const metadata: ToolCallMetadata =
-        toolCall === null
-          ? {
-              toolCallId,
-              originalInput: toolPayload,
-              effectiveInput: toolPayload,
-              rewrittenBy: [],
-            }
-          : {
-              toolCallId,
-              originalInput: structuredClone(toolCall.params),
-              effectiveInput: structuredClone(toolCall.params),
-              rewrittenBy: [],
-            }
+      const metadata: ToolCallMetadata = {
+        toolCallId,
+        originalInput: structuredClone(toolCall.params),
+        effectiveInput: structuredClone(toolCall.params),
+        rewrittenBy: [],
+      }
       await handlers.onToolCall?.(toolCall, toolPayload, metadata)
 
       if (!prepared.ok) {
         await handlers.onToolResult?.(prepared.result, toolCall, metadata)
-        user = formatToolResultMessage(
-          toolCall?.tool ?? 'unknown',
+        user = this.toolRegistry.formatToolResultMessage(
+          toolCall.tool,
           prepared.result
         )
         outboundOrigin = 'tool_result'
         outboundToolResult = {
-          toolName: toolCall?.tool ?? 'unknown',
+          toolName: toolCall.tool,
           toolResult: prepared.result,
         }
         continue
@@ -306,14 +297,32 @@ export class RuntimeCore {
         toolCallId
       )
       throwIfAborted(handlers.signal)
+      await this.deliverAttachments(toolResult, handlers.signal)
+      throwIfAborted(handlers.signal)
       await handlers.onToolResult?.(toolResult, toolCall, metadata)
-      user = formatToolResultMessage(toolCall?.tool ?? 'unknown', toolResult)
+      user = this.toolRegistry.formatToolResultMessage(
+        toolCall.tool,
+        toolResult
+      )
       outboundOrigin = 'tool_result'
       outboundToolResult = {
-        toolName: toolCall?.tool ?? 'unknown',
+        toolName: toolCall.tool,
         toolResult,
       }
     }
+  }
+
+  private async deliverAttachments(
+    toolResult: ToolResult,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const ref = attachmentRef(toolResult.result.attachment)
+    if (ref === null) return
+    if (this.attachmentReader === null) {
+      throw new Error('Attachment delivery is unavailable in this runtime.')
+    }
+    throwIfAborted(signal)
+    await this.agentAdapter.attachAttachment(ref, this.attachmentReader)
   }
 
   private async submitPayloadWithRetry(
@@ -328,7 +337,9 @@ export class RuntimeCore {
       this.agentAdapter.setSubmitTextReporter(async (message) => {
         throwIfAborted(handlers.signal)
         streamed = true
-        await handlers.onAssistantStream?.(message)
+        await handlers.onAssistantStream?.(
+          this.toolRegistry.projectStreamingAssistantText(message)
+        )
       })
       this.agentAdapter.setSubmitStatusReporter(async (message) => {
         throwIfAborted(handlers.signal)
@@ -377,7 +388,7 @@ export class RuntimeCore {
     if (origin !== 'tool_result' || outboundToolResult === null) {
       throw new ComposerLimitExceededError(check, origin)
     }
-    const replacement = formatToolResultMessage(
+    const replacement = this.toolRegistry.formatToolResultMessage(
       outboundToolResult.toolName,
       outboundToolResult.toolResult,
       createComposerLimitToolDelivery(check)
@@ -429,7 +440,21 @@ export class RuntimeCore {
   }
 
   public async close() {
-    await this.agentAdapter.close()
+    const outcomes = await Promise.allSettled([
+      this.agentAdapter.close(),
+      Promise.resolve().then(async () => await this.onClose?.()),
+    ])
+    const failures = outcomes
+      .filter(
+        (outcome): outcome is PromiseRejectedResult =>
+          outcome.status === 'rejected'
+      )
+      .map(({ reason }) => reason as unknown)
+    if (failures.length > 0) {
+      throw failures.length === 1
+        ? failures[0]
+        : new AggregateError(failures, 'Runtime close failed.')
+    }
   }
 
   private async emitAssistantTextSegment(
@@ -441,5 +466,42 @@ export class RuntimeCore {
       return
     }
     await handlers.onAssistantText?.(normalizedSegment)
+  }
+}
+
+function requirePreparedToolCall(
+  prepared: PreparedToolCall,
+  declaredToolName: string | null,
+  rawPayload: string
+): ToolCall {
+  if (prepared.ok) return prepared.toolCall
+  if (prepared.toolCall !== null) return prepared.toolCall
+  if (declaredToolName !== null) {
+    return { tool: declaredToolName, params: rawPayload }
+  }
+  throw new Error(prepared.result.displayText ?? 'Invalid Tool call.')
+}
+
+function attachmentRef(value: unknown): AttachmentRef | null {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value) ||
+    !('id' in value) ||
+    typeof value.id !== 'string' ||
+    !('mediaType' in value) ||
+    typeof value.mediaType !== 'string' ||
+    !('sizeBytes' in value) ||
+    typeof value.sizeBytes !== 'number' ||
+    !('sha256' in value) ||
+    typeof value.sha256 !== 'string'
+  ) {
+    return null
+  }
+  return {
+    id: value.id,
+    mediaType: value.mediaType,
+    sizeBytes: value.sizeBytes,
+    sha256: value.sha256,
   }
 }

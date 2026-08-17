@@ -301,7 +301,7 @@ test('RunCommandTool keeps UTF-8 code points intact across output chunks', async
   assert.equal(outputChunks.join(''), '中\n')
 })
 
-test('RunCommandTool aborts its waiter but leaves the job running', async () => {
+test('RunCommandTool cancels the owned job when its operation is aborted', async () => {
   const manager = new RunCommandJobManager()
   const tool = new RunCommandTool(createProviderAdapterStub(), {
     runCommandJobs: manager,
@@ -319,8 +319,9 @@ test('RunCommandTool aborts its waiter but leaves the job running', async () => 
     controller.abort(new PortalAbortError('cancel command waiter'))
     await assert.rejects(running, PortalAbortError)
 
-    assert.equal(manager.list().length, 1)
-    await waitForFile(finished)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(manager.list().length, 0)
+    assert.equal(existsSync(finished), false)
   } finally {
     await manager.stopAll()
     rmSync(tempDir, { recursive: true, force: true })

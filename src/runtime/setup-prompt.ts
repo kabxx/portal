@@ -1,4 +1,8 @@
 import { joinPromptSections } from '../shared/prompt-sections.ts'
+import {
+  DEFAULT_TEXT_TOOL_PROTOCOL,
+  type TextToolProtocol,
+} from '../tools/core/text-tool-protocol.ts'
 
 export interface SetupSkill {
   name: string
@@ -8,20 +12,14 @@ export interface SetupSkill {
 
 export interface SetupPromptOptions {
   tools: string | null
+  textToolProtocol?: TextToolProtocol
   skills?: readonly SetupSkill[]
   projectInstructions?: string | null
   workingDirectory: string
   task?: string
 }
 
-export const TOOL_PROTOCOL_PROMPT = [
-  '## Tool Protocol',
-  '- Format: `<tool name="NAME">PAYLOAD</tool>`',
-  '- Payload: JSON object for JSON tools; raw text for freeform tools',
-  '- Limit: at most one tool call per assistant message',
-  '- Position: the tool call must appear at the end of the assistant message',
-  '- Results: returned in the next user message as a Tool Result',
-].join('\n')
+export const TOOL_PROTOCOL_PROMPT = DEFAULT_TEXT_TOOL_PROTOCOL.prompt
 
 export const SETUP_INITIALIZATION_PROMPT = [
   '## Initialization',
@@ -30,6 +28,7 @@ export const SETUP_INITIALIZATION_PROMPT = [
 
 export function buildSetupPrompt({
   tools,
+  textToolProtocol = DEFAULT_TEXT_TOOL_PROTOCOL,
   skills = [],
   projectInstructions = null,
   workingDirectory,
@@ -38,7 +37,10 @@ export function buildSetupPrompt({
   const toolSection =
     tools === null || tools.trim() === ''
       ? null
-      : joinPromptSections([TOOL_PROTOCOL_PROMPT, `## Tools\n\n${tools}`])
+      : joinPromptSections([
+          textToolProtocol.prompt,
+          `## ${textToolProtocol.catalogHeading}\n\n${tools}`,
+        ])
   const skillSection =
     skills.length === 0
       ? null

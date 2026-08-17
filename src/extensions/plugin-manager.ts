@@ -4,10 +4,13 @@ import path from 'node:path'
 import { lt, satisfies } from 'semver'
 
 import type {
+  BuiltInPluginRecord,
   InstalledPluginRecord,
   PluginCapabilityExpansionPolicy,
   PluginDiagnostic,
+  PluginContributionDeclaration,
   PluginResolutionSnapshot,
+  PluginStoreRepairResult,
   PluginTrustGrant,
   PluginUpdatePolicy,
 } from './plugin-contracts.ts'
@@ -49,6 +52,71 @@ export class PluginManager {
 
   public async list(): Promise<readonly InstalledPluginRecord[]> {
     return await this.#store.read()
+  }
+
+  /** Persist the bundled package set without executing any package code. */
+  public async synchronizeBuiltIns(
+    builtIns: readonly BuiltInPluginRecord[]
+  ): Promise<void> {
+    const definitions = new Map(
+      builtIns.map((record) => [record.manifest.id, record])
+    )
+    await this.#store.update((packages) => {
+      const next = packages.filter(
+        (record) =>
+          record.source.kind !== 'built-in' ||
+          definitions.has(record.manifest.id)
+      )
+      const now = new Date(this.#clock()).toISOString()
+      for (const definition of builtIns) {
+        const index = next.findIndex(
+          (record) => record.manifest.id === definition.manifest.id
+        )
+        if (index >= 0) {
+          const current = next[index]!
+          if (current.source.kind !== 'built-in') {
+            throw new PluginManagerError(
+              `Installed plugin ID is reserved by Portal: ${definition.manifest.id}`
+            )
+          }
+          if (
+            JSON.stringify({
+              manifest: current.manifest,
+              source: current.source,
+              trust: current.trust,
+            }) ===
+            JSON.stringify({
+              manifest: definition.manifest,
+              source: definition.source,
+              trust: definition.trust,
+            })
+          ) {
+            continue
+          }
+          next[index] = Object.freeze({
+            ...definition,
+            enabled: current.enabled,
+            disabledContributions: retainDeclaredContributions(
+              current.disabledContributions,
+              definition.manifest.contributions
+            ),
+            installedAt: current.installedAt,
+            updatedAt: now,
+          })
+          continue
+        }
+        next.push(
+          Object.freeze({
+            ...definition,
+            enabled: true,
+            disabledContributions: Object.freeze([]),
+            installedAt: now,
+            updatedAt: now,
+          })
+        )
+      }
+      return next
+    })
   }
 
   public async addLocalDirectory(
@@ -131,6 +199,7 @@ export class PluginManager {
       }),
       trust,
       enabled: true,
+      disabledContributions: Object.freeze([]),
       installedAt: now,
       updatedAt: now,
     })
@@ -148,10 +217,25 @@ export class PluginManager {
   public async remove(id: string): Promise<boolean> {
     let removed = false
     await this.#store.update((packages) => {
-      removed = packages.some((record) => record.manifest.id === id)
-      return removed
-        ? packages.filter((record) => record.manifest.id !== id)
-        : packages
+      const record = packages.find((item) => item.manifest.id === id)
+      if (record === undefined) return packages
+      if (record.source.kind === 'built-in') {
+        throw new PluginManagerError(
+          `Bundled plugin ${id} cannot be removed; disable it instead.`
+        )
+      }
+      const dependents = packages
+        .filter((item) =>
+          item.manifest.dependencies.some((dependency) => dependency.id === id)
+        )
+        .map((item) => item.manifest.id)
+      if (dependents.length > 0) {
+        throw new PluginManagerError(
+          `Plugin ${id} is required by installed plugin(s): ${dependents.join(', ')}. Disable or remove them first.`
+        )
+      }
+      removed = true
+      return packages.filter((record) => record.manifest.id !== id)
     })
     return removed
   }
@@ -226,6 +310,10 @@ export class PluginManager {
           capabilities: Object.freeze(capabilities),
         }),
         enabled: latest.enabled,
+        disabledContributions: retainDeclaredContributions(
+          latest.disabledContributions,
+          manifest.contributions
+        ),
         installedAt: latest.installedAt,
         updatedAt: new Date(this.#clock()).toISOString(),
       })
@@ -245,12 +333,31 @@ export class PluginManager {
   }
 
   public async diagnose(): Promise<readonly PluginDiagnostic[]> {
-    const packages = await this.#store.read()
+    let packages: readonly InstalledPluginRecord[]
+    try {
+      packages = await this.#store.read()
+    } catch (error) {
+      return Object.freeze([
+        Object.freeze({
+          packageId: '<store>',
+          code: 'invalid-record' as const,
+          message: getErrorMessage(error),
+        }),
+      ])
+    }
+    return await this.#diagnosePackages(packages, true)
+  }
+
+  async #diagnosePackages(
+    packages: readonly InstalledPluginRecord[],
+    includeDisabled: boolean
+  ): Promise<readonly PluginDiagnostic[]> {
     const diagnostics: PluginDiagnostic[] = []
     const records = new Map(
       packages.map((record) => [record.manifest.id, record])
     )
     for (const record of packages) {
+      if (!includeDisabled && !record.enabled) continue
       if (record.manifest.apiVersion !== this.#supportedApiVersion) {
         diagnostics.push({
           packageId: record.manifest.id,
@@ -260,21 +367,23 @@ export class PluginManager {
             `${record.manifest.apiVersion}; this Portal supports ${this.#supportedApiVersion}.`,
         })
       }
-      try {
-        const digest = await digestDirectory(record.source.locator)
-        if (digest !== record.source.digest) {
+      if (record.source.kind !== 'built-in') {
+        try {
+          const digest = await digestDirectory(record.source.locator)
+          if (digest !== record.source.digest) {
+            diagnostics.push({
+              packageId: record.manifest.id,
+              code: 'digest-mismatch',
+              message: `Installed source digest changed for ${record.manifest.id}.`,
+            })
+          }
+        } catch {
           diagnostics.push({
             packageId: record.manifest.id,
-            code: 'digest-mismatch',
-            message: `Installed source digest changed for ${record.manifest.id}.`,
+            code: 'source-missing',
+            message: `Installed source is unavailable for ${record.manifest.id}.`,
           })
         }
-      } catch {
-        diagnostics.push({
-          packageId: record.manifest.id,
-          code: 'source-missing',
-          message: `Installed source is unavailable for ${record.manifest.id}.`,
-        })
       }
       for (const dependency of record.manifest.dependencies) {
         const dependencyRecord = records.get(dependency.id)
@@ -309,7 +418,7 @@ export class PluginManager {
     const records = new Map(
       packages.map((record) => [record.manifest.id, record])
     )
-    const diagnostics = [...(await this.diagnose())]
+    const diagnostics = [...(await this.#diagnosePackages(packages, false))]
     const resolved: InstalledPluginRecord[] = []
     const invalid = new Set(
       diagnostics.map((diagnostic) => diagnostic.packageId)
@@ -387,6 +496,55 @@ export class PluginManager {
     })
     return changed
   }
+
+  public async setContributionEnabled(
+    packageId: string,
+    point: string,
+    contributionId: string,
+    enabled: boolean
+  ): Promise<boolean> {
+    let changed = false
+    await this.#store.update((packages) => {
+      const index = packages.findIndex(
+        (record) => record.manifest.id === packageId
+      )
+      if (index < 0) return packages
+      const current = packages[index]!
+      const declaration = current.manifest.contributions.find(
+        (item) => item.point === point && item.id === contributionId
+      )
+      if (declaration === undefined) {
+        throw new PluginManagerError(
+          `Plugin ${packageId} does not declare ${point}:${contributionId}.`
+        )
+      }
+      const isDisabled = current.disabledContributions.some(
+        (item) => item.point === point && item.id === contributionId
+      )
+      if (enabled === !isDisabled) {
+        changed = true
+        return packages
+      }
+      const disabledContributions = enabled
+        ? current.disabledContributions.filter(
+            (item) => item.point !== point || item.id !== contributionId
+          )
+        : [...current.disabledContributions, declaration]
+      const updated = [...packages]
+      updated[index] = Object.freeze({
+        ...current,
+        disabledContributions: Object.freeze(disabledContributions),
+        updatedAt: new Date(this.#clock()).toISOString(),
+      })
+      changed = true
+      return updated
+    })
+    return changed
+  }
+
+  public async repairStore(): Promise<PluginStoreRepairResult> {
+    return await this.#store.repair()
+  }
 }
 
 export async function digestDirectory(directory: string): Promise<string> {
@@ -421,7 +579,6 @@ async function hashDirectory(
     if (entry.isSymbolicLink())
       throw new PluginManagerError(`Symlink is not allowed: ${relative}`)
     if (entry.isDirectory()) {
-      if (entry.name === 'data') continue
       await hashDirectory(hash, absolute, relative)
       continue
     }
@@ -438,20 +595,36 @@ function createGeneration(packages: readonly InstalledPluginRecord[]): string {
   for (const record of [...packages].sort((a, b) =>
     a.manifest.id.localeCompare(b.manifest.id)
   )) {
-    hash.update(record.manifest.id)
+    hash.update(
+      JSON.stringify({
+        manifest: record.manifest,
+        source: record.source,
+        trust: record.trust,
+        enabled: record.enabled,
+        disabledContributions: record.disabledContributions,
+      })
+    )
     hash.update('\0')
-    hash.update(record.manifest.version)
-    hash.update('\0')
-    hash.update(record.source.digest)
-    hash.update('\0')
-    hash.update(record.enabled ? 'enabled' : 'disabled')
-    hash.update('\0')
-    for (const capability of [...record.trust.capabilities].sort()) {
-      hash.update(capability)
-      hash.update('\0')
-    }
   }
   return hash.digest('hex').slice(0, 24)
+}
+
+function retainDeclaredContributions(
+  disabled: readonly PluginContributionDeclaration[],
+  declared: readonly PluginContributionDeclaration[]
+): readonly PluginContributionDeclaration[] {
+  const current = new Set(
+    declared.map((item) => `${item.point}\0${item.id}\0${item.version}`)
+  )
+  return Object.freeze(
+    disabled.filter((item) =>
+      current.has(`${item.point}\0${item.id}\0${item.version}`)
+    )
+  )
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function validateEnabledDependencyGraph(

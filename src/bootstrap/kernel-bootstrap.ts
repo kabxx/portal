@@ -6,9 +6,19 @@ import type {
   ExtensionDescriptor,
   ExtensionRegistrationApi,
   ExtensionModule,
+  ContributionRef,
+  ExecutableBindingRef,
+  HookRef,
+  HookMode,
+  ServiceRef,
+  ServiceFactory,
+  ContributionRegistration,
+  ExecutableBindingRegistration,
+  HookHandlerRegistration,
 } from '../extensions/extension-contracts.ts'
 import { pluginDescriptor } from '../extensions/plugin-contracts.ts'
 import type {
+  BuiltInPluginRecord,
   InstalledPluginRecord,
   PluginDiagnostic,
   PluginResolutionSnapshot,
@@ -30,6 +40,11 @@ export interface KernelPluginPlan {
   readonly extensions: readonly CatalogExtensionRegistration[]
 }
 
+export interface BuiltInPluginDefinition {
+  readonly record: BuiltInPluginRecord
+  readonly load: () => Promise<CatalogExtensionRegistration>
+}
+
 export class PluginBootstrapError extends Error {
   public constructor(
     message: string,
@@ -43,27 +58,55 @@ export class PluginBootstrapError extends Error {
 export class KernelBootstrap {
   readonly #manager: PluginManager
   readonly #importModule: (specifier: string) => Promise<unknown>
+  readonly #builtIns: readonly BuiltInPluginDefinition[]
 
   public constructor(options: {
     readonly manager: PluginManager
     readonly importModule?: (specifier: string) => Promise<unknown>
+    readonly builtIns?: readonly BuiltInPluginDefinition[]
   }) {
     this.#manager = options.manager
     this.#importModule = options.importModule ?? importDirectModule
+    this.#builtIns = options.builtIns ?? []
   }
 
-  public async prepare(): Promise<KernelPluginPlan> {
+  public async prepare(
+    options: {
+      readonly excludedPackageIds?: readonly string[]
+    } = {}
+  ): Promise<KernelPluginPlan> {
+    if (this.#builtIns.length > 0) {
+      await this.#manager.synchronizeBuiltIns(
+        this.#builtIns.map(({ record }) => record)
+      )
+    }
     const snapshot = await this.#manager.resolveEnabled()
-    if (snapshot.diagnostics.length > 0) {
+    const blockingDiagnostics = snapshot.diagnostics.filter(
+      (diagnostic) => diagnostic.code !== 'disabled-dependency'
+    )
+    if (blockingDiagnostics.length > 0) {
       throw new PluginBootstrapError(
-        `Plugin graph validation failed with ${snapshot.diagnostics.length} diagnostic(s).`,
-        snapshot.diagnostics
+        `Plugin graph validation failed with ${blockingDiagnostics.length} diagnostic(s).`,
+        blockingDiagnostics
       )
     }
 
+    const builtIns = new Map(
+      this.#builtIns.map((definition) => [
+        definition.record.manifest.id,
+        definition,
+      ])
+    )
+    const excluded = new Set(options.excludedPackageIds ?? [])
     const extensions: CatalogExtensionRegistration[] = []
     for (const record of snapshot.packages) {
-      extensions.push(await this.#load(record))
+      if (excluded.has(record.manifest.id)) continue
+      const builtIn = builtIns.get(record.manifest.id)
+      extensions.push(
+        builtIn === undefined
+          ? await this.#load(record)
+          : await this.#loadBuiltIn(record, builtIn)
+      )
     }
     return Object.freeze({
       generation: snapshot.generation,
@@ -72,9 +115,36 @@ export class KernelBootstrap {
     })
   }
 
+  async #loadBuiltIn(
+    record: InstalledPluginRecord,
+    definition: BuiltInPluginDefinition
+  ): Promise<CatalogExtensionRegistration> {
+    if (record.source.kind !== 'built-in') {
+      throw new PluginBootstrapError(
+        `Plugin ${record.manifest.id} does not match its bundled source record.`
+      )
+    }
+    const registration = await definition.load()
+    if (registration.packageId !== record.manifest.id) {
+      throw new PluginBootstrapError(
+        `Bundled plugin loader returned ${registration.packageId} for ${record.manifest.id}.`
+      )
+    }
+    assertDescriptorMatches(
+      registration.descriptor,
+      pluginDescriptor(record.manifest)
+    )
+    return prepareRegistration(record, registration)
+  }
+
   async #load(
     record: InstalledPluginRecord
   ): Promise<CatalogExtensionRegistration> {
+    if (record.source.kind === 'built-in') {
+      throw new PluginBootstrapError(
+        `No bundled plugin loader is registered for ${record.manifest.id}.`
+      )
+    }
     const digest = await digestDirectory(record.source.locator)
     if (digest !== record.source.digest) {
       throw new PluginBootstrapError(
@@ -101,10 +171,97 @@ export class KernelBootstrap {
     )
     return Object.freeze({
       packageId: record.manifest.id,
-      descriptor: plugin.descriptor,
-      module: plugin.extension,
+      descriptor: pluginDescriptor(record.manifest, record.trust.capabilities),
+      module: filterAndVerifyModule(record, plugin.extension),
     })
   }
+}
+
+function prepareRegistration(
+  record: InstalledPluginRecord,
+  registration: CatalogExtensionRegistration
+): CatalogExtensionRegistration {
+  return Object.freeze({
+    packageId: registration.packageId,
+    descriptor: pluginDescriptor(record.manifest, record.trust.capabilities),
+    module: filterAndVerifyModule(record, registration.module),
+  })
+}
+
+function filterAndVerifyModule(
+  record: InstalledPluginRecord,
+  module: ExtensionModule
+): ExtensionModule {
+  const expected = new Map(
+    record.manifest.contributions.map((item) => [
+      contributionKey(item.point, item.id, item.version),
+      item,
+    ])
+  )
+  const disabled = new Set(
+    record.disabledContributions.map((item) =>
+      contributionKey(item.point, item.id, item.version)
+    )
+  )
+  const disabledIds = new Set(
+    record.disabledContributions.map((item) => item.id)
+  )
+  return Object.freeze({
+    register(api: ExtensionRegistrationApi): unknown {
+      const actual = new Set<string>()
+      const filtered: ExtensionRegistrationApi = {
+        provide<Service>(
+          ref: ServiceRef<Service>,
+          factory: ServiceFactory<Service>
+        ): void {
+          api.provide(ref, factory)
+        },
+        contribute<Value>(
+          ref: ContributionRef<Value>,
+          registration: ContributionRegistration<Value>
+        ): void {
+          const key = contributionKey(ref.id, registration.id, ref.version)
+          if (!expected.has(key)) {
+            throw new PluginBootstrapError(
+              `Plugin ${record.manifest.id} registered undeclared contribution ${ref.id}:${registration.id}@${ref.version}.`
+            )
+          }
+          if (actual.has(key)) {
+            throw new PluginBootstrapError(
+              `Plugin ${record.manifest.id} registered contribution ${ref.id}:${registration.id} more than once.`
+            )
+          }
+          actual.add(key)
+          if (!disabled.has(key)) api.contribute(ref, registration)
+        },
+        bind<Binding>(
+          ref: ExecutableBindingRef<Binding>,
+          registration: ExecutableBindingRegistration<Binding>
+        ): void {
+          if (!disabledIds.has(registration.targetId))
+            api.bind(ref, registration)
+        },
+        handle<Input, Output, Mode extends HookMode>(
+          ref: HookRef<Input, Output, Mode>,
+          registration: HookHandlerRegistration<Input, Output>
+        ): void {
+          api.handle(ref, registration)
+        },
+      }
+      const result = module.register(filtered)
+      const missing = [...expected.keys()].filter((key) => !actual.has(key))
+      if (missing.length > 0) {
+        throw new PluginBootstrapError(
+          `Plugin ${record.manifest.id} did not register every declared contribution: ${missing.join(', ')}.`
+        )
+      }
+      return result
+    },
+  })
+}
+
+function contributionKey(point: string, id: string, version: number): string {
+  return `${point}\0${id}\0${version}`
 }
 
 async function resolvePackageEntry(

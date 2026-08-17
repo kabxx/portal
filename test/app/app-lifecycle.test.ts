@@ -24,10 +24,13 @@ test('login wait warning renders only when entering login wait', () => {
   })
 })
 
-test('close timeout returns when a close operation hangs', async () => {
-  await closeWithTimeout(async () => {
-    await new Promise(() => {})
-  }, 10)
+test('close timeout reports when a close operation hangs', async () => {
+  await assert.rejects(
+    closeWithTimeout(async () => {
+      await new Promise(() => {})
+    }, 10),
+    /Close timed out after 10ms/
+  )
 })
 
 test('idempotent async task runs concurrent and later calls once', async () => {
@@ -80,4 +83,22 @@ test('MCP foreground cancellation aborts and calls its stop target once', async 
 
   assert.equal(controller.signal.aborted, true)
   assert.equal(stopCalls, 1)
+})
+
+test('MCP foreground cancellation reports stop failures', async () => {
+  const operation = {
+    controller: new AbortController(),
+    stopTarget: {
+      stopGeneration: async () => {
+        throw new Error('stop failed')
+      },
+    },
+    done: Promise.resolve(),
+    cancellation: null,
+  }
+
+  await assert.rejects(
+    stopMcpForegroundOperation(operation, 100),
+    /stop failed/
+  )
 })

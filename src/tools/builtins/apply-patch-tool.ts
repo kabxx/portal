@@ -315,30 +315,34 @@ async function commitPatch(files: PlannedFile[]): Promise<void> {
 })
 class ApplyPatchTool extends Tool<string, ToolOutput> {
   public async call(input: string): Promise<ToolOutput> {
-    if (typeof input !== 'string' || !input.trim()) {
-      return createApplyPatchError(
-        'apply_patch input must be non-empty freeform Patch text',
-        []
-      )
-    }
+    return await executeApplyPatch(input)
+  }
+}
 
-    let resolvedPaths: string[] = []
-    try {
-      resolvedPaths = resolvePatchPaths(input)
-      const operations = parsePatch(input)
-      const files = await planPatch(operations)
-      await commitPatch(files)
-      return {
-        result: {
-          operations: operations.length,
-          files: files.map((file) => file.displayPath),
-          resolvedPaths,
-        },
-        displayText: buildV4aPreview(files),
-      }
-    } catch (error) {
-      return createApplyPatchError(errorMessage(error), resolvedPaths)
+export async function executeApplyPatch(input: string): Promise<ToolOutput> {
+  if (typeof input !== 'string' || !input.trim()) {
+    return createApplyPatchError(
+      'apply_patch input must be non-empty freeform Patch text',
+      []
+    )
+  }
+
+  let resolvedPaths: string[] = []
+  try {
+    resolvedPaths = resolvePatchPaths(input)
+    const operations = parsePatch(input)
+    const files = await planPatch(operations)
+    await commitPatch(files)
+    return {
+      result: {
+        operations: operations.length,
+        files: files.map((file) => file.displayPath),
+        resolvedPaths,
+      },
+      displayText: buildV4aPreview(files),
     }
+  } catch (error) {
+    return createApplyPatchError(errorMessage(error), resolvedPaths)
   }
 }
 

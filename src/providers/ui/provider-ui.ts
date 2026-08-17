@@ -1,7 +1,7 @@
 import type { Locator, Page } from 'playwright'
 
 import { getProviderDefinition } from '../provider-definition-pack.ts'
-import type { ProviderId } from '../provider-id.ts'
+import type { FirstPartyProviderId as ProviderId } from '../first-party-provider-id.ts'
 
 export type LocatorCandidates = readonly [string, ...string[]]
 

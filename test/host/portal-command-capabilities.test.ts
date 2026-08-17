@@ -2,14 +2,49 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  executePortalCommandCapability,
-  listPortalCommandCapabilities,
-} from '../../src/host/portal-command-capabilities.ts'
+  executeWebProviderCapability,
+  listWebProviderCapabilities,
+} from '../../src/providers/web-provider-capabilities.ts'
+import type { FirstPartyProviderId as ProviderId } from '../../src/providers/first-party-provider-id.ts'
+import type { RuntimeCore } from '../../src/runtime/runtime-core.ts'
 import { ProviderAdapterUnsupportedError } from '../../src/providers/adapters/adapter-base.ts'
 import {
   createFakeRuntime,
   createProviderAdapterStub,
 } from '../helpers/fakes.ts'
+
+async function listPortalCommandCapabilities(
+  provider: ProviderId,
+  runtime: RuntimeCore,
+  signal: AbortSignal
+) {
+  return {
+    provider,
+    ...(await listWebProviderCapabilities(provider, runtime, signal)),
+  }
+}
+
+async function executePortalCommandCapability(
+  provider: ProviderId,
+  runtime: RuntimeCore,
+  name: string,
+  args: readonly string[],
+  signal: AbortSignal
+) {
+  const outcome = await executeWebProviderCapability(
+    provider,
+    runtime,
+    name,
+    args,
+    signal
+  )
+  return {
+    status: outcome.status,
+    title: '/thread capability',
+    body: outcome.message,
+    format: 'plain',
+  }
+}
 
 test('action capability adapter lists, selects, clears, and maps terminal states', async () => {
   const selected: string[] = []
