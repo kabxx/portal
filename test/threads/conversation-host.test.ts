@@ -16,6 +16,7 @@ import {
   type ProviderBinding,
 } from '../../src/providers/provider-host.ts'
 import { ConversationHost } from '../../src/threads/conversation-host.ts'
+import { createConversationRuntimeBridge } from '../../src/threads/conversation-runtime-bridge.ts'
 import {
   defineToolHost,
   toolContributions,
@@ -25,7 +26,14 @@ import {
 
 test('ConversationHost owns the commit and promotes a Provider Tool request into the next leg', async (t) => {
   let exchangeCount = 0
+  const toolStarted = Promise.withResolvers<void>()
+  const releaseTool = Promise.withResolvers<void>()
+  const liveItems: string[] = []
   let secondLegMessages: readonly {
+    readonly role: string
+    readonly content: string
+  }[] = []
+  let thirdLegMessages: readonly {
     readonly role: string
     readonly content: string
   }[] = []
@@ -65,16 +73,21 @@ test('ConversationHost owns the commit and promotes a Provider Tool request into
           targetId: 'test.provider',
           binding: async () => async (input, _context) => {
             exchangeCount += 1
-            if (exchangeCount === 2) secondLegMessages = input.messages
-            const tool = exchangeCount === 1
+            const currentExchange = exchangeCount
+            if (currentExchange === 2) secondLegMessages = input.messages
+            if (currentExchange === 3) thirdLegMessages = input.messages
+            const tool = currentExchange <= 2
+            const toolCallId = `call-${currentExchange}`
             return {
               events: (async function* () {
                 if (tool) {
                   yield {
                     type: 'tool.request' as const,
-                    toolCallId: 'call-1',
+                    toolCallId,
                     name: 'echo_tool',
-                    input: { value: 'from provider' },
+                    input: {
+                      value: currentExchange === 1 ? 'from provider' : 'fail',
+                    },
                   }
                 }
               })(),
@@ -118,7 +131,19 @@ test('ConversationHost owns the commit and promotes a Provider Tool request into
         api.bind(toolHandlerBindings, {
           id: 'test.echo-tool.handler',
           targetId: 'test.echo-tool',
-          binding: async (input) => ({ status: 'success', output: { input } }),
+          binding: async (input) => {
+            if (
+              typeof input === 'object' &&
+              input !== null &&
+              'value' in input &&
+              input.value === 'fail'
+            ) {
+              throw new Error('simulated Tool failure')
+            }
+            toolStarted.resolve()
+            await releaseTool.promise
+            return { status: 'success', output: { input } }
+          },
         })
       },
     }
@@ -147,18 +172,62 @@ test('ConversationHost owns the commit and promotes a Provider Tool request into
     agentMode: null,
     agentStartup: 'resume',
   })
-  const result = await conversations.send(thread.id, 'hello')
+  const runtime = createConversationRuntimeBridge({
+    host: conversations,
+    threadId: thread.id,
+    providerId: 'test.provider',
+    model: null,
+    workingDirectory: process.cwd(),
+    spawnDepth: 0,
+  })
+  const sending = runtime.submitUserInput('hello', {
+    onAssistantText: async () => {
+      liveItems.push('assistant')
+    },
+    onToolCall: async () => {
+      liveItems.push('tool.request')
+    },
+    onToolResult: async (result) => {
+      liveItems.push(`tool.result:${result.outcome}`)
+    },
+  })
+  await toolStarted.promise
+  assert.deepEqual(liveItems, ['tool.request'])
+  releaseTool.resolve()
+  assert.equal(await sending, 'final answer')
+  const result = conversations.get(thread.id)
+  assert.ok(result)
 
-  assert.equal(exchangeCount, 2)
+  assert.equal(exchangeCount, 3)
   assert.deepEqual(
     secondLegMessages.map((message) => message.role),
     ['user', 'assistant', 'tool']
   )
+  assert.deepEqual(
+    thirdLegMessages.map((message) => message.role),
+    ['user', 'assistant', 'tool', 'assistant', 'tool']
+  )
   assert.equal(result.turns[0]?.status, 'completed')
   assert.deepEqual(
     result.turns[0]?.items.map((item) => item.kind),
-    ['user', 'assistant', 'tool.request', 'tool.result', 'assistant']
+    [
+      'user',
+      'assistant',
+      'tool.request',
+      'tool.result',
+      'assistant',
+      'tool.request',
+      'tool.result',
+      'assistant',
+    ]
   )
+  assert.deepEqual(liveItems, [
+    'tool.request',
+    'tool.result:success',
+    'tool.request',
+    'tool.result:error',
+    'assistant',
+  ])
 })
 
 test('ConversationHost reports both generation stop and Provider close failures', async (t) => {

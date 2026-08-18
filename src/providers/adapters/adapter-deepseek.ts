@@ -411,35 +411,66 @@ export class DeepSeekAdapter extends ProviderAdapter {
 
   private async waitForCapturedFinishedResponse(
     fetchCaptureStartIndex: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    fallbackResponse?: import('playwright').Response
   ): Promise<DeepSeekParsedResponse> {
-    let parsedResponse: DeepSeekParsedResponse | null = null
-
-    await waitAsync(
-      async () => {
-        const rawResponse = await abortable(
-          this.readCurrentCapturedRawResponse(fetchCaptureStartIndex),
-          signal
-        )
-        if (rawResponse === null) {
-          return false
-        }
-
-        parsedResponse = this.parseResponse(rawResponse)
-        return parsedResponse?.isFinished === true
-      },
-      {
-        timeoutMs: this.getSubmitResponseTimeoutMs(),
-        signal,
-        onTimeout: async () => {
-          throw new Error(
-            'Timed out waiting for DeepSeek response to reach finished state.'
+    const raceController = new AbortController()
+    const responseSignal =
+      signal === undefined
+        ? raceController.signal
+        : AbortSignal.any([signal, raceController.signal])
+    const captured = (async () => {
+      let parsedResponse: DeepSeekParsedResponse | null = null
+      await waitAsync(
+        async () => {
+          const rawResponse = await abortable(
+            this.readCurrentCapturedRawResponse(fetchCaptureStartIndex),
+            responseSignal
           )
+          if (rawResponse === null) return false
+          parsedResponse = this.parseResponse(rawResponse)
+          return parsedResponse?.isFinished === true
         },
-      }
-    )
+        {
+          timeoutMs: this.getSubmitResponseTimeoutMs(),
+          signal: responseSignal,
+          onTimeout: async () => {
+            throw new Error(
+              'Timed out waiting for DeepSeek response to reach finished state.'
+            )
+          },
+        }
+      )
+      return parsedResponse
+    })()
 
-    if (parsedResponse === null) {
+    const fallback =
+      fallbackResponse === undefined
+        ? null
+        : (async (): Promise<DeepSeekParsedResponse> => {
+            // The page capture is normally available immediately. Delay the
+            // body fallback so the normal streaming path remains independent
+            // of Playwright response.text().
+            try {
+              await delayAsync(250, responseSignal)
+              const raw = await abortable(
+                fallbackResponse.text(),
+                responseSignal
+              )
+              const parsed = this.parseResponse(raw)
+              if (parsed?.isFinished === true) return parsed
+              return await new Promise<never>(() => {})
+            } catch (error) {
+              if (isAbortError(error)) throw error
+              return await new Promise<never>(() => {})
+            }
+          })()
+
+    try {
+      const parsedResponse = await (fallback === null
+        ? captured
+        : Promise.race([captured, fallback]))
+      if (parsedResponse !== null) return parsedResponse
       throw new ProviderAdapterError(
         'submit',
         'Failed to parse DeepSeek response.',
@@ -451,8 +482,9 @@ export class DeepSeekAdapter extends ProviderAdapter {
           detailCode: 'deepseek_response_parse_failed',
         }
       )
+    } finally {
+      raceController.abort()
     }
-    return parsedResponse
   }
 
   public async submit(options: AbortOptions = {}): Promise<string> {
@@ -470,6 +502,8 @@ export class DeepSeekAdapter extends ProviderAdapter {
         const targetResponse = createDeferred<import('playwright').Response>()
         let requestObserved = false
         let responseObserved = false
+        let dispatchStarted = false
+        let ownedRequest: import('playwright').Request | null = null
         let terminalError: unknown = null
         let warningTimer: NodeJS.Timeout | null = null
         let settled = false
@@ -481,7 +515,13 @@ export class DeepSeekAdapter extends ProviderAdapter {
           }
         }
 
-        const resolveRequestStarted = () => {
+        const resolveRequestStarted = (
+          request: import('playwright').Request
+        ) => {
+          if (!dispatchStarted || ownedRequest !== null) {
+            return
+          }
+          ownedRequest = request
           if (requestObserved) {
             return
           }
@@ -513,14 +553,17 @@ export class DeepSeekAdapter extends ProviderAdapter {
           if (!this.isTargetCompletionRequest(request)) {
             return
           }
-          resolveRequestStarted()
+          resolveRequestStarted(request)
         }
 
         const onRequestFailed = (request: import('playwright').Request) => {
           if (!this.isTargetCompletionRequest(request)) {
             return
           }
-          resolveRequestStarted()
+          resolveRequestStarted(request)
+          if (ownedRequest !== request) {
+            return
+          }
           const failureText =
             request.failure()?.errorText ?? 'unknown network failure'
           settleTargetResponse({
@@ -540,11 +583,15 @@ export class DeepSeekAdapter extends ProviderAdapter {
         }
 
         const onResponse = (response: import('playwright').Response) => {
-          if (!this.isTargetCompletionRequest(response.request())) {
+          const request = response.request()
+          if (
+            !this.isTargetCompletionRequest(request) ||
+            ownedRequest !== request
+          ) {
             return
           }
           this.emitSubmitActivitySafely()
-          resolveRequestStarted()
+          resolveRequestStarted(request)
           settleTargetResponse({ kind: 'resolve', response })
         }
 
@@ -569,6 +616,7 @@ export class DeepSeekAdapter extends ProviderAdapter {
               await this.readCurrentStreamedResponseText(fetchCaptureStartIndex)
           )
           this.emitSubmitDispatching(signal)
+          dispatchStarted = true
           await this.ui.clickSend()
           this.emitSubmitSent()
           throwIfAborted(signal)
@@ -606,13 +654,13 @@ export class DeepSeekAdapter extends ProviderAdapter {
           )
           const parsedResponse = await this.waitForCapturedFinishedResponse(
             fetchCaptureStartIndex,
-            signal
+            signal,
+            await targetResponse.promise
           )
-          await this.waitForReadyButton(
-            'submit',
-            this.getSubmitResponseTimeoutMs(),
-            signal
-          )
+          // FINISHED plus a parsed body is the completion contract for this
+          // request. The ready marker belongs to the next submission; making
+          // it part of this request used to discard valid replies while the
+          // page was briefly transitioning its controls.
           this.conversationIdVal =
             this.conversationIdVal ??
             this.page.url().match(/\/a\/chat\/s\/([^/?#]+)/)?.[1] ??

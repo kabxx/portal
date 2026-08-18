@@ -162,6 +162,13 @@ test('web Provider forwards reporter snapshots before submission completion', as
 
 test('web Provider resets a partial stream before a retry attempt', async () => {
   const adapter = new StreamingAdapter(createBrowserContextStub())
+  const staleTextReporters: Array<(message: string) => void | Promise<void>> =
+    []
+  const setTextReporter = adapter.setSubmitTextReporter.bind(adapter)
+  adapter.setSubmitTextReporter = (reporter) => {
+    if (reporter !== null) staleTextReporters.push(reporter)
+    setTextReporter(reporter)
+  }
   let attempts = 0
   adapter.submit = async function submit(
     _options?: AbortOptions
@@ -176,6 +183,9 @@ test('web Provider resets a partial stream before a retry attempt', async () => 
         retryable: true,
         maxAttempts: 2,
       })
+    }
+    if (staleTextReporters[0] !== undefined) {
+      await staleTextReporters[0]('late old response')
     }
     this.publishSnapshot('new response')
     return 'new response'

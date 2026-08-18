@@ -5,6 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 import type { BrowserContext } from 'playwright'
 import { isValidElement } from 'react'
+import type { RenderOptions } from '@kabxx/ink'
 
 import { run, type PortalRunDependencies } from '../../src/app.ts'
 import {
@@ -165,6 +166,54 @@ test(
     assert.equal(existsSync(cwd), false)
   }
 )
+
+test('run explicitly aligns Ink interactivity with the output TTY state', async () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-ink-mode-'))
+  const ui = new TerminalController()
+  const browserDisconnected = createDeferred<void>()
+  const inkInteractiveModes: boolean[] = []
+  const inkApp = {
+    rerender: () => {},
+    unmount: () => {},
+    waitUntilExit: async () => await new Promise<never>(() => {}),
+    waitUntilRenderFlush: async () => {},
+    cleanup: () => {},
+    clear: () => {},
+  }
+  try {
+    const runPromise = run(
+      [process.execPath, 'portal', '--data-dir', path.join(cwd, 'data')],
+      {
+        cwd,
+        terminalController: ui,
+        renderTerminal: (_node, options) => {
+          const renderOptions: RenderOptions | null =
+            options !== undefined &&
+            typeof options === 'object' &&
+            'interactive' in options
+              ? options
+              : null
+          inkInteractiveModes.push(renderOptions?.interactive === true)
+          return inkApp
+        },
+        launchBrowser: async () => ({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+          context: { isClosed: () => false } as unknown as BrowserContext,
+          disconnected: browserDisconnected.promise,
+          close: async () => {},
+        }),
+      }
+    )
+    await waitFor(() => inkInteractiveModes.length > 0, 'Ink render options')
+    assert.equal(inkInteractiveModes[0], process.stdout.isTTY === true)
+    await waitFor(() => ui.getState().prompt.active, 'TUI prompt')
+    assert.equal(ui.submitInput('/exit'), true)
+    await runPromise
+  } finally {
+    browserDisconnected.resolve()
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
 
 test('run rolls back the prepared host when the TUI surface fails', async () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-app-surface-fail-'))

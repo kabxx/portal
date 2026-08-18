@@ -254,6 +254,38 @@ test('waitForBrowserDevToolsEndpoint reports Chromium profile conflicts', async 
   }
 })
 
+test('waitForBrowserDevToolsEndpoint distinguishes a dynamic CDP launch from a profile conflict', async () => {
+  const child = spawnNode(`
+    process.stderr.write('Unable to create a ProcessSingleton for the profile directory.\\n')
+    setInterval(() => {}, 1000)
+  `)
+
+  try {
+    await assert.rejects(
+      waitForBrowserDevToolsEndpoint(child, 0, Date.now() + 1000),
+      /CDP port 0 is dynamic and is not the conflicting resource/
+    )
+  } finally {
+    await stopChild(child)
+  }
+})
+
+test('waitForBrowserDevToolsEndpoint reports a dynamic CDP bind failure without claiming port zero is occupied', async () => {
+  const child = spawnNode(`
+    process.stderr.write('bind failed: address already in use\\n')
+    setInterval(() => {}, 1000)
+  `)
+
+  try {
+    await assert.rejects(
+      waitForBrowserDevToolsEndpoint(child, 0, Date.now() + 1000),
+      /dynamically allocated CDP port \(configured CDP port is 0\)/
+    )
+  } finally {
+    await stopChild(child)
+  }
+})
+
 test('waitForBrowserDevToolsEndpoint reports early process exit', async () => {
   const child = spawnNode('process.exit(23)')
 

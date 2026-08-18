@@ -293,20 +293,16 @@ test('DeepSeekAdapter.submit fails instead of returning an unfinished response w
   )
 })
 
-test('DeepSeekAdapter.submit waits for the ready button to become visible before returning', async () => {
+test('DeepSeekAdapter.submit returns a finished response even when the next-ready marker is absent', async () => {
   const adapter = createTestDeepSeekAdapter()
   adapter.conversationIdVal = null
   const responseText = 'Recovered after render completed.'
   const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
 data: {"p":"response/status","o":"SET","v":"FINISHED"}`
 
-  let readyChecks = 0
   const readyButton = {
     first: () => readyButton,
-    isVisible: async () => {
-      readyChecks += 1
-      return readyChecks >= 3
-    },
+    isVisible: async () => false,
   }
 
   const sendButton = {
@@ -337,7 +333,86 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
   const result = await adapter.submit()
 
   assert.equal(result, responseText)
-  assert.ok(readyChecks >= 3)
+})
+
+test('DeepSeekAdapter.submit falls back to the Playwright response body when fetch capture is unavailable', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  adapter.conversationIdVal = null
+  const responseText = 'Recovered through the response fallback.'
+  const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const request = {
+        method: () => 'POST',
+        url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+        text: async () => raw,
+      })
+    },
+  }
+  const page = createDeepSeekPage(sendButton)
+  adapter.page = page
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getLatestCapturedFetchBody = async () => null
+  adapter.getSubmitRequestStartGraceMs = () => 10
+
+  const result = await adapter.submit()
+
+  assert.equal(result, responseText)
+})
+
+test('DeepSeekAdapter ignores a stale completion response from before the owned request', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  adapter.conversationIdVal = null
+  const responseText = 'The response from the current submission.'
+  const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  let capturedRaw: string | null = null
+  const staleRequest = {
+    method: () => 'POST',
+    url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+    failure: () => null,
+  }
+  const currentRequest = {
+    method: () => 'POST',
+    url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+    failure: () => null,
+  }
+  const page = createDeepSeekPage({
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('response', {
+        request: () => staleRequest,
+        url: () => staleRequest.url(),
+        text: async () => await new Promise<string>(() => {}),
+      })
+      setTimeout(() => {
+        capturedRaw = raw
+        page.emit('request', currentRequest)
+        page.emit('response', {
+          request: () => currentRequest,
+          url: () => currentRequest.url(),
+          text: async () => raw,
+        })
+      }, 10)
+    },
+  })
+  adapter.page = page
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getLatestCapturedFetchBody = async () => capturedRaw
+  adapter.getSubmitRequestStartGraceMs = () => 10
+  adapter.getSubmitResponseTimeoutMs = () => 500
+
+  assert.equal(await adapter.submit(), responseText)
 })
 
 test('DeepSeekAdapter.submit waits for the send button disabled class to clear before clicking', async () => {

@@ -15,6 +15,7 @@ import type {
 import type { ToolHost, ToolResult } from '../tools/tool-host.ts'
 import { ResourceScope } from '../shared/resource-scope.ts'
 import type { AgentMode, AgentStartup } from '../agents/agent-extension.ts'
+import { isAbortError } from '../runtime/runtime-cancellation.ts'
 
 export type ConversationItem =
   | { readonly kind: 'user'; readonly text: string }
@@ -132,6 +133,13 @@ export interface ConversationSendOptions {
   readonly attachments?: readonly AttachmentRef[]
   readonly maxToolLoops?: number
   readonly onProviderEvent?: (event: ProviderEvent) => void | Promise<void>
+  /**
+   * Receives generated turn items at commit time. This keeps tool calls and
+   * results observable while the tool loop is still running.
+   */
+  readonly onTurnItem?: (
+    item: Exclude<ConversationItem, { readonly kind: 'user' }>
+  ) => void | Promise<void>
   readonly onToolProgress?: import('../tools/tool-host.ts').ToolHandlerContext['onProgress']
   readonly invocation?: import('./child-conversation-service.ts').ChildConversationParent
 }
@@ -386,18 +394,23 @@ export class ConversationHost {
           return thread
         }
         if (leg.toolRequest === null) {
-          return this.#appendTurnItem(
+          thread = this.#appendTurnItem(
             thread,
             turnId,
             { kind: 'assistant', text: leg.completion.text },
             'completed'
           )
+          await options.onTurnItem?.({
+            kind: 'assistant',
+            text: leg.completion.text,
+          })
+          return thread
         }
         toolLoops += 1
         if (toolLoops > maxToolLoops) {
           throw new ConversationHostError('Tool loop limit exceeded.')
         }
-        thread = this.#appendTurnItem(thread, turnId, {
+        const assistantItem: ConversationItem = {
           kind: 'assistant',
           text: leg.completion.text,
           toolCalls: [
@@ -407,34 +420,51 @@ export class ConversationHost {
               input: leg.toolRequest.input,
             },
           ],
-        })
-        thread = this.#appendTurnItem(thread, turnId, {
+        }
+        thread = this.#appendTurnItem(thread, turnId, assistantItem)
+        await options.onTurnItem?.(assistantItem)
+        const toolRequestItem: ConversationItem = {
           kind: 'tool.request',
           toolCallId: leg.toolRequest.toolCallId,
           name: leg.toolRequest.name,
           input: leg.toolRequest.input,
-        })
-        const result = await this.#toolHost.execute(
-          leg.toolRequest.name,
-          leg.toolRequest.input,
-          leg.toolRequest.toolCallId,
-          {
-            signal: operationScope.signal,
-            availableCapabilities: binding.capabilities,
-            ...(options.onToolProgress === undefined
-              ? {}
-              : { onProgress: options.onToolProgress }),
-            ...(options.invocation === undefined
-              ? {}
-              : { invocation: options.invocation }),
-          }
-        )
-        thread = this.#appendTurnItem(thread, turnId, {
+        }
+        thread = this.#appendTurnItem(thread, turnId, toolRequestItem)
+        await options.onTurnItem?.(toolRequestItem)
+        let result: ToolResult
+        try {
+          result = await this.#toolHost.execute(
+            leg.toolRequest.name,
+            leg.toolRequest.input,
+            leg.toolRequest.toolCallId,
+            {
+              signal: operationScope.signal,
+              availableCapabilities: binding.capabilities,
+              ...(options.onToolProgress === undefined
+                ? {}
+                : { onProgress: options.onToolProgress }),
+              ...(options.invocation === undefined
+                ? {}
+                : { invocation: options.invocation }),
+            }
+          )
+        } catch (error) {
+          if (operationScope.signal.aborted || isAbortError(error)) throw error
+          const message = `Tool execution failed: ${getErrorMessage(error)}`
+          result = Object.freeze({
+            status: 'error',
+            output: Object.freeze({ message }),
+            displayText: message,
+          })
+        }
+        const toolResultItem: ConversationItem = {
           kind: 'tool.result',
           toolCallId: leg.toolRequest.toolCallId,
           name: leg.toolRequest.name,
           result,
-        })
+        }
+        thread = this.#appendTurnItem(thread, turnId, toolResultItem)
+        await options.onTurnItem?.(toolResultItem)
         attachments = extractAttachments(result)
         if (
           attachments.length > 0 &&

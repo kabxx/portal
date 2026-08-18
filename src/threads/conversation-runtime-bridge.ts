@@ -70,6 +70,7 @@ async function submitThroughConversation(
   input: string,
   handlers: ThreadRuntimeHandlers = {}
 ): Promise<string> {
+  const toolCalls = new Map<string, ToolCall>()
   const thread = await options.host.send(options.threadId, input, {
     ...(handlers.signal === undefined ? {} : { signal: handlers.signal }),
     ...(handlers.maxToolCalls === undefined
@@ -92,6 +93,9 @@ async function submitThroughConversation(
         await handlers.onStatus?.(event.prompt)
       }
     },
+    onTurnItem: async (item) => {
+      await projectConversationItem(item, handlers, toolCalls)
+    },
     ...(handlers.onToolProgress === undefined
       ? {}
       : {
@@ -101,45 +105,6 @@ async function submitThroughConversation(
   })
   const turn = thread.turns.at(-1)
   if (turn === undefined) throw new Error('Conversation produced no turn.')
-  const toolCalls = new Map<string, ToolCall>()
-  let finalText = ''
-  for (const item of turn.items) {
-    if (item.kind === 'assistant') {
-      if (item.text !== '') await handlers.onAssistantText?.(item.text)
-      finalText = item.text
-      continue
-    }
-    if (item.kind === 'tool.request') {
-      const call: ToolCall = { tool: item.name, params: item.input }
-      toolCalls.set(item.toolCallId, call)
-      await handlers.onToolCall?.(
-        call,
-        rawPayload(item),
-        metadata(item.toolCallId, item.input)
-      )
-      continue
-    }
-    if (item.kind === 'tool.result') {
-      const result: ToolResult = {
-        outcome: item.result.status,
-        result: item.result.output,
-        ...(item.result.displayText === undefined
-          ? {}
-          : { displayText: item.result.displayText }),
-      }
-      const call = toolCalls.get(item.toolCallId)
-      if (call === undefined) {
-        throw new Error(
-          `Tool result ${item.toolCallId} has no matching Tool request.`
-        )
-      }
-      await handlers.onToolResult?.(
-        result,
-        call,
-        metadata(item.toolCallId, call?.params ?? '')
-      )
-    }
-  }
   if (turn.status === 'failed' || turn.status === 'canceled') {
     const failure = [...turn.items]
       .reverse()
@@ -149,7 +114,55 @@ async function submitThroughConversation(
       )
     throw new Error(failure?.message ?? `Conversation ${turn.status}.`)
   }
-  return finalText
+  return (
+    [...turn.items]
+      .reverse()
+      .find(
+        (item): item is Extract<ConversationItem, { kind: 'assistant' }> =>
+          item.kind === 'assistant'
+      )?.text ?? ''
+  )
+}
+
+async function projectConversationItem(
+  item: Exclude<ConversationItem, { readonly kind: 'user' }>,
+  handlers: ThreadRuntimeHandlers,
+  toolCalls: Map<string, ToolCall>
+): Promise<void> {
+  if (item.kind === 'assistant') {
+    if (item.text !== '') await handlers.onAssistantText?.(item.text)
+    return
+  }
+  if (item.kind === 'tool.request') {
+    const call: ToolCall = { tool: item.name, params: item.input }
+    toolCalls.set(item.toolCallId, call)
+    await handlers.onToolCall?.(
+      call,
+      rawPayload(item),
+      metadata(item.toolCallId, item.input)
+    )
+    return
+  }
+  if (item.kind === 'tool.result') {
+    const call = toolCalls.get(item.toolCallId)
+    if (call === undefined) {
+      throw new Error(
+        `Tool result ${item.toolCallId} has no matching Tool request.`
+      )
+    }
+    const result: ToolResult = {
+      outcome: item.result.status,
+      result: item.result.output,
+      ...(item.result.displayText === undefined
+        ? {}
+        : { displayText: item.result.displayText }),
+    }
+    await handlers.onToolResult?.(
+      result,
+      call,
+      metadata(item.toolCallId, call.params)
+    )
+  }
 }
 
 function rawPayload(

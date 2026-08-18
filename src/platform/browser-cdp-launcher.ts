@@ -51,7 +51,9 @@ const BROWSER_CLOSE_TIMEOUT_MS = 3000
 const BROWSER_STARTUP_TIMEOUT_MS = 60_000
 const MAX_BROWSER_STARTUP_LOG_BYTES = 64 * 1024
 const PROFILE_SINGLETON_ERROR =
-  'Failed to create a ProcessSingleton for your profile directory.'
+  /ProcessSingleton.*profile directory|profile directory.*ProcessSingleton/i
+const CDP_BIND_ERROR =
+  /(?:address|bind|listen).*(?:already in use|in use|eaddrinuse)|eaddrinuse/i
 
 export interface BrowserLaunchOptions {
   startupTimeoutMs?: number
@@ -222,12 +224,9 @@ export async function waitForBrowserDevToolsEndpoint(
       if (Buffer.byteLength(logs) > MAX_BROWSER_STARTUP_LOG_BYTES) {
         logs = logs.slice(-MAX_BROWSER_STARTUP_LOG_BYTES)
       }
-      if (logs.includes(PROFILE_SINGLETON_ERROR)) {
-        fail(
-          new Error(
-            'Browser profile is already in use by another Chromium process.'
-          )
-        )
+      const diagnostic = classifyBrowserStartupLog(logs, configuredPort)
+      if (diagnostic !== null) {
+        fail(new Error(diagnostic))
         return
       }
       const match = logs.match(/DevTools listening on ([^\r\n]+)/)
@@ -256,7 +255,14 @@ export async function waitForBrowserDevToolsEndpoint(
         exitSignal === null
           ? `exit code ${String(code)}`
           : `signal ${exitSignal}`
-      fail(new Error(`Browser exited before CDP was ready (${status}).`))
+      const diagnostic = classifyBrowserStartupLog(logs, configuredPort)
+      fail(
+        new Error(
+          diagnostic === null
+            ? `Browser exited before CDP was ready (${status}).`
+            : `${diagnostic} Browser exited before CDP was ready (${status}).`
+        )
+      )
     }
     const onAbort = () => {
       fail(getAbortError(signal))
@@ -276,6 +282,23 @@ export async function waitForBrowserDevToolsEndpoint(
       onExit(child.exitCode, child.signalCode)
     }
   })
+}
+
+function classifyBrowserStartupLog(
+  logs: string,
+  configuredPort: number
+): string | null {
+  if (PROFILE_SINGLETON_ERROR.test(logs)) {
+    return configuredPort === 0
+      ? 'Browser profile is already in use by another Chromium process; CDP port 0 is dynamic and is not the conflicting resource.'
+      : 'Browser profile is already in use by another Chromium process.'
+  }
+  if (CDP_BIND_ERROR.test(logs)) {
+    return configuredPort === 0
+      ? 'Chromium could not bind a dynamically allocated CDP port (configured CDP port is 0).'
+      : `Browser remote debugging port ${configuredPort} is already in use.`
+  }
+  return null
 }
 
 export async function connectBrowserOverCDP<TBrowser extends BrowserConnection>(

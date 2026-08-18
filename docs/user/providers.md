@@ -122,7 +122,13 @@ Adapters use different provider completion signals:
 | Qwen     | SSE from `POST /api/v2/chat/completions`                       |
 | Kimi     | Connect assistant blocks ending in completion or root `done`   |
 
-Every adapter separately verifies composer readiness after completion. Submit polling can emit status warnings when a provider request has not started, and adapter errors are classified for bounded retry, page restore, login wait, or terminal failure.
+Completion and next-submit readiness are provider-specific. Adapters expose the
+response signal that is reliable for their site; some also verify that the
+composer is ready for the next request before returning, while others treat a
+parsed terminal response as sufficient and let the next submission perform its
+own readiness check. Submit polling can emit status warnings when a provider
+request has not started, and adapter errors are classified for bounded retry,
+page restore, login wait, or terminal failure.
 
 Kimi reads Markdown text only from assistant blocks in the owned `ChatService/Chat` network response. It does not use rendered message DOM as a response fallback.
 

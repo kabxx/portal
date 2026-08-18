@@ -1285,9 +1285,42 @@ export abstract class ProviderAdapter<
             error: string | null
           }>
         }
-        return globalObject.__portalGetFetchCaptureEntries?.(startIndex) ?? []
+        const getter = globalObject.__portalGetFetchCaptureEntries
+        return getter === undefined ? null : getter(startIndex)
       }, startIndex)
-      .catch(() => [])
+      .catch(() => null)
+
+    // A navigation can replace the execution context after the initial
+    // installation. Do not keep a stale initialized flag and silently poll an
+    // empty capture buffer forever; reinstall on the next read instead.
+    if (entries === null) {
+      this.fetchCaptureInitialized = false
+      await this.ensureFetchCaptureInstalled().catch(() => {})
+      return await this.page
+        .evaluate((retryStartIndex: number) => {
+          const globalObject = globalThis as typeof globalThis & {
+            __portalGetFetchCaptureEntries?: (startIndex?: number) => Array<{
+              id: number
+              url: string
+              method: string
+              requestBody?: string | null
+              status: number | null
+              chunks: string[]
+              done: boolean
+              error: string | null
+            }>
+          }
+          return (
+            globalObject.__portalGetFetchCaptureEntries?.(retryStartIndex) ?? []
+          )
+        }, startIndex)
+        .then((retryEntries) =>
+          Array.isArray(retryEntries)
+            ? retryEntries.filter(isCapturedFetchEntry)
+            : []
+        )
+        .catch(() => [])
+    }
 
     return Array.isArray(entries) ? entries.filter(isCapturedFetchEntry) : []
   }

@@ -237,6 +237,11 @@ async function activateTuiSurface(
     {
       stdin: options.input,
       stdout: options.output,
+      // Keep Ink's rendering mode aligned with the transcript ownership rule
+      // in TerminalScreen. Auto-detection also considers CI and can otherwise
+      // make Ink non-interactive while the screen has already disabled replay
+      // because stdout is a TTY.
+      interactive: options.output.isTTY === true,
       incrementalRendering: true,
       exitOnCtrlC: false,
       reserveTrailingLine: false,
