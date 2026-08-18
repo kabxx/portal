@@ -18,6 +18,7 @@ import {
   type AgentMode,
   type AgentSessionFactory,
 } from './agent-extension.ts'
+import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
 
 export const PORTAL_AGENT_PACKAGE_ID = 'portal.agent.default'
 export const PORTAL_CHAT_AGENT_PACKAGE_ID = 'portal.agent.chat'
@@ -94,28 +95,36 @@ function createAgentRegistration(options: {
 const createPortalAgentSession: AgentSessionFactory = async ({
   request,
   prompt,
+  signal,
 }) => {
   let inlineState: 'pending' | 'preparing' | 'complete' =
     request.startup === 'inline' ? 'pending' : 'complete'
   const initialization =
     request.startup === 'interactive'
       ? Object.freeze({
-          prompt: await prompt.render(),
+          prompt: await prompt.render(undefined, signal),
           accepts: hasReadyHandshakeToken,
         })
       : null
   return Object.freeze({
     initialization,
-    previewInput: async (input: string) =>
-      inlineState === 'complete' ? input : await prompt.render(input),
-    prepareInput: async (input: string) => {
+    previewInput: async (input: string, operationSignal: AbortSignal) => {
+      throwIfAborted(operationSignal)
+      if (inlineState === 'complete') return input
+      const rendered = await prompt.render(input, operationSignal)
+      throwIfAborted(operationSignal)
+      return rendered
+    },
+    prepareInput: async (input: string, operationSignal: AbortSignal) => {
+      throwIfAborted(operationSignal)
       if (inlineState === 'complete') return input
       if (inlineState === 'preparing') {
         throw new Error('Agent is already preparing its first input.')
       }
       inlineState = 'preparing'
       try {
-        const rendered = await prompt.render(input)
+        const rendered = await prompt.render(input, operationSignal)
+        throwIfAborted(operationSignal)
         inlineState = 'complete'
         return rendered
       } catch (error) {

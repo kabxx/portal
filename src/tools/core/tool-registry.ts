@@ -188,28 +188,34 @@ class ToolRegistry {
   private readonly availableCapabilities: readonly string[]
   private readonly invocation: ChildConversationParent | null
   private readonly promptedToolPrompts: readonly string[]
-  public readonly protocol: TextToolProtocol
+  public readonly protocol: TextToolProtocol | null
 
   constructor(
     provider: { readonly toolCapabilities: readonly string[] },
     options: {
       readonly toolHost: ToolRuntimeService
       readonly hiddenToolNames?: readonly string[]
-      readonly protocol?: TextToolProtocol
+      readonly protocol?: TextToolProtocol | null
       readonly invocation?: ChildConversationParent
     }
   ) {
-    this.protocol = options.protocol ?? DEFAULT_TEXT_TOOL_PROTOCOL
+    this.protocol =
+      options.protocol === undefined
+        ? DEFAULT_TEXT_TOOL_PROTOCOL
+        : options.protocol
     this.graphToolHost = options.toolHost
     this.availableCapabilities = provider.toolCapabilities
     this.invocation = options.invocation ?? null
     const hiddenNames = new Set(options.hiddenToolNames ?? [])
-    this.promptedToolPrompts = Object.freeze([
-      ...this.graphToolHost
-        .list()
-        .filter(({ descriptor }) => !hiddenNames.has(descriptor.name))
-        .map(({ descriptor }) => formatGraphToolPrompt(descriptor)),
-    ])
+    this.promptedToolPrompts =
+      this.protocol === null
+        ? Object.freeze([])
+        : Object.freeze([
+            ...this.graphToolHost
+              .list()
+              .filter(({ descriptor }) => !hiddenNames.has(descriptor.name))
+              .map(({ descriptor }) => formatGraphToolPrompt(descriptor)),
+          ])
   }
 
   public get prompt(): string {
@@ -219,7 +225,9 @@ class ToolRegistry {
   public async extractToolCall(
     response: string
   ): Promise<ExtractedToolCall | null> {
-    return extractToolCall(response, this.protocol)
+    return this.protocol === null
+      ? null
+      : extractToolCall(response, this.protocol)
   }
 
   public async extractToolCallPayload(
@@ -253,7 +261,9 @@ class ToolRegistry {
   }
 
   public projectStreamingAssistantText(response: string): string {
-    return projectStreamingAssistantText(response, this.protocol)
+    return this.protocol === null
+      ? response
+      : projectStreamingAssistantText(response, this.protocol)
   }
 
   public formatToolResultMessage(
@@ -261,6 +271,9 @@ class ToolRegistry {
     toolResult: ToolResult,
     delivery?: ToolResultDelivery
   ): string {
+    if (this.protocol === null) {
+      throw new Error('Text Tool protocol is disabled for this Provider.')
+    }
     return formatToolResultMessage(
       toolName,
       toolResult,
@@ -273,6 +286,15 @@ class ToolRegistry {
     toolCallPayload: string,
     declaredToolName: string | null = null
   ): PreparedToolCall {
+    if (this.protocol === null) {
+      return {
+        ok: false,
+        toolCall: null,
+        result: asErrorResult(
+          'Text Tool protocol is disabled for this Provider.'
+        ),
+      }
+    }
     if (declaredToolName === null) {
       return {
         ok: false,
@@ -315,6 +337,15 @@ class ToolRegistry {
     toolCall: ToolCall,
     namedInvocation: boolean
   ): PreparedToolCall {
+    if (this.protocol === null) {
+      return {
+        ok: false,
+        toolCall: null,
+        result: asErrorResult(
+          'Text Tool protocol is disabled for this Provider.'
+        ),
+      }
+    }
     const graphTool = this.graphToolHost
       .list()
       .find(({ descriptor }) => descriptor.name === toolCall.tool)

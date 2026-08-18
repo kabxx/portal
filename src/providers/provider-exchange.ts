@@ -48,6 +48,7 @@ export interface ProviderOutboundLeg {
 
 export type ProviderEvent =
   | { readonly type: 'text.delta'; readonly text: string }
+  | { readonly type: 'text.reset' }
   | {
       readonly type: 'tool.request'
       readonly toolCallId: string

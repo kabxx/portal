@@ -18,6 +18,7 @@ import {
 } from './agent-extension.ts'
 import { PromptHost } from '../prompts/prompt-host.ts'
 import type { ConversationHistoryMessage } from '../providers/conversation-history.ts'
+import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
 
 export class AgentHostError extends Error {
   public constructor(message: string, options: ErrorOptions = {}) {
@@ -192,26 +193,38 @@ export class AgentHost {
             })
       return Object.freeze({
         initialization,
-        previewInput: async (input: string) =>
-          await raceWithAbort(
+        previewInput: async (input: string, operationSignal?: AbortSignal) => {
+          const signal =
+            operationSignal === undefined
+              ? activeSignal
+              : AbortSignal.any([activeSignal, operationSignal])
+          throwIfAborted(signal)
+          return await raceWithAbort(
             requireAgentText(
-              session.previewInput(input),
+              session.previewInput(input, signal),
               contribution.value.id,
               'previewInput'
             ),
-            activeSignal,
+            signal,
             `Agent ${contribution.value.id} input preview was canceled.`
-          ),
-        prepareInput: async (input: string) =>
-          await raceWithAbort(
+          )
+        },
+        prepareInput: async (input: string, operationSignal?: AbortSignal) => {
+          const signal =
+            operationSignal === undefined
+              ? activeSignal
+              : AbortSignal.any([activeSignal, operationSignal])
+          throwIfAborted(signal)
+          return await raceWithAbort(
             requireAgentText(
-              session.prepareInput(input),
+              session.prepareInput(input, signal),
               contribution.value.id,
               'prepareInput'
             ),
-            activeSignal,
+            signal,
             `Agent ${contribution.value.id} input preparation was canceled.`
-          ),
+          )
+        },
         close: async (reason?: unknown) =>
           await scope.resourceScope.dispose({ reason }),
       })

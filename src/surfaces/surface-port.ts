@@ -18,6 +18,7 @@ export interface SurfacePort {
 
 export type SurfaceMessageEvent =
   | { readonly type: 'assistant.delta'; readonly text: string }
+  | { readonly type: 'assistant.reset' }
   | { readonly type: 'assistant.result'; readonly text: string }
   | {
       readonly type: 'tool.progress'

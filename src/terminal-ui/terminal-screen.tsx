@@ -933,10 +933,18 @@ export function TerminalScreen({
   }
   const { columns, rows } = useWindowSize()
   const { waitUntilRenderFlush } = useApp()
-  const { write: writeToStdout } = useStdout()
+  const { stdout, write: writeToStdout } = useStdout()
   const screenColumns = Math.max(1, columns)
   const screenRows = Math.max(1, rows)
   const transcriptWriter = transcriptWriterProp ?? null
+  // Ink owns the live TTY frame. Replaying the transcript through its stdout
+  // escape path can restore a stale input frame while a new one is committing.
+  // Keep the replay optimization for non-interactive output, where no live
+  // frame exists to race with it.
+  const effectiveTranscriptWriter = resolveTranscriptWriterForOutput(
+    transcriptWriter,
+    stdout.isTTY
+  )
   const inputValue = inputState.value
 
   useEffect(() => {
@@ -1383,13 +1391,13 @@ export function TerminalScreen({
     .join('\u001F')
 
   useEffect(() => {
-    if (transcriptWriter === null) return
+    if (effectiveTranscriptWriter === null) return
 
     const scheduler = createTranscriptSyncScheduler({
       waitUntilRenderFlush,
       getLiveFrameSignature: () => liveFrameSignatureRef.current,
       sync: (request) => {
-        transcriptWriter.sync(
+        effectiveTranscriptWriter.sync(
           request.completedTimeline,
           request.bubbleWidth,
           request.forceReflow,
@@ -1408,7 +1416,7 @@ export function TerminalScreen({
         transcriptSyncSchedulerRef.current = null
       }
     }
-  }, [transcriptWriter, waitUntilRenderFlush, writeToStdout])
+  }, [effectiveTranscriptWriter, waitUntilRenderFlush, writeToStdout])
 
   useLayoutEffect(() => {
     liveFrameSignatureRef.current = liveFrameSignature
@@ -1417,7 +1425,7 @@ export function TerminalScreen({
 
   useEffect(() => {
     const scheduler = transcriptSyncSchedulerRef.current
-    if (scheduler === null || transcriptWriter === null) return
+    if (scheduler === null || effectiveTranscriptWriter === null) return
 
     const previousLayout = transcriptLayoutRef.current
     const forceReflow =
@@ -1437,12 +1445,12 @@ export function TerminalScreen({
     screenColumns,
     screenRows,
     state.timelineVersion,
-    transcriptWriter,
+    effectiveTranscriptWriter,
   ])
 
   return (
     <>
-      {transcriptWriter === null
+      {effectiveTranscriptWriter === null
         ? completedTimeline.map((entry) => (
             <TimelineBubble entry={entry} key={entry.id} width={bubbleWidth} />
           ))
@@ -1476,6 +1484,13 @@ export function TerminalScreen({
       </Box>
     </>
   )
+}
+
+export function resolveTranscriptWriterForOutput(
+  transcriptWriter: TerminalTranscriptWriter | null,
+  isTTY: boolean | undefined
+): TerminalTranscriptWriter | null {
+  return isTTY === true ? null : transcriptWriter
 }
 
 export function formatInputHintLines(

@@ -20,7 +20,7 @@ import {
 interface TestToolHostOptions {
   readonly services?: ToolServices
   readonly hiddenToolNames?: readonly string[]
-  readonly protocol?: TextToolProtocol
+  readonly protocol?: TextToolProtocol | null
   readonly invocation?: ChildConversationParent
 }
 

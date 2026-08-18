@@ -24,10 +24,14 @@ export function createTuiThreadInputHandler({
       return
     }
 
+    let turnErrorRendered = false
     const startResult = surface.startMessage(
       activeThread.id,
       input,
       async (event) => {
+        if (event.type === 'turn.item' && event.item.kind === 'error') {
+          turnErrorRendered = true
+        }
         await renderSurfaceEvent(ui, activeThread, event)
       },
       displayInput
@@ -47,15 +51,17 @@ export function createTuiThreadInputHandler({
     ui.renderUserMessage(activeThread, displayInput)
     ui.setThreadBusy(activeThread.id, true)
     void startResult.operation.done
-      .catch((error: unknown) => {
-        ui.renderThreadError(activeThread, 'runtime', String(error))
-      })
       .then(
         () => {
+          ui.clearLiveAssistant(activeThread)
           ui.clearLiveCommand(activeThread)
           ui.setThreadBusy(activeThread.id, false)
         },
-        () => {
+        (error: unknown) => {
+          if (!turnErrorRendered) {
+            ui.renderThreadError(activeThread, 'runtime', String(error))
+          }
+          ui.clearLiveAssistant(activeThread)
           ui.clearLiveCommand(activeThread)
           ui.setThreadBusy(activeThread.id, false)
         }
@@ -78,6 +84,10 @@ async function renderSurfaceEvent(
 ): Promise<void> {
   if (event.type === 'assistant.delta') {
     ui.renderAssistantStream(thread, event.text)
+    return
+  }
+  if (event.type === 'assistant.reset') {
+    ui.clearLiveAssistant(thread)
     return
   }
   if (event.type === 'tool.progress') {

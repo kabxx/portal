@@ -138,10 +138,13 @@ export class PortalSurfacePort implements SurfacePortActions {
     signal?: AbortSignal
   ): SurfaceStartResult {
     const start = this.#lifecycle.startSend(threadId, input, async (signal) => {
+      let completed = false
       const handlers: ThreadInputHandlers = {
         signal,
         onAssistantStream: async (text) =>
           await onEvent({ type: 'assistant.delta', text }),
+        onAssistantStreamReset: async () =>
+          await onEvent({ type: 'assistant.reset' }),
         onToolProgress: (event, toolCall, toolCallId) => {
           void Promise.resolve()
             .then(
@@ -158,20 +161,25 @@ export class PortalSurfacePort implements SurfacePortActions {
         onTurnItem: async (item) =>
           await onEvent({ type: 'turn.item', item: mapTurnItem(item) }),
       }
-      const result = await this.#threads.submitThreadInput(
-        threadId,
-        input,
-        handlers
-      )
-      await this.#lifecycle.recordActivity({
-        threadId,
-        provider: this.#threads.getThread(threadId)!.provider,
-        conversationUrl:
-          this.#threads.getThread(threadId)!.runtime.conversationUrl,
-        title: buildThreadHistoryTitle(title),
-      })
-      if (result !== null) {
-        await onEvent({ type: 'assistant.result', text: result.assistant })
+      try {
+        const result = await this.#threads.submitThreadInput(
+          threadId,
+          input,
+          handlers
+        )
+        await this.#lifecycle.recordActivity({
+          threadId,
+          provider: this.#threads.getThread(threadId)!.provider,
+          conversationUrl:
+            this.#threads.getThread(threadId)!.runtime.conversationUrl,
+          title: buildThreadHistoryTitle(title),
+        })
+        if (result !== null) {
+          await onEvent({ type: 'assistant.result', text: result.assistant })
+        }
+        completed = true
+      } finally {
+        if (!completed) await onEvent({ type: 'assistant.reset' })
       }
     })
     if (!start.accepted) return start

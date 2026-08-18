@@ -4,9 +4,9 @@ import type {
 } from '../providers/adapters/adapter-base.ts'
 import { isProviderAdapterError } from '../providers/adapters/adapter-base.ts'
 import { ToolRegistry } from '../tools/core/tool-registry.ts'
-import { RuntimeCore, type RuntimeCoreOptions } from './runtime-core.ts'
+import { type RuntimeCoreOptions } from './runtime-core.ts'
+import { WebProviderTextRuntime } from '../providers/web-provider-text-runtime.ts'
 import { throwIfAborted } from './runtime-cancellation.ts'
-import { DEFAULT_TEXT_TOOL_PROTOCOL } from '../tools/core/text-tool-protocol.ts'
 import type { TextToolProtocol } from '../tools/core/text-tool-protocol.ts'
 import type { ToolRuntimeService } from '../tools/tool-runtime-service.ts'
 import type { AttachmentReader } from '../attachments/attachment-contracts.ts'
@@ -26,7 +26,6 @@ export interface RuntimeFactoryOptions extends ProviderAdapterOptions {
   providerId?: string
   currentSpawnDepth?: number
   attachmentReader?: AttachmentReader
-  exchangeDelegate?: RuntimeCoreOptions['exchangeDelegate']
   onClose?: RuntimeCoreOptions['onClose']
 }
 
@@ -34,7 +33,7 @@ export interface RuntimeFactoryOptions extends ProviderAdapterOptions {
 export async function createRuntimeFromAdapter(
   adapter: ProviderAdapter,
   options: RuntimeFactoryOptions
-): Promise<RuntimeCore> {
+): Promise<WebProviderTextRuntime> {
   const { signal } = options
   let agentSession: AgentSession | null = null
   try {
@@ -60,7 +59,9 @@ export async function createRuntimeFromAdapter(
     const toolRegistry = new ToolRegistry(adapter, {
       toolHost: options.toolHost,
       hiddenToolNames,
-      protocol: options.textToolProtocol ?? DEFAULT_TEXT_TOOL_PROTOCOL,
+      ...(options.textToolProtocol === undefined
+        ? {}
+        : { protocol: options.textToolProtocol }),
       ...(options.providerId === undefined
         ? {}
         : {
@@ -85,15 +86,12 @@ export async function createRuntimeFromAdapter(
           : options.textToolProtocol,
     })
     throwIfAborted(signal)
-    const runtime = new RuntimeCore(adapter, toolRegistry, {
+    const runtime = new WebProviderTextRuntime(adapter, toolRegistry, {
       agentSession,
       requestAttemptLimit: options.requestAttemptLimit ?? 3,
       ...(options.attachmentReader === undefined
         ? {}
         : { attachmentReader: options.attachmentReader }),
-      ...(options.exchangeDelegate === undefined
-        ? {}
-        : { exchangeDelegate: options.exchangeDelegate }),
       ...(options.onClose === undefined ? {} : { onClose: options.onClose }),
     })
     await runtime.init({ signal })

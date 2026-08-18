@@ -162,6 +162,36 @@ test('Portal Action Protocol converts JSON and freeform actions into internal To
   )
 })
 
+test('ToolRegistry with a null text protocol does not advertise or parse text Tools', async () => {
+  const registry = createTestToolRegistry(
+    createProviderAdapterStub(),
+    [JsonEchoTool],
+    { protocol: null }
+  )
+
+  assert.equal(registry.prompt, '')
+  assert.equal(
+    await registry.extractToolCall(
+      '<tool name="json_echo">{"value":"x"}</tool>'
+    ),
+    null
+  )
+  assert.equal(
+    registry.projectStreamingAssistantText(
+      'Answer <tool name="json_echo">{"value":"x"}</tool>'
+    ),
+    'Answer <tool name="json_echo">{"value":"x"}</tool>'
+  )
+  assert.throws(
+    () =>
+      registry.formatToolResultMessage('json_echo', {
+        outcome: 'success',
+        result: { value: 'x' },
+      }),
+    /Text Tool protocol is disabled/
+  )
+})
+
 test('streaming assistant projection hides tool candidates and payloads', () => {
   assert.equal(
     projectStreamingAssistantText('Ordinary response'),

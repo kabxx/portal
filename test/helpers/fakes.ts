@@ -1,7 +1,7 @@
 import {
-  RuntimeCore,
+  WebProviderTextRuntime as RuntimeCore,
   type RuntimeCoreHandlers,
-} from '../../src/runtime/runtime-core.ts'
+} from '../../src/providers/web-provider-text-runtime.ts'
 import {
   ProviderAdapter,
   type ProviderBrowserContext,

@@ -21,7 +21,7 @@ export interface PromptRenderRequest {
 }
 
 export interface PromptSession {
-  render(task?: string): Promise<string>
+  render(task?: string, signal?: AbortSignal): Promise<string>
   close?(reason?: unknown): void | Promise<void>
 }
 

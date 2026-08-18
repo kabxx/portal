@@ -13,6 +13,7 @@ import {
   type PromptRendererFactory,
   type PromptSession,
 } from './prompt-extension.ts'
+import { throwIfAborted } from '../runtime/runtime-cancellation.ts'
 
 export class PromptHostError extends Error {
   public constructor(message: string, options: ErrorOptions = {}) {
@@ -108,10 +109,17 @@ export class PromptHost {
         await closePromise
       }
       return Object.freeze({
-        render: async (task?: string) => {
+        render: async (task?: string, renderSignal?: AbortSignal) => {
+          const operationSignal =
+            renderSignal === undefined
+              ? activeSignal
+              : AbortSignal.any([activeSignal, renderSignal])
+          throwIfAborted(operationSignal)
           const rendered = await raceWithAbort(
-            Promise.resolve().then(async () => await session.render(task)),
-            activeSignal,
+            Promise.resolve().then(
+              async () => await session.render(task, operationSignal)
+            ),
+            operationSignal,
             `Prompt ${promptId} rendering was canceled.`
           )
           if (typeof rendered !== 'string') {

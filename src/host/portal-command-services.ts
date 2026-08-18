@@ -108,7 +108,11 @@ export function createPortalCommandServices(
       )
       return result.ok
         ? { ok: true }
-        : { ok: false, message: result.failure.message }
+        : {
+            ok: false,
+            message: result.failure.message,
+            lifecycleFailure: true,
+          }
     },
     list() {
       const active = started.threadManager.getActiveThread()?.id ?? null

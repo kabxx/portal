@@ -31,8 +31,8 @@ export interface AgentInitialization {
 
 export interface AgentSession {
   readonly initialization: AgentInitialization | null
-  previewInput(input: string): Promise<string>
-  prepareInput(input: string): Promise<string>
+  previewInput(input: string, signal?: AbortSignal): Promise<string>
+  prepareInput(input: string, signal?: AbortSignal): Promise<string>
   close?(reason?: unknown): void | Promise<void>
 }
 

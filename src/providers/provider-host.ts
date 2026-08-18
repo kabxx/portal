@@ -84,6 +84,7 @@ export class ProviderHost {
   readonly #services: ServiceContainer | null
   readonly #serviceScope: ExtensionResourceScope | null
   readonly #agents: AgentHost | null
+  readonly #lateFactorySettlements = new Set<Promise<void>>()
   #attachmentReader: AttachmentReader
 
   public constructor(options: {
@@ -101,6 +102,25 @@ export class ProviderHost {
     this.#serviceScope = options.serviceScope ?? null
     this.#attachmentReader =
       options.attachmentReader ?? unavailableAttachmentReader
+    this.#parent.defer(
+      'provider endpoint factory late settlements',
+      async ({ reason }) => {
+        const outcomes = await Promise.allSettled([
+          ...this.#lateFactorySettlements,
+        ])
+        this.#lateFactorySettlements.clear()
+        const errors = outcomes.flatMap((outcome) =>
+          outcome.status === 'rejected' ? [outcome.reason as unknown] : []
+        )
+        if (errors.length === 1) throw errors[0]
+        if (errors.length > 1) {
+          throw new AggregateError(
+            errors,
+            `Provider endpoint late cleanup failed during shutdown (${String(reason)}).`
+          )
+        }
+      }
+    )
   }
 
   public setAttachmentReader(reader: AttachmentReader | null): void {
@@ -279,16 +299,25 @@ export class ProviderHost {
           })
       )
       let endpointAdopted = false
-      scope.defer(
-        'provider endpoint factory settlement',
-        async ({ reason }) => {
-          if (endpointAdopted) return
-          const lateEndpoint = await endpointPromise
+      const lateCleanup = endpointPromise.then(
+        async (lateEndpoint) => {
+          if (endpointAdopted || !scope.signal.aborted) return
           if (typeof lateEndpoint === 'function') {
-            await lateEndpoint.close?.(reason)
+            await lateEndpoint.close?.(scope.signal.reason)
           }
+        },
+        () => undefined
+      )
+      const lateSettlement = lateCleanup.then(
+        () => {
+          this.#lateFactorySettlements.delete(lateSettlement)
+        },
+        (error: unknown) => {
+          throw error
         }
       )
+      this.#lateFactorySettlements.add(lateSettlement)
+      void lateSettlement.catch(() => undefined)
       const endpoint = await raceBindingWithAbort(endpointPromise, scope.signal)
       if (typeof endpoint !== 'function') {
         throw new ProviderHostError(

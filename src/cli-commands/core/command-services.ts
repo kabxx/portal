@@ -74,7 +74,12 @@ export interface CommandThreadService {
     readonly mode: 'agent' | 'chat'
     readonly signal: AbortSignal
   }): Promise<
-    { readonly ok: true } | { readonly ok: false; readonly message: string }
+    | { readonly ok: true }
+    | {
+        readonly ok: false
+        readonly message: string
+        readonly lifecycleFailure?: boolean
+      }
   >
   list(): readonly CommandThreadSummary[]
   history(

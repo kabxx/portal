@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { RuntimeCore } from '../../src/runtime/runtime-core.ts'
+import { WebProviderTextRuntime as RuntimeCore } from '../../src/providers/web-provider-text-runtime.ts'
 import {
   ProviderAdapter,
   ProviderAdapterError,

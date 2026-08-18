@@ -253,6 +253,71 @@ test('ProviderHost waits for and closes a late endpoint after binding cancellati
   assert.equal(closeCalls, 1)
 })
 
+test('ProviderHost binding cancellation does not wait for a never-settling factory', async (t) => {
+  const factoryStarted = Promise.withResolvers<void>()
+  const endpointDeferred = Promise.withResolvers<ProviderEndpoint>()
+  const { host, root } = createHost(async () => {
+    factoryStarted.resolve()
+    return await endpointDeferred.promise
+  })
+  t.after(async () => {
+    endpointDeferred.resolve(
+      Object.assign(
+        async () => ({
+          events: (async function* () {})(),
+          completion: Promise.resolve({
+            status: 'canceled' as const,
+            message: 'test cleanup',
+            delivery: 'unknown' as const,
+          }),
+          cancel: () => undefined,
+        }),
+        { close: async () => undefined }
+      )
+    )
+    await root.dispose()
+  })
+
+  const opening = host.openBinding(
+    'test.provider',
+    'test.provider-package',
+    'never-settles',
+    RESUME_BINDING
+  )
+  void opening.catch(() => undefined)
+  await factoryStarted.promise
+
+  const disposing = root.dispose({
+    reason: new PortalAbortError('cancel Provider binding'),
+  })
+  const outcome = await Promise.race([
+    opening.then(
+      () => 'resolved' as const,
+      () => 'rejected' as const
+    ),
+    new Promise<'timeout'>((resolve) => {
+      setTimeout(() => resolve('timeout'), 100)
+    }),
+  ])
+  assert.equal(outcome, 'rejected')
+
+  endpointDeferred.resolve(
+    Object.assign(
+      async () => ({
+        events: (async function* () {})(),
+        completion: Promise.resolve({
+          status: 'canceled' as const,
+          message: 'test cleanup',
+          delivery: 'unknown' as const,
+        }),
+        cancel: () => undefined,
+      }),
+      { close: async () => undefined }
+    )
+  )
+  await disposing
+})
+
 test('ProviderHost binds one owner endpoint and closes an exchange after provider completion', async (t) => {
   const events: ProviderEvent[] = []
   const { host, root } = createHost(async () => async () => ({

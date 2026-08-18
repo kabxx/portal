@@ -28,6 +28,7 @@ import {
   normalizePastedInput,
   renderBubbleBody,
   renderTimelineEntryToAnsi,
+  resolveTranscriptWriterForOutput,
   wrapAnsiLine,
   resolveInputSyntaxHighlight,
   resolveSubmittedInputValue,
@@ -39,12 +40,21 @@ import {
   truncateMiddleLine,
 } from '../../src/terminal-ui/terminal-screen.tsx'
 import type { KeyModifiers } from '../../src/terminal-ui/terminal-screen.tsx'
+import { TerminalTranscriptWriter } from '../../src/terminal-ui/terminal-transcript-writer.ts'
 
 const commandFixture = createBuiltinCommandTestRuntime()
 const COMMAND_SESSION = commandFixture.session
 const COMPLETION_SNAPSHOT = commandFixture.completionSnapshot
 
 test.after(async () => await commandFixture.close())
+
+test('interactive Ink output owns the live frame instead of transcript replay', () => {
+  const writer = new TerminalTranscriptWriter(() => '')
+
+  assert.equal(resolveTranscriptWriterForOutput(writer, true), null)
+  assert.equal(resolveTranscriptWriterForOutput(writer, false), writer)
+  assert.equal(resolveTranscriptWriterForOutput(writer, undefined), writer)
+})
 
 function key(modifiers: Partial<KeyModifiers> = {}): KeyModifiers {
   return {

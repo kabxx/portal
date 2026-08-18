@@ -1076,7 +1076,7 @@ export class TerminalController {
     return `${thread.id}@${thread.provider}`
   }
 
-  private clearLiveAssistant(thread: ThreadHandle) {
+  public clearLiveAssistant(thread: ThreadHandle): void {
     this.takeLiveAssistant(thread)
   }
 

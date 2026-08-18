@@ -84,6 +84,8 @@ async function submitThroughConversation(
     onProviderEvent: async (event) => {
       if (event.type === 'text.delta') {
         await handlers.onAssistantStream?.(event.text)
+      } else if (event.type === 'text.reset') {
+        await handlers.onAssistantStreamReset?.()
       } else if (event.type === 'status') {
         await handlers.onStatus?.(event.message)
       } else if (event.type === 'attention.request') {

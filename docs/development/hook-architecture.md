@@ -125,7 +125,9 @@ renderer bindings. `AgentHost` resolves `agents.collect`, verifies that its
 referenced Prompt is active, and owns the scoped Agent session. Prompt sections,
 Skill content, READY acceptance, interactive initialization, and inline-first-
 task policy are first-party plugin behavior. `RuntimeCore` consumes only the
-resolved Agent session and no longer imports a setup Prompt builder.
+resolved Agent session and no longer imports a setup Prompt builder. A web
+Provider may add a Provider-private runtime for its text Tool codec and retry
+loop, but that implementation is not part of the Kernel RuntimeCore contract.
 
 Prompt, Agent, and Skill contributions can be disabled independently from
 their commands or tools. Disabling a Prompt package disables dependent Agent
@@ -139,8 +141,10 @@ prompt.
 
 Portal terminology remains `Tool`, `ToolHost`, `ToolRequest`, and `ToolResult`.
 Tools enter the graph through `tools.collect` and execute through a same-owner
-binding. There is no `DEFAULT_TOOLS`, legacy ToolRegistry execution path, or
-wide Provider/Runtime/Browser service passed to a Tool.
+binding. There is no `DEFAULT_TOOLS`, Kernel-owned RuntimeCore Tool loop, or
+wide Provider/Runtime/Browser service passed to a Tool. A Provider-private
+text protocol may use the resolved ToolHost through its narrow runtime service;
+it does not create a second Kernel execution path.
 
 `run_command` owns its JobManager, process tree, output capture, timeout, stop,
 list, command contribution, MCP management feature, and shutdown. The Kernel

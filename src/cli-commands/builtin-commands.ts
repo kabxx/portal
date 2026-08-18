@@ -352,12 +352,14 @@ async function threadHandler(
         mode: invocation.routeId,
         signal: context.signal,
       })
-      if (!result.ok)
+      if (!result.ok) {
+        if (result.lifecycleFailure) return CONTINUE
         return writeWarning(
           output,
           `/thread ${invocation.routeId}`,
           result.message
         )
+      }
       return CONTINUE
     }
     case 'list': {

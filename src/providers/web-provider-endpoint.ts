@@ -187,26 +187,21 @@ export async function createWebProviderEndpoint(
     input: ProviderOutboundLeg,
     exchangeContext: ProviderEndpointContext
   ) => {
+    const events = new ProviderEventQueue()
     const submission = submitLeg({
       input,
       context: exchangeContext,
       adapter,
       tools,
       requestAttemptLimit: options.requestAttemptLimit ?? 3,
-      prepareText: async (text) => await runtime.prepareExchangeInput(text),
+      prepareText: async (text, signal) =>
+        await runtime.prepareExchangeInput(text, signal),
+      onEvent: (event) => events.push(event),
     })
-    void submission.catch(() => undefined)
-    const events: AsyncIterable<ProviderEvent> = Object.freeze({
-      async *[Symbol.asyncIterator](): AsyncGenerator<ProviderEvent> {
-        const result = await submission
-        if (result.text !== '') {
-          yield { type: 'text.delta', text: result.text }
-        }
-        if (result.toolRequest !== null) {
-          yield { type: 'tool.request', ...result.toolRequest }
-        }
-      },
-    })
+    void submission.then(
+      () => events.close(),
+      () => events.close()
+    )
     const completion = submission.then<ProviderCompletion, ProviderCompletion>(
       ({ text }) => ({
         status: 'completed',
@@ -255,7 +250,8 @@ async function submitLeg(options: {
   readonly adapter: ProviderAdapter
   readonly tools: ToolRegistry
   readonly requestAttemptLimit: number
-  readonly prepareText: (text: string) => Promise<string>
+  readonly prepareText: (text: string, signal: AbortSignal) => Promise<string>
+  readonly onEvent: (event: ProviderEvent) => void
 }): Promise<{
   readonly text: string
   readonly toolRequest: {
@@ -273,19 +269,41 @@ async function submitLeg(options: {
     })
   }
   const payload = await options.prepareText(
-    formatOutboundMessage(message, options)
+    formatOutboundMessage(message, options),
+    options.context.signal
   )
+  let lastStreamedText: string | null = null
   const response = await submitWithRetry(
     options.adapter,
     payload,
     options.context.signal,
-    options.requestAttemptLimit
+    options.requestAttemptLimit,
+    {
+      onText: (snapshot) => {
+        const projected = options.tools.projectStreamingAssistantText(snapshot)
+        if (projected === lastStreamedText) return
+        lastStreamedText = projected
+        options.onEvent({ type: 'text.delta', text: projected })
+      },
+      onStatus: (message) => options.onEvent({ type: 'status', message }),
+      onReset: () => {
+        lastStreamedText = null
+        options.onEvent({ type: 'text.reset' })
+      },
+    }
   )
-  return await decodeWebProviderResponse(
+  const result = await decodeWebProviderResponse(
     response,
     options.input.exchangeId,
     options.tools
   )
+  if (result.text !== '' && result.text !== lastStreamedText) {
+    options.onEvent({ type: 'text.delta', text: result.text })
+  }
+  if (result.toolRequest !== null) {
+    options.onEvent({ type: 'tool.request', ...result.toolRequest })
+  }
+  return result
 }
 
 export async function decodeWebProviderResponse(
@@ -300,6 +318,9 @@ export async function decodeWebProviderResponse(
     readonly input: Record<string, unknown> | string
   } | null
 }> {
+  if (tools.protocol === null) {
+    return Object.freeze({ text: response, toolRequest: null })
+  }
   const extracted = await tools.extractToolCall(response)
   if (extracted === null || !isToolCallAtResponseEnd(extracted)) {
     return Object.freeze({ text: response, toolRequest: null })
@@ -334,6 +355,7 @@ function formatOutboundMessage(
   ) {
     return message.content
   }
+  if (options.tools.protocol === null) return message.content
   return formatToolResultMessage(
     message.toolName,
     {
@@ -352,14 +374,40 @@ async function submitWithRetry(
   adapter: ProviderAdapter,
   payload: string,
   signal: AbortSignal,
-  maxAttempts: number
+  maxAttempts: number,
+  callbacks: {
+    readonly onText: (message: string) => void | Promise<void>
+    readonly onStatus: (message: string) => void | Promise<void>
+    readonly onReset: () => void | Promise<void>
+  }
 ): Promise<string> {
+  let attemptGeneration = 0
+  let streamedInAttempt = false
   return await retryAsync(
     async () => {
       throwIfAborted(signal)
-      await adapter.attachText(payload)
-      throwIfAborted(signal)
-      return await adapter.submitWithResponseTimeout({ signal })
+      const generation = ++attemptGeneration
+      streamedInAttempt = false
+      adapter.setSubmitTextReporter(async (message) => {
+        if (generation !== attemptGeneration) return
+        streamedInAttempt = true
+        await callbacks.onText(message)
+      })
+      adapter.setSubmitStatusReporter(async (message) => {
+        if (generation !== attemptGeneration) return
+        await callbacks.onStatus(message)
+      })
+      try {
+        await adapter.attachText(payload)
+        throwIfAborted(signal)
+        return await adapter.submitWithResponseTimeout({ signal })
+      } finally {
+        if (generation === attemptGeneration) {
+          attemptGeneration += 1
+          adapter.setSubmitTextReporter(null)
+          adapter.setSubmitStatusReporter(null)
+        }
+      }
     },
     {
       maxAttempts,
@@ -370,12 +418,51 @@ async function submitWithRetry(
         attempt + 1 < error.maxAttempts,
       onRetry: async (error) => {
         throwIfAborted(signal)
+        if (streamedInAttempt) await callbacks.onReset()
         if (isProviderAdapterError(error) && error.recovery === 'restore') {
           await adapter.restore({ signal })
         }
       },
     }
   )
+}
+
+class ProviderEventQueue implements AsyncIterable<ProviderEvent> {
+  readonly #events: ProviderEvent[] = []
+  readonly #waiters: ((result: IteratorResult<ProviderEvent>) => void)[] = []
+  #closed = false
+
+  public push(event: ProviderEvent): void {
+    if (this.#closed) return
+    const waiter = this.#waiters.shift()
+    if (waiter === undefined) this.#events.push(event)
+    else waiter({ done: false, value: event })
+  }
+
+  public close(): void {
+    if (this.#closed) return
+    this.#closed = true
+    while (this.#waiters.length > 0) {
+      this.#waiters.shift()!({ done: true, value: undefined })
+    }
+  }
+
+  public [Symbol.asyncIterator](): AsyncIterator<ProviderEvent> {
+    return {
+      next: async () => {
+        const event = this.#events.shift()
+        if (event !== undefined) return { done: false, value: event }
+        if (this.#closed) return { done: true, value: undefined }
+        return await new Promise<IteratorResult<ProviderEvent>>((resolve) => {
+          this.#waiters.push(resolve)
+        })
+      },
+      return: async () => {
+        this.close()
+        return { done: true, value: undefined }
+      },
+    }
+  }
 }
 
 function getErrorMessage(error: unknown): string {

@@ -95,6 +95,24 @@ test('thread creation resolves providers and forwards parsed route arguments', a
   )
 })
 
+test('thread lifecycle failures are left to the lifecycle event projection', async (t) => {
+  const runtime = createBuiltinCommandTestRuntime({
+    threads: {
+      ...defaultThreads(),
+      create: async () => ({
+        ok: false,
+        message: 'Provider could not be initialized.',
+        lifecycleFailure: true,
+      }),
+    },
+  })
+  t.after(async () => await runtime.close())
+
+  await runtime.execute('/thread agent gemini')
+
+  assert.equal(runtime.messages.length, 0)
+})
+
 test('resolved route availability preserves the busy-thread admission contract', async (t) => {
   const runtime = createBuiltinCommandTestRuntime()
   t.after(async () => await runtime.close())
