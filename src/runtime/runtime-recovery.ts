@@ -11,6 +11,7 @@ export interface RuntimeRecoveryPlan {
   lines: string[]
   canRetry: boolean
   requiresLogin: boolean
+  requiresHumanInput: boolean
   showFallbackError: boolean
 }
 
@@ -28,7 +29,22 @@ export function buildRuntimeRecoveryPlan(
       ],
       canRetry: false,
       requiresLogin: false,
+      requiresHumanInput: false,
       showFallbackError: true,
+    }
+  }
+
+  if (error.detailCode === 'chatgpt_challenge_required') {
+    return {
+      title: 'browser verification required',
+      lines: [
+        `${context.provider} is waiting for a browser verification step.`,
+        'Complete the verification in the open browser window, then retry the same request.',
+      ],
+      canRetry: true,
+      requiresLogin: false,
+      requiresHumanInput: true,
+      showFallbackError: false,
     }
   }
 
@@ -42,6 +58,7 @@ export function buildRuntimeRecoveryPlan(
       ],
       canRetry: true,
       requiresLogin: true,
+      requiresHumanInput: false,
       showFallbackError: false,
     }
   }
@@ -60,6 +77,7 @@ export function buildRuntimeRecoveryPlan(
       ],
       canRetry: true,
       requiresLogin: false,
+      requiresHumanInput: false,
       showFallbackError: false,
     }
   }
@@ -73,6 +91,7 @@ export function buildRuntimeRecoveryPlan(
     ],
     canRetry: false,
     requiresLogin: false,
+    requiresHumanInput: false,
     showFallbackError: true,
   }
 }

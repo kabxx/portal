@@ -31,7 +31,10 @@ type GlmAdapterHarness = Pick<GlmAdapter, keyof GlmAdapter> & {
     url(): string
   }): boolean
   getLatestCapturedFetchBody: unknown
-  readCurrentStreamedResponseText(startIndex: number): Promise<string>
+  readCurrentStreamedResponseText(
+    startIndex: number,
+    requestBody?: string | null
+  ): Promise<string>
   getSubmitRequestStartGraceMs(): number
 }
 
@@ -77,9 +80,15 @@ function createTestGlmAdapter(): GlmAdapterHarness {
       return matched
     },
     getLatestCapturedFetchBody: candidate.getLatestCapturedFetchBody,
-    async readCurrentStreamedResponseText(startIndex: number): Promise<string> {
+    async readCurrentStreamedResponseText(
+      startIndex: number,
+      requestBody?: string | null
+    ): Promise<string> {
       const text: unknown = await Promise.resolve(
-        Reflect.apply(readCurrentStreamedResponseText, adapter, [startIndex])
+        Reflect.apply(readCurrentStreamedResponseText, adapter, [
+          startIndex,
+          requestBody,
+        ])
       )
       if (typeof text !== 'string') {
         throw new Error('GLM streamed response reader returned a non-string.')
@@ -148,6 +157,7 @@ test('GlmAdapter matches captured completion URLs with query parameters', async 
       id: number
       url: string
       method: string
+      requestBody?: string | null
       status: number | null
       chunks: string[]
       done: boolean
@@ -160,6 +170,7 @@ test('GlmAdapter matches captured completion URLs with query parameters', async 
         id: 1,
         url: '/api/v2/chat/completions?conversation_id=one',
         method: 'POST',
+        requestBody: 'owned-request',
         status: 200,
         chunks: [raw],
         done: false,
@@ -172,6 +183,7 @@ test('GlmAdapter matches captured completion URLs with query parameters', async 
         id: 2,
         url: 'https://example.com/api/v2/chat/completions?conversation_id=one',
         method: 'POST',
+        requestBody: 'owned-request',
         status: 200,
         chunks: [raw],
         done: false,
@@ -182,7 +194,10 @@ test('GlmAdapter matches captured completion URLs with query parameters', async 
     return raw
   }
 
-  assert.equal(await adapter.readCurrentStreamedResponseText(4), 'partial')
+  assert.equal(
+    await adapter.readCurrentStreamedResponseText(4, 'owned-request'),
+    'partial'
+  )
   assert.equal(
     adapter.isTargetCompletionRequest(
       createCompletionRequest(`${GLM_COMPLETION_URL}?conversation_id=one`)

@@ -488,6 +488,8 @@ export class DeepSeekAdapter extends ProviderAdapter {
   }
 
   public async submit(options: AbortOptions = {}): Promise<string> {
+    let dispatchAttempted = false
+    let terminalEvidenceObserved = false
     try {
       return await this.wrapAdapterActionErrorAsync('submit', async () => {
         const { signal } = options
@@ -617,6 +619,7 @@ export class DeepSeekAdapter extends ProviderAdapter {
           )
           this.emitSubmitDispatching(signal)
           dispatchStarted = true
+          dispatchAttempted = true
           await this.ui.clickSend()
           this.emitSubmitSent()
           throwIfAborted(signal)
@@ -657,10 +660,12 @@ export class DeepSeekAdapter extends ProviderAdapter {
             signal,
             await targetResponse.promise
           )
-          // FINISHED plus a parsed body is the completion contract for this
-          // request. The ready marker belongs to the next submission; making
-          // it part of this request used to discard valid replies while the
-          // page was briefly transitioning its controls.
+          terminalEvidenceObserved = true
+          await this.ui.waitForReady(
+            'submit',
+            this.getSubmitResponseTimeoutMs(),
+            signal
+          )
           this.conversationIdVal =
             this.conversationIdVal ??
             this.page.url().match(/\/a\/chat\/s\/([^/?#]+)/)?.[1] ??
@@ -680,6 +685,20 @@ export class DeepSeekAdapter extends ProviderAdapter {
     } catch (error) {
       if (isAbortError(error)) {
         throw error
+      }
+      if (dispatchAttempted && !terminalEvidenceObserved) {
+        throw new ProviderAdapterError(
+          'submit',
+          'DeepSeek submit outcome is unknown after the send action; Portal will not replay it automatically.',
+          {
+            kind: 'unknown',
+            recovery: 'none',
+            retryable: false,
+            maxAttempts: 1,
+            detailCode: 'deepseek_submit_outcome_unknown',
+            cause: error,
+          }
+        )
       }
       if (this.isRetryableError(error)) {
         throw new ProviderAdapterError(

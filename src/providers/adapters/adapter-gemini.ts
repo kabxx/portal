@@ -7,6 +7,7 @@ import {
   ProviderAdapterUnsupportedError,
   createDeferred,
   delayAsync,
+  requestBodyContainsSubmittedText,
 } from './adapter-base.ts'
 import {
   abortable,
@@ -94,6 +95,7 @@ export class GeminiAdapter extends ProviderAdapter {
   }
 
   private lastParsedResponse!: GeminiParsedResponse | null
+  private pendingText = ''
 
   private get ui(): GeminiUi {
     return new GeminiUi(this.page)
@@ -277,6 +279,7 @@ export class GeminiAdapter extends ProviderAdapter {
   public async attachText(text: string) {
     await this.wrapAdapterActionErrorAsync('attachText', async () => {
       await this.ui.attachText(text)
+      this.pendingText += text
     })
   }
 
@@ -293,7 +296,9 @@ export class GeminiAdapter extends ProviderAdapter {
         await this.readRetryComposerText(composer()),
       writeText: async () => await this.attachText(text),
       clearComposer: async () =>
-        await this.clearRetryComposerElements(composer()),
+        await this.clearRetryComposerElements(composer()).finally(() => {
+          this.pendingText = ''
+        }),
       isStopActive: async () =>
         await this.isRetryControlActive(ui.getRetryStopButton()),
       isSendReady: async () =>
@@ -349,13 +354,16 @@ export class GeminiAdapter extends ProviderAdapter {
   }
 
   private async readCurrentStreamedResponseText(
-    fetchCaptureStartIndex: number
+    fetchCaptureStartIndex: number,
+    requestBody?: string | null
   ): Promise<string | null> {
     const raw = await this.getLatestCapturedFetchBody(
       fetchCaptureStartIndex,
       (entry) =>
         entry.method === 'POST' &&
-        entry.url.includes(GEMINI_STREAM_GENERATE_PATH)
+        entry.url.includes(GEMINI_STREAM_GENERATE_PATH) &&
+        requestBody !== undefined &&
+        entry.requestBody === requestBody
     )
     if (!raw) {
       return null
@@ -388,6 +396,8 @@ export class GeminiAdapter extends ProviderAdapter {
   }
 
   public async submit(options: AbortOptions = {}): Promise<string> {
+    let dispatchAttempted = false
+    let terminalEvidenceObserved = false
     try {
       return await this.wrapAdapterActionErrorAsync('submit', async () => {
         const { signal } = options
@@ -408,6 +418,10 @@ export class GeminiAdapter extends ProviderAdapter {
         const targetResponse = createDeferred<import('playwright').Response>()
         let requestObserved = false
         let responseObserved = false
+        let dispatchStarted = false
+        const submittedText = this.pendingText
+        let ownedRequest: import('playwright').Request | null = null
+        let ownedRequestBody: string | null = null
         let terminalError: unknown = null
         let warningTimer: NodeJS.Timeout | null = null
         let settled = false
@@ -417,6 +431,26 @@ export class GeminiAdapter extends ProviderAdapter {
             clearInterval(warningTimer)
             warningTimer = null
           }
+        }
+
+        const adoptRequest = (request: import('playwright').Request) => {
+          if (!dispatchStarted || ownedRequest !== null) return
+          const candidate = request as import('playwright').Request & {
+            postData?: () => string | null
+          }
+          const requestBody =
+            typeof candidate.postData === 'function'
+              ? candidate.postData()
+              : null
+          if (
+            submittedText !== '' &&
+            !requestBodyContainsSubmittedText(requestBody, submittedText)
+          ) {
+            return
+          }
+          ownedRequest = request
+          ownedRequestBody = requestBody
+          this.pendingText = ''
         }
 
         const resolveRequestStarted = () => {
@@ -451,13 +485,16 @@ export class GeminiAdapter extends ProviderAdapter {
           if (!this.isTargetStreamRequest(request)) {
             return
           }
-          resolveRequestStarted()
+          adoptRequest(request)
+          if (ownedRequest === request) resolveRequestStarted()
         }
 
         const onRequestFailed = (request: import('playwright').Request) => {
           if (!this.isTargetStreamRequest(request)) {
             return
           }
+          adoptRequest(request)
+          if (ownedRequest !== request) return
           resolveRequestStarted()
           const failureText =
             request.failure()?.errorText ?? 'unknown network failure'
@@ -480,7 +517,10 @@ export class GeminiAdapter extends ProviderAdapter {
         const handleResponse = async (
           response: import('playwright').Response
         ) => {
-          if (!this.isTargetStreamRequest(response.request())) {
+          if (
+            !this.isTargetStreamRequest(response.request()) ||
+            ownedRequest !== response.request()
+          ) {
             return
           }
           this.emitSubmitActivitySafely()
@@ -528,9 +568,14 @@ export class GeminiAdapter extends ProviderAdapter {
         try {
           stopSubmitTextPolling = this.startSubmitTextPolling(
             async () =>
-              await this.readCurrentStreamedResponseText(fetchCaptureStartIndex)
+              await this.readCurrentStreamedResponseText(
+                fetchCaptureStartIndex,
+                ownedRequestBody
+              )
           )
           this.emitSubmitDispatching(signal)
+          dispatchStarted = true
+          dispatchAttempted = true
           await sendButton.click()
           this.emitSubmitSent()
           throwIfAborted(signal)
@@ -584,6 +629,20 @@ export class GeminiAdapter extends ProviderAdapter {
             }
           )
         }
+        if (!this.lastParsedResponse.isFinished) {
+          throw new ProviderAdapterError(
+            'submit',
+            'Gemini response ended without a completion marker.',
+            {
+              kind: 'protocol',
+              recovery: 'none',
+              retryable: false,
+              maxAttempts: 1,
+              detailCode: 'gemini_response_incomplete',
+            }
+          )
+        }
+        terminalEvidenceObserved = true
         await this.emitSubmitText(this.lastParsedResponse.text)
         await this.ui.waitForComposerReady(
           'submit',
@@ -596,6 +655,20 @@ export class GeminiAdapter extends ProviderAdapter {
     } catch (error) {
       if (isAbortError(error)) {
         throw error
+      }
+      if (dispatchAttempted && !terminalEvidenceObserved) {
+        throw new ProviderAdapterError(
+          'submit',
+          'Gemini submit outcome is unknown after the send action; Portal will not replay it automatically.',
+          {
+            kind: 'unknown',
+            recovery: 'none',
+            retryable: false,
+            maxAttempts: 1,
+            detailCode: 'gemini_submit_outcome_unknown',
+            cause: error,
+          }
+        )
       }
       if (
         error instanceof Error &&

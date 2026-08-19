@@ -16,7 +16,10 @@ export interface RuntimeInitializationOptions {
   createAdapter: () => Promise<ProviderAdapter>
   createRuntime: (adapter: ProviderAdapter) => Promise<RuntimeCore>
   onWarning: (plan: RuntimeRecoveryPlan) => void | Promise<void>
-  onLoginWait: (provider: string) => void | Promise<void>
+  onLoginWait: (
+    provider: string,
+    kind?: 'login' | 'human-input'
+  ) => void | Promise<void>
   waitForLogin: () => Promise<void>
   signal?: AbortSignal | undefined
   maxRetryAttempts?: number
@@ -56,7 +59,7 @@ export async function initializeRuntimeWithLoginWait({
           const adapter = pendingAdapter
           if (adapter !== null) {
             if (!(await adapter.isLoggedIn())) {
-              await onLoginWait(provider)
+              await onLoginWait(provider, 'login')
               await waitForLogin()
               continue
             }
@@ -88,8 +91,11 @@ export async function initializeRuntimeWithLoginWait({
             threadId,
           })
           await onWarning(plan)
-          if (plan.requiresLogin) {
-            await onLoginWait(provider)
+          if (plan.requiresLogin || plan.requiresHumanInput) {
+            await onLoginWait(
+              provider,
+              plan.requiresHumanInput ? 'human-input' : 'login'
+            )
             await waitForLogin()
             continue
           }

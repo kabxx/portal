@@ -157,9 +157,10 @@ test('GeminiAdapter.submit contains asynchronous response parser failures', asyn
 
   const assertion = assert.rejects(adapter.submit(), (error: unknown) => {
     assert.ok(error instanceof ProviderAdapterError)
-    assert.equal(error.message, 'Action failed during submit')
+    assert.equal(error.detailCode, 'gemini_submit_outcome_unknown')
     assert.ok(error.cause instanceof Error)
-    assert.equal(error.cause.message, 'parser failed')
+    assert.ok(error.cause.cause instanceof Error)
+    assert.equal(error.cause.cause.message, 'parser failed')
     return true
   })
   await new Promise<void>((resolve) => setImmediate(resolve))

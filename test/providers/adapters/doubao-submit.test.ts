@@ -3,6 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { DoubaoAdapter } from '../../../src/providers/adapters/adapter-doubao.ts'
+import { ProviderAdapterError } from '../../../src/providers/adapters/adapter-base.ts'
 import { joinCssLocatorCandidates } from '../../../src/providers/ui/provider-ui.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
@@ -121,7 +122,9 @@ test('DoubaoAdapter.submit handles request failure before a failed click settles
 
   const assertion = assert.rejects(
     adapter.submit(),
-    /Action failed during submit/
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'doubao_submit_outcome_unknown'
   )
   await new Promise<void>((resolve) => setImmediate(resolve))
   await assertion
@@ -328,7 +331,9 @@ data: {"content":{"content_block":[{"block_type":10000,"content":{"text_block":{
 
   await assert.rejects(
     adapter.submit(),
-    /Doubao submit failed due to a temporary page or network issue\./
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'doubao_submit_outcome_unknown'
   )
 })
 

@@ -104,6 +104,41 @@ test('ChatGPTAdapter.restore reports auth when login button is visible', async (
   assert.equal(capturedError.kind, 'auth')
 })
 
+test('ChatGPTAdapter.restore classifies the current auth route as signed out', async () => {
+  const adapter = createRestorableAdapter(
+    ChatGPTAdapter,
+    createMockPage({
+      afterGotoUrl: 'https://chatgpt.com/auth/login',
+    })
+  )
+
+  await assert.rejects(
+    adapter.restore(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'auth' &&
+      error.detailCode === 'chatgpt_signed_out'
+  )
+})
+
+test('ChatGPTAdapter keeps browser verification separate from signed-out recovery', async () => {
+  const adapter = createRestorableAdapter(
+    ChatGPTAdapter,
+    createMockPage({
+      afterGotoUrl: 'https://chatgpt.com',
+      visibleByLocator: { '#challenge-running': true },
+    })
+  )
+
+  await assert.rejects(
+    adapter.restore(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'auth' &&
+      error.detailCode === 'chatgpt_challenge_required'
+  )
+})
+
 test('GeminiAdapter.restore reports auth when signed-out panel is visible', async () => {
   const adapter = createRestorableAdapter(
     GeminiAdapter,
@@ -573,6 +608,11 @@ test('ChatGPTAdapter.restore waits for the speech button ready signal before suc
           isVisible: async () => false,
         }
       }
+      if (selector === '#prompt-textarea') {
+        return {
+          isVisible: async () => true,
+        }
+      }
       if (selector === 'button[style*="--vt-composer-speech-button"]') {
         return {
           count: async () => {
@@ -613,4 +653,21 @@ test('ChatGPTAdapter.restore waits for the speech button ready signal before suc
 
   assert.ok(checks >= 3)
   assert.ok(countChecks >= 3)
+})
+
+test('ChatGPTAdapter fails closed when the page has no known access markers', async () => {
+  const adapter = createRestorableAdapter(
+    ChatGPTAdapter,
+    createMockPage({
+      afterGotoUrl: 'https://chatgpt.com',
+    })
+  )
+
+  await assert.rejects(
+    adapter.restore(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'ui' &&
+      error.detailCode === 'chatgpt_access_unknown'
+  )
 })

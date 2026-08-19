@@ -177,10 +177,17 @@ async function executeActionCapability(
     return result('ok', `${provider}.none: cleared`)
   }
   const capabilities = await abortable(adapter.listActionCapabilities(), signal)
-  if (!capabilities.some((item) => item.name === name)) {
+  const definition = getProviderCapability(provider, name)
+  if (definition?.kind !== 'action') {
     return result(
       'unknown-capability',
       `Unknown capability for ${provider}: ${name}`
+    )
+  }
+  if (!capabilities.some((item) => item.name === name)) {
+    return result(
+      'unsupported-provider',
+      `Capability not available for ${provider}: ${name}`
     )
   }
   if (args.length > 0) {

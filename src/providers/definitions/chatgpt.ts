@@ -23,8 +23,8 @@ export const chatgptDefinition = defineProvider({
       kind: 'action',
     },
     {
-      key: 'openai_platform',
-      description: 'Use OpenAI platform resources.',
+      key: 'thinking',
+      description: 'Use Thinking for the next message.',
       kind: 'action',
     },
   ],

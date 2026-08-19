@@ -253,6 +253,29 @@ test('ChatGPT WebSocket parser reads nested encoded-item deltas through frame no
   })
 })
 
+test('ChatGPT WebSocket parser ignores frames from another conversation', () => {
+  const parsed = parseChatGptWebSocketFrames(
+    [
+      createInitialMessageFrame(
+        { id: 'old-message', text: 'old' },
+        'old-conversation'
+      ),
+      createInitialMessageFrame(
+        { id: 'current-message', text: 'current', finished: true },
+        'current-conversation'
+      ),
+    ],
+    'current-conversation'
+  )
+
+  assert.deepEqual(parsed, {
+    conversationId: 'current-conversation',
+    messageId: 'current-message',
+    text: 'current',
+    isFinished: true,
+  })
+})
+
 test('ChatGPT WebSocket parser applies patches only to the latest active message', () => {
   const parsed = parseChatGptWebSocketFrames([
     createInitialMessageFrame({ id: 'message-1', text: 'first' }),

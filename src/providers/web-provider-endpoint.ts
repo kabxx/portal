@@ -122,12 +122,14 @@ export async function createWebProviderEndpoint(
             await context.openAgentSession({ tools, textToolProtocol }),
         })),
     onWarning: async (plan) => {
-      if (plan.requiresLogin) loginAttentionSent = true
-      if (plan.requiresLogin) {
+      if (plan.requiresLogin || plan.requiresHumanInput) {
+        loginAttentionSent = true
+      }
+      if (plan.requiresLogin || plan.requiresHumanInput) {
         await context.emit({
           type: 'attention.request',
-          requestId: `${providerId}:login`,
-          kind: 'login',
+          requestId: `${providerId}:${plan.requiresHumanInput ? 'challenge' : 'login'}`,
+          kind: plan.requiresHumanInput ? 'human-input' : 'login',
           prompt: plan.lines.join('\n'),
         })
       } else {
@@ -137,7 +139,8 @@ export async function createWebProviderEndpoint(
         })
       }
     },
-    onLoginWait: async () => {
+    onLoginWait: async (_provider, kind = 'login') => {
+      if (kind === 'human-input') return
       if (loginAttentionSent) return
       loginAttentionSent = true
       await context.emit({

@@ -66,6 +66,52 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+export function requestBodyContainsSubmittedText(
+  raw: string | null | undefined,
+  submittedText: string
+): boolean {
+  if (raw === null || raw === undefined || submittedText === '') return false
+  const visited = new Set<string>()
+
+  const inspect = (value: unknown, depth: number): boolean => {
+    if (depth > 8) return false
+    if (typeof value === 'string') {
+      if (value === submittedText) return true
+      if (value === '' || visited.has(value)) return false
+      visited.add(value)
+      try {
+        if (inspect(JSON.parse(value), depth + 1)) return true
+      } catch {
+        // Some Provider bodies contain URL-encoded nested JSON.
+      }
+      try {
+        const decoded = decodeURIComponent(value.replace(/\+/g, ' '))
+        if (decoded !== value && inspect(decoded, depth + 1)) return true
+      } catch {
+        // Invalid percent escapes are ordinary opaque request data.
+      }
+      return false
+    }
+    if (Array.isArray(value)) {
+      return value.some((child) => inspect(child, depth + 1))
+    }
+    if (isRecord(value)) {
+      return Object.values(value).some((child) => inspect(child, depth + 1))
+    }
+    return false
+  }
+
+  if (inspect(raw, 0)) return true
+  try {
+    for (const value of new URLSearchParams(raw).values()) {
+      if (inspect(value, 0)) return true
+    }
+  } catch {
+    return false
+  }
+  return false
+}
+
 function isCapturedFetchEntry(value: unknown): value is CapturedFetchEntry {
   return (
     isRecord(value) &&

@@ -7,6 +7,7 @@ import {
   ProviderAdapterUnsupportedError,
   createDeferred,
   delayAsync,
+  requestBodyContainsSubmittedText,
 } from './adapter-base.ts'
 import {
   abortable,
@@ -73,6 +74,7 @@ export class DoubaoAdapter extends ProviderAdapter {
   }
 
   private lastParsedResponse!: DoubaoParsedResponse | null
+  private pendingText = ''
 
   private get ui(): DoubaoUi {
     return new DoubaoUi(this.page)
@@ -347,10 +349,10 @@ export class DoubaoAdapter extends ProviderAdapter {
   }
 
   public async attachText(text: string): Promise<void> {
-    await this.wrapAdapterActionErrorAsync(
-      'attachText',
-      async () => await this.ui.attachText(text)
-    )
+    await this.wrapAdapterActionErrorAsync('attachText', async () => {
+      await this.ui.attachText(text)
+      this.pendingText += text
+    })
   }
 
   protected override async prepareRetrySubmit(
@@ -366,7 +368,9 @@ export class DoubaoAdapter extends ProviderAdapter {
         await this.readRetryComposerText(controls.composer),
       writeText: async () => await this.attachText(text),
       clearComposer: async () =>
-        await this.clearRetryComposerElements(controls.composer),
+        await this.clearRetryComposerElements(controls.composer).finally(() => {
+          this.pendingText = ''
+        }),
       isStopActive: async () => await this.isRetryControlActive(controls.stop),
       isSendReady: async () => await this.isRetryControlReady(controls.send),
     })
@@ -416,20 +420,24 @@ export class DoubaoAdapter extends ProviderAdapter {
   }
 
   private async readCurrentStreamedResponseText(
-    fetchCaptureStartIndex: number
+    fetchCaptureStartIndex: number,
+    requestBody?: string | null
   ): Promise<string | null> {
     const parsedResponse = await this.readCurrentCapturedResponse(
-      fetchCaptureStartIndex
+      fetchCaptureStartIndex,
+      requestBody
     )
     const text = parsedResponse?.text?.trim() ?? ''
     return text ? parsedResponse!.text : null
   }
 
   private async readCurrentCapturedResponse(
-    fetchCaptureStartIndex: number
+    fetchCaptureStartIndex: number,
+    requestBody?: string | null
   ): Promise<DoubaoParsedResponse | null> {
     const raw = await this.readCurrentCapturedRawResponse(
-      fetchCaptureStartIndex
+      fetchCaptureStartIndex,
+      requestBody
     )
     if (!raw) {
       return null
@@ -439,19 +447,24 @@ export class DoubaoAdapter extends ProviderAdapter {
   }
 
   private async readCurrentCapturedRawResponse(
-    fetchCaptureStartIndex: number
+    fetchCaptureStartIndex: number,
+    requestBody?: string | null
   ): Promise<string | null> {
     return await this.getLatestCapturedFetchBody(
       fetchCaptureStartIndex,
       (entry) =>
         entry.method === 'POST' &&
-        entry.url.startsWith(DOUBAO_CHAT_COMPLETION_URL)
+        entry.url.startsWith(DOUBAO_CHAT_COMPLETION_URL) &&
+        requestBody !== undefined &&
+        entry.requestBody === requestBody
     )
   }
 
   private async waitForCapturedFinishedResponse(
     fetchCaptureStartIndex: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    fallbackResponse?: import('playwright').Response,
+    requestBody?: string | null
   ): Promise<DoubaoParsedResponse> {
     throwIfAborted(signal)
     let timer: NodeJS.Timeout | null = null
@@ -475,7 +488,8 @@ export class DoubaoAdapter extends ProviderAdapter {
         const tick = async () => {
           try {
             const rawResponse = await this.readCurrentCapturedRawResponse(
-              fetchCaptureStartIndex
+              fetchCaptureStartIndex,
+              requestBody
             )
             if (!rawResponse) {
               return
@@ -511,9 +525,26 @@ export class DoubaoAdapter extends ProviderAdapter {
       }
     )
 
+    const fallbackPromise =
+      fallbackResponse === undefined ||
+      typeof (
+        fallbackResponse as import('playwright').Response & {
+          text?: unknown
+        }
+      ).text !== 'function'
+        ? null
+        : (async (): Promise<DoubaoParsedResponse> => {
+            const raw = await abortable(fallbackResponse.text(), signal)
+            const parsed = this.parseResponse(raw)
+            if (parsed?.isFinished === true) return parsed
+            return await new Promise<never>(() => {})
+          })()
+
     try {
       return await awaitWithTimeout(
-        capturedResponsePromise,
+        fallbackPromise === null
+          ? capturedResponsePromise
+          : Promise.race([capturedResponsePromise, fallbackPromise]),
         this.getSubmitResponseTimeoutMs(),
         () =>
           new Error(
@@ -529,6 +560,8 @@ export class DoubaoAdapter extends ProviderAdapter {
   }
 
   public async submit(options: AbortOptions = {}): Promise<string> {
+    let dispatchAttempted = false
+    let terminalEvidenceObserved = false
     try {
       return await this.wrapAdapterActionErrorAsync('submit', async () => {
         const { signal } = options
@@ -550,6 +583,10 @@ export class DoubaoAdapter extends ProviderAdapter {
         const targetResponse = createDeferred<import('playwright').Response>()
         let requestObserved = false
         let responseObserved = false
+        let dispatchStarted = false
+        const submittedText = this.pendingText
+        let ownedRequest: import('playwright').Request | null = null
+        let ownedRequestBody: string | null = null
         let terminalError: unknown = null
         let warningTimer: NodeJS.Timeout | null = null
         let settled = false
@@ -559,6 +596,26 @@ export class DoubaoAdapter extends ProviderAdapter {
             clearInterval(warningTimer)
             warningTimer = null
           }
+        }
+
+        const adoptRequest = (request: import('playwright').Request) => {
+          if (!dispatchStarted || ownedRequest !== null) return
+          const candidate = request as import('playwright').Request & {
+            postData?: () => string | null
+          }
+          const requestBody =
+            typeof candidate.postData === 'function'
+              ? candidate.postData()
+              : null
+          if (
+            submittedText !== '' &&
+            !requestBodyContainsSubmittedText(requestBody, submittedText)
+          ) {
+            return
+          }
+          ownedRequest = request
+          ownedRequestBody = requestBody
+          this.pendingText = ''
         }
 
         const resolveRequestStarted = () => {
@@ -593,13 +650,16 @@ export class DoubaoAdapter extends ProviderAdapter {
           if (!this.isTargetCompletionRequest(request)) {
             return
           }
-          resolveRequestStarted()
+          adoptRequest(request)
+          if (ownedRequest === request) resolveRequestStarted()
         }
 
         const onRequestFailed = (request: import('playwright').Request) => {
           if (!this.isTargetCompletionRequest(request)) {
             return
           }
+          adoptRequest(request)
+          if (ownedRequest !== request) return
           resolveRequestStarted()
           const failureText =
             request.failure()?.errorText ?? 'unknown network failure'
@@ -621,7 +681,10 @@ export class DoubaoAdapter extends ProviderAdapter {
 
         const onResponse = async (response: import('playwright').Response) => {
           try {
-            if (!this.isTargetCompletionRequest(response.request())) {
+            if (
+              !this.isTargetCompletionRequest(response.request()) ||
+              ownedRequest !== response.request()
+            ) {
               return
             }
             this.emitSubmitActivitySafely()
@@ -668,9 +731,14 @@ export class DoubaoAdapter extends ProviderAdapter {
         try {
           stopSubmitTextPolling = this.startSubmitTextPolling(
             async () =>
-              await this.readCurrentStreamedResponseText(fetchCaptureStartIndex)
+              await this.readCurrentStreamedResponseText(
+                fetchCaptureStartIndex,
+                ownedRequestBody
+              )
           )
           this.emitSubmitDispatching(signal)
+          dispatchStarted = true
+          dispatchAttempted = true
           await sendButton.click()
           this.emitSubmitSent()
           throwIfAborted(signal)
@@ -709,8 +777,11 @@ export class DoubaoAdapter extends ProviderAdapter {
 
           this.lastParsedResponse = await this.waitForCapturedFinishedResponse(
             fetchCaptureStartIndex,
-            signal
+            signal,
+            await targetResponse.promise,
+            ownedRequestBody
           )
+          terminalEvidenceObserved = true
           await this.ui.waitForReady(
             'submit',
             this.getSubmitResponseTimeoutMs(),
@@ -732,6 +803,20 @@ export class DoubaoAdapter extends ProviderAdapter {
     } catch (error) {
       if (isAbortError(error)) {
         throw error
+      }
+      if (dispatchAttempted && !terminalEvidenceObserved) {
+        throw new ProviderAdapterError(
+          'submit',
+          'Doubao submit outcome is unknown after the send action; Portal will not replay it automatically.',
+          {
+            kind: 'unknown',
+            recovery: 'none',
+            retryable: false,
+            maxAttempts: 1,
+            detailCode: 'doubao_submit_outcome_unknown',
+            cause: error,
+          }
+        )
       }
       if (
         error instanceof ProviderAdapterError &&

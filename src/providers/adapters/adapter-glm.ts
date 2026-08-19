@@ -7,6 +7,7 @@ import {
   ProviderAdapterUnsupportedError,
   createDeferred,
   delayAsync,
+  requestBodyContainsSubmittedText,
 } from './adapter-base.ts'
 import {
   abortable,
@@ -76,6 +77,7 @@ export class GlmAdapter extends ProviderAdapter {
   }
 
   private conversationIdVal!: string | null
+  private pendingText = ''
   private get providerUi(): GlmUi {
     return new GlmUi(this.page)
   }
@@ -321,6 +323,7 @@ export class GlmAdapter extends ProviderAdapter {
   public async attachText(text: string): Promise<void> {
     await this.wrapAdapterActionErrorAsync('attachText', async () => {
       await this.providerUi.attachText(text)
+      this.pendingText += text
     })
   }
 
@@ -337,7 +340,11 @@ export class GlmAdapter extends ProviderAdapter {
         await this.readRetryComposerText(getLocators().composer),
       writeText: async () => await this.attachText(text),
       clearComposer: async () =>
-        await this.clearRetryComposerElements(getLocators().composer),
+        await this.clearRetryComposerElements(getLocators().composer).finally(
+          () => {
+            this.pendingText = ''
+          }
+        ),
       isStopActive: async () =>
         await this.isRetryControlActive(getLocators().stop),
       isSendReady: async () =>
@@ -370,11 +377,16 @@ export class GlmAdapter extends ProviderAdapter {
   }
 
   private async readCurrentStreamedResponseText(
-    fetchCaptureStartIndex: number
+    fetchCaptureStartIndex: number,
+    requestBody?: string | null
   ): Promise<string | null> {
     const raw = await this.getLatestCapturedFetchBody(
       fetchCaptureStartIndex,
-      (entry) => entry.method === 'POST' && isGlmCompletionUrl(entry.url)
+      (entry) =>
+        entry.method === 'POST' &&
+        isGlmCompletionUrl(entry.url) &&
+        requestBody !== undefined &&
+        entry.requestBody === requestBody
     )
     if (!raw) {
       return null
@@ -386,6 +398,8 @@ export class GlmAdapter extends ProviderAdapter {
   }
 
   public async submit(options: AbortOptions = {}): Promise<string> {
+    let dispatchAttempted = false
+    let terminalEvidenceObserved = false
     try {
       return await this.wrapAdapterActionErrorAsync('submit', async () => {
         const { signal } = options
@@ -402,6 +416,10 @@ export class GlmAdapter extends ProviderAdapter {
         const targetResponse = createDeferred<import('playwright').Response>()
         let requestObserved = false
         let responseObserved = false
+        let dispatchStarted = false
+        const submittedText = this.pendingText
+        let ownedRequest: import('playwright').Request | null = null
+        let ownedRequestBody: string | null = null
         let terminalError: unknown = null
         let warningTimer: NodeJS.Timeout | null = null
         let settled = false
@@ -412,6 +430,26 @@ export class GlmAdapter extends ProviderAdapter {
             warningTimer = null
           }
         }
+        const adoptRequest = (request: import('playwright').Request) => {
+          if (!dispatchStarted || ownedRequest !== null) return
+          const candidate = request as import('playwright').Request & {
+            postData?: () => string | null
+          }
+          const requestBody =
+            typeof candidate.postData === 'function'
+              ? candidate.postData()
+              : null
+          if (
+            submittedText !== '' &&
+            !requestBodyContainsSubmittedText(requestBody, submittedText)
+          ) {
+            return
+          }
+          ownedRequest = request
+          ownedRequestBody = requestBody
+          this.pendingText = ''
+        }
+
         const resolveRequestStarted = () => {
           if (requestObserved) {
             return
@@ -441,13 +479,16 @@ export class GlmAdapter extends ProviderAdapter {
 
         const onRequest = (request: import('playwright').Request) => {
           if (this.isTargetCompletionRequest(request)) {
-            resolveRequestStarted()
+            adoptRequest(request)
+            if (ownedRequest === request) resolveRequestStarted()
           }
         }
         const onRequestFailed = (request: import('playwright').Request) => {
           if (!this.isTargetCompletionRequest(request)) {
             return
           }
+          adoptRequest(request)
+          if (ownedRequest !== request) return
           resolveRequestStarted()
           const failureText =
             request.failure()?.errorText ?? 'unknown network failure'
@@ -467,7 +508,10 @@ export class GlmAdapter extends ProviderAdapter {
           })
         }
         const onResponse = (response: import('playwright').Response) => {
-          if (!this.isTargetCompletionRequest(response.request())) {
+          if (
+            !this.isTargetCompletionRequest(response.request()) ||
+            ownedRequest !== response.request()
+          ) {
             return
           }
           this.emitSubmitActivitySafely()
@@ -492,9 +536,14 @@ export class GlmAdapter extends ProviderAdapter {
         try {
           stopSubmitTextPolling = this.startSubmitTextPolling(
             async () =>
-              await this.readCurrentStreamedResponseText(fetchCaptureStartIndex)
+              await this.readCurrentStreamedResponseText(
+                fetchCaptureStartIndex,
+                ownedRequestBody
+              )
           )
           this.emitSubmitDispatching(signal)
+          dispatchStarted = true
+          dispatchAttempted = true
           await this.providerUi.clickSend()
           this.emitSubmitSent()
           throwIfAborted(signal)
@@ -546,6 +595,7 @@ export class GlmAdapter extends ProviderAdapter {
             )
           }
           if (parsedResponse.error !== null) {
+            terminalEvidenceObserved = true
             throw this.createStreamError(parsedResponse.error)
           }
           if (!parsedResponse.isFinished) {
@@ -561,6 +611,7 @@ export class GlmAdapter extends ProviderAdapter {
               }
             )
           }
+          terminalEvidenceObserved = true
 
           await this.waitForReadyButton(
             'submit',
@@ -586,6 +637,20 @@ export class GlmAdapter extends ProviderAdapter {
     } catch (error) {
       if (isAbortError(error)) {
         throw error
+      }
+      if (dispatchAttempted && !terminalEvidenceObserved) {
+        throw new ProviderAdapterError(
+          'submit',
+          'GLM submit outcome is unknown after the send action; Portal will not replay it automatically.',
+          {
+            kind: 'unknown',
+            recovery: 'none',
+            retryable: false,
+            maxAttempts: 1,
+            detailCode: 'glm_submit_outcome_unknown',
+            cause: error,
+          }
+        )
       }
       if (this.isRetryableError(error)) {
         throw new ProviderAdapterError(

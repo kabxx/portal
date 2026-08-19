@@ -2,7 +2,10 @@ import { EventEmitter } from 'node:events'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { ProviderAdapterUnsupportedError } from '../../../src/providers/adapters/adapter-base.ts'
+import {
+  ProviderAdapterError,
+  ProviderAdapterUnsupportedError,
+} from '../../../src/providers/adapters/adapter-base.ts'
 import { DeepSeekAdapter } from '../../../src/providers/adapters/adapter-deepseek.ts'
 import { isAbortError } from '../../../src/runtime/runtime-cancellation.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
@@ -289,20 +292,23 @@ test('DeepSeekAdapter.submit fails instead of returning an unfinished response w
 
   await assert.rejects(
     adapter.submit(),
-    /DeepSeek submit failed due to a temporary page or network issue\./
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'deepseek_submit_outcome_unknown'
   )
 })
 
-test('DeepSeekAdapter.submit returns a finished response even when the next-ready marker is absent', async () => {
+test('DeepSeekAdapter.submit requires the post-submit ready marker before returning', async () => {
   const adapter = createTestDeepSeekAdapter()
   adapter.conversationIdVal = null
   const responseText = 'Recovered after render completed.'
   const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
 data: {"p":"response/status","o":"SET","v":"FINISHED"}`
 
+  let ready = false
   const readyButton = {
     first: () => readyButton,
-    isVisible: async () => false,
+    isVisible: async () => ready,
   }
 
   const sendButton = {
@@ -320,6 +326,9 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
         url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
         text: async () => raw,
       })
+      setTimeout(() => {
+        ready = true
+      }, 20)
     },
   }
   const page = createDeepSeekPage(sendButton, readyButton)
@@ -333,6 +342,48 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
   const result = await adapter.submit()
 
   assert.equal(result, responseText)
+})
+
+test('DeepSeekAdapter.submit fails when post-submit ready never returns', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  adapter.conversationIdVal = null
+  const responseText = 'Response before the page became stuck.'
+  const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const request = {
+        method: () => 'POST',
+        url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+        text: async () => raw,
+      })
+    },
+  }
+  const readyButton = {
+    first: () => readyButton,
+    isVisible: async () => false,
+  }
+  const page = createDeepSeekPage(sendButton, readyButton)
+  adapter.page = page
+  stubCapturedResponse(adapter, raw)
+  adapter.getSubmitResponseTimeoutMs = () => 30
+  adapter.getSubmitRequestStartGraceMs = () => 10
+  adapter.setSubmitStatusReporter(async () => undefined)
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'deepseek_ready_button_missing'
+  )
 })
 
 test('DeepSeekAdapter.submit falls back to the Playwright response body when fetch capture is unavailable', async () => {

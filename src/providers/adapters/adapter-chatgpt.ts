@@ -5,6 +5,7 @@ import {
   buildSubmitBlockedWarningMessage,
   ProviderAdapterError,
   ProviderAdapterUnsupportedError,
+  requestBodyContainsSubmittedText,
   createDeferred,
   delayAsync,
 } from './adapter-base.ts'
@@ -69,6 +70,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
   }
 
   private lastParsedResponse!: ChatGPTParsedResponse | null
+  private pendingText = ''
   private websocketFrames!: string[]
 
   private get ui(): ChatGPTUi {
@@ -142,7 +144,15 @@ export class ChatGPTAdapter extends ProviderAdapter {
   public async restore(options: AbortOptions = {}): Promise<void> {
     const { signal } = options
     const isAvailable = async () => {
-      return this.page.url().startsWith(CHATGPT_CHAT_URL)
+      try {
+        const url = new URL(this.page.url())
+        return (
+          url.protocol === 'https:' &&
+          (url.hostname === 'chatgpt.com' || url.hostname === 'chat.openai.com')
+        )
+      } catch {
+        return false
+      }
     }
     try {
       await retryAsync(async () => {
@@ -158,18 +168,41 @@ export class ChatGPTAdapter extends ProviderAdapter {
         timeoutMs: this.getRestoreTimeoutMs(),
         signal,
       })
-      if (!(await this.isLoggedIn())) {
-        throw new ProviderAdapterError(
-          'restore',
-          'ChatGPT is not logged in for the current browser profile.',
-          {
-            kind: 'auth',
-            recovery: 'none',
-            retryable: false,
-            maxAttempts: 1,
+      const accessState = await this.ui.getAccessState()
+      if (accessState !== 'authenticated') {
+        const details = {
+          signed_out: {
+            kind: 'auth' as const,
             detailCode: 'chatgpt_signed_out',
-          }
-        )
+            message:
+              'ChatGPT is not logged in for the current browser profile.',
+          },
+          challenge: {
+            kind: 'auth' as const,
+            detailCode: 'chatgpt_challenge_required',
+            message:
+              'ChatGPT is waiting for a browser verification step. Complete it in the browser window, then retry.',
+          },
+          restricted: {
+            kind: 'ui' as const,
+            detailCode: 'chatgpt_access_restricted',
+            message:
+              'ChatGPT is restricting access for the current account or page.',
+          },
+          unknown: {
+            kind: 'ui' as const,
+            detailCode: 'chatgpt_access_unknown',
+            message: 'ChatGPT access state could not be identified safely.',
+          },
+        }[accessState]
+        throw new ProviderAdapterError('restore', details.message, {
+          adapter: this,
+          kind: details.kind,
+          recovery: 'none',
+          retryable: false,
+          maxAttempts: 1,
+          detailCode: details.detailCode,
+        })
       }
       await this.ui.waitForComposerReady(
         'restore',
@@ -212,7 +245,35 @@ export class ChatGPTAdapter extends ProviderAdapter {
   }
 
   public async isLoggedIn(): Promise<boolean> {
-    return await this.ui.isLoggedIn()
+    const state = await this.ui.getAccessState()
+    if (state === 'authenticated') return true
+    if (state === 'signed_out') return false
+    const details = {
+      challenge: {
+        kind: 'auth' as const,
+        detailCode: 'chatgpt_challenge_required',
+        message: 'ChatGPT is waiting for a browser verification step.',
+      },
+      restricted: {
+        kind: 'ui' as const,
+        detailCode: 'chatgpt_access_restricted',
+        message:
+          'ChatGPT is restricting access for the current account or page.',
+      },
+      unknown: {
+        kind: 'ui' as const,
+        detailCode: 'chatgpt_access_unknown',
+        message: 'ChatGPT access state could not be identified safely.',
+      },
+    }[state]
+    throw new ProviderAdapterError('restore', details.message, {
+      adapter: this,
+      kind: details.kind,
+      recovery: 'none',
+      retryable: false,
+      maxAttempts: 1,
+      detailCode: details.detailCode,
+    })
   }
 
   public async changeModel(model: ResolvedProviderModel): Promise<void> {
@@ -222,6 +283,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
   public async attachText(text: string) {
     await this.wrapAdapterActionErrorAsync('attachText', async () => {
       await this.ui.attachText(text)
+      this.pendingText += text
     })
   }
 
@@ -238,7 +300,9 @@ export class ChatGPTAdapter extends ProviderAdapter {
         await this.readRetryComposerText(composer()),
       writeText: async () => await this.attachText(text),
       clearComposer: async () =>
-        await this.clearRetryComposerElements(composer()),
+        await this.clearRetryComposerElements(composer()).finally(() => {
+          this.pendingText = ''
+        }),
       isStopActive: async () =>
         await this.isRetryControlActive(ui.getRetryStopButton()),
       isSendReady: async () =>
@@ -329,11 +393,15 @@ export class ChatGPTAdapter extends ProviderAdapter {
   }
 
   private async readCurrentCapturedResponse(
-    fetchCaptureStartIndex: number
+    fetchCaptureStartIndex: number,
+    requestBody?: string | null
   ): Promise<ChatGPTParsedResponse | null> {
     const raw = await this.getLatestCapturedFetchBody(
       fetchCaptureStartIndex,
-      (entry) => this.isTargetCapturedConversationEntry(entry)
+      (entry) =>
+        this.isTargetCapturedConversationEntry(entry) &&
+        requestBody !== undefined &&
+        entry.requestBody === requestBody
     )
     if (!raw) {
       return null
@@ -355,6 +423,8 @@ export class ChatGPTAdapter extends ProviderAdapter {
   }
 
   public async submit(options: AbortOptions = {}): Promise<string> {
+    let dispatchAttempted = false
+    let terminalEvidenceObserved = false
     try {
       return await this.wrapAdapterActionErrorAsync('submit', async () => {
         const { signal } = options
@@ -377,6 +447,11 @@ export class ChatGPTAdapter extends ProviderAdapter {
         const httpResponseDeferred = createDeferred<void>()
         let requestObserved = false
         let responseObserved = false
+        let dispatchStarted = false
+        const submittedText = this.pendingText
+        let ownedRequest: import('playwright').Request | null = null
+        let ownedRequestBody: string | null = null
+        let ownedFrameStartIndex = frameStart
         let httpParsedResponse: ChatGPTParsedResponse | null = null
         let terminalError: unknown = null
         let warningTimer: NodeJS.Timeout | null = null
@@ -430,7 +505,8 @@ export class ChatGPTAdapter extends ProviderAdapter {
 
         const updateCapturedHttpResponse = async () => {
           const capturedResponse = await this.readCurrentCapturedResponse(
-            fetchCaptureStartIndex
+            fetchCaptureStartIndex,
+            ownedRequestBody
           )
           if (
             capturedResponse !== null &&
@@ -441,17 +517,41 @@ export class ChatGPTAdapter extends ProviderAdapter {
           return capturedResponse
         }
 
+        const adoptRequest = (request: import('playwright').Request) => {
+          if (!dispatchStarted || ownedRequest !== null) return
+          const candidate = request as import('playwright').Request & {
+            postData?: () => string | null
+          }
+          const requestBody =
+            typeof candidate.postData === 'function'
+              ? candidate.postData()
+              : null
+          if (
+            submittedText !== '' &&
+            !requestBodyContainsSubmittedText(requestBody, submittedText)
+          ) {
+            return
+          }
+          ownedRequest = request
+          ownedRequestBody = requestBody
+          ownedFrameStartIndex = this.websocketFrames.length
+          this.pendingText = ''
+        }
+
         const onRequest = (request: import('playwright').Request) => {
           if (!this.isTargetConversationRequest(request)) {
             return
           }
-          resolveRequestStarted()
+          adoptRequest(request)
+          if (ownedRequest === request) resolveRequestStarted()
         }
 
         const onRequestFailed = (request: import('playwright').Request) => {
           if (!this.isTargetConversationRequest(request)) {
             return
           }
+          adoptRequest(request)
+          if (ownedRequest !== request) return
           resolveRequestStarted()
           const failureText =
             request.failure()?.errorText ?? 'unknown network failure'
@@ -472,7 +572,10 @@ export class ChatGPTAdapter extends ProviderAdapter {
         }
 
         const onResponse = (response: import('playwright').Response) => {
-          if (!this.isTargetConversationRequest(response.request())) {
+          if (
+            !this.isTargetConversationRequest(response.request()) ||
+            ownedRequest !== response.request()
+          ) {
             return
           }
           this.emitSubmitActivitySafely()
@@ -521,7 +624,10 @@ export class ChatGPTAdapter extends ProviderAdapter {
 
         const pickCurrentResponse = (): ChatGPTParsedResponse | null => {
           const websocketParsedResponse = parseChatGptWebSocketFrames(
-            this.websocketFrames.slice(frameStart)
+            this.websocketFrames.slice(ownedFrameStartIndex),
+            httpParsedResponse?.conversationId ??
+              this.conversationId ??
+              undefined
           )
           const candidates = [
             websocketParsedResponse,
@@ -572,6 +678,8 @@ export class ChatGPTAdapter extends ProviderAdapter {
           }
           void pollSubmitText().catch(() => {})
           this.emitSubmitDispatching(signal)
+          dispatchStarted = true
+          dispatchAttempted = true
           await sendButton.click()
           this.emitSubmitSent()
           throwIfAborted(signal)
@@ -717,6 +825,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
               'Timed out waiting for ChatGPT response to reach finished state.'
             )
           }
+          terminalEvidenceObserved = true
 
           if (
             parsedResponse === null ||
@@ -758,6 +867,20 @@ export class ChatGPTAdapter extends ProviderAdapter {
     } catch (error) {
       if (isAbortError(error)) {
         throw error
+      }
+      if (dispatchAttempted && !terminalEvidenceObserved) {
+        throw new ProviderAdapterError(
+          'submit',
+          'ChatGPT submit outcome is unknown after the send action; Portal will not replay it automatically.',
+          {
+            kind: 'unknown',
+            recovery: 'none',
+            retryable: false,
+            maxAttempts: 1,
+            detailCode: 'chatgpt_submit_outcome_unknown',
+            cause: error,
+          }
+        )
       }
       if (this.isRetryableError(error)) {
         throw new ProviderAdapterError(

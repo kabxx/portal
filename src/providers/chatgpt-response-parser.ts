@@ -380,12 +380,15 @@ function pickBestResponse(
 }
 
 export function parseChatGptWebSocketFrames(
-  frames: readonly string[]
+  frames: readonly string[],
+  expectedConversationId?: string | null
 ): ChatGPTParsedResponse | null {
   const results: ChatGPTParsedResponse[] = []
   const aggregatedReferenceUrls = new Map<string, string>()
   const streamedResponses = new Map<string, ChatGPTParsedResponse>()
   let activeMessageId: string | null = null
+  const restrictConversation = typeof expectedConversationId === 'string'
+  let ownedConversationId = expectedConversationId ?? null
 
   // A WebSocket frame can wrap one or more JSON values in transport text.
   const extractJsonChunks = (value: string): string[] => {
@@ -652,6 +655,23 @@ export function parseChatGptWebSocketFrames(
     for (const chunk of extractJsonChunks(frame)) {
       try {
         const parsedChunk: unknown = JSON.parse(chunk)
+        const parsedChunkRecord = asRecord(parsedChunk)
+        const chunkConversationId =
+          parsedChunkRecord === null
+            ? undefined
+            : readConversationId(parsedChunkRecord)
+        if (
+          chunkConversationId !== undefined &&
+          ownedConversationId !== null &&
+          chunkConversationId !== ownedConversationId
+        ) {
+          continue
+        }
+        if (chunkConversationId !== undefined) {
+          ownedConversationId ??= chunkConversationId
+        } else if (restrictConversation && ownedConversationId === null) {
+          continue
+        }
         results.push(...collectResponses(parsedChunk))
         for (const [referenceId, url] of collectReferenceUrls(
           parsedChunk
@@ -661,6 +681,16 @@ export function parseChatGptWebSocketFrames(
           }
         }
         for (const item of extractEncodedItems(parsedChunk)) {
+          if (
+            item.conversationId !== undefined &&
+            ownedConversationId !== null &&
+            item.conversationId !== ownedConversationId
+          ) {
+            continue
+          }
+          if (item.conversationId !== undefined) {
+            ownedConversationId ??= item.conversationId
+          }
           const { eventType, data } = parseEncodedItem(item.encodedItem)
           if (!data) {
             continue

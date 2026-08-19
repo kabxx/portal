@@ -188,6 +188,9 @@ test('ChatGPTAdapter.submit waits past empty target responses for the real HTTP 
   const adapter = createTestChatGPTAdapter()
   const parsedBodies: string[] = []
 
+  Object.assign(adapter, { pendingText: 'current request' })
+  adapter.getSubmitRequestStartGraceMs = () => 50
+
   adapter.websocketFrames = []
 
   const sendButton = {
@@ -197,11 +200,13 @@ test('ChatGPTAdapter.submit waits past empty target responses for the real HTTP 
       const firstRequest = {
         method: () => 'POST',
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        postData: () => JSON.stringify({ message: 'background request' }),
         failure: () => null,
       }
       const secondRequest = {
         method: () => 'POST',
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        postData: () => JSON.stringify({ message: 'current request' }),
         failure: () => null,
       }
       page.emit('request', firstRequest)
@@ -239,13 +244,10 @@ test('ChatGPTAdapter.submit waits past empty target responses for the real HTTP 
   const result = await adapter.submit()
 
   assert.equal(result, 'READY')
-  assert.deepEqual(parsedBodies, [
-    '{"status":"ok"}',
-    createChatGptHttpResponse('READY'),
-  ])
+  assert.deepEqual(parsedBodies, [createChatGptHttpResponse('READY')])
 })
 
-test('ChatGPTAdapter.submit keeps accepting later HTTP text after the first non-empty response', async () => {
+test('ChatGPTAdapter.submit ignores a later same-URL response from another request', async () => {
   const adapter = createTestChatGPTAdapter()
 
   adapter.websocketFrames = []
@@ -291,7 +293,7 @@ test('ChatGPTAdapter.submit keeps accepting later HTTP text after the first non-
 
   const result = await adapter.submit()
 
-  assert.equal(result, 'First sentence. Second sentence.')
+  assert.equal(result, 'First sentence.')
 })
 
 test('ChatGPTAdapter.submit streams captured HTTP text before response.text completes', async () => {
@@ -670,7 +672,10 @@ test('ChatGPTAdapter.submit fails instead of returning an unfinished response wi
   adapter.getSubmitResponseIdleTimeoutMs = () => 200
   await assert.rejects(
     adapter.submit(),
-    /ChatGPT submit failed due to a temporary page or network issue\./
+    (error: unknown) =>
+      error instanceof Error &&
+      'detailCode' in error &&
+      error.detailCode === 'chatgpt_submit_outcome_unknown'
   )
 })
 
@@ -772,7 +777,7 @@ test('ChatGPTAdapter.submit accepts the data-testid send button as composer read
   assert.ok(fallbackChecks >= 1)
 })
 
-test('ChatGPTAdapter lists fixed action capabilities when the capability group exists', async () => {
+test('ChatGPTAdapter discovers only stable action capabilities from the current menu', async () => {
   const adapter = createTestChatGPTAdapter()
   const page = createChatGPTCapabilityPage()
   adapter.page = page
@@ -781,9 +786,9 @@ test('ChatGPTAdapter lists fixed action capabilities when the capability group e
     { name: 'image_create', state: 'available' },
     { name: 'web_search', state: 'available' },
     { name: 'deep_research', state: 'available' },
-    { name: 'openai_platform', state: 'available' },
+    { name: 'thinking', state: 'available' },
   ])
-  assert.deepEqual(page.events, ['click:plus'])
+  assert.deepEqual(page.events, ['click:plus', 'click:plus'])
 })
 
 test('ChatGPTAdapter returns no action capabilities when the capability group is missing', async () => {
@@ -793,22 +798,59 @@ test('ChatGPTAdapter returns no action capabilities when the capability group is
   assert.deepEqual(await adapter.listActionCapabilities(), [])
 })
 
-test('ChatGPTAdapter selects fixed action capabilities by index', async () => {
+test('ChatGPTAdapter reopens a capability menu whose hidden DOM remains mounted', async () => {
+  const adapter = createTestChatGPTAdapter()
+  const page = createChatGPTCapabilityPage({ retainHiddenMenuDom: true })
+  adapter.page = page
+
+  assert.deepEqual(await adapter.listActionCapabilities(), [
+    { name: 'image_create', state: 'available' },
+    { name: 'web_search', state: 'available' },
+    { name: 'deep_research', state: 'available' },
+    { name: 'thinking', state: 'available' },
+  ])
+  assert.deepEqual(page.events, ['click:plus', 'click:plus'])
+})
+
+test('ChatGPTAdapter excludes hidden capability items from discovery and selection', async () => {
+  const adapter = createTestChatGPTAdapter()
+  adapter.page = createChatGPTCapabilityPage({ hiddenCapability: 'thinking' })
+
+  assert.deepEqual(await adapter.listActionCapabilities(), [
+    { name: 'image_create', state: 'available' },
+    { name: 'web_search', state: 'available' },
+    { name: 'deep_research', state: 'available' },
+  ])
+  assert.equal(await adapter.selectActionCapability('thinking'), 'unavailable')
+})
+
+test('ChatGPTAdapter rejects duplicate visible capability identities', async () => {
+  const adapter = createTestChatGPTAdapter()
+  adapter.page = createChatGPTCapabilityPage({
+    duplicateCapability: 'thinking',
+  })
+
+  await assert.rejects(
+    adapter.listActionCapabilities(),
+    (error: unknown) =>
+      error instanceof Error &&
+      'detailCode' in error &&
+      error.detailCode === 'chatgpt_capability_identity_ambiguous'
+  )
+})
+
+test('ChatGPTAdapter selects action capabilities by stable identity and verifies state', async () => {
   const adapter = createTestChatGPTAdapter()
   const page = createChatGPTCapabilityPage()
   adapter.page = page
 
   assert.equal(await adapter.selectActionCapability('web_search'), 'selected')
-  assert.equal(
-    await adapter.selectActionCapability('openai_platform'),
-    'selected'
-  )
+  assert.equal(await adapter.selectActionCapability('thinking'), 'selected')
 
-  assert.deepEqual(page.events, [
-    'click:plus',
-    'click:capability:web_search',
-    'click:capability:openai_platform',
-  ])
+  assert.deepEqual(
+    page.events.filter((event) => event.startsWith('click:capability:')),
+    ['click:capability:web_search', 'click:capability:thinking']
+  )
 })
 
 test('ChatGPTAdapter changes the declared model through the intelligence picker', async () => {
@@ -1161,8 +1203,14 @@ function createChatGPTDirectModelPage({
 
 function createChatGPTCapabilityPage({
   hasCapabilityGroup = true,
+  retainHiddenMenuDom = false,
+  hiddenCapability,
+  duplicateCapability,
 }: {
   hasCapabilityGroup?: boolean
+  retainHiddenMenuDom?: boolean
+  hiddenCapability?: string
+  duplicateCapability?: string
 } = {}) {
   const events: string[] = []
   let menuOpen = false
@@ -1170,14 +1218,34 @@ function createChatGPTCapabilityPage({
     'image_create',
     'web_search',
     'deep_research',
-    'openai_platform',
+    'thinking',
+    ...(duplicateCapability === undefined ? [] : [duplicateCapability]),
   ]
+  let selectedCapability: string | null = null
+  const capabilityItems = capabilityNames.map((name) => ({
+    isVisible: async () => name !== hiddenCapability,
+    getAttribute: async (attribute: string) => {
+      if (attribute === 'data-testid') return `composer-action-${name}`
+      if (attribute === 'aria-checked') {
+        return selectedCapability === name ? 'true' : 'false'
+      }
+      return null
+    },
+    locator: () => ({ count: async () => 0 }),
+    click: async () => {
+      selectedCapability = name
+      menuOpen = false
+      events.push(`click:capability:${name}`)
+    },
+  }))
   const uploadGroup = {
+    isVisible: async () => menuOpen,
     locator: (selector: string) => {
       if (selector !== 'xpath=./div') {
         throw new Error(`Unexpected upload group selector: ${selector}`)
       }
       return {
+        count: async () => 0,
         nth: () => ({
           click: async () => {
             events.push('click:upload')
@@ -1187,24 +1255,25 @@ function createChatGPTCapabilityPage({
     },
   }
   const capabilityGroup = {
-    count: async () => (hasCapabilityGroup && menuOpen ? 1 : 0),
+    count: async () =>
+      hasCapabilityGroup && (menuOpen || retainHiddenMenuDom) ? 1 : 0,
+    isVisible: async () => menuOpen,
     locator: (selector: string) => {
       if (selector !== 'xpath=./div') {
         throw new Error(`Unexpected capability group selector: ${selector}`)
       }
       return {
-        nth: (index: number) => ({
-          click: async () => {
-            events.push(`click:capability:${capabilityNames[index]}`)
-          },
-        }),
+        count: async () => capabilityItems.length,
+        nth: (index: number) => capabilityItems[index],
       }
     },
   }
   const capabilityTrigger = {
+    count: async () => 1,
+    isVisible: async () => true,
     click: async () => {
       events.push('click:plus')
-      menuOpen = true
+      menuOpen = !menuOpen
     },
   }
   return {
@@ -1222,6 +1291,8 @@ function createChatGPTCapabilityPage({
         throw new Error(`Unexpected selector: ${selector}`)
       }
       return {
+        count: async () =>
+          hasCapabilityGroup && (menuOpen || retainHiddenMenuDom) ? 2 : 0,
         nth: (index: number) => (index === 1 ? capabilityGroup : uploadGroup),
       }
     },

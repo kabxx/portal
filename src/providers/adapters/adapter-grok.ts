@@ -250,7 +250,10 @@ export class GrokAdapter extends ProviderAdapter {
     })
   }
 
-  private parseWebSocketResponse(frames: readonly string[]): {
+  private parseWebSocketResponse(
+    frames: readonly string[],
+    expectedConversationId: string | null = null
+  ): {
     conversationId: string | null
     text: string
     isFinished: boolean
@@ -259,6 +262,7 @@ export class GrokAdapter extends ProviderAdapter {
     let text = ''
     let isFinished = false
 
+    let ownedConversationId = expectedConversationId
     for (const frame of frames) {
       let payload: unknown
       try {
@@ -269,8 +273,19 @@ export class GrokAdapter extends ProviderAdapter {
       if (!isRecord(payload)) {
         continue
       }
-      if (typeof payload.session_id === 'string') {
-        conversationId = payload.session_id
+      const frameConversationId =
+        typeof payload.session_id === 'string' ? payload.session_id : null
+      if (frameConversationId !== null) {
+        if (
+          ownedConversationId !== null &&
+          frameConversationId !== ownedConversationId
+        ) {
+          continue
+        }
+        ownedConversationId ??= frameConversationId
+        conversationId = frameConversationId
+      } else if (ownedConversationId === null) {
+        continue
       }
       const event = payload.event
       if (!isRecord(event)) {
@@ -306,6 +321,8 @@ export class GrokAdapter extends ProviderAdapter {
   }
 
   public async submit(options: AbortOptions = {}): Promise<string> {
+    let dispatchAttempted = false
+    let terminalEvidenceObserved = false
     try {
       return await this.wrapAdapterActionErrorAsync('submit', async () => {
         const { signal } = options
@@ -315,6 +332,10 @@ export class GrokAdapter extends ProviderAdapter {
           signal,
         })
         const websocketStartIndex = this.websocketFrames.length
+        let expectedConversationId =
+          this.conversationIdVal ??
+          readGrokConversationIdFromUrl(this.page.url()) ??
+          null
         let warningTimer: NodeJS.Timeout | null = null
         const stopWarningTimer = () => {
           if (warningTimer !== null) {
@@ -323,21 +344,32 @@ export class GrokAdapter extends ProviderAdapter {
           }
         }
         const stopSubmitTextPolling = this.startSubmitTextPolling(async () => {
+          expectedConversationId ??=
+            readGrokConversationIdFromUrl(this.page.url()) ?? null
+          if (expectedConversationId === null) return null
           const parsed = this.parseWebSocketResponse(
-            this.websocketFrames.slice(websocketStartIndex)
+            this.websocketFrames.slice(websocketStartIndex),
+            expectedConversationId
           )
+          expectedConversationId ??= parsed.conversationId
           return parsed.text.trim() ? parsed.text : null
         })
         try {
           this.emitSubmitDispatching(signal)
+          dispatchAttempted = true
           await this.providerUi.clickSubmit()
           this.emitSubmitSent()
           throwIfAborted(signal)
           await waitAsync(
             async () => {
+              expectedConversationId ??=
+                readGrokConversationIdFromUrl(this.page.url()) ?? null
+              if (expectedConversationId === null) return false
               const parsed = this.parseWebSocketResponse(
-                this.websocketFrames.slice(websocketStartIndex)
+                this.websocketFrames.slice(websocketStartIndex),
+                expectedConversationId
               )
+              expectedConversationId ??= parsed.conversationId
               const responseStarted = parsed.text.trim() || parsed.isFinished
               if (responseStarted) {
                 stopWarningTimer()
@@ -365,9 +397,14 @@ export class GrokAdapter extends ProviderAdapter {
           await waitAsync(
             async () => {
               throwIfAborted(signal)
+              expectedConversationId ??=
+                readGrokConversationIdFromUrl(this.page.url()) ?? null
+              if (expectedConversationId === null) return false
               parsedResponse = this.parseWebSocketResponse(
-                this.websocketFrames.slice(websocketStartIndex)
+                this.websocketFrames.slice(websocketStartIndex),
+                expectedConversationId
               )
+              expectedConversationId ??= parsedResponse.conversationId
               stopWarningTimer()
               return parsedResponse.isFinished
             },
@@ -402,6 +439,7 @@ export class GrokAdapter extends ProviderAdapter {
               }
             )
           }
+          terminalEvidenceObserved = true
           await waitAsync(async () => await this.providerUi.isComposerIdle(), {
             timeoutMs: this.getSubmitResponseTimeoutMs(),
             signal,
@@ -427,6 +465,20 @@ export class GrokAdapter extends ProviderAdapter {
     } catch (error) {
       if (isAbortError(error)) {
         throw error
+      }
+      if (dispatchAttempted && !terminalEvidenceObserved) {
+        throw new ProviderAdapterError(
+          'submit',
+          'Grok submit outcome is unknown after the send action; Portal will not replay it automatically.',
+          {
+            kind: 'unknown',
+            recovery: 'none',
+            retryable: false,
+            maxAttempts: 1,
+            detailCode: 'grok_submit_outcome_unknown',
+            cause: error,
+          }
+        )
       }
       if (this.isRetryableError(error)) {
         throw new ProviderAdapterError(
