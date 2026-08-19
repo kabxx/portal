@@ -466,6 +466,59 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
   assert.equal(await adapter.submit(), responseText)
 })
 
+test('DeepSeekAdapter fails closed when an indistinguishable background request wins the race', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  const responseText = 'The response from the current submission.'
+  const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  const backgroundRequest = {
+    method: () => 'POST',
+    url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+    postData: () => JSON.stringify({ message: 'same prompt' }),
+    failure: () => null,
+  }
+  const currentRequest = {
+    method: () => 'POST',
+    url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+    postData: () => JSON.stringify({ message: 'same prompt' }),
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('request', backgroundRequest)
+      page.emit('response', {
+        request: () => backgroundRequest,
+        url: () => backgroundRequest.url(),
+        text: async () => await new Promise<string>(() => {}),
+      })
+      setTimeout(() => {
+        page.emit('request', currentRequest)
+        page.emit('response', {
+          request: () => currentRequest,
+          url: () => currentRequest.url(),
+          text: async () => raw,
+        })
+      }, 10)
+    },
+  }
+  const page = createDeepSeekPage(sendButton)
+  adapter.page = page
+  Object.assign(adapter, { pendingText: 'same prompt' })
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getLatestCapturedFetchBody = async () => raw
+  adapter.getSubmitRequestStartGraceMs = () => 10
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'unknown' &&
+      error.detailCode === 'deepseek_submit_outcome_unknown'
+  )
+})
+
 test('DeepSeekAdapter.submit waits for the send button disabled class to clear before clicking', async () => {
   const adapter = createTestDeepSeekAdapter()
   adapter.conversationIdVal = null

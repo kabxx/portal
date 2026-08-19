@@ -1,6 +1,7 @@
 export interface ChatGPTParsedResponse {
   conversationId?: string
   messageId?: string
+  parentMessageId?: string
   text: string
   isFinished: boolean
 }
@@ -20,6 +21,15 @@ function readConversationId(node: Record<string, unknown>): string | undefined {
 
 function readMessageId(node: Record<string, unknown>): string | undefined {
   const value = node.message_id ?? node.messageId ?? node.id
+  return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+function readParentMessageId(
+  node: Record<string, unknown>
+): string | undefined {
+  const metadata = asRecord(node.metadata)
+  const value =
+    node.parent_id ?? node.parentId ?? metadata?.parent_id ?? metadata?.parentId
   return typeof value === 'string' && value.trim() ? value : undefined
 }
 
@@ -294,9 +304,11 @@ function readToolMultimodalResponse(
 
   const conversationId = readConversationId(message)
   const messageId = readMessageId(message)
+  const parentMessageId = readParentMessageId(message)
   return {
     ...(conversationId !== undefined ? { conversationId } : {}),
     ...(messageId !== undefined ? { messageId } : {}),
+    ...(parentMessageId !== undefined ? { parentMessageId } : {}),
     text: '[ChatGPT image generation completed in the UI. This transport payload did not include direct image URLs.]',
     isFinished: readFinished(message),
   }
@@ -316,9 +328,11 @@ function readResponseFromMessage(
 
   const conversationId = readConversationId(message)
   const messageId = readMessageId(message)
+  const parentMessageId = readParentMessageId(message)
   return {
     ...(conversationId !== undefined ? { conversationId } : {}),
     ...(messageId !== undefined ? { messageId } : {}),
+    ...(parentMessageId !== undefined ? { parentMessageId } : {}),
     text,
     isFinished: readFinished(message),
   }
@@ -381,7 +395,13 @@ function pickBestResponse(
 
 export function parseChatGptWebSocketFrames(
   frames: readonly string[],
-  expectedConversationId?: string | null
+  expectedConversationId?: string | null,
+  options: {
+    requireExpectedConversationId?: boolean
+    requireSingleMessageId?: boolean
+    expectedMessageId?: string
+    expectedParentMessageId?: string
+  } = {}
 ): ChatGPTParsedResponse | null {
   const results: ChatGPTParsedResponse[] = []
   const aggregatedReferenceUrls = new Map<string, string>()
@@ -389,6 +409,17 @@ export function parseChatGptWebSocketFrames(
   let activeMessageId: string | null = null
   const restrictConversation = typeof expectedConversationId === 'string'
   let ownedConversationId = expectedConversationId ?? null
+  const requireExpectedConversationId =
+    options.requireExpectedConversationId === true
+
+  if (
+    requireExpectedConversationId &&
+    ownedConversationId === null &&
+    options.expectedMessageId === undefined &&
+    options.expectedParentMessageId === undefined
+  ) {
+    return null
+  }
 
   // A WebSocket frame can wrap one or more JSON values in transport text.
   const extractJsonChunks = (value: string): string[] => {
@@ -541,6 +572,7 @@ export function parseChatGptWebSocketFrames(
     }
 
     const conversationId = readConversationId(message) ?? fallbackConversationId
+    const parentMessageId = readParentMessageId(message)
     const rawText = readText(content?.parts) ?? ''
     const text = rawText
       ? normalizeAssistantTextFromReferences(rawText, message)
@@ -552,6 +584,11 @@ export function parseChatGptWebSocketFrames(
         ? { conversationId }
         : current?.conversationId !== undefined
           ? { conversationId: current.conversationId }
+          : {}),
+      ...(parentMessageId !== undefined
+        ? { parentMessageId }
+        : current?.parentMessageId !== undefined
+          ? { parentMessageId: current.parentMessageId }
           : {}),
       messageId,
       text: text || current?.text || '',
@@ -765,7 +802,28 @@ export function parseChatGptWebSocketFrames(
       ),
     }))
   )
-  return pickBestResponse(results)
+  const filteredResults =
+    options.expectedMessageId === undefined &&
+    options.expectedParentMessageId === undefined
+      ? results
+      : results.filter(
+          (response) =>
+            (options.expectedMessageId === undefined ||
+              response.messageId === options.expectedMessageId) &&
+            (options.expectedParentMessageId === undefined ||
+              response.parentMessageId === options.expectedParentMessageId)
+        )
+  if (options.requireSingleMessageId === true) {
+    const messageIds = new Set(
+      filteredResults
+        .map((response) => response.messageId)
+        .filter((messageId): messageId is string => messageId !== undefined)
+    )
+    if (messageIds.size > 1) {
+      return null
+    }
+  }
+  return pickBestResponse(filteredResults)
 }
 
 function parseChatGptHttpSseResponse(

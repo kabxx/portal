@@ -37,7 +37,13 @@ function createTestGrokAdapter(): GrokAdapter {
 
 function parseWebSocketResponse(
   adapter: GrokAdapter,
-  frames: readonly string[]
+  frames: readonly string[],
+  expectedConversationId: string | null = null,
+  options: {
+    requireExpectedConversationId?: boolean
+    excludedConversationIds?: readonly string[]
+    requireSingleResponse?: boolean
+  } = {}
 ): GrokParsedWebSocketResponse {
   const candidate: object = adapter
   if (
@@ -49,7 +55,7 @@ function parseWebSocketResponse(
   const parsed: unknown = Reflect.apply(
     candidate.parseWebSocketResponse,
     candidate,
-    [frames]
+    [frames, expectedConversationId, options]
   )
   if (
     parsed === null ||
@@ -106,6 +112,49 @@ test('GrokAdapter.submit waits for Grok websocket response.done', async () => {
   assert.equal(streamedTexts.at(-1), 'Grok response complete.')
 })
 
+test('GrokAdapter.submit preserves the confirmed session for a consecutive submission', async () => {
+  const adapter = createTestGrokAdapter()
+  const page = createGrokPage({ resetSubmitAfterMs: 40 })
+  const streamedTexts: string[] = []
+  installGrokWebSocketFrames(adapter, page.websocketFrames)
+  installGrokTestPage(adapter, page)
+  adapter.setSubmitTextReporter(async (message: string) => {
+    streamedTexts.push(message)
+  })
+
+  assert.equal(await adapter.submit(), 'Grok response complete.')
+  assert.equal(await adapter.submit(), 'Grok response complete.')
+  assert.equal(
+    streamedTexts.filter((text) => text === 'Grok response complete.').length,
+    2
+  )
+})
+
+test('GrokAdapter.submit fails closed when an unknown session arrives after dispatch', async () => {
+  const adapter = createTestGrokAdapter()
+  Object.assign(adapter, {
+    getSubmitRequestStartGraceMs: () => 100,
+    getSubmitResponseTimeoutMs: () => 100,
+  })
+  const page = createGrokPage({
+    conversationUrl: 'https://grok.com/',
+    responseConversationIds: [
+      'late-background-session',
+      'late-current-session',
+    ],
+  })
+  installGrokWebSocketFrames(adapter, page.websocketFrames)
+  installGrokTestPage(adapter, page)
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'unknown' &&
+      error.detailCode === 'grok_submit_outcome_unknown'
+  )
+})
+
 test('GrokAdapter websocket parsing does not finish from text chunks alone', () => {
   const adapter = createTestGrokAdapter()
 
@@ -117,6 +166,72 @@ test('GrokAdapter websocket parsing does not finish from text chunks alone', () 
     conversationId: 'conv-1',
     text: 'partial text',
     isFinished: false,
+  })
+})
+
+test('GrokAdapter websocket parsing can fail closed without a dispatch session id', () => {
+  const adapter = createTestGrokAdapter()
+
+  const parsed = parseWebSocketResponse(
+    adapter,
+    [buildResponseFrame('background-session', 'background response', true)],
+    null,
+    { requireExpectedConversationId: true }
+  )
+
+  assert.deepEqual(parsed, {
+    conversationId: null,
+    text: '',
+    isFinished: false,
+  })
+})
+
+test('GrokAdapter websocket parsing requires a known current session', () => {
+  const adapter = createTestGrokAdapter()
+
+  const parsed = parseWebSocketResponse(
+    adapter,
+    [
+      buildResponseFrame('old-session', 'old response', true),
+      buildResponseFrame('new-session', 'current response', false),
+      buildResponseFrame('new-session', '', true),
+    ],
+    null,
+    {
+      requireExpectedConversationId: true,
+      excludedConversationIds: ['old-session'],
+    }
+  )
+
+  assert.deepEqual(parsed, {
+    conversationId: null,
+    text: '',
+    isFinished: false,
+  })
+})
+
+test('GrokAdapter websocket parsing uses only the confirmed current session', () => {
+  const adapter = createTestGrokAdapter()
+
+  const parsed = parseWebSocketResponse(
+    adapter,
+    [
+      buildResponseFrame('old-session', 'old response', true),
+      buildResponseFrame('new-session', 'current response', false),
+      buildResponseFrame('new-session', '', true),
+    ],
+    'new-session',
+    {
+      requireExpectedConversationId: true,
+      excludedConversationIds: ['old-session'],
+      requireSingleResponse: true,
+    }
+  )
+
+  assert.deepEqual(parsed, {
+    conversationId: 'new-session',
+    text: 'current response',
+    isFinished: true,
   })
 })
 
@@ -292,6 +407,10 @@ function createGrokPage({
   subscribeModelIndex = null,
   stopButtonAvailable = false,
   unrelatedFileInputCount = 0,
+  resetSubmitAfterMs = null,
+  conversationUrl = 'https://grok.com/chat/conv-1',
+  responseConversationId = 'conv-1',
+  responseConversationIds = [responseConversationId],
 }: {
   attachButtonAvailable?: boolean
   attachComposerCount?: number
@@ -300,11 +419,15 @@ function createGrokPage({
   subscribeModelIndex?: number | null
   stopButtonAvailable?: boolean
   unrelatedFileInputCount?: number
+  resetSubmitAfterMs?: number | null
+  conversationUrl?: string
+  responseConversationId?: string
+  responseConversationIds?: readonly string[]
 } = {}) {
   const events: string[] = []
   const files: string[] = []
   const unrelatedFiles: string[] = []
-  let currentUrl = 'https://grok.com/chat/conv-1'
+  let currentUrl = conversationUrl
   let submitEnabled = true
   let submitVisible = true
 
@@ -326,19 +449,40 @@ function createGrokPage({
     click: async () => {
       events.push('click:submit')
       setTimeout(() => {
-        page.websocketFrames.push(
-          buildResponseFrame('conv-1', 'Grok response', false)
-        )
+        for (const [
+          index,
+          conversationId,
+        ] of responseConversationIds.entries()) {
+          page.websocketFrames.push(
+            buildResponseFrame(
+              conversationId,
+              index === 0 ? 'Grok response' : 'background response',
+              false
+            )
+          )
+        }
       }, 20)
       setTimeout(() => {
-        page.websocketFrames.push(
-          buildResponseFrame('conv-1', ' complete.', false)
-        )
+        for (const conversationId of responseConversationIds) {
+          page.websocketFrames.push(
+            buildResponseFrame(conversationId, ' complete.', false)
+          )
+        }
       }, 60)
       setTimeout(() => {
-        page.websocketFrames.push(buildResponseFrame('conv-1', '', true))
+        for (const conversationId of responseConversationIds) {
+          page.websocketFrames.push(
+            buildResponseFrame(conversationId, '', true)
+          )
+        }
         submitVisible = false
         submitEnabled = false
+        if (resetSubmitAfterMs !== null) {
+          setTimeout(() => {
+            submitVisible = true
+            submitEnabled = true
+          }, resetSubmitAfterMs)
+        }
       }, 90)
     },
   }

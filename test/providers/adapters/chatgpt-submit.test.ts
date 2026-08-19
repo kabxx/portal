@@ -3,7 +3,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { ChatGPTAdapter } from '../../../src/providers/adapters/adapter-chatgpt.ts'
-import { createDeferred } from '../../../src/providers/adapters/adapter-base.ts'
+import {
+  createDeferred,
+  ProviderAdapterError,
+} from '../../../src/providers/adapters/adapter-base.ts'
 import {
   joinCssLocatorCandidates,
   mapCssLocatorCandidates,
@@ -54,6 +57,7 @@ type ChatGPTAdapterHarness = Pick<ChatGPTAdapter, keyof ChatGPTAdapter> & {
   getFinishedResponseSettleMs(): number
   getSubmitRequestStartGraceMs(): number
   getSubmitBlockedWarningIntervalMs(): number
+  getSubmitResponseTimeoutMs(): number
   getSubmitResponseIdleTimeoutMs(): number
 }
 
@@ -76,6 +80,12 @@ function createTestChatGPTAdapter(): ChatGPTAdapterHarness {
   return Object.assign(adapter, {
     page: undefined,
     websocketFrames,
+    pendingText: 'current prompt',
+    lastParsedResponse: {
+      conversationId: 'conversation-1',
+      text: '',
+      isFinished: true,
+    },
     isTargetConversationRequest(request: {
       method(): string
       url(): string
@@ -95,7 +105,23 @@ function createTestChatGPTAdapter(): ChatGPTAdapterHarness {
     getFinishedResponseSettleMs: (): number => 50,
     getSubmitRequestStartGraceMs: (): number => 5,
     getSubmitBlockedWarningIntervalMs: (): number => 30_000,
+    getSubmitResponseTimeoutMs: (): number => 30_000,
     getSubmitResponseIdleTimeoutMs: (): number => 30_000,
+  })
+}
+
+function createChatGptRequestBody(
+  text = 'current prompt',
+  userMessageId = 'user-message-1'
+): string {
+  return JSON.stringify({
+    messages: [
+      {
+        id: userMessageId,
+        role: 'user',
+        content: { parts: [text] },
+      },
+    ],
   })
 }
 
@@ -126,7 +152,8 @@ function createChatGptHttpResponse(
 function createChatGptWebSocketFrame(
   text: string,
   finished = false,
-  conversationId = 'conversation-1'
+  conversationId = 'conversation-1',
+  parentMessageId: string | null = 'user-message-1'
 ): string {
   return JSON.stringify({
     conversation_id: conversationId,
@@ -140,6 +167,7 @@ function createChatGptWebSocketFrame(
           end_turn: finished,
           channel: 'final',
           metadata: {},
+          ...(parentMessageId !== null ? { parent_id: parentMessageId } : {}),
         },
       },
     })}`,
@@ -247,8 +275,10 @@ test('ChatGPTAdapter.submit waits past empty target responses for the real HTTP 
   assert.deepEqual(parsedBodies, [createChatGptHttpResponse('READY')])
 })
 
-test('ChatGPTAdapter.submit ignores a later same-URL response from another request', async () => {
+test('ChatGPTAdapter.submit fails closed when another indistinguishable request appears', async () => {
   const adapter = createTestChatGPTAdapter()
+  Object.assign(adapter, { pendingText: 'same prompt' })
+  const streamedTexts: string[] = []
 
   adapter.websocketFrames = []
 
@@ -257,11 +287,13 @@ test('ChatGPTAdapter.submit ignores a later same-URL response from another reque
     isVisible: async () => true,
     click: async () => {
       const firstRequest = {
+        postData: () => JSON.stringify({ message: 'same prompt' }),
         method: () => 'POST',
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
         failure: () => null,
       }
       const secondRequest = {
+        postData: () => JSON.stringify({ message: 'same prompt' }),
         method: () => 'POST',
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
         failure: () => null,
@@ -290,10 +322,143 @@ test('ChatGPTAdapter.submit ignores a later same-URL response from another reque
   adapter.setSubmitStatusReporter(async () => {
     throw new Error('submit warning should not fire after a target response')
   })
+  adapter.setSubmitTextReporter(async (message: string) => {
+    streamedTexts.push(message)
+  })
 
-  const result = await adapter.submit()
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'unknown' &&
+      error.detailCode === 'chatgpt_submit_outcome_unknown'
+  )
+  assert.deepEqual(streamedTexts, [])
+})
 
-  assert.equal(result, 'First sentence.')
+test('ChatGPTAdapter.submit does not return an old same-conversation websocket response without message correlation', async () => {
+  const adapter = createTestChatGPTAdapter()
+  Object.assign(adapter, {
+    pendingText: 'same prompt',
+    lastParsedResponse: null,
+  })
+  adapter.getSubmitResponseTimeoutMs = () => 100
+
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const request = {
+        postData: () => JSON.stringify({ message: 'same prompt' }),
+        method: () => 'POST',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () => '{}',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        status: () => 200,
+      })
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame(
+          'old completed response',
+          true,
+          'conversation-1',
+          null
+        )
+      )
+      setTimeout(() => {
+        adapter.websocketFrames.push(
+          createChatGptWebSocketFrame(
+            'current response',
+            true,
+            'conversation-1',
+            null
+          )
+        )
+      }, 20)
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+  adapter.setSubmitStatusReporter(async () => undefined)
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'unknown' &&
+      error.detailCode === 'chatgpt_submit_outcome_unknown'
+  )
+})
+
+test('ChatGPTAdapter.submit accepts a new websocket conversation only after matching the submitted user message', async () => {
+  const adapter = createTestChatGPTAdapter()
+  Object.assign(adapter, { lastParsedResponse: null })
+
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const request = {
+        postData: () => createChatGptRequestBody(),
+        method: () => 'POST',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame(
+          'new conversation response',
+          true,
+          'new-conversation'
+        )
+      )
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+  adapter.setSubmitStatusReporter(async () => undefined)
+
+  assert.equal(await adapter.submit(), 'new conversation response')
+})
+
+test('ChatGPTAdapter.submit does not synthesize ownership when the real request has no postData', async () => {
+  const adapter = createTestChatGPTAdapter()
+  adapter.getSubmitResponseTimeoutMs = () => 100
+
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const request = {
+        postData: () => null,
+        method: () => 'POST',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () => '{}',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        status: () => 200,
+      })
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+  adapter.setSubmitStatusReporter(async () => undefined)
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'unknown' &&
+      error.detailCode === 'chatgpt_submit_outcome_unknown'
+  )
 })
 
 test('ChatGPTAdapter.submit streams captured HTTP text before response.text completes', async () => {
@@ -367,6 +532,59 @@ test('ChatGPTAdapter.submit streams captured HTTP text before response.text comp
   assert.deepEqual(responseTextCompletedByEmission, [false, false])
   releaseResponseText.resolve()
   await responseTextFinished.promise
+})
+
+test('ChatGPTAdapter.submit ignores a late captured snapshot after the attempt stops', async () => {
+  const adapter = createTestChatGPTAdapter()
+  const releaseCapture = createDeferred<{
+    text: string
+    isFinished: boolean
+  } | null>()
+  let captureCalls = 0
+  const streamedTexts: string[] = []
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.readCurrentCapturedResponse = async () => {
+    captureCalls += 1
+    if (captureCalls === 1) {
+      return await releaseCapture.promise
+    }
+    return null
+  }
+
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const request = {
+        method: () => 'POST',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () => '{}',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        status: () => 200,
+      })
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame('finished response', true)
+      )
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+  adapter.setSubmitTextReporter(async (message: string) => {
+    streamedTexts.push(message)
+  })
+
+  const result = await adapter.submit()
+  const streamedBeforeLateCapture = [...streamedTexts]
+  releaseCapture.resolve({ text: 'stale response', isFinished: true })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  assert.equal(result, 'finished response')
+  assert.deepEqual(streamedTexts, streamedBeforeLateCapture)
 })
 
 test('ChatGPTAdapter.submit waits for websocket text to stabilize after the HTTP response settles', async () => {
@@ -1013,6 +1231,16 @@ function createChatGPTPage(
       emitter.off(eventName, listener)
     },
     emit: (eventName: string, payload: unknown) => {
+      if (
+        eventName === 'request' &&
+        payload !== null &&
+        typeof payload === 'object' &&
+        !('postData' in payload)
+      ) {
+        Object.assign(payload, {
+          postData: () => createChatGptRequestBody(),
+        })
+      }
       emitter.emit(eventName, payload)
     },
   }

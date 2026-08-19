@@ -7,6 +7,7 @@ import {
   ProviderAdapterUnsupportedError,
   createDeferred,
   delayAsync,
+  requestBodyContainsSubmittedText,
 } from './adapter-base.ts'
 import {
   abortable,
@@ -29,6 +30,7 @@ import {
 const DEEPSEEK_CHAT_URL = 'https://chat.deepseek.com'
 const DEEPSEEK_CHAT_COMPLETION_URL =
   'https://chat.deepseek.com/api/v0/chat/completion'
+const DEEPSEEK_REQUEST_OWNERSHIP_SETTLE_MS = 25
 type DeepSeekParsedResponse = {
   messageId?: number
   parentId?: number
@@ -69,6 +71,7 @@ export class DeepSeekAdapter extends ProviderAdapter {
   }
 
   private conversationIdVal!: string | null
+  private pendingText = ''
 
   private get ui(): DeepSeekUi {
     return new DeepSeekUi(this.page)
@@ -328,6 +331,7 @@ export class DeepSeekAdapter extends ProviderAdapter {
   public async attachText(text: string) {
     await this.wrapAdapterActionErrorAsync('attachText', async () => {
       await this.ui.attachText(text)
+      this.pendingText += text
     })
   }
 
@@ -344,7 +348,9 @@ export class DeepSeekAdapter extends ProviderAdapter {
         await this.readRetryComposerText(controls.composer),
       writeText: async () => await this.attachText(text),
       clearComposer: async () =>
-        await this.clearRetryComposerElements(controls.composer),
+        await this.clearRetryComposerElements(controls.composer).finally(() => {
+          this.pendingText = ''
+        }),
       isStopActive: async () => await this.isRetryControlActive(controls.stop),
       isSendReady: async () => await this.isRetryControlReady(controls.send),
     })
@@ -378,31 +384,37 @@ export class DeepSeekAdapter extends ProviderAdapter {
   }
 
   private async readCurrentStreamedResponseText(
-    fetchCaptureStartIndex: number
+    fetchCaptureStartIndex: number,
+    requestBody?: string | null
   ): Promise<string | null> {
     const parsedResponse = await this.readCurrentCapturedResponse(
-      fetchCaptureStartIndex
+      fetchCaptureStartIndex,
+      requestBody
     )
     const text = parsedResponse?.text.trim() ?? ''
     return text ? parsedResponse!.text : null
   }
 
   private async readCurrentCapturedResponse(
-    fetchCaptureStartIndex: number
+    fetchCaptureStartIndex: number,
+    requestBody?: string | null
   ): Promise<DeepSeekParsedResponse | null> {
     const raw = await this.readCurrentCapturedRawResponse(
-      fetchCaptureStartIndex
+      fetchCaptureStartIndex,
+      requestBody
     )
     return raw === null ? null : this.parseResponse(raw)
   }
 
   private async readCurrentCapturedRawResponse(
-    fetchCaptureStartIndex: number
+    fetchCaptureStartIndex: number,
+    requestBody?: string | null
   ): Promise<string | null> {
     return await this.getLatestCapturedFetchBody(
       fetchCaptureStartIndex,
       (entry) =>
         entry.method === 'POST' &&
+        (requestBody === undefined || entry.requestBody === requestBody) &&
         (entry.url === '/api/v0/chat/completion' ||
           entry.url.endsWith('/api/v0/chat/completion') ||
           entry.url.startsWith(DEEPSEEK_CHAT_COMPLETION_URL))
@@ -412,7 +424,8 @@ export class DeepSeekAdapter extends ProviderAdapter {
   private async waitForCapturedFinishedResponse(
     fetchCaptureStartIndex: number,
     signal?: AbortSignal,
-    fallbackResponse?: import('playwright').Response
+    fallbackResponse?: import('playwright').Response,
+    requestBody?: string | null
   ): Promise<DeepSeekParsedResponse> {
     const raceController = new AbortController()
     const responseSignal =
@@ -424,7 +437,10 @@ export class DeepSeekAdapter extends ProviderAdapter {
       await waitAsync(
         async () => {
           const rawResponse = await abortable(
-            this.readCurrentCapturedRawResponse(fetchCaptureStartIndex),
+            this.readCurrentCapturedRawResponse(
+              fetchCaptureStartIndex,
+              requestBody
+            ),
             responseSignal
           )
           if (rawResponse === null) return false
@@ -505,7 +521,11 @@ export class DeepSeekAdapter extends ProviderAdapter {
         let requestObserved = false
         let responseObserved = false
         let dispatchStarted = false
+        const submittedText = this.pendingText
         let ownedRequest: import('playwright').Request | null = null
+        let ownedRequestBody: string | null = null
+        const candidateRequests = new Set<import('playwright').Request>()
+        let ambiguousRequest = false
         let terminalError: unknown = null
         let warningTimer: NodeJS.Timeout | null = null
         let settled = false
@@ -520,10 +540,35 @@ export class DeepSeekAdapter extends ProviderAdapter {
         const resolveRequestStarted = (
           request: import('playwright').Request
         ) => {
-          if (!dispatchStarted || ownedRequest !== null) {
+          if (!dispatchStarted) {
             return
           }
+          const candidate = request as import('playwright').Request & {
+            postData?: () => string | null
+          }
+          const requestBody =
+            typeof candidate.postData === 'function'
+              ? candidate.postData()
+              : null
+          if (
+            submittedText !== '' &&
+            !requestBodyContainsSubmittedText(requestBody, submittedText)
+          ) {
+            return
+          }
+          if (!candidateRequests.has(request)) {
+            candidateRequests.add(request)
+            if (candidateRequests.size > 1) {
+              ambiguousRequest = true
+              ownedRequest = null
+              ownedRequestBody = null
+              return
+            }
+          }
+          if (ambiguousRequest) return
           ownedRequest = request
+          ownedRequestBody = requestBody
+          this.pendingText = ''
           if (requestObserved) {
             return
           }
@@ -612,11 +657,16 @@ export class DeepSeekAdapter extends ProviderAdapter {
         this.page.on('close', onClose)
 
         let stopSubmitTextPolling = () => {}
+        let lastStreamedText = ''
         try {
-          stopSubmitTextPolling = this.startSubmitTextPolling(
-            async () =>
-              await this.readCurrentStreamedResponseText(fetchCaptureStartIndex)
-          )
+          stopSubmitTextPolling = this.startSubmitTextPolling(async () => {
+            const text = await this.readCurrentStreamedResponseText(
+              fetchCaptureStartIndex,
+              ownedRequestBody
+            )
+            if (text !== null) lastStreamedText = text
+            return text
+          })
           this.emitSubmitDispatching(signal)
           dispatchStarted = true
           dispatchAttempted = true
@@ -658,19 +708,50 @@ export class DeepSeekAdapter extends ProviderAdapter {
           const parsedResponse = await this.waitForCapturedFinishedResponse(
             fetchCaptureStartIndex,
             signal,
-            await targetResponse.promise
+            await targetResponse.promise,
+            ownedRequestBody
           )
+          await delayAsync(DEEPSEEK_REQUEST_OWNERSHIP_SETTLE_MS, signal)
+          if (ambiguousRequest) {
+            throw new ProviderAdapterError(
+              'submit',
+              'DeepSeek response ownership became ambiguous after dispatch.',
+              {
+                kind: 'unknown',
+                recovery: 'none',
+                retryable: false,
+                maxAttempts: 1,
+                detailCode: 'deepseek_response_ownership_ambiguous',
+              }
+            )
+          }
           terminalEvidenceObserved = true
           await this.ui.waitForReady(
             'submit',
             this.getSubmitResponseTimeoutMs(),
             signal
           )
+          if (ambiguousRequest) {
+            throw new ProviderAdapterError(
+              'submit',
+              'DeepSeek response ownership became ambiguous after completion.',
+              {
+                kind: 'unknown',
+                recovery: 'none',
+                retryable: false,
+                maxAttempts: 1,
+                detailCode: 'deepseek_response_ownership_ambiguous',
+              }
+            )
+          }
+          stopSubmitTextPolling()
           this.conversationIdVal =
             this.conversationIdVal ??
             this.page.url().match(/\/a\/chat\/s\/([^/?#]+)/)?.[1] ??
             null
-          await this.emitSubmitText(parsedResponse.text)
+          if (lastStreamedText !== parsedResponse.text) {
+            await this.emitSubmitText(parsedResponse.text)
+          }
           throwIfAborted(signal)
           return parsedResponse.text
         } finally {

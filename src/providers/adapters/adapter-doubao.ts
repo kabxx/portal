@@ -32,6 +32,7 @@ import {
 const DOUBAO_CHAT_URL = 'https://www.doubao.com/chat'
 const DOUBAO_CHAT_COMPLETION_URL = 'https://www.doubao.com/chat/completion'
 const DOUBAO_HISTORY_POLL_MS = 100
+const DOUBAO_REQUEST_OWNERSHIP_SETTLE_MS = 25
 
 type DoubaoParsedResponse = {
   conversationId?: string
@@ -467,6 +468,16 @@ export class DoubaoAdapter extends ProviderAdapter {
     requestBody?: string | null
   ): Promise<DoubaoParsedResponse> {
     throwIfAborted(signal)
+    const createStreamError = (
+      streamError: DoubaoStreamError
+    ): ProviderAdapterError =>
+      new ProviderAdapterError('submit', streamError.message, {
+        kind: streamError.kind,
+        recovery: 'retry',
+        retryable: true,
+        maxAttempts: 2,
+        detailCode: streamError.detailCode,
+      })
     let timer: NodeJS.Timeout | null = null
     const capturedResponsePromise = new Promise<DoubaoParsedResponse>(
       (resolve, reject) => {
@@ -497,15 +508,7 @@ export class DoubaoAdapter extends ProviderAdapter {
 
             const streamError = this.readStreamError(rawResponse)
             if (streamError !== null) {
-              rejectOnce(
-                new ProviderAdapterError('submit', streamError.message, {
-                  kind: streamError.kind,
-                  recovery: 'retry',
-                  retryable: true,
-                  maxAttempts: 2,
-                  detailCode: streamError.detailCode,
-                })
-              )
+              rejectOnce(createStreamError(streamError))
               return
             }
 
@@ -535,6 +538,10 @@ export class DoubaoAdapter extends ProviderAdapter {
         ? null
         : (async (): Promise<DoubaoParsedResponse> => {
             const raw = await abortable(fallbackResponse.text(), signal)
+            const streamError = this.readStreamError(raw)
+            if (streamError !== null) {
+              throw createStreamError(streamError)
+            }
             const parsed = this.parseResponse(raw)
             if (parsed?.isFinished === true) return parsed
             return await new Promise<never>(() => {})
@@ -587,6 +594,8 @@ export class DoubaoAdapter extends ProviderAdapter {
         const submittedText = this.pendingText
         let ownedRequest: import('playwright').Request | null = null
         let ownedRequestBody: string | null = null
+        const candidateRequests = new Set<import('playwright').Request>()
+        let ambiguousRequest = false
         let terminalError: unknown = null
         let warningTimer: NodeJS.Timeout | null = null
         let settled = false
@@ -599,7 +608,7 @@ export class DoubaoAdapter extends ProviderAdapter {
         }
 
         const adoptRequest = (request: import('playwright').Request) => {
-          if (!dispatchStarted || ownedRequest !== null) return
+          if (!dispatchStarted) return
           const candidate = request as import('playwright').Request & {
             postData?: () => string | null
           }
@@ -613,6 +622,16 @@ export class DoubaoAdapter extends ProviderAdapter {
           ) {
             return
           }
+          if (!candidateRequests.has(request)) {
+            candidateRequests.add(request)
+            if (candidateRequests.size > 1) {
+              ambiguousRequest = true
+              ownedRequest = null
+              ownedRequestBody = null
+              return
+            }
+          }
+          if (ambiguousRequest) return
           ownedRequest = request
           ownedRequestBody = requestBody
           this.pendingText = ''
@@ -728,14 +747,16 @@ export class DoubaoAdapter extends ProviderAdapter {
         this.page.on('close', onClose)
 
         let stopSubmitTextPolling = () => {}
+        let lastStreamedText = ''
         try {
-          stopSubmitTextPolling = this.startSubmitTextPolling(
-            async () =>
-              await this.readCurrentStreamedResponseText(
-                fetchCaptureStartIndex,
-                ownedRequestBody
-              )
-          )
+          stopSubmitTextPolling = this.startSubmitTextPolling(async () => {
+            const text = await this.readCurrentStreamedResponseText(
+              fetchCaptureStartIndex,
+              ownedRequestBody
+            )
+            if (text !== null) lastStreamedText = text
+            return text
+          })
           this.emitSubmitDispatching(signal)
           dispatchStarted = true
           dispatchAttempted = true
@@ -781,14 +802,44 @@ export class DoubaoAdapter extends ProviderAdapter {
             await targetResponse.promise,
             ownedRequestBody
           )
+          await delayAsync(DOUBAO_REQUEST_OWNERSHIP_SETTLE_MS, signal)
+          if (ambiguousRequest) {
+            throw new ProviderAdapterError(
+              'submit',
+              'Doubao response ownership became ambiguous after dispatch.',
+              {
+                kind: 'unknown',
+                recovery: 'none',
+                retryable: false,
+                maxAttempts: 1,
+                detailCode: 'doubao_response_ownership_ambiguous',
+              }
+            )
+          }
           terminalEvidenceObserved = true
           await this.ui.waitForReady(
             'submit',
             this.getSubmitResponseTimeoutMs(),
             signal
           )
+          if (ambiguousRequest) {
+            throw new ProviderAdapterError(
+              'submit',
+              'Doubao response ownership became ambiguous after completion.',
+              {
+                kind: 'unknown',
+                recovery: 'none',
+                retryable: false,
+                maxAttempts: 1,
+                detailCode: 'doubao_response_ownership_ambiguous',
+              }
+            )
+          }
+          stopSubmitTextPolling()
           await this.ui.dismissDesktopPromotion('submit', signal)
-          await this.emitSubmitText(this.lastParsedResponse.text)
+          if (lastStreamedText !== this.lastParsedResponse.text) {
+            await this.emitSubmitText(this.lastParsedResponse.text)
+          }
           throwIfAborted(signal)
           return this.lastParsedResponse.text
         } finally {
@@ -804,6 +855,13 @@ export class DoubaoAdapter extends ProviderAdapter {
       if (isAbortError(error)) {
         throw error
       }
+      const isKnownStreamError =
+        error instanceof ProviderAdapterError &&
+        typeof error.detailCode === 'string' &&
+        error.detailCode.startsWith('doubao_stream_error_')
+      if (isKnownStreamError) {
+        throw error
+      }
       if (dispatchAttempted && !terminalEvidenceObserved) {
         throw new ProviderAdapterError(
           'submit',
@@ -817,12 +875,6 @@ export class DoubaoAdapter extends ProviderAdapter {
             cause: error,
           }
         )
-      }
-      if (
-        error instanceof ProviderAdapterError &&
-        error.kind === 'rate_limit'
-      ) {
-        throw error
       }
       if (this.isRetryableError(error)) {
         throw new ProviderAdapterError(

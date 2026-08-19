@@ -252,7 +252,12 @@ export class GrokAdapter extends ProviderAdapter {
 
   private parseWebSocketResponse(
     frames: readonly string[],
-    expectedConversationId: string | null = null
+    expectedConversationId: string | null = null,
+    options: {
+      requireExpectedConversationId?: boolean
+      excludedConversationIds?: readonly string[]
+      requireSingleResponse?: boolean
+    } = {}
   ): {
     conversationId: string | null
     text: string
@@ -261,8 +266,18 @@ export class GrokAdapter extends ProviderAdapter {
     let conversationId: string | null = null
     let text = ''
     let isFinished = false
+    let terminalEventCount = 0
 
     let ownedConversationId = expectedConversationId
+    const excludedConversationIds = new Set(
+      options.excludedConversationIds ?? []
+    )
+    if (
+      options.requireExpectedConversationId === true &&
+      ownedConversationId === null
+    ) {
+      return { conversationId: null, text: '', isFinished: false }
+    }
     for (const frame of frames) {
       let payload: unknown
       try {
@@ -276,6 +291,9 @@ export class GrokAdapter extends ProviderAdapter {
       const frameConversationId =
         typeof payload.session_id === 'string' ? payload.session_id : null
       if (frameConversationId !== null) {
+        if (excludedConversationIds.has(frameConversationId)) {
+          continue
+        }
         if (
           ownedConversationId !== null &&
           frameConversationId !== ownedConversationId
@@ -292,6 +310,7 @@ export class GrokAdapter extends ProviderAdapter {
         continue
       }
       if (event.type === 'response.done') {
+        terminalEventCount += 1
         const response = event.response
         if (isRecord(response) && response.status === 'completed') {
           isFinished = true
@@ -317,7 +336,27 @@ export class GrokAdapter extends ProviderAdapter {
       }
     }
 
+    if (options.requireSingleResponse === true && terminalEventCount > 1) {
+      return { conversationId: null, text: '', isFinished: false }
+    }
+
     return { conversationId, text, isFinished }
+  }
+
+  private readWebSocketSessionIds(frames: readonly string[]): string[] {
+    const ids = new Set<string>()
+    for (const frame of frames) {
+      try {
+        const payload: unknown = JSON.parse(frame)
+        if (!isRecord(payload) || typeof payload.session_id !== 'string') {
+          continue
+        }
+        ids.add(payload.session_id)
+      } catch {
+        // Ignore unrelated or malformed frames.
+      }
+    }
+    return [...ids]
   }
 
   public async submit(options: AbortOptions = {}): Promise<string> {
@@ -332,10 +371,17 @@ export class GrokAdapter extends ProviderAdapter {
           signal,
         })
         const websocketStartIndex = this.websocketFrames.length
+        const historicalConversationIds = this.readWebSocketSessionIds(
+          this.websocketFrames
+        )
         let expectedConversationId =
           this.conversationIdVal ??
           readGrokConversationIdFromUrl(this.page.url()) ??
           null
+        const getExcludedConversationIds = () =>
+          historicalConversationIds.filter(
+            (conversationId) => conversationId !== expectedConversationId
+          )
         let warningTimer: NodeJS.Timeout | null = null
         const stopWarningTimer = () => {
           if (warningTimer !== null) {
@@ -349,7 +395,12 @@ export class GrokAdapter extends ProviderAdapter {
           if (expectedConversationId === null) return null
           const parsed = this.parseWebSocketResponse(
             this.websocketFrames.slice(websocketStartIndex),
-            expectedConversationId
+            expectedConversationId,
+            {
+              requireExpectedConversationId: true,
+              excludedConversationIds: getExcludedConversationIds(),
+              requireSingleResponse: true,
+            }
           )
           expectedConversationId ??= parsed.conversationId
           return parsed.text.trim() ? parsed.text : null
@@ -367,7 +418,12 @@ export class GrokAdapter extends ProviderAdapter {
               if (expectedConversationId === null) return false
               const parsed = this.parseWebSocketResponse(
                 this.websocketFrames.slice(websocketStartIndex),
-                expectedConversationId
+                expectedConversationId,
+                {
+                  requireExpectedConversationId: true,
+                  excludedConversationIds: getExcludedConversationIds(),
+                  requireSingleResponse: true,
+                }
               )
               expectedConversationId ??= parsed.conversationId
               const responseStarted = parsed.text.trim() || parsed.isFinished
@@ -402,7 +458,12 @@ export class GrokAdapter extends ProviderAdapter {
               if (expectedConversationId === null) return false
               parsedResponse = this.parseWebSocketResponse(
                 this.websocketFrames.slice(websocketStartIndex),
-                expectedConversationId
+                expectedConversationId,
+                {
+                  requireExpectedConversationId: true,
+                  excludedConversationIds: getExcludedConversationIds(),
+                  requireSingleResponse: true,
+                }
               )
               expectedConversationId ??= parsedResponse.conversationId
               stopWarningTimer()

@@ -177,6 +177,144 @@ data: {"end_type":1}`
   assert.equal(result, correctText)
 })
 
+test('DoubaoAdapter.submit preserves an explicit stream rate-limit error', async () => {
+  const adapter = createTestDoubaoAdapter()
+  const raw = `event: STREAM_ERROR
+data: {"error_code":710022002,"error_msg":""}`
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const request = {
+        method: () => 'POST',
+        url: () => 'https://www.doubao.com/chat/completion',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        status: () => 200,
+        url: () => 'https://www.doubao.com/chat/completion',
+        headerValue: async (name: string) =>
+          name === 'content-type' ? 'text/event-stream; charset=utf-8' : null,
+        body: async () => raw,
+      })
+    },
+  }
+  const page = createDoubaoPage(sendButton)
+  adapter.page = page
+  stubCapturedResponse(adapter, raw)
+  adapter.getSubmitRequestStartGraceMs = () => 10
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'rate_limit' &&
+      error.detailCode === 'doubao_stream_error_710022002'
+  )
+})
+
+test('DoubaoAdapter.submit preserves an ordinary stream error from capture', async () => {
+  const adapter = createTestDoubaoAdapter()
+  const raw = `event: STREAM_ERROR
+data: {"error_code":"server_busy","error_msg":"temporary provider failure"}`
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const request = {
+        method: () => 'POST',
+        url: () => 'https://www.doubao.com/chat/completion',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        status: () => 200,
+        url: () => 'https://www.doubao.com/chat/completion',
+        headerValue: async (name: string) =>
+          name === 'content-type' ? 'text/event-stream; charset=utf-8' : null,
+        body: async () => raw,
+      })
+    },
+  }
+  const page = createDoubaoPage(sendButton)
+  adapter.page = page
+  stubCapturedResponse(adapter, raw)
+  adapter.getSubmitRequestStartGraceMs = () => 10
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'transient' &&
+      error.detailCode === 'doubao_stream_error_server_busy'
+  )
+})
+
+test('DoubaoAdapter.submit fails closed when an indistinguishable background request wins the race', async () => {
+  const adapter = createTestDoubaoAdapter()
+  Object.assign(adapter, { pendingText: 'same prompt' })
+  const raw = `id: 0
+event: STREAM_MSG_NOTIFY
+data: {"content":{"content_block":[{"block_type":10000,"content":{"text_block":{"text":"same response"}}}]},"meta":{"message_id":"1","conversation_id":"c1"}}
+
+id: 1
+event: SSE_REPLY_END
+data: {"end_type":1}`
+  const backgroundRequest = {
+    method: () => 'POST',
+    url: () => 'https://www.doubao.com/chat/completion',
+    postData: () => JSON.stringify({ message: 'same prompt' }),
+    failure: () => null,
+  }
+  const currentRequest = {
+    method: () => 'POST',
+    url: () => 'https://www.doubao.com/chat/completion',
+    postData: () => JSON.stringify({ message: 'same prompt' }),
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('request', backgroundRequest)
+      page.emit('response', {
+        request: () => backgroundRequest,
+        status: () => 200,
+        url: () => backgroundRequest.url(),
+        headerValue: async (name: string) =>
+          name === 'content-type' ? 'text/event-stream' : null,
+        body: async () => raw,
+      })
+      setTimeout(() => {
+        page.emit('request', currentRequest)
+        page.emit('response', {
+          request: () => currentRequest,
+          status: () => 200,
+          url: () => currentRequest.url(),
+          headerValue: async (name: string) =>
+            name === 'content-type' ? 'text/event-stream' : null,
+          body: async () => raw,
+        })
+      }, 10)
+    },
+  }
+  const page = createDoubaoPage(sendButton)
+  adapter.page = page
+  stubCapturedResponse(adapter, raw)
+  adapter.getSubmitRequestStartGraceMs = () => 10
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'unknown' &&
+      error.detailCode === 'doubao_submit_outcome_unknown'
+  )
+})
+
 test('DoubaoAdapter.submit emits periodic warnings while waiting for a request to start and still accepts a later response', async () => {
   const adapter = createTestDoubaoAdapter()
   const warnings: string[] = []

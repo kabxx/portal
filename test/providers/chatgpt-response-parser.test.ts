@@ -13,6 +13,7 @@ interface AssistantMessageOptions {
   finished?: boolean
   channel?: string
   hidden?: boolean
+  parentId?: string
 }
 
 function createAssistantMessage({
@@ -21,6 +22,7 @@ function createAssistantMessage({
   finished = false,
   channel = 'final',
   hidden = false,
+  parentId,
 }: AssistantMessageOptions): Record<string, unknown> {
   return {
     id,
@@ -29,6 +31,7 @@ function createAssistantMessage({
     status: finished ? 'finished_successfully' : 'in_progress',
     end_turn: finished,
     channel,
+    ...(parentId !== undefined ? { parent_id: parentId } : {}),
     metadata: {
       is_visually_hidden_from_conversation: hidden,
     },
@@ -459,6 +462,101 @@ test('ChatGPT WebSocket parser recovers after malformed outer and encoded JSON',
       ?.text,
     'recovered'
   )
+})
+
+test('ChatGPT WebSocket parser can fail closed without a dispatch conversation id', () => {
+  const parsed = parseChatGptWebSocketFrames(
+    [
+      JSON.stringify({
+        conversation_id: 'background-conversation',
+        message: createAssistantMessage({
+          id: 'background-message',
+          text: 'background response',
+          finished: true,
+        }),
+      }),
+    ],
+    null,
+    { requireExpectedConversationId: true }
+  )
+
+  assert.equal(parsed, null)
+})
+
+test('ChatGPT WebSocket parser can establish a new conversation from a matched parent', () => {
+  const parsed = parseChatGptWebSocketFrames(
+    [
+      createInitialMessageFrame(
+        {
+          id: 'assistant-message',
+          text: 'current response',
+          finished: true,
+          parentId: 'user-message',
+        },
+        'new-conversation'
+      ),
+    ],
+    null,
+    {
+      requireExpectedConversationId: true,
+      expectedParentMessageId: 'user-message',
+    }
+  )
+
+  assert.equal(parsed?.conversationId, 'new-conversation')
+  assert.equal(parsed?.text, 'current response')
+})
+
+test('ChatGPT WebSocket parser rejects a missing parent when parent correlation is required', () => {
+  const parsed = parseChatGptWebSocketFrames(
+    [
+      JSON.stringify({
+        conversation_id: 'conversation-1',
+        message: createAssistantMessage({
+          id: 'assistant-message',
+          text: 'unrelated response',
+          finished: true,
+        }),
+      }),
+    ],
+    'conversation-1',
+    {
+      requireExpectedConversationId: true,
+      expectedParentMessageId: 'user-message',
+    }
+  )
+
+  assert.equal(parsed, null)
+})
+
+test('ChatGPT WebSocket parser fails closed when one conversation has multiple message streams', () => {
+  const parsed = parseChatGptWebSocketFrames(
+    [
+      JSON.stringify({
+        conversation_id: 'conversation-1',
+        message: createAssistantMessage({
+          id: 'old-message',
+          text: 'old completed response',
+          finished: true,
+        }),
+      }),
+      JSON.stringify({
+        conversation_id: 'conversation-1',
+        message: createAssistantMessage({
+          id: 'current-message',
+          text: 'current response',
+          finished: false,
+        }),
+      }),
+    ],
+    'conversation-1',
+    {
+      requireExpectedConversationId: true,
+      requireSingleMessageId: true,
+    }
+  )
+
+  assert.equal(parsed, null)
 })
 
 test('ChatGPT WebSocket parser filters hidden and non-final messages', () => {

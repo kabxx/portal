@@ -49,6 +49,7 @@ function createInitialWebSocketFrame(text: string): string {
           status: 'in_progress',
           end_turn: false,
           channel: 'final',
+          parent_id: 'user-message-1',
           metadata: {},
         },
       },
@@ -77,6 +78,7 @@ function createFinishedWebSocketFrame(): string {
 
 test('ChatGPTAdapter.submit returns READY from websocket without waiting for a late HTTP response', async () => {
   const adapter = new TestChatGPTAdapter()
+  Object.assign(adapter, { pendingText: 'READY' })
   const websocketFrames = [
     JSON.stringify({
       ref_id: 'turn0search0',
@@ -92,6 +94,16 @@ test('ChatGPTAdapter.submit returns READY from websocket without waiting for a l
       const request = {
         method: () => 'POST',
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        postData: () =>
+          JSON.stringify({
+            messages: [
+              {
+                id: 'user-message-1',
+                role: 'user',
+                content: { parts: ['READY'] },
+              },
+            ],
+          }),
         failure: () => null,
       }
       page.emit('request', request)
@@ -123,6 +135,7 @@ function createChatGPTPage(sendButton: {
   }
 
   return {
+    url: () => 'https://chatgpt.com/c/conversation-1',
     locator: (selector: string) => {
       if (selector === '#composer-submit-button') {
         return sendButton

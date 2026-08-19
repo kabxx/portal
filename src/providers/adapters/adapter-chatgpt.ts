@@ -33,8 +33,13 @@ const CHATGPT_CHAT_URL = 'https://chatgpt.com'
 const CHATGPT_CHAT_WS_URL = 'wss://ws.chatgpt.com/p18/ws/user'
 const CHATGPT_RESPONSE_IDLE_TIMEOUT_MS = 60000
 const CHATGPT_FINISHED_RESPONSE_SETTLE_MS = 1000
+const CHATGPT_REQUEST_OWNERSHIP_SETTLE_MS = 100
 
 export type ChatGPTActionCapability = string
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
 
 export type ChatGPTActionCapabilityState =
   'available' | 'selected' | 'disabled' | 'unavailable'
@@ -62,6 +67,57 @@ function readChatGPTConversationIdFromUrl(
   } catch {
     return undefined
   }
+}
+
+function readChatGPTSubmittedMessageId(
+  raw: string | null,
+  submittedText: string
+): string | undefined {
+  if (raw === null || submittedText === '') return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+
+  const ids = new Set<string>()
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const child of value) visit(child)
+      return
+    }
+    if (!isRecord(value)) return
+    const node = value
+    const author = isRecord(node.author) ? node.author : null
+    const role =
+      typeof node.role === 'string'
+        ? node.role
+        : typeof author?.role === 'string'
+          ? author.role
+          : null
+    const id =
+      typeof node.id === 'string'
+        ? node.id
+        : typeof node.message_id === 'string'
+          ? node.message_id
+          : typeof node.messageId === 'string'
+            ? node.messageId
+            : null
+    if (
+      role === 'user' &&
+      id !== null &&
+      requestBodyContainsSubmittedText(
+        JSON.stringify(node.content ?? node),
+        submittedText
+      )
+    ) {
+      ids.add(id)
+    }
+    for (const child of Object.values(node)) visit(child)
+  }
+  visit(parsed)
+  return ids.size === 1 ? [...ids][0] : undefined
 }
 
 export class ChatGPTAdapter extends ProviderAdapter {
@@ -451,12 +507,16 @@ export class ChatGPTAdapter extends ProviderAdapter {
         const submittedText = this.pendingText
         let ownedRequest: import('playwright').Request | null = null
         let ownedRequestBody: string | null = null
+        const candidateRequests = new Set<import('playwright').Request>()
+        let ambiguousRequest = false
+        let ownedUserMessageId: string | null = null
         let ownedFrameStartIndex = frameStart
         let httpParsedResponse: ChatGPTParsedResponse | null = null
         let terminalError: unknown = null
         let warningTimer: NodeJS.Timeout | null = null
         let settled = false
         let lastStreamedText = ''
+        let requestOwnershipSettled: Promise<void> | null = null
 
         const stopWarningTimer = () => {
           if (warningTimer !== null) {
@@ -504,6 +564,9 @@ export class ChatGPTAdapter extends ProviderAdapter {
         }
 
         const updateCapturedHttpResponse = async () => {
+          if (ambiguousRequest) {
+            return null
+          }
           const capturedResponse = await this.readCurrentCapturedResponse(
             fetchCaptureStartIndex,
             ownedRequestBody
@@ -518,7 +581,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
         }
 
         const adoptRequest = (request: import('playwright').Request) => {
-          if (!dispatchStarted || ownedRequest !== null) return
+          if (!dispatchStarted) return
           const candidate = request as import('playwright').Request & {
             postData?: () => string | null
           }
@@ -532,9 +595,28 @@ export class ChatGPTAdapter extends ProviderAdapter {
           ) {
             return
           }
+          if (!candidateRequests.has(request)) {
+            candidateRequests.add(request)
+            if (candidateRequests.size > 1) {
+              ambiguousRequest = true
+              ownedRequest = null
+              ownedRequestBody = null
+              return
+            }
+            requestOwnershipSettled = delayAsync(
+              CHATGPT_REQUEST_OWNERSHIP_SETTLE_MS,
+              signal
+            ).catch(() => {})
+          }
+          if (ambiguousRequest) return
           ownedRequest = request
           ownedRequestBody = requestBody
-          ownedFrameStartIndex = this.websocketFrames.length
+          ownedUserMessageId =
+            readChatGPTSubmittedMessageId(requestBody, submittedText) ?? null
+          // Keep every frame observed after dispatch. A background response can
+          // arrive before the matching Request event, so slicing at adoption
+          // time would silently discard evidence needed for ownership checks.
+          ownedFrameStartIndex = frameStart
           this.pendingText = ''
         }
 
@@ -543,7 +625,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
             return
           }
           adoptRequest(request)
-          if (ownedRequest === request) resolveRequestStarted()
+          resolveRequestStarted()
         }
 
         const onRequestFailed = (request: import('playwright').Request) => {
@@ -551,7 +633,10 @@ export class ChatGPTAdapter extends ProviderAdapter {
             return
           }
           adoptRequest(request)
-          if (ownedRequest !== request) return
+          if (ownedRequest !== request) {
+            resolveRequestStarted()
+            return
+          }
           resolveRequestStarted()
           const failureText =
             request.failure()?.errorText ?? 'unknown network failure'
@@ -614,6 +699,13 @@ export class ChatGPTAdapter extends ProviderAdapter {
         const emitCurrentStreamText = async (
           response: ChatGPTParsedResponse | null
         ) => {
+          if (requestOwnershipSettled !== null) {
+            await requestOwnershipSettled
+            throwIfAborted(signal)
+            if (ambiguousRequest) {
+              return
+            }
+          }
           const currentText = response?.text?.trim() ?? ''
           if (!currentText || currentText === lastStreamedText) {
             return
@@ -623,19 +715,51 @@ export class ChatGPTAdapter extends ProviderAdapter {
         }
 
         const pickCurrentResponse = (): ChatGPTParsedResponse | null => {
-          const websocketParsedResponse = parseChatGptWebSocketFrames(
-            this.websocketFrames.slice(ownedFrameStartIndex),
-            httpParsedResponse?.conversationId ??
-              this.conversationId ??
-              undefined
-          )
-          const candidates = [
-            websocketParsedResponse,
-            httpParsedResponse,
-          ].filter(
-            (response): response is ChatGPTParsedResponse =>
-              response !== null && response.text.trim().length > 0
-          )
+          if (ambiguousRequest) {
+            return null
+          }
+          const currentPageUrl =
+            typeof this.page.url === 'function' ? this.page.url() : null
+          const websocketCorrelationAvailable =
+            httpParsedResponse?.messageId !== undefined ||
+            ownedUserMessageId !== null
+          const websocketParsedResponse = websocketCorrelationAvailable
+            ? parseChatGptWebSocketFrames(
+                this.websocketFrames.slice(ownedFrameStartIndex),
+                httpParsedResponse?.conversationId ??
+                  readChatGPTConversationIdFromUrl(currentPageUrl) ??
+                  this.conversationId ??
+                  null,
+                {
+                  requireExpectedConversationId: true,
+                  requireSingleMessageId: true,
+                  ...(httpParsedResponse?.messageId !== undefined
+                    ? { expectedMessageId: httpParsedResponse.messageId }
+                    : {}),
+                  ...(ownedUserMessageId !== null
+                    ? { expectedParentMessageId: ownedUserMessageId }
+                    : {}),
+                }
+              )
+            : null
+          const candidates: ChatGPTParsedResponse[] = []
+          if (
+            websocketParsedResponse !== null &&
+            websocketParsedResponse.text.trim().length > 0
+          ) {
+            candidates.push(websocketParsedResponse)
+          }
+          if (
+            httpParsedResponse !== null &&
+            httpParsedResponse.text.trim().length > 0 &&
+            (ownedUserMessageId === null ||
+              httpParsedResponse.parentMessageId === undefined ||
+              httpParsedResponse.parentMessageId === ownedUserMessageId)
+          ) {
+            // This response is tied to the exact Playwright Request. A missing
+            // parent_id is therefore incomplete metadata, not a contradiction.
+            candidates.push(httpParsedResponse)
+          }
           if (candidates.length === 0) {
             return null
           }
@@ -656,15 +780,19 @@ export class ChatGPTAdapter extends ProviderAdapter {
         this.page.on('close', onClose)
 
         let stopSubmitTextPolling = () => {}
+        let stopped = false
         try {
           let submitTextPollInFlight = false
           const pollSubmitText = async () => {
-            if (submitTextPollInFlight) {
+            if (stopped || submitTextPollInFlight) {
               return
             }
             submitTextPollInFlight = true
             try {
               await updateCapturedHttpResponse()
+              if (stopped) {
+                return
+              }
               await emitCurrentStreamText(pickCurrentResponse())
             } finally {
               submitTextPollInFlight = false
@@ -725,6 +853,19 @@ export class ChatGPTAdapter extends ProviderAdapter {
                 : (requestStartedAt ?? Date.now()) + submitTimeoutMs
             await waitAsync(
               async () => {
+                if (ambiguousRequest) {
+                  throw new ProviderAdapterError(
+                    'submit',
+                    'ChatGPT response ownership became ambiguous after dispatch.',
+                    {
+                      kind: 'unknown',
+                      recovery: 'none',
+                      retryable: false,
+                      maxAttempts: 1,
+                      detailCode: 'chatgpt_response_ownership_ambiguous',
+                    }
+                  )
+                }
                 await updateCapturedHttpResponse()
                 parsedResponse = pickCurrentResponse()
                 await emitCurrentStreamText(parsedResponse)
@@ -756,6 +897,19 @@ export class ChatGPTAdapter extends ProviderAdapter {
                 : (requestStartedAt ?? Date.now()) + submitTimeoutMs
             await waitAsync(
               async () => {
+                if (ambiguousRequest) {
+                  throw new ProviderAdapterError(
+                    'submit',
+                    'ChatGPT response ownership became ambiguous after dispatch.',
+                    {
+                      kind: 'unknown',
+                      recovery: 'none',
+                      retryable: false,
+                      maxAttempts: 1,
+                      detailCode: 'chatgpt_response_ownership_ambiguous',
+                    }
+                  )
+                }
                 await updateCapturedHttpResponse()
                 const current = pickCurrentResponse()
                 if (current === null) {
@@ -825,6 +979,33 @@ export class ChatGPTAdapter extends ProviderAdapter {
               'Timed out waiting for ChatGPT response to reach finished state.'
             )
           }
+          if (ambiguousRequest) {
+            throw new ProviderAdapterError(
+              'submit',
+              'ChatGPT response ownership became ambiguous after dispatch.',
+              {
+                kind: 'unknown',
+                recovery: 'none',
+                retryable: false,
+                maxAttempts: 1,
+                detailCode: 'chatgpt_response_ownership_ambiguous',
+              }
+            )
+          }
+          await delayAsync(CHATGPT_REQUEST_OWNERSHIP_SETTLE_MS, signal)
+          if (ambiguousRequest) {
+            throw new ProviderAdapterError(
+              'submit',
+              'ChatGPT response ownership became ambiguous after completion.',
+              {
+                kind: 'unknown',
+                recovery: 'none',
+                retryable: false,
+                maxAttempts: 1,
+                detailCode: 'chatgpt_response_ownership_ambiguous',
+              }
+            )
+          }
           terminalEvidenceObserved = true
 
           if (
@@ -854,8 +1035,22 @@ export class ChatGPTAdapter extends ProviderAdapter {
             signal
           )
           throwIfAborted(signal)
+          if (ambiguousRequest) {
+            throw new ProviderAdapterError(
+              'submit',
+              'ChatGPT response ownership became ambiguous after completion.',
+              {
+                kind: 'unknown',
+                recovery: 'none',
+                retryable: false,
+                maxAttempts: 1,
+                detailCode: 'chatgpt_response_ownership_ambiguous',
+              }
+            )
+          }
           return parsedResponse.text
         } finally {
+          stopped = true
           stopSubmitTextPolling()
           stopWarningTimer()
           this.page.off('request', onRequest)
