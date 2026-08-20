@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { isProviderAdapterError } from '../providers/adapters/adapter-base.ts'
 
 export interface RuntimeRecoveryContext {
@@ -34,26 +35,12 @@ export function buildRuntimeRecoveryPlan(
     }
   }
 
-  if (error.detailCode === 'chatgpt_challenge_required') {
-    return {
-      title: 'browser verification required',
-      lines: [
-        `${context.provider} is waiting for a browser verification step.`,
-        'Complete the verification in the open browser window, then retry the same request.',
-      ],
-      canRetry: true,
-      requiresLogin: false,
-      requiresHumanInput: true,
-      showFallbackError: false,
-    }
-  }
-
   if (error.kind === 'auth') {
     return {
       title: 'login required',
       lines: [
         `${context.provider} is not logged in for the current browser profile.`,
-        `Browser profile: ${context.browserProfileDir}`,
+        `Browser profile: ${profileDirectoryName(context.browserProfileDir)}`,
         'Complete login in the browser window, then retry the same thread request.',
       ],
       canRetry: true,
@@ -94,6 +81,10 @@ export function buildRuntimeRecoveryPlan(
     requiresHumanInput: false,
     showFallbackError: true,
   }
+}
+
+function profileDirectoryName(profileDirectory: string): string {
+  return path.basename(path.win32.basename(profileDirectory)) || '(default)'
 }
 
 export async function tryRestoreRuntimeForRecovery(

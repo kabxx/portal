@@ -26,27 +26,8 @@ test('buildRuntimeRecoveryPlan marks auth errors as login-required and retryable
   assert.equal(plan.canRetry, true)
   assert.equal(plan.showFallbackError, false)
   assert.match(plan.lines.join('\n'), /Complete login/)
-})
-
-test('buildRuntimeRecoveryPlan sends ChatGPT verification to human input recovery', () => {
-  const plan = buildRuntimeRecoveryPlan(
-    new ProviderAdapterError('restore', 'verification required', {
-      kind: 'auth',
-      recovery: 'none',
-      retryable: false,
-      detailCode: 'chatgpt_challenge_required',
-    }),
-    {
-      provider: 'chatgpt',
-      browserProfileDir: 'C:\\profiles\\chrome',
-      threadId: 't-challenge',
-    }
-  )
-
-  assert.equal(plan.requiresLogin, false)
-  assert.equal(plan.requiresHumanInput, true)
-  assert.equal(plan.canRetry, true)
-  assert.equal(plan.showFallbackError, false)
+  assert.match(plan.lines.join('\n'), /Browser profile: chrome/)
+  assert.doesNotMatch(plan.lines.join('\n'), /C:\\profiles/)
 })
 
 test('buildRuntimeRecoveryPlan marks transient adapter errors as retryable', () => {

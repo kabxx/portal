@@ -4,6 +4,8 @@ import {
   createJob,
   assignPidToJob,
   closeJob,
+  getJobActiveProcessCount,
+  isPidInJob,
 } from '../../src/platform/win32-process-job.ts'
 
 test('createJob returns a valid handle on Windows', () => {
@@ -48,4 +50,17 @@ test('createJob creates independent handles', () => {
 
   closeJob(j1)
   closeJob(j2)
+})
+
+test('new Windows jobs contain no active processes', () => {
+  if (process.platform !== 'win32') {
+    assert.equal(getJobActiveProcessCount(0), null)
+    return
+  }
+
+  const job = createJob()
+  assert.ok(job !== null)
+  assert.equal(getJobActiveProcessCount(job), 0)
+  assert.equal(isPidInJob(job, process.pid), false)
+  closeJob(job)
 })

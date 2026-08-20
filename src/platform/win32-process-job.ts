@@ -13,6 +13,7 @@ import koffi from 'koffi'
 import type { LibraryHandle } from 'koffi'
 
 const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+const JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
 const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 
 // JOBOBJECT_EXTENDED_LIMIT_INFORMATION offset of LimitFlags (64-bit):
@@ -22,6 +23,8 @@ const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 //   ...padding + IoInfo + MemoryLimit fields...    total 144 bytes
 const LIMIT_FLAGS_OFFSET = 16
 const JOB_EXTENDED_INFO_SIZE = 144
+const JOB_BASIC_ACCOUNTING_INFO_SIZE = 48
+const ACTIVE_PROCESSES_OFFSET = 40
 
 const isWin32 = process.platform === 'win32'
 
@@ -34,6 +37,19 @@ let _SetInformationJobObject:
   | null = null
 let _AssignProcessToJobObject:
   ((hJob: number, hProcess: number) => boolean) | null = null
+let _IsProcessInJob:
+  ((hProcess: number, hJob: number, result: Buffer) => boolean) | null = null
+let _TerminateJobObject: ((hJob: number, exitCode: number) => boolean) | null =
+  null
+let _QueryInformationJobObject:
+  | ((
+      hJob: number,
+      type_: number,
+      info: Buffer,
+      size: number,
+      returnedLength: null
+    ) => boolean)
+  | null = null
 let _OpenProcess:
   ((access: number, inherit: boolean, pid: number) => number) | null = null
 let _CloseHandle: ((handle: number) => boolean) | null = null
@@ -60,6 +76,23 @@ function ensureLoaded() {
     'AssignProcessToJobObject',
     'bool',
     ['size_t', 'size_t']
+  )
+
+  _IsProcessInJob = kernel32.func('IsProcessInJob', 'bool', [
+    'size_t',
+    'size_t',
+    'void *',
+  ])
+
+  _TerminateJobObject = kernel32.func('TerminateJobObject', 'bool', [
+    'size_t',
+    'uint',
+  ])
+
+  _QueryInformationJobObject = kernel32.func(
+    'QueryInformationJobObject',
+    'bool',
+    ['size_t', 'int', 'void *', 'uint', 'void *']
   )
 
   _OpenProcess = kernel32.func('OpenProcess', 'size_t', [
@@ -124,6 +157,41 @@ export function assignHandleToJob(hJob: number, hProcess: number): boolean {
   if (!isWin32) return false
   ensureLoaded()
   return _AssignProcessToJobObject!(hJob, hProcess)
+}
+
+/** Verify that a process belongs to the expected Job Object. */
+export function isPidInJob(hJob: number, pid: number): boolean {
+  if (!isWin32) return false
+  ensureLoaded()
+
+  const hProcess = _OpenProcess!(0x1000, false, pid)
+  if (!hProcess) return false
+  const result = Buffer.alloc(4)
+  const ok = _IsProcessInJob!(hProcess, hJob, result)
+  _CloseHandle!(hProcess)
+  return ok && result.readInt32LE(0) !== 0
+}
+
+/** Terminate every active process in the Job Object. */
+export function terminateJob(hJob: number, exitCode = 1): boolean {
+  if (!isWin32) return false
+  ensureLoaded()
+  return _TerminateJobObject!(hJob, exitCode)
+}
+
+/** Return the number of active processes, or null when the query fails. */
+export function getJobActiveProcessCount(hJob: number): number | null {
+  if (!isWin32) return null
+  ensureLoaded()
+  const info = Buffer.alloc(JOB_BASIC_ACCOUNTING_INFO_SIZE)
+  const ok = _QueryInformationJobObject!(
+    hJob,
+    JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION,
+    info,
+    JOB_BASIC_ACCOUNTING_INFO_SIZE,
+    null
+  )
+  return ok ? info.readUInt32LE(ACTIVE_PROCESSES_OFFSET) : null
 }
 
 /** Close the Job Object handle. */

@@ -462,6 +462,10 @@ export class PortalHost {
           ),
         async (launch) => await launch.close()
       )
+      const browserDisconnectOutcome = browser.disconnected.then(
+        () => true,
+        () => false
+      )
       throwIfAborted(signal)
 
       const runtimeScope = startScope.resourceScope.createChild('runtime')
@@ -628,13 +632,17 @@ export class PortalHost {
       this.#startedServices = services
       this.#state = 'ready'
       this.#emitSurfaceEvent({ type: 'host.status', status: 'ready' })
-      void browser.disconnected.then(
-        () =>
-          this.#emitSurfaceEvent({
-            type: 'runtime.disconnected',
-            message: 'Browser disconnected while the Portal was running.',
-          }),
-        () => undefined
+      void browserDisconnectOutcome.then((cleanupVerified) =>
+        cleanupVerified
+          ? this.#emitSurfaceEvent({
+              type: 'runtime.disconnected',
+              message: 'Browser disconnected while the Portal was running.',
+            })
+          : this.#emitSurfaceEvent({
+              type: 'runtime.disconnected',
+              message:
+                'Browser disconnected and process cleanup could not be verified.',
+            })
       )
       return services
     } catch (error) {

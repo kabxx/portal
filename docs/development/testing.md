@@ -27,7 +27,11 @@ $env:PORTAL_BROWSER_EXECUTABLE = 'C:\Program Files\Google\Chrome\Application\chr
 npm run test:browser
 ```
 
-The smoke tests use temporary profiles and cover both an exact fixed CDP port and Chromium's dynamic port selection. They verify startup, connection, repeated close calls, and process cleanup without opening a provider website or using an account.
+The smoke tests use temporary profiles and cover both an exact fixed CDP port
+and Portal's automatic non-zero loopback port selection. They verify startup,
+`navigator.webdriver`, connection, repeated close calls, profile reuse after
+verified process-tree cleanup, and shutdown without opening a provider website
+or using an account.
 
 `test:package` builds and audits the real npm tarball, installs it with
 `npm install --global --prefix` and an unavailable Git executable, executes the

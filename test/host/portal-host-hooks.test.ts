@@ -272,6 +272,67 @@ test('a cancelled portal.ready Handler cannot publish services after shutdown', 
   }
 })
 
+test('PortalHost observes browser cleanup failure while portal.ready is pending', async () => {
+  const fixture = createFixture('portal-host-ready-disconnect-')
+  const readyStarted = Promise.withResolvers<void>()
+  const finishReady = Promise.withResolvers<void>()
+  const disconnected = Promise.withResolvers<void>()
+  const observed = Promise.withResolvers<string>()
+  let host: PortalHost | null = null
+
+  try {
+    host = await PortalHost.prepare(
+      {
+        entrySurfaceId: 'portal.exec',
+        cwd: fixture.cwd,
+        dataDirectory: fixture.dataDirectory,
+      },
+      {
+        [portalHostTestExtensions]: [
+          extension('test.pending-ready-disconnect', (api) => {
+            api.handle(portalReadyHook, {
+              id: 'test.pending-ready-disconnect',
+              handler: async () => {
+                readyStarted.resolve()
+                await finishReady.promise
+              },
+              requiredServices: [],
+              requiredCapabilities: [],
+            })
+          }),
+        ],
+        launchBrowser: async () => ({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+          context: { isClosed: () => false } as unknown as BrowserContext,
+          disconnected: disconnected.promise,
+          close: async () => undefined,
+        }),
+      }
+    )
+    host.subscribeSurfaceEvents((event) => {
+      if (event.type === 'runtime.disconnected') {
+        observed.resolve(event.message)
+      }
+    })
+
+    const start = host.start()
+    await readyStarted.promise
+    disconnected.reject(new Error('cleanup uncertain'))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    finishReady.resolve()
+    await start
+
+    assert.equal(
+      await observed.promise,
+      'Browser disconnected and process cleanup could not be verified.'
+    )
+  } finally {
+    finishReady.resolve()
+    await host?.close().catch(() => {})
+    fixture.remove()
+  }
+})
+
 test('portal.ready failure prevents publication and closes the acquired browser once', async () => {
   const fixture = createFixture('portal-host-hook-ready-')
   let browserCloseCount = 0

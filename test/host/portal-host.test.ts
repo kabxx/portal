@@ -299,6 +299,47 @@ test('PortalHost prepares without launching a browser and starts once', async ()
   }
 })
 
+test('PortalHost reports an unverified process cleanup after browser disconnect', async () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-host-disconnect-'))
+  const disconnected = createDeferred<void>()
+  const observed = Promise.withResolvers<string>()
+  let host: PortalHost | null = null
+
+  try {
+    host = await PortalHost.prepare(
+      {
+        entrySurfaceId: 'portal.exec',
+        cwd,
+        dataDirectory: path.join(cwd, 'data'),
+      },
+      {
+        launchBrowser: async () => ({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+          context: { isClosed: () => false } as unknown as BrowserContext,
+          disconnected: disconnected.promise,
+          close: async () => undefined,
+        }),
+      }
+    )
+    const unsubscribe = host.subscribeSurfaceEvents((event) => {
+      if (event.type === 'runtime.disconnected') {
+        observed.resolve(event.message)
+      }
+    })
+    await host.start()
+
+    disconnected.reject(new Error('cleanup uncertain'))
+    assert.equal(
+      await observed.promise,
+      'Browser disconnected and process cleanup could not be verified.'
+    )
+    unsubscribe()
+  } finally {
+    await host?.close()
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
 test('PortalHost closes a browser that resolves after shutdown begins', async () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-host-late-'))
   const dataDirectory = path.join(cwd, 'data')

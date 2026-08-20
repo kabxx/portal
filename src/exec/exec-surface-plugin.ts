@@ -91,7 +91,11 @@ function activateExecSurface(
   const unsubscribe = context.events.subscribe((event) => {
     if (event.type === 'runtime.disconnected') {
       rejectDisconnected(
-        new Error('Browser disconnected while the exec task was running.')
+        new Error(
+          event.message.includes('cleanup could not be verified')
+            ? event.message
+            : 'Browser disconnected while the exec task was running.'
+        )
       )
       return
     }

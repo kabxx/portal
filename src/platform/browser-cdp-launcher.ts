@@ -1,20 +1,23 @@
 import fs from 'fs'
 import net from 'node:net'
-import { spawn } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import { chromium } from 'playwright'
-import type { Browser, BrowserContext, BrowserType } from 'playwright'
+import type { BrowserContext, BrowserType } from 'playwright'
 import {
   getAbortError,
   throwIfAborted,
 } from '../runtime/runtime-cancellation.ts'
 import { ensurePrivateDirectorySync } from '../shared/private-files.ts'
+import type { BrowserProcess } from './browser-process.ts'
+import { BrowserProcessTreeCleanupError } from './browser-process.ts'
+import { launchPosixBrowser } from './posix-browser-launcher.ts'
 import { launchWin32Browser } from './win32-browser-launcher.ts'
 import type { BrowserEngine } from './platform-defaults.ts'
 
 export interface BrowserLaunch {
   context: BrowserContext
   disconnected: Promise<void>
+  remoteDebuggingPort?: number
   close(): Promise<void>
 }
 
@@ -28,8 +31,13 @@ export interface BrowserConnection {
   close(): Promise<void>
 }
 
+export interface BrowserRuntimeConnection
+  extends BrowserConnection, BrowserConnectionEvents {
+  contexts(): BrowserContext[]
+}
+
 export interface BrowserConnector<
-  TBrowser extends BrowserConnection = Browser,
+  TBrowser extends BrowserConnection = BrowserRuntimeConnection,
 > {
   connectOverCDP(
     endpoint: string,
@@ -42,23 +50,51 @@ export interface BrowserProcessFailureMonitor {
   close(): void
 }
 
-interface BrowserProcess {
-  process: ChildProcess
-  close(): void
-}
-
 const BROWSER_CLOSE_TIMEOUT_MS = 3000
 const BROWSER_STARTUP_TIMEOUT_MS = 60_000
+const MAX_DYNAMIC_CDP_BIND_ATTEMPTS = 3
 const MAX_BROWSER_STARTUP_LOG_BYTES = 64 * 1024
 const PROFILE_SINGLETON_ERROR =
   /ProcessSingleton.*profile directory|profile directory.*ProcessSingleton/i
 const CDP_BIND_ERROR =
   /(?:address|bind|listen).*(?:already in use|in use|eaddrinuse)|eaddrinuse/i
 
+type BrowserStartupErrorCode = 'CDP_BIND' | 'PROFILE_IN_USE'
+
+export class BrowserStartupError extends Error {
+  public constructor(
+    public readonly code: BrowserStartupErrorCode,
+    message: string
+  ) {
+    super(message)
+    this.name = 'BrowserStartupError'
+  }
+}
+
+interface BrowserLaunchDependencies {
+  connector: BrowserConnector<BrowserRuntimeConnection>
+  launchProcess(
+    executable: string,
+    args: string[],
+    cleanupTimeoutMs: number,
+    startupDeadline: number,
+    signal?: AbortSignal
+  ): Promise<BrowserProcess>
+  reserveDynamicPort(
+    startupDeadline: number,
+    signal?: AbortSignal
+  ): Promise<number>
+}
+
+export const browserLaunchTestExtensions = Symbol(
+  'portal.browser-launch-test-extensions'
+)
+
 export interface BrowserLaunchOptions {
   startupTimeoutMs?: number
   closeTimeoutMs?: number
   signal?: AbortSignal
+  [browserLaunchTestExtensions]?: Partial<BrowserLaunchDependencies>
 }
 
 export function createBrowserDisconnectSignal(
@@ -164,8 +200,12 @@ export function buildBrowserLaunchArguments(
   browserUserDataDir: string,
   browserRemoteDebuggingPort: number
 ): string[] {
+  if (browserRemoteDebuggingPort <= 0) {
+    throw new Error('Chromium requires an actual non-zero CDP port.')
+  }
   return [
     `--remote-debugging-port=${browserRemoteDebuggingPort}`,
+    '--remote-debugging-address=127.0.0.1',
     `--user-data-dir=${browserUserDataDir}`,
     '--homepage=about:blank',
     '--no-first-run',
@@ -200,7 +240,7 @@ export async function waitForBrowserDevToolsEndpoint(
       clearTimeout(timer)
       stderr.off('data', onData)
       child.off('error', onError)
-      child.off('exit', onExit)
+      child.off('close', onClose)
       signal?.removeEventListener('abort', onAbort)
     }
     const fail = (error: Error) => {
@@ -226,7 +266,7 @@ export async function waitForBrowserDevToolsEndpoint(
       }
       const diagnostic = classifyBrowserStartupLog(logs, configuredPort)
       if (diagnostic !== null) {
-        fail(new Error(diagnostic))
+        fail(diagnostic)
         return
       }
       const match = logs.match(/DevTools listening on ([^\r\n]+)/)
@@ -250,19 +290,20 @@ export async function waitForBrowserDevToolsEndpoint(
         })
       )
     }
-    const onExit = (code: number | null, exitSignal: NodeJS.Signals | null) => {
+    const onClose = (
+      code: number | null,
+      exitSignal: NodeJS.Signals | null
+    ) => {
       const status =
         exitSignal === null
           ? `exit code ${String(code)}`
           : `signal ${exitSignal}`
       const diagnostic = classifyBrowserStartupLog(logs, configuredPort)
-      fail(
-        new Error(
-          diagnostic === null
-            ? `Browser exited before CDP was ready (${status}).`
-            : `${diagnostic} Browser exited before CDP was ready (${status}).`
-        )
-      )
+      if (diagnostic !== null) {
+        fail(diagnostic)
+        return
+      }
+      fail(new Error(`Browser exited before CDP was ready (${status}).`))
     }
     const onAbort = () => {
       fail(getAbortError(signal))
@@ -273,13 +314,16 @@ export async function waitForBrowserDevToolsEndpoint(
 
     stderr.on('data', onData)
     child.once('error', onError)
-    child.once('exit', onExit)
+    child.once('close', onClose)
     signal?.addEventListener('abort', onAbort, { once: true })
 
     if (signal?.aborted) {
       onAbort()
-    } else if (child.exitCode !== null || child.signalCode !== null) {
-      onExit(child.exitCode, child.signalCode)
+    } else if (
+      (child.exitCode !== null || child.signalCode !== null) &&
+      stderr.closed
+    ) {
+      queueMicrotask(() => onClose(child.exitCode, child.signalCode))
     }
   })
 }
@@ -287,16 +331,18 @@ export async function waitForBrowserDevToolsEndpoint(
 function classifyBrowserStartupLog(
   logs: string,
   configuredPort: number
-): string | null {
+): BrowserStartupError | null {
   if (PROFILE_SINGLETON_ERROR.test(logs)) {
-    return configuredPort === 0
-      ? 'Browser profile is already in use by another Chromium process; CDP port 0 is dynamic and is not the conflicting resource.'
-      : 'Browser profile is already in use by another Chromium process.'
+    return new BrowserStartupError(
+      'PROFILE_IN_USE',
+      'Browser profile is already in use by another Chromium process.'
+    )
   }
   if (CDP_BIND_ERROR.test(logs)) {
-    return configuredPort === 0
-      ? 'Chromium could not bind a dynamically allocated CDP port (configured CDP port is 0).'
-      : `Browser remote debugging port ${configuredPort} is already in use.`
+    return new BrowserStartupError(
+      'CDP_BIND',
+      `Browser remote debugging port ${configuredPort} is already in use.`
+    )
   }
   return null
 }
@@ -332,8 +378,24 @@ export async function connectBrowserOverCDP<TBrowser extends BrowserConnection>(
       },
       () => {}
     )
-    throw error
+    throw sanitizeBrowserConnectionError(error)
   }
+}
+
+export function sanitizeBrowserConnectionError(error: unknown): unknown {
+  if (!(error instanceof Error) || error.name === 'AbortError') {
+    return error
+  }
+  const message = error.message.replace(
+    /(wss?:\/\/(?:localhost|127\.0\.0\.1|\[?::1\]?):\d+\/devtools\/browser\/)[^\s'"\\]+/giu,
+    '$1[redacted]'
+  )
+  if (message === error.message) {
+    return error
+  }
+  const sanitized = new Error(message)
+  sanitized.name = error.name
+  return sanitized
 }
 
 export async function launchBrowser(
@@ -343,12 +405,30 @@ export async function launchBrowser(
   browserUserDataDir: string,
   options: BrowserLaunchOptions = {}
 ): Promise<BrowserLaunch> {
-  const browserType = resolveBrowserType(browserEngine)
+  const connector = resolveBrowserType(browserEngine)
   const startupTimeoutMs =
     options.startupTimeoutMs ?? BROWSER_STARTUP_TIMEOUT_MS
   const closeTimeoutMs = options.closeTimeoutMs ?? BROWSER_CLOSE_TIMEOUT_MS
   const signal = options.signal
   const startupDeadline = Date.now() + startupTimeoutMs
+  const testExtensions = options[browserLaunchTestExtensions]
+  const dependencies: BrowserLaunchDependencies = {
+    connector: testExtensions?.connector ?? connector,
+    launchProcess:
+      testExtensions?.launchProcess ??
+      (async (executable, args, cleanupTimeoutMs, deadline, launchSignal) =>
+        await launchBrowserProcess(
+          executable,
+          args,
+          cleanupTimeoutMs,
+          deadline,
+          launchSignal
+        )),
+    reserveDynamicPort:
+      testExtensions?.reserveDynamicPort ??
+      (async (deadline, reserveSignal) =>
+        await reserveDynamicBrowserPort(reserveSignal, deadline)),
+  }
 
   throwIfAborted(signal)
   if (
@@ -367,25 +447,81 @@ export async function launchBrowser(
   }
 
   if (browserRemoteDebuggingPort !== 0) {
-    await assertBrowserPortAvailable(browserRemoteDebuggingPort, signal)
+    await assertBrowserPortAvailable(
+      browserRemoteDebuggingPort,
+      startupDeadline,
+      signal
+    )
   }
 
   ensurePrivateDirectorySync(browserUserDataDir)
 
+  const dynamicPort = browserRemoteDebuggingPort === 0
+  const maxAttempts = dynamicPort ? MAX_DYNAMIC_CDP_BIND_ATTEMPTS : 1
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    throwIfAborted(signal)
+    if (Date.now() >= startupDeadline) {
+      throw new Error('Timed out before starting the browser process.')
+    }
+    const actualPort = dynamicPort
+      ? await dependencies.reserveDynamicPort(startupDeadline, signal)
+      : browserRemoteDebuggingPort
+    throwIfAborted(signal)
+    if (Date.now() >= startupDeadline) {
+      throw new Error('Timed out before starting the browser process.')
+    }
+
+    try {
+      return await launchBrowserAttempt(
+        dependencies,
+        browserExecutablePath,
+        actualPort,
+        browserUserDataDir,
+        startupDeadline,
+        closeTimeoutMs,
+        signal
+      )
+    } catch (error) {
+      if (
+        !dynamicPort ||
+        !(error instanceof BrowserStartupError) ||
+        error.code !== 'CDP_BIND' ||
+        attempt === maxAttempts
+      ) {
+        throw error
+      }
+    }
+  }
+
+  throw new Error('Browser startup attempts were exhausted.')
+}
+
+async function launchBrowserAttempt(
+  dependencies: BrowserLaunchDependencies,
+  browserExecutablePath: string,
+  actualPort: number,
+  browserUserDataDir: string,
+  startupDeadline: number,
+  closeTimeoutMs: number,
+  signal?: AbortSignal
+): Promise<BrowserLaunch> {
   const browserArguments = buildBrowserLaunchArguments(
     browserUserDataDir,
-    browserRemoteDebuggingPort
+    actualPort
   )
-  const browserProcess = await launchBrowserProcess(
+  const browserProcess = await dependencies.launchProcess(
     browserExecutablePath,
-    browserArguments
+    browserArguments,
+    closeTimeoutMs,
+    startupDeadline,
+    signal
   )
-  let browser: Browser | null = null
+  let browser: BrowserRuntimeConnection | null = null
 
   try {
     const endpoint = await waitForBrowserDevToolsEndpoint(
       browserProcess.process,
-      browserRemoteDebuggingPort,
+      actualPort,
       startupDeadline,
       signal
     )
@@ -393,10 +529,10 @@ export async function launchBrowser(
     const processFailure = createBrowserProcessFailureMonitor(
       browserProcess.process
     )
-    let connectedBrowser: Browser
+    let connectedBrowser: BrowserRuntimeConnection
     try {
       connectedBrowser = await connectBrowserOverCDP(
-        browserType,
+        dependencies.connector,
         endpoint,
         startupDeadline,
         signal,
@@ -416,30 +552,48 @@ export async function launchBrowser(
     const disconnected = Promise.race([
       createBrowserDisconnectSignal(connectedBrowser, () => closing),
       createBrowserProcessExitSignal(browserProcess.process, () => closing),
-    ])
+    ]).then(async () => await browserProcess.close(Date.now() + closeTimeoutMs))
     return {
       context,
       disconnected,
+      remoteDebuggingPort: actualPort,
       close: () => {
         if (closePromise !== null) {
           return closePromise
         }
         closing = true
         closePromise = (async () => {
-          await withTimeout(connectedBrowser.close(), closeTimeoutMs).catch(
-            () => {}
-          )
-          browserProcess.close()
+          const closeDeadline = Date.now() + closeTimeoutMs
+          await Promise.all([
+            withDeadline(connectedBrowser.close(), closeDeadline).catch(
+              () => {}
+            ),
+            browserProcess.close(closeDeadline),
+          ])
         })()
         return closePromise
       },
     }
   } catch (error) {
     browserProcess.process.stderr?.resume()
-    if (browser !== null) {
-      await withTimeout(browser.close(), closeTimeoutMs).catch(() => {})
+    const closeDeadline = Date.now() + closeTimeoutMs
+    const browserClose =
+      browser === null
+        ? Promise.resolve()
+        : withDeadline(browser.close(), closeDeadline).catch(() => {})
+    try {
+      await Promise.all([browserClose, browserProcess.close(closeDeadline)])
+    } catch (cleanupError) {
+      if (cleanupError instanceof BrowserProcessTreeCleanupError) {
+        throw cleanupError
+      }
+      throw new BrowserProcessTreeCleanupError(
+        'Browser process tree cleanup could not be verified after startup failed.',
+        {
+          cause: new AggregateError([error, cleanupError]),
+        }
+      )
     }
-    browserProcess.close()
     throw error
   }
 }
@@ -473,7 +627,7 @@ function validateBrowserDevToolsEndpoint(
   if (!Number.isSafeInteger(endpointPort) || endpointPort <= 0) {
     throw new Error('Chromium reported a CDP endpoint without a valid port.')
   }
-  if (configuredPort !== 0 && endpointPort !== configuredPort) {
+  if (endpointPort !== configuredPort) {
     throw new Error(
       `Chromium reported CDP port ${endpointPort}, expected ${configuredPort}.`
     )
@@ -483,18 +637,42 @@ function validateBrowserDevToolsEndpoint(
 
 async function assertBrowserPortAvailable(
   port: number,
+  startupDeadline: number,
   signal?: AbortSignal
 ): Promise<void> {
+  await reserveLoopbackPort(port, startupDeadline, signal)
+}
+
+export async function reserveDynamicBrowserPort(
+  signal?: AbortSignal,
+  startupDeadline = Number.POSITIVE_INFINITY
+): Promise<number> {
+  return await reserveLoopbackPort(0, startupDeadline, signal)
+}
+
+async function reserveLoopbackPort(
+  requestedPort: number,
+  startupDeadline: number,
+  signal?: AbortSignal
+): Promise<number> {
   throwIfAborted(signal)
+  if (Date.now() >= startupDeadline) {
+    throw new Error('Timed out while reserving a browser CDP port.')
+  }
   const server = net.createServer()
   server.unref()
+  let actualPort = 0
+  const probeController = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const onCallerAbort = () => probeController.abort(getAbortError(signal))
+  signal?.addEventListener('abort', onCallerAbort, { once: true })
 
   try {
     await new Promise<void>((resolve, reject) => {
       const cleanup = () => {
         server.off('error', onError)
         server.off('listening', onListening)
-        signal?.removeEventListener('abort', onAbort)
+        probeController.signal.removeEventListener('abort', onProbeAbort)
       }
       const onError = (error: NodeJS.ErrnoException) => {
         cleanup()
@@ -505,14 +683,16 @@ async function assertBrowserPortAvailable(
         if (error.code === 'EADDRINUSE') {
           reject(
             new Error(
-              `Browser remote debugging port ${port} is already in use.`
+              `Browser remote debugging port ${requestedPort} is already in use.`
             )
           )
           return
         }
         if (error.code === 'EACCES') {
           reject(
-            new Error(`Browser remote debugging port ${port} is not permitted.`)
+            new Error(
+              `Browser remote debugging port ${requestedPort} is not permitted.`
+            )
           )
           return
         }
@@ -520,64 +700,78 @@ async function assertBrowserPortAvailable(
       }
       const onListening = () => {
         cleanup()
+        const address = server.address()
+        if (address === null || typeof address === 'string') {
+          reject(new Error('Browser CDP port probe returned no TCP address.'))
+          return
+        }
+        actualPort = address.port
         resolve()
       }
-      const onAbort = () => {
+      const onProbeAbort = () => {
         cleanup()
-        server.close(() => {})
-        reject(getAbortError(signal))
+        reject(
+          signal?.aborted
+            ? getAbortError(signal)
+            : new Error('Timed out while reserving a browser CDP port.')
+        )
       }
 
       server.once('error', onError)
       server.once('listening', onListening)
-      signal?.addEventListener('abort', onAbort, { once: true })
+      probeController.signal.addEventListener('abort', onProbeAbort, {
+        once: true,
+      })
+      if (Number.isFinite(startupDeadline)) {
+        timer = setTimeout(
+          () => probeController.abort(),
+          Math.max(0, startupDeadline - Date.now())
+        )
+      }
       server.listen({
         host: '127.0.0.1',
-        port,
+        port: requestedPort,
         exclusive: true,
+        signal: probeController.signal,
       })
       if (signal?.aborted) {
-        onAbort()
+        onCallerAbort()
       }
     })
   } finally {
-    if (server.listening) {
-      await new Promise<void>((resolve) => server.close(() => resolve()))
+    if (timer !== null) {
+      clearTimeout(timer)
     }
+    signal?.removeEventListener('abort', onCallerAbort)
+    probeController.abort()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
   }
+
+  if (actualPort <= 0) {
+    throw new Error('Browser CDP port probe did not allocate a valid port.')
+  }
+  return actualPort
 }
 
 async function launchBrowserProcess(
   executable: string,
-  args: string[]
+  args: string[],
+  cleanupTimeoutMs: number,
+  startupDeadline: number,
+  signal?: AbortSignal
 ): Promise<BrowserProcess> {
   if (process.platform === 'win32') {
-    return await launchWin32Browser(executable, args)
+    return await launchWin32Browser(executable, args, undefined, {
+      cleanupTimeoutMs,
+      startupDeadline,
+      ...(signal === undefined ? {} : { signal }),
+    })
   }
-
-  const child = spawn(executable, args, {
-    detached: true,
-    stdio: ['ignore', 'ignore', 'pipe'],
+  return launchPosixBrowser(executable, args, {
+    cleanupTimeoutMs,
+    startupDeadline,
+    ...(signal === undefined ? {} : { signal }),
   })
-  child.unref()
-  let closed = false
-  return {
-    process: child,
-    close: () => {
-      if (closed) {
-        return
-      }
-      closed = true
-      if (child.pid === undefined) {
-        return
-      }
-      try {
-        process.kill(-child.pid, 'SIGKILL')
-      } catch {
-        child.kill('SIGKILL')
-      }
-    },
-  }
 }
 
 async function raceStartupOperation<T>(
@@ -619,10 +813,11 @@ async function raceStartupOperation<T>(
   }
 }
 
-async function withTimeout<T>(
+async function withDeadline<T>(
   promise: Promise<T>,
-  timeoutMs: number
+  deadline: number
 ): Promise<T> {
+  const timeoutMs = Math.max(0, deadline - Date.now())
   let timer: ReturnType<typeof setTimeout> | null = null
   try {
     return await Promise.race([

@@ -2,8 +2,10 @@ import assert from 'node:assert/strict'
 import { access, readFile, rm, mkdtemp, mkdir, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import { once } from 'node:events'
 import { createRequire } from 'node:module'
+import { clearTimeout, setTimeout } from 'node:timers'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -295,6 +297,9 @@ try {
     'utf8'
   )
   assert.match(installedEntry, /^#!\/usr\/bin\/env node\r?\n/)
+  await smokeBrowserHelper(
+    path.join(installedPackage, 'dist', 'platform', 'win32-browser-helper.js')
+  )
   for (const obsoleteDependency of ['ink', 'markdansi']) {
     assert.equal(
       await pathExists(path.join(globalNodeModules, obsoleteDependency)),
@@ -395,6 +400,42 @@ try {
   await rm(temporaryRoot, { recursive: true, force: true })
 }
 
+async function smokeBrowserHelper(helperPath) {
+  const helper = spawn(process.execPath, [helperPath], {
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+    windowsHide: true,
+  })
+  try {
+    const [message] = await onceWithTimeout(helper, 'message', 5000)
+    assert.deepEqual(message, { type: 'ready' })
+  } finally {
+    if (helper.connected) {
+      const exited = onceWithTimeout(helper, 'exit', 5000)
+      helper.disconnect()
+      await exited
+    } else if (helper.exitCode === null && helper.signalCode === null) {
+      helper.kill('SIGKILL')
+    }
+  }
+}
+
+async function onceWithTimeout(emitter, event, timeoutMs) {
+  let timer
+  try {
+    return await Promise.race([
+      once(emitter, event),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Timed out waiting for ${event}.`)),
+          timeoutMs
+        )
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
 function assertNoNonRegistryDependencies(dependencies) {
   const nonRegistry = Object.entries(dependencies ?? {}).filter(([, value]) =>
     /^(?:file|git|github|gitlab|bitbucket|link|workspace)(?:\+[^:]+)?:/i.test(
@@ -476,6 +517,7 @@ function auditPack(pack) {
     'dist/mcp-server/mcp-surface-plugin.js',
     'dist/providers/portal-action-protocol.js',
     'dist/providers/provider-host.js',
+    'dist/platform/win32-browser-helper.js',
     'dist/prompts/prompt-extension.js',
     'dist/prompts/prompt-host.js',
     'dist/prompts/portal-prompt-plugin.js',

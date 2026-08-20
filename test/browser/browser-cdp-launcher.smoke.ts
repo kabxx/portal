@@ -101,7 +101,7 @@ test('launchBrowser starts and cleans up a real Chromium process', async () => {
   }
 })
 
-test('launchBrowser connects to a real Chromium dynamic CDP port', async () => {
+test('launchBrowser uses a non-zero automatic port and reuses a cleaned profile', async () => {
   assert.ok(
     browserExecutablePath,
     'Set PORTAL_BROWSER_EXECUTABLE to a Chromium-based browser executable.'
@@ -121,7 +121,26 @@ test('launchBrowser connects to a real Chromium dynamic CDP port', async () => {
     )
 
     assert.ok(launch.context.browser()?.isConnected())
+    const dynamicPort = launch.remoteDebuggingPort
+    assert.ok(dynamicPort !== undefined && dynamicPort > 0)
+    assert.equal(await isPortOpen(dynamicPort), true)
+    const page = launch.context.pages()[0] ?? (await launch.context.newPage())
+    assert.equal(await page.evaluate(() => navigator.webdriver), false)
+    const firstPort = dynamicPort
     await launch.close()
+    launch = null
+    await waitForPortToClose(firstPort, 10_000)
+
+    launch = await launchBrowser(
+      'chromium',
+      browserExecutablePath,
+      0,
+      profile,
+      { startupTimeoutMs: 45_000, closeTimeoutMs: 5_000 }
+    )
+    const restartedPort = launch.remoteDebuggingPort
+    assert.ok(restartedPort !== undefined && restartedPort > 0)
+    assert.equal(await isPortOpen(restartedPort), true)
   } finally {
     await launch?.close()
     await rm(root, {
