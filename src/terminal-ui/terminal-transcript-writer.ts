@@ -17,6 +17,7 @@ export interface TranscriptSyncResult {
  */
 export class TerminalTranscriptWriter {
   private committedSignatures: string[] = []
+  private committedTimelineVersion: number | null = null
   private committedWidth: number | null = null
   private initialized = false
   private renderedWidth: number | null = null
@@ -29,6 +30,7 @@ export class TerminalTranscriptWriter {
 
   public reset(): void {
     this.committedSignatures = []
+    this.committedTimelineVersion = null
     this.committedWidth = null
     this.initialized = false
     this.renderedEntries.clear()
@@ -39,8 +41,13 @@ export class TerminalTranscriptWriter {
     entries: readonly TimelineEntry[],
     width: number,
     forceReflow: boolean,
-    writePreservingLiveFrame: (data: string) => void
+    writePreservingLiveFrame: (data: string) => void,
+    timelineVersion = 0
   ): TranscriptSyncResult {
+    if (this.committedTimelineVersion !== timelineVersion) {
+      this.reset()
+      this.committedTimelineVersion = timelineVersion
+    }
     const signatures = entries.map(timelineEntrySignature)
     const needsFullReplay =
       forceReflow ||

@@ -106,7 +106,6 @@ interface TimelineViewState {
 }
 
 type Listener = () => void
-type ScreenResetter = () => void
 
 export class TerminalController {
   private readonly listeners = new Set<Listener>()
@@ -116,7 +115,6 @@ export class TerminalController {
   private readonly timelineViews = new Map<string, TimelineViewState>([
     [HOME_TIMELINE_KEY, createTimelineView(HOME_TIMELINE_KEY)],
   ])
-  private screenResetter: ScreenResetter | null = null
   private foregroundBusy = false
   private state: Pick<
     TerminalState,
@@ -166,6 +164,41 @@ export class TerminalController {
     }
   }
 
+  public discardPendingThreadTimeline(
+    threadId: string,
+    restoreThreadId: string | null
+  ): void {
+    const view = this.timelineViews.get(threadId)
+    if (view !== undefined) {
+      this.discardLiveAssistant(view)
+      this.discardLiveCommand(view)
+      this.timelineViews.delete(threadId)
+    }
+
+    if (this.activeTimelineKey !== threadId) {
+      return
+    }
+
+    const canRestore =
+      restoreThreadId !== null &&
+      restoreThreadId !== threadId &&
+      this.timelineViews.has(restoreThreadId)
+    const nextKey = canRestore ? restoreThreadId : HOME_TIMELINE_KEY
+    this.activeTimelineKey = nextKey
+    const nextView = this.timelineViews.get(nextKey)
+    if (nextView === undefined) {
+      throw new Error(`Timeline ${nextKey} is not available.`)
+    }
+    this.state.timelineVersion += 1
+    nextView.lastAction = canRestore
+      ? `Switched to ${restoreThreadId}.`
+      : 'Returned to portal home.'
+    if (nextView.liveCommand?.toolName === 'spawn') {
+      this.scheduleLiveToolHeartbeat(nextView)
+    }
+    this.emit()
+  }
+
   public cycleThread(direction: -1 | 1): SurfaceThread | null {
     const surfacePort = this.surfacePort
     if (surfacePort === null) {
@@ -200,10 +233,6 @@ export class TerminalController {
     return () => {
       this.listeners.delete(listener)
     }
-  }
-
-  public setScreenResetter(reset: ScreenResetter | null): void {
-    this.screenResetter = reset
   }
 
   public getState(): TerminalState {
@@ -261,7 +290,6 @@ export class TerminalController {
 
     if (staticWelcomeUpdated) {
       this.state.timelineVersion += 1
-      this.screenResetter?.()
     }
     this.emit()
   }
@@ -983,7 +1011,6 @@ export class TerminalController {
     if (nextView.liveCommand?.toolName === 'spawn') {
       this.scheduleLiveToolHeartbeat(nextView)
     }
-    this.screenResetter?.()
     this.emit()
   }
 

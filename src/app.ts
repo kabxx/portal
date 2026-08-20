@@ -29,7 +29,6 @@ export {
 export { createPortalRuntimeSettings } from './runtime/runtime-settings.ts'
 export { inheritSpawnModelSelection } from './threads/web-child-conversation-service.ts'
 export {
-  clearInteractiveTerminal,
   clearTerminalBeforeRender,
   shouldRenderFallbackThreadError,
   showPendingThreadTimeline,

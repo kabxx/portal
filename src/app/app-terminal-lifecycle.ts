@@ -12,17 +12,6 @@ export function clearTerminalBeforeRender(output: {
   }
 }
 
-export function clearInteractiveTerminal(
-  inkApp: { clear: () => void },
-  output: { isTTY?: boolean; write: (data: string) => unknown }
-): void {
-  if (output.isTTY !== true) {
-    return
-  }
-  inkApp.clear()
-  output.write(CLEAR_TERMINAL_ESCAPE)
-}
-
 export function shouldRenderFallbackThreadError({
   turnErrorRendered,
   showFallbackError,
@@ -51,15 +40,12 @@ export function showPendingThreadTimeline(
         return
       }
       settled = true
-      ui.removeThreadTimeline(threadId)
-      if (
+      const restoreThreadId =
         previousThreadId !== null &&
         surface.getThread(previousThreadId) !== null
-      ) {
-        ui.showThreadTimeline(previousThreadId)
-      } else {
-        ui.showHomeTimeline()
-      }
+          ? previousThreadId
+          : null
+      ui.discardPendingThreadTimeline(threadId, restoreThreadId)
     },
   }
 }

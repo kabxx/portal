@@ -155,3 +155,18 @@ test('transcript writer replays unchanged content after a screen reset', () => {
   })
   assert.match(harness.writes.join(''), /\[1@80\]message-1/)
 })
+
+test('transcript writer resets declaratively when the timeline changes', () => {
+  const harness = createHarness()
+  const timeline = [entry(1)]
+  harness.writer.sync(timeline, 80, false, harness.write, 1)
+  harness.writes.length = 0
+
+  assert.deepEqual(harness.writer.sync(timeline, 80, false, harness.write, 2), {
+    status: 'written',
+  })
+  assert.equal(
+    harness.writes.join('').startsWith('\u001B[2J\u001B[3J\u001B[H'),
+    true
+  )
+})

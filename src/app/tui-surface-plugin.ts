@@ -23,7 +23,6 @@ import {
   noActiveThreadMessage,
 } from './app-tui-thread-input-handler.ts'
 import {
-  clearInteractiveTerminal,
   clearTerminalBeforeRender,
   showPendingThreadTimeline,
 } from './app-terminal-lifecycle.ts'
@@ -46,7 +45,10 @@ import type {
   CommandOutputMessage,
   CommandOutputService,
 } from '../cli-commands/core/command-services.ts'
-import type { SurfacePortActions } from '../surfaces/surface-port.ts'
+import type {
+  SurfacePort,
+  SurfacePortActions,
+} from '../surfaces/surface-port.ts'
 import {
   createDefaultPortalConfig,
   ensurePortalConfig,
@@ -164,7 +166,6 @@ async function activateTuiSurface(
         unsubscribe = () => {}
       },
       async () => {
-        ui.setScreenResetter(null)
         inkApp?.unmount()
         inkApp = null
       },
@@ -248,10 +249,6 @@ async function activateTuiSurface(
       windowsConsoleInput: { mode: 'enabled' },
     }
   )
-  ui.setScreenResetter(() => {
-    transcriptWriter.reset()
-    if (inkApp !== null) clearInteractiveTerminal(inkApp, options.output)
-  })
   void inkApp
     .waitUntilExit()
     .then(() => requestExit())
@@ -356,11 +353,11 @@ async function activateTuiSurface(
   return Object.freeze({ done, close })
 }
 
-function handleTuiHostEvent(
+export function handleTuiHostEvent(
   event: SurfaceHostEvent,
   state: {
     readonly ui: TerminalController
-    readonly surface: SurfacePortActions
+    readonly surface: SurfacePort
     readonly pendingProvision: Map<
       string,
       ReturnType<typeof showPendingThreadTimeline>
@@ -372,7 +369,9 @@ function handleTuiHostEvent(
     state.ui.setBrowserConnected(false)
     state.ui.renderWarning(
       'browser',
-      'Browser disconnected. Portal is shutting down.'
+      event.message.includes('cleanup could not be verified')
+        ? `${event.message} Portal is shutting down.`
+        : 'Browser disconnected. Portal is shutting down.'
     )
     state.requestExit()
     return
@@ -392,7 +391,7 @@ function handleTuiThreadEvent(
   event: SurfaceThreadLifecycleEvent,
   state: {
     readonly ui: TerminalController
-    readonly surface: SurfacePortActions
+    readonly surface: SurfacePort
     readonly pendingProvision: Map<
       string,
       ReturnType<typeof showPendingThreadTimeline>

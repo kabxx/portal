@@ -164,6 +164,7 @@ test('transcript sync scheduler coalesces live updates and writes the latest req
     forceReflow: false,
     layout: { columns: 80, rows: 24 },
     liveFrameSignature: 'stable',
+    timelineVersion: 0,
   })
   await new Promise<void>((resolve) => setTimeout(resolve, 0))
 
@@ -175,6 +176,7 @@ test('transcript sync scheduler coalesces live updates and writes the latest req
     forceReflow: false,
     layout: { columns: 80, rows: 24 },
     liveFrameSignature: 'stable',
+    timelineVersion: 0,
   })
   firstFlush.resolve()
   await new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -210,6 +212,7 @@ test('transcript sync scheduler retries when the live frame changes during flush
     forceReflow: false,
     layout: { columns: 80, rows: 24 },
     liveFrameSignature: 'before',
+    timelineVersion: 0,
   })
   await new Promise<void>((resolve) => setTimeout(resolve, 0))
 
@@ -267,6 +270,7 @@ test('transcript sync scheduler preserves full reflow until the latest request c
     forceReflow: true,
     layout: { columns: 100, rows: 30 },
     liveFrameSignature: 'stable',
+    timelineVersion: 0,
   })
   await new Promise<void>((resolve) => setTimeout(resolve, 80))
   scheduler.request({
@@ -275,6 +279,7 @@ test('transcript sync scheduler preserves full reflow until the latest request c
     forceReflow: true,
     layout: { columns: 120, rows: 40 },
     liveFrameSignature: 'stable',
+    timelineVersion: 0,
   })
 
   firstFlush.resolve()
@@ -308,6 +313,7 @@ test('disposed transcript sync scheduler ignores a pending flush', async () => {
     forceReflow: false,
     layout: { columns: 80, rows: 24 },
     liveFrameSignature: 'stable',
+    timelineVersion: 0,
   })
   await new Promise<void>((resolve) => setTimeout(resolve, 0))
   scheduler.dispose()
@@ -338,6 +344,7 @@ test('transcript sync scheduler drops a request when sync fails', async () => {
     forceReflow: false,
     layout: { columns: 80, rows: 24 },
     liveFrameSignature: 'stable',
+    timelineVersion: 0,
   })
   await new Promise<void>((resolve) => setTimeout(resolve, 10))
 
@@ -369,6 +376,7 @@ test('transcript sync scheduler reports flush failures and retries new requests'
     forceReflow: false,
     layout: { columns: 80, rows: 24 },
     liveFrameSignature: 'stable',
+    timelineVersion: 0,
   }
   scheduler.request(request)
   await new Promise<void>((resolve) => setTimeout(resolve, 10))

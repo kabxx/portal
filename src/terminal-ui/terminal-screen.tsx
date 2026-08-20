@@ -125,6 +125,7 @@ export interface TranscriptSyncRequest {
   forceReflow: boolean
   layout: { columns: number; rows: number }
   liveFrameSignature: string
+  timelineVersion: number
 }
 
 interface TranscriptSyncSchedulerOptions {
@@ -1401,7 +1402,8 @@ export function TerminalScreen({
           request.completedTimeline,
           request.bubbleWidth,
           request.forceReflow,
-          writeToStdout
+          writeToStdout,
+          request.timelineVersion
         )
       },
       commitLayout: (request) => {
@@ -1438,6 +1440,7 @@ export function TerminalScreen({
       forceReflow,
       layout: { columns: screenColumns, rows: screenRows },
       liveFrameSignature,
+      timelineVersion: state.timelineVersion,
     })
   }, [
     bubbleWidth,

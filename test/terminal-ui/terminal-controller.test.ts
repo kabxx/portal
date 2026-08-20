@@ -48,7 +48,6 @@ test('TerminalController stores the startup welcome in the home timeline', () =>
 test('TerminalController updates the existing welcome when the browser connects', () => {
   const ui = new TerminalController()
   const events: string[] = []
-  ui.setScreenResetter(() => events.push('reset'))
   ui.subscribe(() => events.push('notify'))
   ui.renderWelcome({
     browserStatus: 'connecting',
@@ -69,7 +68,7 @@ test('TerminalController updates the existing welcome when the browser connects'
 
   events.length = 0
   ui.setBrowserConnected(false)
-  assert.deepEqual(events, ['reset', 'notify'])
+  assert.deepEqual(events, ['notify'])
   assert.equal(
     ui.getState().timeline[0]?.welcome?.browserStatus,
     'disconnected'
@@ -239,7 +238,7 @@ test('foreground busy state cannot clear a running thread', () => {
   assert.equal(ui.getState().busy, false)
 })
 
-test('TerminalController resets the screen before notifying a timeline switch and restores cached bubbles', () => {
+test('TerminalController notifies once for a timeline switch and restores cached bubbles', () => {
   const manager = new ThreadManager()
   const first = manager.addThread({
     id: manager.createThreadId(),
@@ -259,22 +258,41 @@ test('TerminalController resets the screen before notifying a timeline switch an
   ui.renderInfo('thread', 'first bubble')
 
   const events: string[] = []
-  ui.setScreenResetter(() => events.push('reset'))
   ui.subscribe(() => events.push('notify'))
 
   manager.switchThread(second.id)
   ui.showThreadTimeline(second.id)
-  assert.deepEqual(events, ['reset', 'notify'])
+  assert.deepEqual(events, ['notify'])
 
   events.length = 0
   manager.switchThread(first.id)
   ui.showThreadTimeline(first.id)
 
-  assert.deepEqual(events, ['reset', 'notify'])
+  assert.deepEqual(events, ['notify'])
   assert.deepEqual(
     ui.getState().timeline.map((entry) => entry.body),
     ['first bubble']
   )
+})
+
+test('pending discard falls back home for invalid restore targets', () => {
+  const ui = new TerminalController()
+  let notifications = 0
+  ui.subscribe(() => {
+    notifications += 1
+  })
+
+  ui.showThreadTimeline('t-pending-self')
+  notifications = 0
+  ui.discardPendingThreadTimeline('t-pending-self', 't-pending-self')
+  assert.equal(ui.getState().lastAction, 'Returned to portal home.')
+  assert.equal(notifications, 1)
+
+  ui.showThreadTimeline('t-pending-missing')
+  notifications = 0
+  ui.discardPendingThreadTimeline('t-pending-missing', 't-not-created')
+  assert.equal(ui.getState().lastAction, 'Returned to portal home.')
+  assert.equal(notifications, 1)
 })
 
 test('TerminalController appends resumed history after the ready message', () => {
