@@ -128,6 +128,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
   private lastParsedResponse!: ChatGPTParsedResponse | null
   private pendingText = ''
   private websocketFrames!: string[]
+  private authenticationConfirmed = false
 
   private get ui(): ChatGPTUi {
     return new ChatGPTUi(this.page)
@@ -224,41 +225,22 @@ export class ChatGPTAdapter extends ProviderAdapter {
         timeoutMs: this.getRestoreTimeoutMs(),
         signal,
       })
-      const accessState = await this.ui.getAccessState()
-      if (accessState !== 'authenticated') {
-        const details = {
-          signed_out: {
-            kind: 'auth' as const,
+      if (
+        !this.authenticationConfirmed &&
+        !(await this.confirmAuthentication({ signal }))
+      ) {
+        throw new ProviderAdapterError(
+          'restore',
+          'ChatGPT is not logged in for the current browser profile.',
+          {
+            adapter: this,
+            kind: 'auth',
+            recovery: 'none',
+            retryable: false,
+            maxAttempts: 1,
             detailCode: 'chatgpt_signed_out',
-            message:
-              'ChatGPT is not logged in for the current browser profile.',
-          },
-          challenge: {
-            kind: 'auth' as const,
-            detailCode: 'chatgpt_challenge_required',
-            message:
-              'ChatGPT is waiting for a browser verification step. Complete it in the browser window, then retry.',
-          },
-          restricted: {
-            kind: 'ui' as const,
-            detailCode: 'chatgpt_access_restricted',
-            message:
-              'ChatGPT is restricting access for the current account or page.',
-          },
-          unknown: {
-            kind: 'ui' as const,
-            detailCode: 'chatgpt_access_unknown',
-            message: 'ChatGPT access state could not be identified safely.',
-          },
-        }[accessState]
-        throw new ProviderAdapterError('restore', details.message, {
-          adapter: this,
-          kind: details.kind,
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: details.detailCode,
-        })
+          }
+        )
       }
       await this.ui.waitForComposerReady(
         'restore',
@@ -300,36 +282,17 @@ export class ChatGPTAdapter extends ProviderAdapter {
     return emptyHistoryResult('ChatGPT history response was not captured.')
   }
 
-  public async isLoggedIn(): Promise<boolean> {
-    const state = await this.ui.getAccessState()
-    if (state === 'authenticated') return true
-    if (state === 'signed_out') return false
-    const details = {
-      challenge: {
-        kind: 'auth' as const,
-        detailCode: 'chatgpt_challenge_required',
-        message: 'ChatGPT is waiting for a browser verification step.',
-      },
-      restricted: {
-        kind: 'ui' as const,
-        detailCode: 'chatgpt_access_restricted',
-        message:
-          'ChatGPT is restricting access for the current account or page.',
-      },
-      unknown: {
-        kind: 'ui' as const,
-        detailCode: 'chatgpt_access_unknown',
-        message: 'ChatGPT access state could not be identified safely.',
-      },
-    }[state]
-    throw new ProviderAdapterError('restore', details.message, {
-      adapter: this,
-      kind: details.kind,
-      recovery: 'none',
-      retryable: false,
-      maxAttempts: 1,
-      detailCode: details.detailCode,
-    })
+  private async confirmAuthentication(
+    options: AbortOptions = {}
+  ): Promise<boolean> {
+    if (this.authenticationConfirmed) return true
+    const authenticated = await this.ui.isLoggedIn(options)
+    if (authenticated) this.authenticationConfirmed = true
+    return authenticated
+  }
+
+  public async isLoggedIn(options: AbortOptions = {}): Promise<boolean> {
+    return await this.confirmAuthentication(options)
   }
 
   public async changeModel(model: ResolvedProviderModel): Promise<void> {

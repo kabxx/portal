@@ -27,6 +27,7 @@ interface RestoreTestLocator {
 interface RestoreTestPage {
   goto(): Promise<void>
   url(): string
+  evaluate?(): Promise<boolean>
   getByTestId?(testId: string): RestoreTestLocator
   getByRole?(): RestoreTestLocator
   locator(selector: string): RestoreTestLocator
@@ -51,11 +52,13 @@ function createMockPage({
   visibleByTestId = {},
   visibleByLocator = {},
   enabledByLocator = {},
+  authenticated = false,
 }: {
   afterGotoUrl: string
   visibleByTestId?: Record<string, boolean>
   visibleByLocator?: Record<string, boolean>
   enabledByLocator?: Record<string, boolean>
+  authenticated?: boolean
 }) {
   let currentUrl = 'about:blank'
 
@@ -64,6 +67,7 @@ function createMockPage({
       currentUrl = afterGotoUrl
     },
     url: () => currentUrl,
+    evaluate: async () => authenticated,
     getByTestId: (testId: string) => ({
       isVisible: async () => visibleByTestId[testId] ?? false,
     }),
@@ -121,12 +125,16 @@ test('ChatGPTAdapter.restore classifies the current auth route as signed out', a
   )
 })
 
-test('ChatGPTAdapter keeps browser verification separate from signed-out recovery', async () => {
+test('ChatGPTAdapter treats Guest composer controls as signed out', async () => {
   const adapter = createRestorableAdapter(
     ChatGPTAdapter,
     createMockPage({
       afterGotoUrl: 'https://chatgpt.com',
-      visibleByLocator: { '#challenge-running': true },
+      visibleByLocator: {
+        '#prompt-textarea': true,
+        'button[data-testid="send-button"]': true,
+        'button[data-testid="model-switcher-dropdown-button"]': true,
+      },
     })
   )
 
@@ -135,7 +143,7 @@ test('ChatGPTAdapter keeps browser verification separate from signed-out recover
     (error: unknown) =>
       error instanceof ProviderAdapterError &&
       error.kind === 'auth' &&
-      error.detailCode === 'chatgpt_challenge_required'
+      error.detailCode === 'chatgpt_signed_out'
   )
 })
 
@@ -583,36 +591,17 @@ test('GlmAdapter.restore only requires the send button to be visible', async () 
 })
 
 test('ChatGPTAdapter.restore waits for the speech button ready signal before succeeding', async () => {
+  let authChecks = 0
   let countChecks = 0
   let checks = 0
   const adapter = createRestorableAdapter(ChatGPTAdapter, {
     goto: async () => undefined,
     url: () => 'https://chatgpt.com',
-    getByTestId: (testId: string) => ({
-      isVisible: async () => {
-        assert.equal(testId, 'login-button')
-        return false
-      },
-    }),
+    evaluate: async () => {
+      authChecks += 1
+      return true
+    },
     locator: (selector: string) => {
-      if (selector === '[data-testid="login-button"]') {
-        return {
-          isVisible: async () => false,
-        }
-      }
-      if (
-        selector === '#modal-no-auth-login' ||
-        selector === '#modal-expired-session'
-      ) {
-        return {
-          isVisible: async () => false,
-        }
-      }
-      if (selector === '#prompt-textarea') {
-        return {
-          isVisible: async () => true,
-        }
-      }
       if (selector === 'button[style*="--vt-composer-speech-button"]') {
         return {
           count: async () => {
@@ -651,11 +640,41 @@ test('ChatGPTAdapter.restore waits for the speech button ready signal before suc
 
   await adapter.restore()
 
+  assert.equal(authChecks, 1)
   assert.ok(checks >= 3)
   assert.ok(countChecks >= 3)
 })
 
-test('ChatGPTAdapter fails closed when the page has no known access markers', async () => {
+test('ChatGPTAdapter reuses its first successful login observation', async () => {
+  let authChecks = 0
+  const adapter = createRestorableAdapter(ChatGPTAdapter, {
+    goto: async () => undefined,
+    url: () => 'https://chatgpt.com',
+    evaluate: async () => {
+      authChecks += 1
+      return true
+    },
+    locator: () => ({
+      count: async () => 1,
+      first() {
+        return this
+      },
+      nth() {
+        return this
+      },
+      isVisible: async () => true,
+      isEnabled: async () => true,
+    }),
+  })
+
+  assert.equal(await adapter.isLoggedIn(), true)
+  await adapter.restore()
+  await adapter.restore()
+
+  assert.equal(authChecks, 1)
+})
+
+test('ChatGPTAdapter treats a missing authenticated session as signed out', async () => {
   const adapter = createRestorableAdapter(
     ChatGPTAdapter,
     createMockPage({
@@ -667,7 +686,7 @@ test('ChatGPTAdapter fails closed when the page has no known access markers', as
     adapter.restore(),
     (error: unknown) =>
       error instanceof ProviderAdapterError &&
-      error.kind === 'ui' &&
-      error.detailCode === 'chatgpt_access_unknown'
+      error.kind === 'auth' &&
+      error.detailCode === 'chatgpt_signed_out'
   )
 })

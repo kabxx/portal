@@ -58,7 +58,7 @@ export async function initializeRuntimeWithLoginWait({
         try {
           const adapter = pendingAdapter
           if (adapter !== null) {
-            if (!(await adapter.isLoggedIn())) {
+            if (!(await adapter.isLoggedIn({ signal }))) {
               await onLoginWait(provider, 'login')
               await waitForLogin()
               continue

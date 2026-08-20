@@ -9,18 +9,21 @@ import {
   type ResolvedProviderModel,
 } from '../../provider-model-catalog.ts'
 import { getProviderDefinition } from '../../provider-definition-pack.ts'
+import {
+  abortable,
+  isAbortError,
+  throwIfAborted,
+  type AbortOptions,
+} from '../../../runtime/runtime-cancellation.ts'
 import { waitAsync } from '../../../shared/wait.ts'
 import {
   defineProviderUiSelectors,
-  defineProviderUiModelPositions,
   joinCssLocatorCandidates,
-  mapCssLocatorCandidates,
 } from '../provider-ui.ts'
 
 const CHATGPT_DEFINITION = getProviderDefinition('chatgpt')
-const modelPositions = defineProviderUiModelPositions('chatgpt', {
-  chatgpt: 1,
-})
+const CHATGPT_SESSION_PATH = '/api/auth/session'
+const CHATGPT_SESSION_PROBE_TIMEOUT_MS = 10_000
 const capabilityIdentityTokens: Readonly<Record<string, readonly string[]>> =
   Object.freeze({
     image_create: ['image', 'image-generation', 'image_create'],
@@ -30,39 +33,6 @@ const capabilityIdentityTokens: Readonly<Record<string, readonly string[]>> =
   })
 
 const selectors = defineProviderUiSelectors({
-  auth: {
-    loginButton: ['[data-testid="login-button"]'],
-    noAuthModal: ['#modal-no-auth-login'],
-    expiredSessionModal: ['#modal-expired-session'],
-    loginForm: ['form[action*="/auth/login"]', 'input[type="email"]'],
-    challenge: [
-      '#challenge-running',
-      '#cf-chl-widget',
-      'iframe[src*="challenges.cloudflare.com"]',
-    ],
-    restricted: [
-      '#account-deactivated',
-      '[data-testid="account-restricted"]',
-      '[data-testid="unsupported-country"]',
-    ],
-    authenticated: [
-      '#prompt-textarea',
-      'button[style*="--vt-composer-speech-button"]',
-      'button[data-testid="send-button"]',
-      'button[data-testid="model-switcher-dropdown-button"]',
-    ],
-  },
-  model: {
-    trigger: [
-      'button[data-testid="model-switcher-dropdown-button"]',
-      'button.__composer-pill',
-    ],
-    directMenu: ['[role="menu"]'],
-    picker: ['div[data-testid="composer-intelligence-picker-content"]'],
-    directItem: ['[role="menuitemradio"]'],
-    menuItem: ['div[role="menuitem"]'],
-    item: ['div[role="menuitemradio"]'],
-  },
   composer: {
     editor: ['#prompt-textarea'],
     sendButton: ['#composer-submit-button'],
@@ -86,66 +56,121 @@ export interface ChatGPTActionCapabilityInfo {
   state: ChatGPTActionCapabilityState
 }
 
-export type ChatGPTAccessState =
-  'authenticated' | 'signed_out' | 'challenge' | 'restricted' | 'unknown'
+export type ChatGPTAccessState = 'authenticated' | 'unauthenticated'
 
-export class ChatGPTUi {
-  public constructor(private readonly page: Page) {}
+export interface ChatGPTAuthenticationPage {
+  url(): string
+  evaluate(
+    pageFunction: (arguments_: {
+      expectedOrigin: string
+      probeTimeoutMs: number
+      sessionPath: string
+    }) => Promise<boolean>,
+    arguments_: {
+      expectedOrigin: string
+      probeTimeoutMs: number
+      sessionPath: string
+    }
+  ): Promise<boolean>
+}
 
-  public async getAccessState(): Promise<ChatGPTAccessState> {
-    let url: URL
-    try {
-      url = new URL(this.page.url())
-    } catch {
-      return 'unknown'
-    }
-    if (
-      url.protocol !== 'https:' ||
-      (url.hostname !== 'chatgpt.com' && url.hostname !== 'chat.openai.com')
-    ) {
-      return 'unknown'
-    }
-    if (url.pathname.startsWith('/auth/')) return 'signed_out'
-
-    const visible = async (candidate: string): Promise<boolean> => {
-      try {
-        return await this.page.locator(candidate).isVisible()
-      } catch {
-        return false
-      }
-    }
-    for (const candidate of selectors.auth.challenge) {
-      if (await visible(candidate)) return 'challenge'
-    }
-    for (const candidate of selectors.auth.restricted) {
-      if (await visible(candidate)) return 'restricted'
-    }
-    for (const candidate of [
-      ...selectors.auth.loginButton,
-      ...selectors.auth.noAuthModal,
-      ...selectors.auth.expiredSessionModal,
-      ...selectors.auth.loginForm,
-    ]) {
-      if (await visible(candidate)) return 'signed_out'
-    }
-    for (const candidate of selectors.auth.authenticated) {
-      if (await visible(candidate)) return 'authenticated'
-    }
-    return 'unknown'
+export async function observeChatGptAccessState(
+  page: ChatGPTAuthenticationPage,
+  options: AbortOptions = {},
+  sessionProbeTimeoutMs = CHATGPT_SESSION_PROBE_TIMEOUT_MS
+): Promise<ChatGPTAccessState> {
+  let url: URL
+  try {
+    url = new URL(page.url())
+  } catch {
+    return 'unauthenticated'
+  }
+  if (
+    url.protocol !== 'https:' ||
+    (url.hostname !== 'chatgpt.com' && url.hostname !== 'chat.openai.com')
+  ) {
+    return 'unauthenticated'
   }
 
-  public async isLoggedIn(): Promise<boolean> {
-    return (await this.getAccessState()) === 'authenticated'
+  const expectedOrigin = url.origin
+  throwIfAborted(options.signal)
+  const probeTimeoutMs = Math.max(1, Math.floor(sessionProbeTimeoutMs))
+  const evaluation = page.evaluate(
+    async ({ expectedOrigin, probeTimeoutMs, sessionPath }) => {
+      const globalObject = globalThis as typeof globalThis & {
+        __portalOriginalFetch?: typeof fetch
+      }
+      const originalFetch = globalObject.__portalOriginalFetch
+      if (typeof originalFetch !== 'function') return false
+
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), probeTimeoutMs)
+      try {
+        const response = await originalFetch(sessionPath, {
+          cache: 'no-store',
+          credentials: 'include',
+          redirect: 'error',
+          signal: controller.signal,
+        })
+        if (!response.ok) return false
+        const responseUrl = new URL(response.url)
+        if (
+          responseUrl.origin !== expectedOrigin ||
+          responseUrl.pathname !== sessionPath
+        ) {
+          return false
+        }
+        const session: unknown = await response.json()
+        if (
+          typeof session !== 'object' ||
+          session === null ||
+          Array.isArray(session)
+        ) {
+          return false
+        }
+        if (!('user' in session)) return false
+        const { user } = session
+        return typeof user === 'object' && user !== null && !Array.isArray(user)
+      } catch {
+        return false
+      } finally {
+        clearTimeout(timer)
+      }
+    },
+    { expectedOrigin, probeTimeoutMs, sessionPath: CHATGPT_SESSION_PATH }
+  )
+  try {
+    return (await abortable(evaluation, options.signal))
+      ? 'authenticated'
+      : 'unauthenticated'
+  } catch (error) {
+    if (isAbortError(error)) throw error
+    return 'unauthenticated'
+  }
+}
+
+export class ChatGPTUi {
+  public constructor(
+    private readonly page: Page,
+    private readonly sessionProbeTimeoutMs = CHATGPT_SESSION_PROBE_TIMEOUT_MS
+  ) {}
+
+  public async getAccessState(
+    options: AbortOptions = {}
+  ): Promise<ChatGPTAccessState> {
+    return await observeChatGptAccessState(
+      this.page,
+      options,
+      this.sessionProbeTimeoutMs
+    )
+  }
+
+  public async isLoggedIn(options: AbortOptions = {}): Promise<boolean> {
+    return (await this.getAccessState(options)) === 'authenticated'
   }
 
   public async changeModel(model: ResolvedProviderModel): Promise<void> {
-    const position = Object.entries(modelPositions).find(
-      ([key]) => key === model.key
-    )?.[1]
-    if (
-      position === undefined ||
-      !isResolvedProviderModelSupported('chatgpt', model)
-    ) {
+    if (!isResolvedProviderModelSupported('chatgpt', model)) {
       throw new ProviderAdapterUnsupportedError(
         'changeModel',
         `ChatGPT does not support model "${model.key}"${
@@ -153,69 +178,6 @@ export class ChatGPTUi {
         }.`
       )
     }
-
-    const modelIndex = position - 1
-    const directMenus = this.page.locator(
-      joinCssLocatorCandidates(selectors.model.directMenu, ':visible')
-    )
-    const picker = await this.openModelPicker(directMenus)
-    if (!(await picker.isVisible().catch(() => false))) {
-      const directModelItems = directMenus
-        .first()
-        .locator(joinCssLocatorCandidates(selectors.model.directItem))
-      if ((await directModelItems.count()) <= modelIndex) {
-        throw new ProviderAdapterUnsupportedError(
-          'changeModel',
-          `ChatGPT does not have model ${position}.`
-        )
-      }
-      await directModelItems.nth(modelIndex).click()
-      return
-    }
-
-    const modelMenuItems = picker.locator(
-      joinCssLocatorCandidates(selectors.model.menuItem)
-    )
-    if ((await modelMenuItems.count()) === 0) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        'ChatGPT model menu is unavailable.'
-      )
-    }
-    const modelMenuItem = modelMenuItems.first()
-    const modelMenuId = await modelMenuItem
-      .getAttribute('aria-controls')
-      .catch(() => null)
-    if (modelMenuId === null || modelMenuId.trim() === '') {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        'ChatGPT model menu is unavailable.'
-      )
-    }
-    await modelMenuItem.click()
-
-    const modelItems = this.page.locator(
-      mapCssLocatorCandidates(
-        selectors.model.item,
-        (candidate) => `[id=${JSON.stringify(modelMenuId)}] ${candidate}`
-      )
-    )
-    await waitAsync(async () => (await modelItems.count().catch(() => 0)) > 0, {
-      timeoutMs: 5000,
-      onTimeout: async () => {
-        throw new ProviderAdapterUnsupportedError(
-          'changeModel',
-          `ChatGPT does not have model ${position}.`
-        )
-      },
-    })
-    if ((await modelItems.count()) <= modelIndex) {
-      throw new ProviderAdapterUnsupportedError(
-        'changeModel',
-        `ChatGPT does not have model ${position}.`
-      )
-    }
-    await modelItems.nth(modelIndex).click()
   }
 
   public async attachText(text: string): Promise<void> {
@@ -342,49 +304,6 @@ export class ChatGPTUi {
         },
       }
     )
-  }
-
-  private async openModelPicker(directMenus: Locator): Promise<Locator> {
-    const triggers = this.page.locator(
-      joinCssLocatorCandidates(selectors.model.trigger, ':visible')
-    )
-    if ((await triggers.count()) !== 1) {
-      throw new ProviderAdapterError(
-        'changeModel',
-        'ChatGPT model selector was missing or ambiguous.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'chatgpt_model_trigger_invalid',
-        }
-      )
-    }
-    await triggers.first().click()
-    const picker = this.page.locator(
-      joinCssLocatorCandidates(selectors.model.picker, ':visible')
-    )
-    await waitAsync(
-      async () =>
-        (await picker.count().catch(() => 0)) > 0 ||
-        (await directMenus.count().catch(() => 0)) > 0,
-      { timeoutMs: 5000 }
-    )
-    if ((await picker.count()) > 1 || (await directMenus.count()) > 1) {
-      throw new ProviderAdapterError(
-        'changeModel',
-        'ChatGPT model menu was ambiguous.',
-        {
-          kind: 'ui',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'chatgpt_model_menu_ambiguous',
-        }
-      )
-    }
-    return picker.first()
   }
 
   private getCapabilityGroup(index: number): Locator {

@@ -20,6 +20,7 @@ class FakeAdapter extends ProviderAdapter {
   public closeCalls = 0
   public loggedIn = false
   public restoreSignals: Array<AbortSignal | undefined> = []
+  public loginSignals: Array<AbortSignal | undefined> = []
 
   public constructor(private readonly events: string[] = []) {
     super(createBrowserContextStub())
@@ -35,7 +36,8 @@ class FakeAdapter extends ProviderAdapter {
     this.events.push('restore')
   }
 
-  public async isLoggedIn() {
+  public async isLoggedIn(options: { signal?: AbortSignal } = {}) {
+    this.loginSignals.push(options.signal)
     return this.loggedIn
   }
 
@@ -368,6 +370,7 @@ test('initializeRuntimeWithLoginWait passes abort signal to pending adapter rest
 
   assert.ok(runtime)
   assert.equal(adapter.restoreSignals[0], controller.signal)
+  assert.equal(adapter.loginSignals[0], controller.signal)
 })
 
 test('initializeRuntimeWithLoginWait propagates abort from pending adapter restore without warning', async () => {

@@ -7,37 +7,13 @@ import {
   createDeferred,
   ProviderAdapterError,
 } from '../../../src/providers/adapters/adapter-base.ts'
-import {
-  joinCssLocatorCandidates,
-  mapCssLocatorCandidates,
-} from '../../../src/providers/ui/provider-ui.ts'
+import { joinCssLocatorCandidates } from '../../../src/providers/ui/provider-ui.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
 const CHATGPT_LOCATORS = {
-  modelTrigger: [
-    'button[data-testid="model-switcher-dropdown-button"]',
-    'button.__composer-pill',
-  ],
-  modelDirectMenu: ['[role="menu"]'],
-  modelPicker: ['div[data-testid="composer-intelligence-picker-content"]'],
-  modelDirectItem: ['[role="menuitemradio"]'],
-  modelMenuItem: ['div[role="menuitem"]'],
-  modelItem: ['div[role="menuitemradio"]'],
   capabilityTrigger: ['[data-testid="composer-plus-btn"]'],
   capabilityGroup: ['div[role="group"][class*="empty:hidden"]'],
 } as const
-const CHATGPT_MODEL_TRIGGER_SELECTOR = joinCssLocatorCandidates(
-  CHATGPT_LOCATORS.modelTrigger,
-  ':visible'
-)
-const CHATGPT_MODEL_DIRECT_MENU_SELECTOR = joinCssLocatorCandidates(
-  CHATGPT_LOCATORS.modelDirectMenu,
-  ':visible'
-)
-const CHATGPT_MODEL_PICKER_SELECTOR = joinCssLocatorCandidates(
-  CHATGPT_LOCATORS.modelPicker,
-  ':visible'
-)
 
 type MockButton = {
   first: () => unknown
@@ -1071,65 +1047,23 @@ test('ChatGPTAdapter selects action capabilities by stable identity and verifies
   )
 })
 
-test('ChatGPTAdapter changes the declared model through the intelligence picker', async () => {
+test('ChatGPTAdapter keeps the current page model for the synthetic default', async () => {
   const adapter = createTestChatGPTAdapter()
-  const page = createChatGPTModelPage()
-  adapter.page = page
+  adapter.page = {
+    locator: () => {
+      throw new Error('The default model must not query or mutate the page.')
+    },
+  }
 
   await adapter.changeModel({ key: 'chatgpt', option: null })
-
-  assert.deepEqual(page.events, [
-    'click:pill',
-    'click:model-menu',
-    'click:model:0',
-  ])
 })
 
-test('ChatGPTAdapter changes model without changing mode', async () => {
+test('ChatGPTAdapter rejects unsupported and optioned models', async () => {
   const adapter = createTestChatGPTAdapter()
-  const page = createChatGPTModelPage()
-  adapter.page = page
-
-  await adapter.changeModel({ key: 'chatgpt', option: null })
-
-  assert.deepEqual(page.events, [
-    'click:pill',
-    'click:model-menu',
-    'click:model:0',
-  ])
-})
-
-test('ChatGPTAdapter changes model through the direct radio menu', async () => {
-  const adapter = createTestChatGPTAdapter()
-  const page = createChatGPTDirectModelPage()
-  adapter.page = page
-
-  await adapter.changeModel({ key: 'chatgpt', option: null })
-
-  assert.deepEqual(page.events, ['click:trigger', 'click:model:0'])
-})
-
-test('ChatGPTAdapter rejects ambiguous visible model selectors', async () => {
-  const adapter = createTestChatGPTAdapter()
-  adapter.page = createChatGPTDirectModelPage({ triggerCount: 2 })
-
-  await assert.rejects(
-    adapter.changeModel({ key: 'chatgpt', option: null }),
-    /missing or ambiguous/
-  )
-})
-
-test('ChatGPTAdapter rejects unsupported, unavailable, and optioned models', async () => {
-  const adapter = createTestChatGPTAdapter()
-  adapter.page = createChatGPTModelPage({ modelCount: 0 })
 
   await assert.rejects(
     adapter.changeModel({ key: 'name', option: null }),
     /ChatGPT does not support model "name"\./
-  )
-  await assert.rejects(
-    adapter.changeModel({ key: 'chatgpt', option: null }),
-    /ChatGPT does not have model 1\./
   )
   await assert.rejects(
     adapter.changeModel({ key: 'chatgpt', option: 'extended' }),
@@ -1289,144 +1223,6 @@ function createStopButton() {
     },
   }
   return button
-}
-
-function createChatGPTModelPage({
-  modelCount = 3,
-}: { modelCount?: number } = {}) {
-  const events: string[] = []
-  let pickerOpen = false
-  let modelMenuOpen = false
-  const modelItems = Array.from({ length: modelCount }, (_, index) => ({
-    click: async () => {
-      events.push(`click:model:${index}`)
-    },
-  }))
-  const picker = {
-    count: async () => (pickerOpen ? 1 : 0),
-    first: () => picker,
-    isVisible: async () => pickerOpen,
-    locator: (selector: string) => {
-      if (
-        selector === joinCssLocatorCandidates(CHATGPT_LOCATORS.modelMenuItem)
-      ) {
-        return {
-          count: async () => 1,
-          first: () => ({
-            getAttribute: async (name: string) =>
-              name === 'aria-controls' ? 'chatgpt-model-menu' : null,
-            click: async () => {
-              events.push('click:model-menu')
-              modelMenuOpen = true
-            },
-          }),
-        }
-      }
-      throw new Error(`Unexpected picker selector: ${selector}`)
-    },
-  }
-  const modelMenu = {
-    count: async () => (modelMenuOpen ? modelItems.length : 0),
-    nth: (itemIndex: number) => modelItems[itemIndex],
-  }
-
-  return {
-    events,
-    locator: (selector: string) => {
-      if (selector === CHATGPT_MODEL_DIRECT_MENU_SELECTOR) {
-        return { count: async () => 0, first: () => picker }
-      }
-      if (selector === CHATGPT_MODEL_TRIGGER_SELECTOR) {
-        const trigger = {
-          count: async () => 1,
-          first: () => trigger,
-          click: async () => {
-            events.push('click:pill')
-            pickerOpen = true
-          },
-        }
-        return trigger
-      }
-      if (selector === CHATGPT_MODEL_PICKER_SELECTOR) {
-        return picker
-      }
-      if (
-        selector ===
-        mapCssLocatorCandidates(
-          CHATGPT_LOCATORS.modelItem,
-          (candidate) => `[id="chatgpt-model-menu"] ${candidate}`
-        )
-      ) {
-        return modelMenu
-      }
-      throw new Error(`Unexpected selector: ${selector}`)
-    },
-  }
-}
-
-function createChatGPTDirectModelPage({
-  modelCount = 2,
-  triggerCount = 1,
-  menuCount = 1,
-}: {
-  modelCount?: number
-  triggerCount?: number
-  menuCount?: number
-} = {}) {
-  const events: string[] = []
-  let menuOpen = false
-  const modelItems = Array.from({ length: modelCount }, (_, index) => ({
-    click: async () => {
-      events.push(`click:model:${index}`)
-    },
-  }))
-  const directModelItems = {
-    count: async () => (menuOpen ? modelItems.length : 0),
-    nth: (index: number) => modelItems[index],
-  }
-  const picker = {
-    isVisible: async () => false,
-  }
-  const pickerCollection = {
-    count: async () => 0,
-    first: () => picker,
-  }
-  const menu = {
-    locator: (selector: string) => {
-      assert.equal(
-        selector,
-        joinCssLocatorCandidates(CHATGPT_LOCATORS.modelDirectItem)
-      )
-      return directModelItems
-    },
-  }
-  const directMenus = {
-    count: async () => (menuOpen ? menuCount : 0),
-    first: () => menu,
-  }
-  const trigger = {
-    click: async () => {
-      events.push('click:trigger')
-      menuOpen = true
-    },
-  }
-
-  return {
-    events,
-    locator: (selector: string) => {
-      if (selector === CHATGPT_MODEL_DIRECT_MENU_SELECTOR) return directMenus
-      if (selector === CHATGPT_MODEL_TRIGGER_SELECTOR) {
-        return {
-          count: async () => triggerCount,
-          first: () => trigger,
-        }
-      }
-      if (selector === CHATGPT_MODEL_PICKER_SELECTOR) {
-        return pickerCollection
-      }
-      throw new Error(`Unexpected selector: ${selector}`)
-    },
-  }
 }
 
 function createChatGPTCapabilityPage({

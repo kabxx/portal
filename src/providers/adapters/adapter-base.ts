@@ -143,7 +143,7 @@ export type ProviderAdapterRecoveryAction =
 
 export interface RecoverableProviderAdapter {
   close(): Promise<void>
-  isLoggedIn(): Promise<boolean>
+  isLoggedIn(options?: AbortOptions): Promise<boolean>
   restore(options?: AbortOptions): Promise<void>
 }
 
@@ -795,7 +795,7 @@ export abstract class ProviderAdapter<
   }
 
   public abstract restore(options?: AbortOptions): Promise<void>
-  public abstract isLoggedIn(): Promise<boolean>
+  public abstract isLoggedIn(options?: AbortOptions): Promise<boolean>
   public abstract get conversationId(): string | null
   public abstract get conversationUrl(): string
 
