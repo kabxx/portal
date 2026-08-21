@@ -34,7 +34,9 @@ type ChatGPTAdapterHarness = Pick<ChatGPTAdapter, keyof ChatGPTAdapter> & {
   getSubmitRequestStartGraceMs(): number
   getSubmitBlockedWarningIntervalMs(): number
   getSubmitResponseTimeoutMs(): number
-  getSubmitResponseIdleTimeoutMs(): number
+  getSubmitResponseStartTimeoutMs(): number
+  getSubmitResponseStallTimeoutMs(): number
+  getPostResponseComposerReadyTimeoutMs(): number
 }
 
 function createTestChatGPTAdapter(): ChatGPTAdapterHarness {
@@ -82,8 +84,21 @@ function createTestChatGPTAdapter(): ChatGPTAdapterHarness {
     getSubmitRequestStartGraceMs: (): number => 5,
     getSubmitBlockedWarningIntervalMs: (): number => 30_000,
     getSubmitResponseTimeoutMs: (): number => 30_000,
-    getSubmitResponseIdleTimeoutMs: (): number => 30_000,
+    getSubmitResponseStartTimeoutMs: (): number => 30_000,
+    getSubmitResponseStallTimeoutMs: (): number => 30_000,
+    getPostResponseComposerReadyTimeoutMs: (): number => 30_000,
   })
+}
+
+function bindChatGptWebSocketListener(adapter: ChatGPTAdapterHarness): void {
+  const candidate: object = adapter
+  if (
+    !('bindWebSocketListener' in candidate) ||
+    typeof candidate.bindWebSocketListener !== 'function'
+  ) {
+    throw new Error('ChatGPT adapter is missing its WebSocket listener.')
+  }
+  Reflect.apply(candidate.bindWebSocketListener, adapter, [])
 }
 
 function createChatGptRequestBody(
@@ -144,6 +159,25 @@ function createChatGptWebSocketFrame(
           channel: 'final',
           metadata: {},
           ...(parentMessageId !== null ? { parent_id: parentMessageId } : {}),
+        },
+      },
+    })}`,
+  })
+}
+
+function createChatGptOwnedAnalysisFrame(index: number): string {
+  return JSON.stringify({
+    conversation_id: 'conversation-1',
+    encoded_item: `event: delta\ndata: ${JSON.stringify({
+      v: {
+        message: {
+          id: `analysis-${index}`,
+          parent_id: 'user-message-1',
+          author: { role: 'assistant' },
+          content: { content_type: 'text', parts: [`analysis-${index}`] },
+          status: 'in_progress',
+          channel: 'analysis',
+          metadata: {},
         },
       },
     })}`,
@@ -676,6 +710,7 @@ test('ChatGPTAdapter.submit emits periodic warnings while waiting for the reques
       (message) => message === 'Waiting for ChatGPT to start the request.'
     )
   )
+  assert.equal(warnings.length, 1)
 
   const request = {
     method: () => 'POST',
@@ -827,7 +862,7 @@ test('ChatGPTAdapter.submit does not accept a stable unfinished tool call before
   adapter.setSubmitStatusReporter(async () => {
     throw new Error('submit warning should not fire for the normal path')
   })
-  adapter.getSubmitResponseIdleTimeoutMs = () => 400
+  adapter.getSubmitResponseStallTimeoutMs = () => 400
   const result = await adapter.submit()
 
   assert.equal(result, '<tool name="run_command">{"command":"dir"}</tool>')
@@ -863,13 +898,13 @@ test('ChatGPTAdapter.submit fails instead of returning an unfinished response wi
   adapter.setSubmitStatusReporter(async () => {
     throw new Error('submit warning should not fire for the normal path')
   })
-  adapter.getSubmitResponseIdleTimeoutMs = () => 200
+  adapter.getSubmitResponseStallTimeoutMs = () => 200
   await assert.rejects(
-    adapter.submit(),
+    adapter.submitWithResponseTimeout(),
     (error: unknown) =>
       error instanceof Error &&
       'detailCode' in error &&
-      error.detailCode === 'chatgpt_submit_outcome_unknown'
+      error.detailCode === 'chatgpt_terminal_marker_missing'
   )
 })
 
@@ -916,6 +951,203 @@ test('ChatGPTAdapter.submit waits for the real speech button selector to become 
 
   assert.equal(result, 'done')
   assert.ok(speechChecks >= 3)
+})
+
+test('ChatGPTAdapter raw background websocket frames do not refresh the response watchdog', async () => {
+  const adapter = createTestChatGPTAdapter()
+  adapter.getSubmitResponseStartTimeoutMs = () => 30
+  adapter.getSubmitResponseStallTimeoutMs = () => 30
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => undefined,
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+  bindChatGptWebSocketListener(adapter)
+
+  const socketEvents = new EventEmitter()
+  page.emit('websocket', {
+    url: () => 'wss://ws.chatgpt.com/p18/ws/user?background=1',
+    on: (eventName: string, listener: (...args: unknown[]) => void) => {
+      socketEvents.on(eventName, listener)
+    },
+  })
+  const frameTimer = setInterval(() => {
+    socketEvents.emit('framereceived', {
+      payload: JSON.stringify({ type: 'background_event' }),
+    })
+  }, 5)
+
+  try {
+    await assert.rejects(
+      adapter.submitWithResponseTimeout(),
+      (error: unknown) =>
+        error instanceof ProviderAdapterError &&
+        error.detailCode === 'chatgpt_owned_request_missing'
+    )
+  } finally {
+    clearInterval(frameTimer)
+  }
+})
+
+test('ChatGPTAdapter owned non-text websocket progress refreshes the response watchdog', async () => {
+  const adapter = createTestChatGPTAdapter()
+  adapter.getSubmitResponseStartTimeoutMs = () => 150
+  adapter.getSubmitResponseStallTimeoutMs = () => 150
+  adapter.getSubmitResponseTimeoutMs = () => 500
+  adapter.getFinishedResponseSettleMs = () => 10
+  const socketEvents = new EventEmitter()
+  const timers: NodeJS.Timeout[] = []
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const request = {
+        method: () => 'POST',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        postData: () => createChatGptRequestBody(),
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () => '{}',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        status: () => 200,
+      })
+      for (const [index, delay] of [20, 80, 140, 200].entries()) {
+        timers.push(
+          setTimeout(() => {
+            socketEvents.emit('framereceived', {
+              payload: createChatGptOwnedAnalysisFrame(index),
+            })
+          }, delay)
+        )
+      }
+      timers.push(
+        setTimeout(() => {
+          socketEvents.emit('framereceived', {
+            payload: createChatGptWebSocketFrame('done', true),
+          })
+        }, 240)
+      )
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+  bindChatGptWebSocketListener(adapter)
+  page.emit('websocket', {
+    url: () => 'wss://ws.chatgpt.com/p18/ws/user',
+    on: (eventName: string, listener: (...args: unknown[]) => void) => {
+      socketEvents.on(eventName, listener)
+    },
+  })
+  adapter.setSubmitStatusReporter(async () => undefined)
+
+  try {
+    assert.equal(await adapter.submitWithResponseTimeout(), 'done')
+  } finally {
+    for (const timer of timers) clearTimeout(timer)
+  }
+})
+
+test('ChatGPTAdapter stops the response watchdog before waiting for Composer readiness', async () => {
+  const adapter = createTestChatGPTAdapter()
+  adapter.websocketFrames = []
+  adapter.getSubmitResponseStartTimeoutMs = () => 20
+  adapter.getSubmitResponseStallTimeoutMs = () => 250
+  adapter.getPostResponseComposerReadyTimeoutMs = () => 1_200
+  adapter.getFinishedResponseSettleMs = () => 10
+
+  let readyChecks = 0
+  let responseCompletedAt = 0
+  let composerReadyAt = 0
+  const readyButton = {
+    first: () => readyButton,
+    isVisible: async () => {
+      readyChecks += 1
+      if (readyChecks < 6) return false
+      composerReadyAt = Date.now()
+      return true
+    },
+    isEnabled: async () => true,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const request = {
+        method: () => 'POST',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () => '{}',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        status: () => 200,
+      })
+      adapter.websocketFrames.push(createChatGptWebSocketFrame('done', true))
+      responseCompletedAt = Date.now()
+    },
+  }
+  const page = createChatGPTPage(sendButton, readyButton)
+  adapter.page = page
+  adapter.setSubmitStatusReporter(async () => undefined)
+
+  assert.equal(await adapter.submitWithResponseTimeout(), 'done')
+  assert.ok(readyChecks >= 6)
+  assert.ok(
+    composerReadyAt - responseCompletedAt >
+      adapter.getSubmitResponseStallTimeoutMs()
+  )
+})
+
+test('ChatGPTAdapter does not mark a post-response Composer failure as retryable', async () => {
+  const adapter = createTestChatGPTAdapter()
+  adapter.websocketFrames = []
+  adapter.getPostResponseComposerReadyTimeoutMs = () => 20
+  adapter.getFinishedResponseSettleMs = () => 1
+  let clicks = 0
+  const neverReady = {
+    first: () => neverReady,
+    isVisible: async () => false,
+    isEnabled: async () => false,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      clicks += 1
+      const request = {
+        method: () => 'POST',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () => '{}',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        status: () => 200,
+      })
+      adapter.websocketFrames.push(createChatGptWebSocketFrame('done', true))
+    },
+  }
+  const page = createChatGPTPage(sendButton, neverReady)
+  adapter.page = page
+  adapter.setSubmitStatusReporter(async () => undefined)
+
+  await assert.rejects(
+    adapter.submitWithResponseTimeout(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'chatgpt_composer_ready_button_missing' &&
+      error.retryable === false
+  )
+  assert.equal(clicks, 1)
 })
 
 test('ChatGPTAdapter.submit accepts the data-testid send button as composer ready fallback', async () => {

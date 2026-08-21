@@ -11,6 +11,10 @@ import type {
 
 import {
   awaitWithTimeout,
+  buildResponseCompletionErrorMessage,
+  buildResponseOwnershipErrorMessage,
+  buildSubmitBlockedWarningMessage,
+  buildSubmitOutcomeUnknownMessage,
   type CapturedFetchEntry,
   createDeferred,
   ProviderAdapter,
@@ -33,6 +37,25 @@ import {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
+
+test('provider user-message helpers produce concise single-line text', () => {
+  assert.equal(
+    buildSubmitBlockedWarningMessage('ChatGPT'),
+    'Waiting for ChatGPT to start the request.'
+  )
+  assert.equal(
+    buildResponseOwnershipErrorMessage('ChatGPT'),
+    'Portal could not match the ChatGPT response to this request; check the browser before continuing.'
+  )
+  assert.equal(
+    buildResponseCompletionErrorMessage('ChatGPT'),
+    'Portal received the ChatGPT response but could not confirm it finished.'
+  )
+  assert.equal(
+    buildSubmitOutcomeUnknownMessage('ChatGPT'),
+    'Portal cannot confirm whether ChatGPT received the message, so it will not retry.'
+  )
+})
 
 class AttachmentBridgeAdapter extends ProviderAdapter {
   public attachedBytes: Uint8Array | null = null
@@ -454,6 +477,10 @@ class ResponseTimingAdapter extends ProviderAdapter {
     this.emitSubmitActivity()
   }
 
+  public reportResponseComplete(): void {
+    this.emitSubmitResponseComplete()
+  }
+
   public reportCapturedEntries(entries: readonly CapturedFetchEntry[]): void {
     this.reportCapturedSubmitActivity(entries)
   }
@@ -691,6 +718,21 @@ test('ProviderAdapter response activity keeps a long stream alive and completion
 
   assert.equal(await adapter.submitWithResponseTimeout(), 'done')
   await new Promise((resolve) => setTimeout(resolve, 25))
+  assert.equal(adapter.stopCalls, 0)
+})
+
+test('ProviderAdapter response completion clears the watchdog while provider UI settles', async () => {
+  const adapter = new ResponseTimingAdapter(
+    responseTimings(20, 10),
+    async (current) => {
+      current.reportActivity()
+      current.reportResponseComplete()
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      return 'done'
+    }
+  )
+
+  assert.equal(await adapter.submitWithResponseTimeout(), 'done')
   assert.equal(adapter.stopCalls, 0)
 })
 

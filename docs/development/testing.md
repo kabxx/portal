@@ -78,3 +78,10 @@ careful handling of captured output. A private runner can perform those checks,
 but they are not a deterministic replacement for unit tests. Run the manual
 browser checklist in [Contributing](../../CONTRIBUTING.md) after changing provider
 selectors, runtime lifecycle, uploads, capabilities, or cancellation.
+
+For a targeted ChatGPT submit investigation, set
+`PORTAL_CHATGPT_DIAGNOSTICS_FILE` to a local JSONL path before starting Portal.
+The file is disabled by default. Each enabled record contains only bounded
+counts, booleans, and allowlisted lifecycle labels. It never contains prompts,
+responses, request bodies, cookies, tokens, session data, URL queries, or raw
+conversation and message identifiers.

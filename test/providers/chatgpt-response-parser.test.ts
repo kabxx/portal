@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 
 import {
+  ChatGptWebSocketResponseTracker,
+  countChatGptOwnedWebSocketProgress,
   parseChatGptHttpResponse,
   parseChatGptWebSocketFrames,
 } from '../../src/providers/chatgpt-response-parser.ts'
@@ -350,6 +352,7 @@ for (const finishCase of [
 test('ChatGPT WebSocket parser keeps transport-specific cross-chunk citations', () => {
   const marker = '\uE200cite\uE202turn0search0\uE202\uE201'
   const referenceChunk = JSON.stringify({
+    message_id: 'message-1',
     refs: [
       {
         ref_id: 'turn0search0',
@@ -362,12 +365,12 @@ test('ChatGPT WebSocket parser keeps transport-specific cross-chunk citations', 
       id: 'message-1',
       text: 'Answer',
     }),
+    referenceChunk,
     createEncodedFrame('delta', {
       p: '/message/content/parts/0',
       o: 'append',
       v: ` ${marker}`,
     }),
-    referenceChunk,
     createPatchFrame([{ p: '/message/end_turn', o: 'replace', v: true }]),
   ])
 
@@ -507,6 +510,325 @@ test('ChatGPT WebSocket parser can establish a new conversation from a matched p
   assert.equal(parsed?.text, 'current response')
 })
 
+test('ChatGPT WebSocket parser ignores an earlier background conversation before establishing owned conversation', () => {
+  const parsed = parseChatGptWebSocketFrames(
+    [
+      createInitialMessageFrame(
+        {
+          id: 'background-assistant',
+          text: 'background response',
+          finished: true,
+          parentId: 'background-user',
+        },
+        'background-conversation'
+      ),
+      createInitialMessageFrame(
+        {
+          id: 'owned-assistant',
+          text: 'owned response',
+          finished: true,
+          parentId: 'owned-user',
+        },
+        'owned-conversation'
+      ),
+    ],
+    null,
+    {
+      requireExpectedConversationId: true,
+      expectedParentMessageId: 'owned-user',
+    }
+  )
+
+  assert.equal(parsed?.conversationId, 'owned-conversation')
+  assert.equal(parsed?.text, 'owned response')
+})
+
+test('ChatGPT WebSocket parser excludes background references before establishing owned conversation', () => {
+  const marker = '\uE200cite\uE202turn0search0\uE202\uE201'
+  const tracker = new ChatGptWebSocketResponseTracker(null, {
+    requireExpectedConversationId: true,
+    expectedParentMessageId: 'owned-user',
+  })
+  const backgroundReference = JSON.stringify({
+    conversation_id: 'background-conversation',
+    refs: [
+      {
+        ref_id: 'turn0search0',
+        url: 'https://background.example/reference',
+      },
+    ],
+  })
+  const ownedResponse = createInitialMessageFrame(
+    {
+      id: 'owned-assistant',
+      text: `owned response ${marker}`,
+      finished: true,
+      parentId: 'owned-user',
+    },
+    'owned-conversation'
+  )
+  const ownedReference = JSON.stringify({
+    conversation_id: 'owned-conversation',
+    message_id: 'owned-assistant',
+    refs: [
+      {
+        ref_id: 'turn0search0',
+        url: 'https://owned.example/reference',
+      },
+    ],
+  })
+
+  assert.equal(tracker.pushFrames([backgroundReference]), null)
+  assert.equal(tracker.pushFrames([ownedResponse])?.text, 'owned response')
+  const parsed = tracker.pushFrames([ownedReference])
+  assert.equal(parsed?.text, 'owned response\nhttps://owned.example/reference')
+  assert.deepEqual(tracker.pushFrames([]), parsed)
+})
+
+test('ChatGPT WebSocket parser keeps an owned reference that establishes a new conversation before the response', () => {
+  const marker = '\uE200cite\uE202turn0search0\uE202\uE201'
+  const tracker = new ChatGptWebSocketResponseTracker(null, {
+    requireExpectedConversationId: true,
+    expectedParentMessageId: 'owned-user',
+  })
+  const ownedReference = JSON.stringify({
+    conversation_id: 'owned-conversation',
+    parent_id: 'owned-user',
+    refs: [
+      {
+        ref_id: 'turn0search0',
+        url: 'https://owned.example/reference',
+      },
+    ],
+  })
+  const ownedResponse = createInitialMessageFrame(
+    {
+      id: 'owned-assistant',
+      text: `owned response ${marker}`,
+      finished: true,
+      parentId: 'owned-user',
+    },
+    'owned-conversation'
+  )
+
+  assert.equal(tracker.pushFrames([ownedReference]), null)
+  assert.equal(
+    tracker.pushFrames([ownedResponse])?.text,
+    'owned response\nhttps://owned.example/reference'
+  )
+})
+
+test('ChatGPT WebSocket parser ignores anonymous same-conversation references', () => {
+  const marker = '\uE200cite\uE202turn0search0\uE202\uE201'
+  const tracker = new ChatGptWebSocketResponseTracker('conversation-1', {
+    requireExpectedConversationId: true,
+    expectedParentMessageId: 'owned-user',
+  })
+  const backgroundReference = JSON.stringify({
+    conversation_id: 'conversation-1',
+    refs: [
+      {
+        ref_id: 'turn0search0',
+        url: 'https://background.example/reference',
+      },
+    ],
+  })
+  const ownedResponse = createInitialMessageFrame(
+    {
+      id: 'owned-assistant',
+      text: `owned response ${marker}`,
+      finished: true,
+      parentId: 'owned-user',
+    },
+    'conversation-1'
+  )
+  const ownedReference = JSON.stringify({
+    conversation_id: 'conversation-1',
+    message_id: 'owned-assistant',
+    refs: [
+      {
+        ref_id: 'turn0search0',
+        url: 'https://owned.example/reference',
+      },
+    ],
+  })
+
+  assert.equal(tracker.pushFrames([backgroundReference]), null)
+  assert.equal(tracker.pushFrames([ownedResponse])?.text, 'owned response')
+  assert.equal(
+    tracker.pushFrames([ownedReference])?.text,
+    'owned response\nhttps://owned.example/reference'
+  )
+})
+
+test('ChatGPT WebSocket parser excludes background references nested in an owned payload', () => {
+  const marker = '\uE200cite\uE202turn0search0\uE202\uE201'
+  const tracker = new ChatGptWebSocketResponseTracker(null, {
+    requireExpectedConversationId: true,
+    expectedParentMessageId: 'owned-user',
+  })
+  const mixedPayload = createEncodedFrame(
+    'delta',
+    {
+      v: {
+        message: createAssistantMessage({
+          id: 'owned-assistant',
+          text: `owned response ${marker}`,
+          finished: true,
+          parentId: 'owned-user',
+        }),
+      },
+      background: {
+        conversation_id: 'background-conversation',
+        refs: [
+          {
+            ref_id: 'turn0search0',
+            url: 'https://background.example/reference',
+          },
+        ],
+      },
+    },
+    'owned-conversation'
+  )
+  const ownedReference = JSON.stringify({
+    conversation_id: 'owned-conversation',
+    message_id: 'owned-assistant',
+    refs: [
+      {
+        ref_id: 'turn0search0',
+        url: 'https://owned.example/reference',
+      },
+    ],
+  })
+
+  assert.equal(tracker.pushFrames([mixedPayload])?.text, 'owned response')
+  assert.equal(
+    tracker.pushFrames([ownedReference])?.text,
+    'owned response\nhttps://owned.example/reference'
+  )
+})
+
+test('ChatGPT WebSocket parser checks grouped reference identities within an owned payload', () => {
+  const marker = '\uE200cite\uE202turn0search0\uE202\uE201'
+  const tracker = new ChatGptWebSocketResponseTracker('owned-conversation', {
+    requireExpectedConversationId: true,
+    expectedParentMessageId: 'owned-user',
+  })
+  const ownedPayload = JSON.stringify({
+    conversation_id: 'owned-conversation',
+    parent_id: 'owned-user',
+    url: 'https://background.example/reference',
+    refs: [
+      {
+        ref_id: 'turn0search0',
+        message_id: 'background-assistant',
+      },
+    ],
+  })
+  const ownedResponse = createInitialMessageFrame(
+    {
+      id: 'owned-assistant',
+      text: `owned response ${marker}`,
+      finished: true,
+      parentId: 'owned-user',
+    },
+    'owned-conversation'
+  )
+  const ownedReference = JSON.stringify({
+    conversation_id: 'owned-conversation',
+    message_id: 'owned-assistant',
+    refs: [
+      {
+        ref_id: 'turn0search0',
+        url: 'https://owned.example/reference',
+      },
+    ],
+  })
+
+  assert.equal(tracker.pushFrames([ownedPayload]), null)
+  assert.equal(tracker.pushFrames([ownedResponse])?.text, 'owned response')
+  assert.equal(
+    tracker.pushFrames([ownedReference])?.text,
+    'owned response\nhttps://owned.example/reference'
+  )
+})
+
+test('ChatGPT WebSocket parser excludes background references nested in an owned direct message', () => {
+  const marker = '\uE200cite\uE202turn0search0\uE202\uE201'
+  const tracker = new ChatGptWebSocketResponseTracker('owned-conversation', {
+    requireExpectedConversationId: true,
+    expectedParentMessageId: 'owned-user',
+  })
+  const ownedMessage = createAssistantMessage({
+    id: 'owned-assistant',
+    text: `owned response ${marker}`,
+    finished: true,
+    parentId: 'owned-user',
+  })
+  ownedMessage.background = {
+    conversation_id: 'background-conversation',
+    refs: [
+      {
+        ref_id: 'turn0search0',
+        url: 'https://background.example/reference',
+      },
+    ],
+  }
+  const directPayload = JSON.stringify({
+    conversation_id: 'owned-conversation',
+    message: ownedMessage,
+  })
+  const ownedReference = JSON.stringify({
+    conversation_id: 'owned-conversation',
+    message_id: 'owned-assistant',
+    refs: [
+      {
+        ref_id: 'turn0search0',
+        url: 'https://owned.example/reference',
+      },
+    ],
+  })
+
+  assert.equal(tracker.pushFrames([directPayload])?.text, 'owned response')
+  assert.equal(
+    tracker.pushFrames([ownedReference])?.text,
+    'owned response\nhttps://owned.example/reference'
+  )
+})
+
+test('ChatGPT WebSocket parser excludes direct responses nested under another conversation', () => {
+  const parsed = parseChatGptWebSocketFrames(
+    [
+      JSON.stringify({
+        conversation_id: 'owned-conversation',
+        background: {
+          conversation_id: 'background-conversation',
+          message: createAssistantMessage({
+            id: 'background-assistant',
+            text: 'background response',
+            finished: true,
+            parentId: 'owned-user',
+          }),
+        },
+        message: createAssistantMessage({
+          id: 'owned-assistant',
+          text: 'owned response',
+          finished: true,
+          parentId: 'owned-user',
+        }),
+      }),
+    ],
+    'owned-conversation',
+    {
+      requireExpectedConversationId: true,
+      expectedParentMessageId: 'owned-user',
+    }
+  )
+
+  assert.equal(parsed?.messageId, 'owned-assistant')
+  assert.equal(parsed?.text, 'owned response')
+})
+
 test('ChatGPT WebSocket parser rejects a missing parent when parent correlation is required', () => {
   const parsed = parseChatGptWebSocketFrames(
     [
@@ -588,6 +910,279 @@ test('ChatGPT WebSocket parser filters hidden and non-final messages', () => {
 
   assert.equal(parsed?.messageId, 'visible-message')
   assert.equal(parsed?.text, 'visible')
+})
+
+test('ChatGPT WebSocket progress follows the owned parent chain without accepting background frames', () => {
+  const background = createInitialMessageFrame(
+    {
+      id: 'background-analysis',
+      text: 'background',
+      parentId: 'another-user-message',
+      channel: 'analysis',
+    },
+    'conversation-1'
+  )
+  const ownedAnalysis = createInitialMessageFrame(
+    {
+      id: 'owned-analysis',
+      text: 'analysis',
+      parentId: 'owned-user-message',
+      channel: 'analysis',
+    },
+    'conversation-1'
+  )
+  const ownedTool = JSON.stringify({
+    conversation_id: 'conversation-1',
+    message: {
+      id: 'owned-tool',
+      parent_id: 'owned-analysis',
+      author: { role: 'tool' },
+      content: { content_type: 'computer_initialize_state', parts: [] },
+      status: 'in_progress',
+    },
+  })
+  const ownedPatch = createEncodedFrame(
+    'delta',
+    { p: '/message/metadata', o: 'replace', v: { progress: 1 } },
+    'conversation-1'
+  )
+  const unrelatedEvent = createEncodedFrame(
+    'ping',
+    { type: 'background_event' },
+    'conversation-1'
+  )
+
+  assert.equal(
+    countChatGptOwnedWebSocketProgress(
+      [background, ownedAnalysis, ownedTool, ownedPatch, unrelatedEvent],
+      {
+        expectedConversationId: 'conversation-1',
+        expectedParentMessageId: 'owned-user-message',
+      }
+    ),
+    2
+  )
+  assert.equal(
+    countChatGptOwnedWebSocketProgress([background], {
+      expectedConversationId: 'conversation-1',
+      expectedParentMessageId: 'owned-user-message',
+    }),
+    0
+  )
+})
+
+test('ChatGPT WebSocket progress does not inherit ownership for identity-free patches', () => {
+  const owned = createInitialMessageFrame(
+    {
+      id: 'owned-assistant',
+      text: 'owned',
+      parentId: 'owned-user',
+      channel: 'analysis',
+    },
+    'conversation-1'
+  )
+  const identityFreePatch = createEncodedFrame(
+    'delta',
+    { p: '/message/metadata', o: 'replace', v: { progress: 1 } },
+    'conversation-1'
+  )
+
+  assert.equal(
+    countChatGptOwnedWebSocketProgress([owned, identityFreePatch], {
+      expectedConversationId: 'conversation-1',
+      expectedParentMessageId: 'owned-user',
+    }),
+    1
+  )
+})
+
+test('ChatGPT WebSocket patches keep the strictly owned active message across background messages', () => {
+  const tracker = new ChatGptWebSocketResponseTracker('conversation-1', {
+    requireExpectedConversationId: true,
+    expectedParentMessageId: 'owned-user',
+  })
+  const owned = createInitialMessageFrame(
+    {
+      id: 'owned-assistant',
+      text: 'owned response',
+      parentId: 'owned-user',
+    },
+    'conversation-1'
+  )
+  const background = createInitialMessageFrame(
+    {
+      id: 'background-assistant',
+      text: 'background response',
+      parentId: 'background-user',
+    },
+    'conversation-1'
+  )
+  const finish = createPatchFrame([
+    { p: '/message/end_turn', o: 'replace', v: true },
+  ])
+
+  assert.equal(tracker.pushFrames([owned])?.isFinished, false)
+  assert.equal(tracker.pushFrames([background])?.text, 'owned response')
+  assert.equal(tracker.pushFrames([finish])?.isFinished, true)
+})
+
+test('ChatGPT WebSocket patches complete a strictly owned direct response', () => {
+  const tracker = new ChatGptWebSocketResponseTracker('conversation-1', {
+    requireExpectedConversationId: true,
+    expectedParentMessageId: 'owned-user',
+  })
+  const direct = JSON.stringify({
+    conversation_id: 'conversation-1',
+    message: createAssistantMessage({
+      id: 'owned-assistant',
+      text: 'owned response',
+      parentId: 'owned-user',
+    }),
+  })
+  const finish = createPatchFrame([
+    { p: '/message/end_turn', o: 'replace', v: true },
+  ])
+
+  assert.equal(tracker.pushFrames([direct])?.isFinished, false)
+  assert.equal(tracker.pushFrames([finish])?.isFinished, true)
+})
+
+test('ChatGPT WebSocket parser preserves parent conversation ownership for nested encoded items', () => {
+  const tracker = new ChatGptWebSocketResponseTracker('owned-conversation', {
+    requireExpectedConversationId: true,
+    expectedParentMessageId: 'owned-user',
+  })
+  const owned = createInitialMessageFrame(
+    {
+      id: 'owned-assistant',
+      text: 'owned response',
+      parentId: 'owned-user',
+    },
+    'owned-conversation'
+  )
+  const nestedBackground = JSON.stringify({
+    conversation_id: 'owned-conversation',
+    background: {
+      conversation_id: 'background-conversation',
+      wrapper: {
+        encoded_item: `event: delta\ndata: ${JSON.stringify({
+          v: {
+            message: createAssistantMessage({
+              id: 'background-assistant',
+              text: 'background response',
+              finished: true,
+              parentId: 'owned-user',
+            }),
+          },
+        })}`,
+      },
+    },
+  })
+  const finish = createPatchFrame([
+    { p: '/message/end_turn', o: 'replace', v: true },
+  ])
+
+  assert.equal(tracker.pushFrames([owned])?.isFinished, false)
+  assert.equal(tracker.pushFrames([nestedBackground])?.text, 'owned response')
+  assert.equal(tracker.getOwnedProgressCount(), 1)
+  assert.equal(tracker.pushFrames([finish])?.isFinished, true)
+})
+
+test('ChatGPT WebSocket tracker preserves results across incremental frame batches', () => {
+  const frames = [
+    createInitialMessageFrame(
+      {
+        id: 'owned-assistant',
+        text: 'part one',
+        parentId: 'owned-user',
+      },
+      'conversation-1'
+    ),
+    createEncodedFrame(
+      'delta',
+      {
+        p: '/message/content/parts/0',
+        o: 'append',
+        v: ' and two',
+      },
+      'conversation-1'
+    ),
+    createEncodedFrame(
+      'delta',
+      {
+        o: 'patch',
+        v: [{ p: '/message/end_turn', o: 'replace', v: true }],
+      },
+      'conversation-1'
+    ),
+  ]
+  const options = {
+    requireExpectedConversationId: true,
+    requireSingleMessageId: true,
+    expectedParentMessageId: 'owned-user',
+  } as const
+  const allAtOnce = new ChatGptWebSocketResponseTracker(
+    'conversation-1',
+    options
+  )
+  const incremental = new ChatGptWebSocketResponseTracker(
+    'conversation-1',
+    options
+  )
+
+  const expected = allAtOnce.pushFrames(frames)
+  assert.equal(incremental.pushFrames(frames.slice(0, 1))?.text, 'part one')
+  assert.equal(
+    incremental.pushFrames(frames.slice(1, 2))?.text,
+    'part one and two'
+  )
+  assert.deepEqual(incremental.pushFrames(frames.slice(2)), expected)
+  assert.equal(
+    incremental.getOwnedProgressCount(),
+    allAtOnce.getOwnedProgressCount()
+  )
+  assert.deepEqual(incremental.pushFrames([]), expected)
+  assert.equal(
+    incremental.getOwnedProgressCount(),
+    allAtOnce.getOwnedProgressCount()
+  )
+})
+
+test('ChatGPT WebSocket progress seeds an HTTP-owned message and stops at an unowned stream', () => {
+  const ownedTool = JSON.stringify({
+    conversation_id: 'conversation-1',
+    message: {
+      id: 'owned-tool',
+      parent_id: 'http-assistant-message',
+      author: { role: 'tool' },
+      content: { content_type: 'computer_initialize_state', parts: [] },
+    },
+  })
+  const background = createInitialMessageFrame(
+    {
+      id: 'background-analysis',
+      text: 'background',
+      parentId: 'another-user-message',
+      channel: 'analysis',
+    },
+    'conversation-1'
+  )
+  const backgroundPatch = createEncodedFrame(
+    'delta',
+    { p: '/message/metadata', o: 'replace', v: { progress: 1 } },
+    'conversation-1'
+  )
+
+  assert.equal(
+    countChatGptOwnedWebSocketProgress(
+      [ownedTool, background, backgroundPatch],
+      {
+        expectedConversationId: 'conversation-1',
+        expectedMessageId: 'http-assistant-message',
+      }
+    ),
+    1
+  )
 })
 
 test('ChatGPT WebSocket parser preserves the multimodal tool fallback', () => {

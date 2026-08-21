@@ -146,42 +146,40 @@ function formatReferenceId(value: unknown): string | null {
   return `turn${turnIndex}${refType}${refIndex}`
 }
 
+function collectNodeReferenceUrls(
+  node: Record<string, unknown>,
+  results: Map<string, string>,
+  isGroupedReferenceAllowed: (value: unknown) => boolean = () => true
+): void {
+  const referenceId = formatReferenceId(node.ref_id)
+  const url = typeof node.url === 'string' && node.url.trim() ? node.url : null
+  if (referenceId !== null && url !== null && !results.has(referenceId)) {
+    results.set(referenceId, url)
+  }
+
+  const refs = Array.isArray(node.refs) ? node.refs : null
+  if (refs !== null && url !== null) {
+    for (const ref of refs) {
+      if (!isGroupedReferenceAllowed(ref)) continue
+      const groupedReferenceId = formatReferenceId(ref)
+      if (groupedReferenceId !== null && !results.has(groupedReferenceId)) {
+        results.set(groupedReferenceId, url)
+      }
+    }
+  }
+}
+
 function collectReferenceUrls(value: unknown): Map<string, string> {
   const results = new Map<string, string>()
-
   const visit = (nodeValue: unknown): void => {
     if (Array.isArray(nodeValue)) {
-      for (const item of nodeValue) {
-        visit(item)
-      }
+      for (const item of nodeValue) visit(item)
       return
     }
-
     const node = asRecord(nodeValue)
-    if (!node) {
-      return
-    }
-
-    const referenceId = formatReferenceId(node.ref_id)
-    const url =
-      typeof node.url === 'string' && node.url.trim() ? node.url : null
-    if (referenceId !== null && url !== null && !results.has(referenceId)) {
-      results.set(referenceId, url)
-    }
-
-    const refs = Array.isArray(node.refs) ? node.refs : null
-    if (refs !== null && url !== null) {
-      for (const ref of refs) {
-        const groupedReferenceId = formatReferenceId(ref)
-        if (groupedReferenceId !== null && !results.has(groupedReferenceId)) {
-          results.set(groupedReferenceId, url)
-        }
-      }
-    }
-
-    for (const child of Object.values(node)) {
-      visit(child)
-    }
+    if (!node) return
+    collectNodeReferenceUrls(node, results)
+    for (const child of Object.values(node)) visit(child)
   }
 
   visit(value)
@@ -315,13 +313,15 @@ function readToolMultimodalResponse(
 }
 
 function readResponseFromMessage(
-  message: Record<string, unknown>
+  message: Record<string, unknown>,
+  normalizeReferences = true
 ): ChatGPTParsedResponse | null {
   const role = readRole(message)
   const rawText = readText(message.content ?? message)
-  const text = rawText
-    ? normalizeAssistantTextFromReferences(rawText, message)
-    : rawText
+  const text =
+    rawText && normalizeReferences
+      ? normalizeAssistantTextFromReferences(rawText, message)
+      : rawText
   if (role !== 'assistant' || !text || !isVisibleMessage(message)) {
     return readToolMultimodalResponse(message)
   }
@@ -393,193 +393,335 @@ function pickBestResponse(
       }
 }
 
-export function parseChatGptWebSocketFrames(
-  frames: readonly string[],
-  expectedConversationId?: string | null,
-  options: {
-    requireExpectedConversationId?: boolean
-    requireSingleMessageId?: boolean
-    expectedMessageId?: string
-    expectedParentMessageId?: string
-  } = {}
-): ChatGPTParsedResponse | null {
-  const results: ChatGPTParsedResponse[] = []
-  const aggregatedReferenceUrls = new Map<string, string>()
-  const streamedResponses = new Map<string, ChatGPTParsedResponse>()
-  let activeMessageId: string | null = null
-  const restrictConversation = typeof expectedConversationId === 'string'
-  let ownedConversationId = expectedConversationId ?? null
-  const requireExpectedConversationId =
-    options.requireExpectedConversationId === true
+function extractChatGptJsonChunks(value: string): string[] {
+  const chunks: string[] = []
+  for (let index = 0; index < value.length; index += 1) {
+    const startChar = value[index]
+    if (startChar !== '[' && startChar !== '{') continue
 
-  if (
-    requireExpectedConversationId &&
-    ownedConversationId === null &&
-    options.expectedMessageId === undefined &&
-    options.expectedParentMessageId === undefined
-  ) {
+    let depth = 0
+    let inString = false
+    let isEscaped = false
+    for (let cursor = index; cursor < value.length; cursor += 1) {
+      const char = value[cursor]
+      if (inString) {
+        if (isEscaped) isEscaped = false
+        else if (char === '\\') isEscaped = true
+        else if (char === '"') inString = false
+        continue
+      }
+      if (char === '"') {
+        inString = true
+        continue
+      }
+      if (char === '[' || char === '{') depth += 1
+      else if (char === ']' || char === '}') {
+        depth -= 1
+        if (depth === 0) {
+          chunks.push(value.slice(index, cursor + 1))
+          index = cursor
+          break
+        }
+      }
+    }
+  }
+  return chunks
+}
+
+function extractChatGptEncodedItems(
+  value: unknown,
+  conversationId?: string
+): Array<{ encodedItem: string; conversationId?: string }> {
+  const items: Array<{ encodedItem: string; conversationId?: string }> = []
+  const visit = (
+    nodeValue: unknown,
+    inheritedConversationId?: string
+  ): void => {
+    if (Array.isArray(nodeValue)) {
+      for (const item of nodeValue) visit(item, inheritedConversationId)
+      return
+    }
+    const node = asRecord(nodeValue)
+    if (!node) return
+    const nodeConversationId =
+      readConversationId(node) ?? inheritedConversationId
+    if (typeof node.encoded_item === 'string') {
+      items.push({
+        encodedItem: node.encoded_item,
+        ...(nodeConversationId === undefined
+          ? {}
+          : { conversationId: nodeConversationId }),
+      })
+    }
+    for (const child of Object.values(node)) {
+      visit(child, nodeConversationId)
+    }
+  }
+  visit(value, conversationId)
+  return items
+}
+
+function readChatGptEncodedData(encodedItem: string): unknown {
+  const data = encodedItem
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice('data:'.length).trim())
+    .join('\n')
+  if (!data) return null
+  try {
+    return JSON.parse(data)
+  } catch {
     return null
   }
+}
 
-  // A WebSocket frame can wrap one or more JSON values in transport text.
-  const extractJsonChunks = (value: string): string[] => {
-    const chunks: string[] = []
+function readChatGptEncodedEventType(encodedItem: string): string | null {
+  const eventLine = encodedItem
+    .split(/\r?\n/)
+    .find((line) => line.startsWith('event:'))
+  return eventLine?.slice('event:'.length).trim() || null
+}
 
-    for (let i = 0; i < value.length; i++) {
-      const startChar = value[i]
-      if (startChar !== '[' && startChar !== '{') {
-        continue
-      }
+export interface ChatGptWebSocketResponseTrackerOptions {
+  requireExpectedConversationId?: boolean
+  requireSingleMessageId?: boolean
+  expectedMessageId?: string
+  expectedParentMessageId?: string
+}
 
-      let depth = 0
-      let inString = false
-      let isEscaped = false
+export class ChatGptWebSocketResponseTracker {
+  private readonly aggregatedReferenceUrls = new Map<string, string>()
+  private readonly streamedResponses = new Map<string, ChatGPTParsedResponse>()
+  private readonly directMessageIds = new Set<string>()
+  private readonly ownedMessageIds = new Set<string>()
+  private readonly restrictConversation: boolean
+  private readonly invalidInitialCorrelation: boolean
+  private activeMessageId: string | null = null
+  private ownedConversationId: string | null
+  private directBest: ChatGPTParsedResponse | null = null
+  private cachedResponse: ChatGPTParsedResponse | null = null
+  private ownedProgressCount = 0
 
-      for (let j = i; j < value.length; j++) {
-        const char = value[j]
-
-        if (inString) {
-          if (isEscaped) {
-            isEscaped = false
-          } else if (char === '\\') {
-            isEscaped = true
-          } else if (char === '"') {
-            inString = false
-          }
-          continue
-        }
-
-        if (char === '"') {
-          inString = true
-          continue
-        }
-
-        if (char === '[' || char === '{') {
-          depth++
-          continue
-        }
-
-        if (char === ']' || char === '}') {
-          depth--
-          if (depth === 0) {
-            chunks.push(value.slice(i, j + 1))
-            i = j
-            break
-          }
-        }
-      }
+  public constructor(
+    expectedConversationId?: string | null,
+    private readonly options: ChatGptWebSocketResponseTrackerOptions = {}
+  ) {
+    this.restrictConversation = typeof expectedConversationId === 'string'
+    this.ownedConversationId = expectedConversationId ?? null
+    this.invalidInitialCorrelation =
+      options.requireExpectedConversationId === true &&
+      this.ownedConversationId === null &&
+      options.expectedMessageId === undefined &&
+      options.expectedParentMessageId === undefined
+    if (options.expectedMessageId !== undefined) {
+      this.ownedMessageIds.add(options.expectedMessageId)
     }
-
-    return chunks
-  }
-
-  // Each outer JSON value can carry an encoded SSE event from ChatGPT.
-  const extractEncodedItems = (
-    value: unknown
-  ): Array<{
-    encodedItem: string
-    conversationId?: string
-  }> => {
-    const items: Array<{
-      encodedItem: string
-      conversationId?: string
-    }> = []
-
-    const visit = (nodeValue: unknown): void => {
-      if (Array.isArray(nodeValue)) {
-        for (const item of nodeValue) {
-          visit(item)
-        }
-        return
-      }
-
-      const node = asRecord(nodeValue)
-      if (!node) {
-        return
-      }
-
-      if (typeof node.encoded_item === 'string') {
-        const conversationId = readConversationId(node)
-        items.push({
-          encodedItem: node.encoded_item,
-          ...(conversationId !== undefined ? { conversationId } : {}),
-        })
-      }
-
-      for (const child of Object.values(node)) {
-        visit(child)
-      }
-    }
-
-    visit(value)
-    return items
-  }
-
-  const parseEncodedItem = (
-    encodedItem: string
-  ): {
-    eventType?: string
-    data?: string
-  } => {
-    const lines = encodedItem.split(/\r?\n/)
-    let eventType: string | undefined
-    const dataLines: string[] = []
-
-    for (const line of lines) {
-      if (line.startsWith('event:')) {
-        eventType = line.slice('event:'.length).trim()
-        continue
-      }
-      if (line.startsWith('data:')) {
-        dataLines.push(line.slice('data:'.length).trim())
-      }
-    }
-
-    return {
-      ...(eventType !== undefined ? { eventType } : {}),
-      ...(dataLines.length > 0 ? { data: dataLines.join('\n') } : {}),
+    if (options.expectedParentMessageId !== undefined) {
+      this.ownedMessageIds.add(options.expectedParentMessageId)
     }
   }
 
-  const upsertStreamedResponse = (
-    messageId: string,
-    update: (current: ChatGPTParsedResponse | null) => ChatGPTParsedResponse
-  ): void => {
-    streamedResponses.set(
-      messageId,
-      update(streamedResponses.get(messageId) ?? null)
+  public pushFrames(frames: readonly string[]): ChatGPTParsedResponse | null {
+    if (this.invalidInitialCorrelation) return null
+    if (frames.length === 0) return this.cachedResponse
+    for (const frame of frames) this.processFrame(frame)
+    this.cachedResponse = this.currentResponse()
+    return this.cachedResponse
+  }
+
+  public getOwnedProgressCount(): number {
+    return this.ownedProgressCount
+  }
+
+  private responseMatches(response: ChatGPTParsedResponse): boolean {
+    return (
+      (response.conversationId === undefined ||
+        this.ownedConversationId === null ||
+        response.conversationId === this.ownedConversationId) &&
+      (this.options.expectedMessageId === undefined ||
+        response.messageId === this.options.expectedMessageId) &&
+      (this.options.expectedParentMessageId === undefined ||
+        response.parentMessageId === this.options.expectedParentMessageId)
     )
   }
 
-  const applyAssistantMessage = (
+  private acceptDirectResponse(response: ChatGPTParsedResponse): void {
+    if (!this.responseMatches(response)) return
+    if (response.conversationId !== undefined) {
+      this.ownedConversationId ??= response.conversationId
+    }
+    if (response.messageId !== undefined) {
+      this.directMessageIds.add(response.messageId)
+      this.ownedMessageIds.add(response.messageId)
+      this.activeMessageId = response.messageId
+      this.upsertStreamedResponse(response.messageId, (current) => ({
+        ...response,
+        text:
+          current !== null && current.text.length > response.text.length
+            ? current.text
+            : response.text,
+        isFinished: current?.isFinished === true || response.isFinished,
+      }))
+    }
+    if (
+      this.directBest === null ||
+      response.isFinished ||
+      (!this.directBest.isFinished &&
+        response.text.length >= this.directBest.text.length)
+    ) {
+      this.directBest = response
+    }
+  }
+
+  private collectDirectResponses(
+    value: unknown,
+    conversationId?: string
+  ): ChatGPTParsedResponse[] {
+    const responses: ChatGPTParsedResponse[] = []
+    const visit = (nodeValue: unknown, inheritedConversationId?: string) => {
+      if (Array.isArray(nodeValue)) {
+        for (const item of nodeValue) visit(item, inheritedConversationId)
+        return
+      }
+      const node = asRecord(nodeValue)
+      if (!node) return
+      const nodeConversationId =
+        readConversationId(node) ?? inheritedConversationId
+      if (
+        nodeConversationId !== undefined &&
+        this.ownedConversationId !== null &&
+        nodeConversationId !== this.ownedConversationId
+      ) {
+        return
+      }
+      const response = readResponseFromMessage(node, false)
+      if (response !== null) {
+        responses.push({
+          ...response,
+          ...(response.conversationId === undefined &&
+          nodeConversationId !== undefined
+            ? { conversationId: nodeConversationId }
+            : {}),
+        })
+      }
+      for (const child of Object.values(node)) {
+        visit(child, nodeConversationId)
+      }
+    }
+
+    visit(value, conversationId)
+    return responses
+  }
+
+  private currentResponse(): ChatGPTParsedResponse | null {
+    const direct =
+      this.directBest === null
+        ? []
+        : [
+            {
+              ...this.directBest,
+              text: normalizeAssistantTextWithReferenceMap(
+                this.directBest.text,
+                this.aggregatedReferenceUrls
+              ),
+            },
+          ]
+    const streamed = [...this.streamedResponses.values()]
+      .filter((response) => this.responseMatches(response))
+      .map((response) => ({
+        ...response,
+        text: normalizeAssistantTextWithReferenceMap(
+          response.text,
+          this.aggregatedReferenceUrls
+        ),
+      }))
+    if (this.options.requireSingleMessageId === true) {
+      const messageIds = new Set(this.directMessageIds)
+      for (const response of streamed) {
+        if (response.messageId !== undefined) messageIds.add(response.messageId)
+      }
+      if (messageIds.size > 1) return null
+    }
+    return pickBestResponse([...direct, ...streamed])
+  }
+
+  private recordOwnedProgress(
+    value: unknown,
+    fallbackConversationId?: string
+  ): void {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        this.recordOwnedProgress(item, fallbackConversationId)
+      }
+      return
+    }
+    const node = asRecord(value)
+    if (!node) return
+    const conversationId = readConversationId(node) ?? fallbackConversationId
+    if (
+      conversationId !== undefined &&
+      this.ownedConversationId !== null &&
+      conversationId !== this.ownedConversationId
+    ) {
+      return
+    }
+    const messageId = readMessageId(node)
+    const parentMessageId = readParentMessageId(node)
+    const role = readRole(node)
+    const isOwned =
+      (messageId !== undefined && this.ownedMessageIds.has(messageId)) ||
+      (parentMessageId !== undefined &&
+        this.ownedMessageIds.has(parentMessageId))
+    if (isOwned && (role === 'assistant' || role === 'tool')) {
+      if (messageId !== undefined) this.ownedMessageIds.add(messageId)
+      if (conversationId !== undefined) {
+        this.ownedConversationId ??= conversationId
+      }
+      this.ownedProgressCount += 1
+    }
+    for (const child of Object.values(node)) {
+      this.recordOwnedProgress(child, conversationId)
+    }
+  }
+
+  private upsertStreamedResponse(
+    messageId: string,
+    update: (current: ChatGPTParsedResponse | null) => ChatGPTParsedResponse
+  ): void {
+    this.streamedResponses.set(
+      messageId,
+      update(this.streamedResponses.get(messageId) ?? null)
+    )
+  }
+
+  private applyAssistantMessage(
     message: Record<string, unknown>,
     fallbackConversationId?: string
-  ): void => {
-    if (readRole(message) !== 'assistant' || !isVisibleMessage(message)) {
-      return
-    }
-
+  ): void {
+    if (readRole(message) !== 'assistant' || !isVisibleMessage(message)) return
     const content = asRecord(message.content)
-    const contentType =
-      typeof content?.content_type === 'string' ? content.content_type : ''
-    if (contentType !== 'text') {
-      return
-    }
-
+    if (content?.content_type !== 'text') return
     const messageId = readMessageId(message)
-    if (messageId === undefined) {
-      return
-    }
-
+    if (messageId === undefined) return
     const conversationId = readConversationId(message) ?? fallbackConversationId
     const parentMessageId = readParentMessageId(message)
-    const rawText = readText(content?.parts) ?? ''
-    const text = rawText
-      ? normalizeAssistantTextFromReferences(rawText, message)
-      : rawText
+    const text = readText(content.parts) ?? ''
     const isFinished = readFinished(message)
-
-    upsertStreamedResponse(messageId, (current) => ({
+    const response: ChatGPTParsedResponse = {
+      ...(conversationId !== undefined ? { conversationId } : {}),
+      ...(parentMessageId !== undefined ? { parentMessageId } : {}),
+      messageId,
+      text,
+      isFinished,
+    }
+    if (this.responseMatches(response)) {
+      if (conversationId !== undefined) {
+        this.ownedConversationId ??= conversationId
+      }
+      this.ownedMessageIds.add(messageId)
+      this.activeMessageId = messageId
+    }
+    this.upsertStreamedResponse(messageId, (current) => ({
       ...(conversationId !== undefined
         ? { conversationId }
         : current?.conversationId !== undefined
@@ -594,236 +736,274 @@ export function parseChatGptWebSocketFrames(
       text: text || current?.text || '',
       isFinished: current?.isFinished === true || isFinished,
     }))
-    activeMessageId = messageId
   }
 
-  const appendToActiveMessage = (text: string): void => {
-    if (activeMessageId === null || !text) {
-      return
-    }
-
-    upsertStreamedResponse(activeMessageId, (current) => {
-      if (current === null) {
-        return {
-          messageId: activeMessageId!,
-          text,
-          isFinished: false,
-        }
-      }
-      return {
-        ...current,
-        text: `${current.text}${text}`,
-      }
-    })
+  private appendToActiveMessage(text: string): void {
+    if (this.activeMessageId === null || !text) return
+    const messageId = this.activeMessageId
+    this.upsertStreamedResponse(messageId, (current) =>
+      current === null
+        ? { messageId, text, isFinished: false }
+        : { ...current, text: `${current.text}${text}` }
+    )
   }
 
-  const markActiveMessageFinished = (): void => {
-    if (activeMessageId === null) {
-      return
-    }
-
-    upsertStreamedResponse(activeMessageId, (current) => ({
-      ...(current ?? {
-        messageId: activeMessageId!,
-        text: '',
-        isFinished: false,
-      }),
+  private markActiveMessageFinished(): void {
+    if (this.activeMessageId === null) return
+    const messageId = this.activeMessageId
+    this.upsertStreamedResponse(messageId, (current) => ({
+      ...(current ?? { messageId, text: '', isFinished: false }),
       isFinished: true,
     }))
   }
 
-  const applyPatchOperations = (operations: readonly unknown[]): void => {
+  private applyPatchOperations(operations: readonly unknown[]): void {
     for (const operationValue of operations) {
       const operation = asRecord(operationValue)
-      if (!operation) {
-        continue
-      }
-
+      if (!operation) continue
       const path = typeof operation.p === 'string' ? operation.p : ''
       const action = typeof operation.o === 'string' ? operation.o : ''
       const value = operation.v
-
       if (path === '/message/content/parts/0' && typeof value === 'string') {
-        if (action === 'replace') {
-          if (activeMessageId === null) {
-            continue
-          }
-          upsertStreamedResponse(activeMessageId, (current) => ({
-            ...(current ?? {
-              messageId: activeMessageId!,
-              text: '',
-              isFinished: false,
-            }),
+        if (action === 'replace' && this.activeMessageId !== null) {
+          const messageId = this.activeMessageId
+          this.upsertStreamedResponse(messageId, (current) => ({
+            ...(current ?? { messageId, text: '', isFinished: false }),
             text: value,
           }))
-          continue
+        } else if (action === 'append') {
+          this.appendToActiveMessage(value)
         }
-        if (action === 'append') {
-          appendToActiveMessage(value)
-          continue
-        }
+        continue
       }
-
       if (path === '/message/status' && typeof value === 'string') {
-        if (
-          value.toLowerCase().includes('finish') ||
-          value.toLowerCase().includes('complete')
-        ) {
-          markActiveMessageFinished()
+        const status = value.toLowerCase()
+        if (status.includes('finish') || status.includes('complete')) {
+          this.markActiveMessageFinished()
         }
         continue
       }
-
       if (path === '/message/end_turn' && value === true) {
-        markActiveMessageFinished()
+        this.markActiveMessageFinished()
         continue
       }
-
       if (path === '/message/metadata') {
         const metadata = asRecord(value)
-        if (metadata?.is_complete === true) {
-          markActiveMessageFinished()
-        }
+        if (metadata?.is_complete === true) this.markActiveMessageFinished()
       }
     }
   }
 
-  for (const frame of frames) {
-    for (const chunk of extractJsonChunks(frame)) {
+  private collectOwnedReferenceUrls(
+    value: unknown,
+    conversationId?: string
+  ): void {
+    let ownedConversationId = this.ownedConversationId
+
+    const visit = (
+      nodeValue: unknown,
+      inheritedConversationId?: string,
+      inheritedOwnership = false
+    ) => {
+      if (Array.isArray(nodeValue)) {
+        for (const item of nodeValue) {
+          visit(item, inheritedConversationId, inheritedOwnership)
+        }
+        return
+      }
+      const node = asRecord(nodeValue)
+      if (!node) return
+      const nodeConversationId =
+        readConversationId(node) ?? inheritedConversationId
+      if (
+        nodeConversationId !== undefined &&
+        ownedConversationId !== null &&
+        nodeConversationId !== ownedConversationId
+      ) {
+        return
+      }
+      const messageId = readMessageId(node)
+      const parentMessageId = readParentMessageId(node)
+      const hasIdentity =
+        messageId !== undefined || parentMessageId !== undefined
+      const hasOwnedIdentity =
+        (messageId !== undefined && this.ownedMessageIds.has(messageId)) ||
+        (parentMessageId !== undefined &&
+          this.ownedMessageIds.has(parentMessageId))
+      const eventMessage = asRecord(asRecord(node.v)?.message)
+      const eventMessageId = eventMessage
+        ? readMessageId(eventMessage)
+        : undefined
+      const eventParentMessageId = eventMessage
+        ? readParentMessageId(eventMessage)
+        : undefined
+      const hasOwnedEventMessage =
+        (eventMessageId !== undefined &&
+          this.ownedMessageIds.has(eventMessageId)) ||
+        (eventParentMessageId !== undefined &&
+          this.ownedMessageIds.has(eventParentMessageId))
+      if (
+        ownedConversationId === null &&
+        nodeConversationId !== undefined &&
+        (hasOwnedIdentity || hasOwnedEventMessage)
+      ) {
+        ownedConversationId = nodeConversationId
+        this.ownedConversationId = nodeConversationId
+      }
+      const ownsReferences = hasIdentity
+        ? hasOwnedIdentity
+        : inheritedOwnership || hasOwnedEventMessage
+      if (ownsReferences) {
+        collectNodeReferenceUrls(
+          node,
+          this.aggregatedReferenceUrls,
+          (reference) => {
+            const referenceNode = asRecord(reference)
+            const referenceConversationId = referenceNode
+              ? readConversationId(referenceNode)
+              : undefined
+            const referenceMessageId = referenceNode
+              ? readMessageId(referenceNode)
+              : undefined
+            const referenceParentMessageId = referenceNode
+              ? readParentMessageId(referenceNode)
+              : undefined
+            const referenceHasIdentity =
+              referenceMessageId !== undefined ||
+              referenceParentMessageId !== undefined
+            const referenceHasOwnedIdentity =
+              (referenceMessageId !== undefined &&
+                this.ownedMessageIds.has(referenceMessageId)) ||
+              (referenceParentMessageId !== undefined &&
+                this.ownedMessageIds.has(referenceParentMessageId))
+            return (
+              (referenceConversationId === undefined ||
+                referenceConversationId === ownedConversationId) &&
+              (!referenceHasIdentity || referenceHasOwnedIdentity)
+            )
+          }
+        )
+      }
+      for (const child of Object.values(node)) {
+        visit(child, nodeConversationId, ownsReferences)
+      }
+    }
+
+    visit(value, conversationId)
+  }
+
+  private processFrame(frame: string): void {
+    for (const chunk of extractChatGptJsonChunks(frame)) {
+      let parsedChunk: unknown
       try {
-        const parsedChunk: unknown = JSON.parse(chunk)
-        const parsedChunkRecord = asRecord(parsedChunk)
-        const chunkConversationId =
-          parsedChunkRecord === null
-            ? undefined
-            : readConversationId(parsedChunkRecord)
-        if (
-          chunkConversationId !== undefined &&
-          ownedConversationId !== null &&
-          chunkConversationId !== ownedConversationId
-        ) {
-          continue
-        }
-        if (chunkConversationId !== undefined) {
-          ownedConversationId ??= chunkConversationId
-        } else if (restrictConversation && ownedConversationId === null) {
-          continue
-        }
-        results.push(...collectResponses(parsedChunk))
-        for (const [referenceId, url] of collectReferenceUrls(
-          parsedChunk
-        ).entries()) {
-          if (!aggregatedReferenceUrls.has(referenceId)) {
-            aggregatedReferenceUrls.set(referenceId, url)
-          }
-        }
-        for (const item of extractEncodedItems(parsedChunk)) {
-          if (
-            item.conversationId !== undefined &&
-            ownedConversationId !== null &&
-            item.conversationId !== ownedConversationId
-          ) {
-            continue
-          }
-          if (item.conversationId !== undefined) {
-            ownedConversationId ??= item.conversationId
-          }
-          const { eventType, data } = parseEncodedItem(item.encodedItem)
-          if (!data) {
-            continue
-          }
-
-          let parsedData: unknown
-          try {
-            parsedData = JSON.parse(data)
-          } catch {
-            continue
-          }
-
-          for (const [referenceId, url] of collectReferenceUrls(
-            parsedData
-          ).entries()) {
-            if (!aggregatedReferenceUrls.has(referenceId)) {
-              aggregatedReferenceUrls.set(referenceId, url)
-            }
-          }
-
-          // Delta payloads either establish the active message or patch it.
-          if (eventType === 'delta') {
-            const delta = asRecord(parsedData)
-            if (!delta) {
-              continue
-            }
-
-            const deltaValue = asRecord(delta.v)
-            const message = deltaValue ? asRecord(deltaValue.message) : null
-            if (message) {
-              applyAssistantMessage(message, item.conversationId)
-            }
-
-            if (
-              typeof delta.p === 'string' &&
-              delta.p === '/message/content/parts/0' &&
-              delta.o === 'append' &&
-              typeof delta.v === 'string'
-            ) {
-              appendToActiveMessage(delta.v)
-              continue
-            }
-
-            if (delta.o === 'patch' && Array.isArray(delta.v)) {
-              applyPatchOperations(delta.v)
-              continue
-            }
-
-            if (typeof delta.v === 'string') {
-              appendToActiveMessage(delta.v)
-            }
-            continue
-          }
-
-          const payload = asRecord(parsedData)
-          if (payload?.type === 'message_stream_complete') {
-            markActiveMessageFinished()
-          }
-        }
+        parsedChunk = JSON.parse(chunk)
       } catch {
         continue
       }
-    }
-  }
-
-  results.push(
-    ...[...streamedResponses.values()].map((response) => ({
-      ...response,
-      text: normalizeAssistantTextWithReferenceMap(
-        response.text,
-        aggregatedReferenceUrls
-      ),
-    }))
-  )
-  const filteredResults =
-    options.expectedMessageId === undefined &&
-    options.expectedParentMessageId === undefined
-      ? results
-      : results.filter(
-          (response) =>
-            (options.expectedMessageId === undefined ||
-              response.messageId === options.expectedMessageId) &&
-            (options.expectedParentMessageId === undefined ||
-              response.parentMessageId === options.expectedParentMessageId)
+      const chunkRecord = asRecord(parsedChunk)
+      const chunkConversationId =
+        chunkRecord === null ? undefined : readConversationId(chunkRecord)
+      if (
+        chunkConversationId !== undefined &&
+        this.ownedConversationId !== null &&
+        chunkConversationId !== this.ownedConversationId
+      ) {
+        continue
+      }
+      if (
+        chunkConversationId === undefined &&
+        this.restrictConversation &&
+        this.ownedConversationId === null
+      ) {
+        continue
+      }
+      this.recordOwnedProgress(parsedChunk, chunkConversationId)
+      for (const response of this.collectDirectResponses(
+        parsedChunk,
+        chunkConversationId
+      )) {
+        this.acceptDirectResponse(response)
+      }
+      this.collectOwnedReferenceUrls(parsedChunk, chunkConversationId)
+      for (const item of extractChatGptEncodedItems(
+        parsedChunk,
+        chunkConversationId
+      )) {
+        if (
+          item.conversationId !== undefined &&
+          this.ownedConversationId !== null &&
+          item.conversationId !== this.ownedConversationId
+        ) {
+          continue
+        }
+        const parsedData = readChatGptEncodedData(item.encodedItem)
+        if (parsedData === null) continue
+        this.recordOwnedProgress(
+          parsedData,
+          item.conversationId ?? chunkConversationId
         )
-  if (options.requireSingleMessageId === true) {
-    const messageIds = new Set(
-      filteredResults
-        .map((response) => response.messageId)
-        .filter((messageId): messageId is string => messageId !== undefined)
-    )
-    if (messageIds.size > 1) {
-      return null
+        const eventType = readChatGptEncodedEventType(item.encodedItem)
+        if (eventType === 'delta') {
+          const delta = asRecord(parsedData)
+          if (!delta) continue
+          const deltaValue = asRecord(delta.v)
+          const message = deltaValue ? asRecord(deltaValue.message) : null
+          if (message) this.applyAssistantMessage(message, item.conversationId)
+          if (
+            delta.p === '/message/content/parts/0' &&
+            delta.o === 'append' &&
+            typeof delta.v === 'string'
+          ) {
+            this.appendToActiveMessage(delta.v)
+          } else if (delta.o === 'patch' && Array.isArray(delta.v)) {
+            this.applyPatchOperations(delta.v)
+          } else if (typeof delta.v === 'string') {
+            this.appendToActiveMessage(delta.v)
+          }
+          this.collectOwnedReferenceUrls(
+            parsedData,
+            item.conversationId ?? chunkConversationId
+          )
+          continue
+        }
+        const payload = asRecord(parsedData)
+        if (payload?.type === 'message_stream_complete') {
+          this.markActiveMessageFinished()
+        }
+        this.collectOwnedReferenceUrls(
+          parsedData,
+          item.conversationId ?? chunkConversationId
+        )
+      }
     }
   }
-  return pickBestResponse(filteredResults)
+}
+
+export function countChatGptOwnedWebSocketProgress(
+  frames: readonly string[],
+  options: {
+    expectedConversationId?: string | null
+    expectedMessageId?: string
+    expectedParentMessageId?: string
+  }
+): number {
+  const tracker = new ChatGptWebSocketResponseTracker(
+    options.expectedConversationId,
+    options
+  )
+  tracker.pushFrames(frames)
+  return tracker.getOwnedProgressCount()
+}
+
+export function parseChatGptWebSocketFrames(
+  frames: readonly string[],
+  expectedConversationId?: string | null,
+  options: ChatGptWebSocketResponseTrackerOptions = {}
+): ChatGPTParsedResponse | null {
+  return new ChatGptWebSocketResponseTracker(
+    expectedConversationId,
+    options
+  ).pushFrames(frames)
 }
 
 function parseChatGptHttpSseResponse(

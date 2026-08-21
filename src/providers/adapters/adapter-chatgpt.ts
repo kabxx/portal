@@ -24,16 +24,23 @@ import {
   parseChatGptHistory,
 } from '../conversation-history.ts'
 import {
+  ChatGptWebSocketResponseTracker,
   parseChatGptHttpResponse,
-  parseChatGptWebSocketFrames,
   type ChatGPTParsedResponse,
 } from '../chatgpt-response-parser.ts'
 import type { ResolvedProviderModel } from '../provider-model-catalog.ts'
 import { ChatGPTUi } from '../ui/chatgpt/chatgpt-ui.ts'
+import {
+  buildChatGptSubmitDiagnosticRecord,
+  type ChatGptSubmitDiagnosticOutcome,
+  type ChatGptSubmitObservation,
+  writeChatGptSubmitDiagnostic,
+} from './chatgpt-submit-diagnostics.ts'
 
 const CHATGPT_CHAT_URL = 'https://chatgpt.com'
 const CHATGPT_CHAT_WS_URL = 'wss://ws.chatgpt.com/p18/ws/user'
-const CHATGPT_RESPONSE_IDLE_TIMEOUT_MS = 60000
+const CHATGPT_RESPONSE_STALL_TIMEOUT_MS = 60000
+const CHATGPT_COMPOSER_READY_TIMEOUT_MS = 30000
 const CHATGPT_FINISHED_RESPONSE_SETTLE_MS = 1000
 const CHATGPT_REQUEST_OWNERSHIP_SETTLE_MS = 100
 
@@ -52,6 +59,29 @@ export interface ChatGPTActionCapabilityInfo {
 }
 
 const CHATGPT_RESPONSE_STABLE_POLLS = 3
+
+interface ActiveChatGptSubmitObservation extends ChatGptSubmitObservation {
+  timeoutPhase: 'start' | 'stall' | null
+}
+
+function createSubmitObservation(): ActiveChatGptSubmitObservation {
+  return {
+    phase: 'pre-dispatch',
+    candidateRequestCount: 0,
+    requestAmbiguous: false,
+    ownedRequest: false,
+    ownedUserMessageId: false,
+    ownedHttpResponse: false,
+    rawWebSocketFrameCount: 0,
+    ownedWebSocketProgress: false,
+    parsedHttpText: false,
+    parsedWebSocketText: false,
+    parsedOwnedText: false,
+    parsedFinished: false,
+    composerReady: false,
+    timeoutPhase: null,
+  }
+}
 
 function readChatGPTConversationIdFromUrl(
   value: string | null | undefined
@@ -131,6 +161,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
   private pendingText = ''
   private websocketFrames!: string[]
   private authenticationConfirmed = false
+  private activeSubmitObservation: ActiveChatGptSubmitObservation | null = null
 
   private get ui(): ChatGPTUi {
     return new ChatGPTUi(this.page)
@@ -188,7 +219,9 @@ export class ChatGPTAdapter extends ProviderAdapter {
         return
       }
       websocket.on('framereceived', (event) => {
-        this.emitSubmitActivitySafely()
+        if (this.activeSubmitObservation !== null) {
+          this.activeSubmitObservation.rawWebSocketFrameCount += 1
+        }
         const payload =
           typeof event.payload === 'string'
             ? event.payload
@@ -435,8 +468,50 @@ export class ChatGPTAdapter extends ProviderAdapter {
     return buildSubmitBlockedWarningMessage('ChatGPT')
   }
 
-  protected getSubmitResponseIdleTimeoutMs(): number {
-    return CHATGPT_RESPONSE_IDLE_TIMEOUT_MS
+  protected override getSubmitResponseStallTimeoutMs(): number {
+    return (
+      this.options.timings?.responseStallTimeoutMs ??
+      CHATGPT_RESPONSE_STALL_TIMEOUT_MS
+    )
+  }
+
+  protected getPostResponseComposerReadyTimeoutMs(): number {
+    return CHATGPT_COMPOSER_READY_TIMEOUT_MS
+  }
+
+  protected override createSubmitResponseTimeoutError(
+    phase: 'start' | 'stall',
+    timeoutMs: number
+  ): ProviderAdapterError {
+    const observation = this.activeSubmitObservation
+    if (observation === null) {
+      return super.createSubmitResponseTimeoutError(phase, timeoutMs)
+    }
+    observation.timeoutPhase = phase
+    const diagnostic = buildChatGptSubmitDiagnosticRecord(
+      observation,
+      'timeout',
+      phase
+    )
+    const message =
+      diagnostic.detailCode === 'owned-request-missing'
+        ? 'Portal could not identify the ChatGPT request after it was sent.'
+        : diagnostic.detailCode === 'owned-request-ambiguous'
+          ? buildResponseOwnershipErrorMessage('ChatGPT')
+          : diagnostic.detailCode === 'owned-response-missing'
+            ? 'ChatGPT did not return a response for this request.'
+            : diagnostic.detailCode === 'owned-response-unparsed'
+              ? 'Portal received the ChatGPT response but could not read it.'
+              : diagnostic.detailCode === 'terminal-marker-missing'
+                ? 'Portal received the ChatGPT response but could not confirm it finished.'
+                : `ChatGPT response activity stopped for ${timeoutMs}ms.`
+    return new ProviderAdapterError('submit', message, {
+      kind: 'protocol',
+      recovery: 'none',
+      retryable: false,
+      maxAttempts: 1,
+      detailCode: `chatgpt_${diagnostic.detailCode.replaceAll('-', '_')}`,
+    })
   }
 
   protected getFinishedResponseSettleMs(): number {
@@ -444,6 +519,9 @@ export class ChatGPTAdapter extends ProviderAdapter {
   }
 
   public async submit(options: AbortOptions = {}): Promise<string> {
+    const observation = createSubmitObservation()
+    this.activeSubmitObservation = observation
+    let diagnosticOutcome: ChatGptSubmitDiagnosticOutcome = 'error'
     let dispatchAttempted = false
     let terminalEvidenceObserved = false
     try {
@@ -481,6 +559,11 @@ export class ChatGPTAdapter extends ProviderAdapter {
         let warningTimer: NodeJS.Timeout | null = null
         let settled = false
         let lastStreamedText = ''
+        let lastOwnedWebSocketProgressCount = 0
+        let finishedProgressReported = false
+        let websocketTracker: ChatGptWebSocketResponseTracker | null = null
+        let websocketTrackerKey: string | null = null
+        let websocketTrackerFrameIndex = frameStart
         let requestOwnershipSettled: Promise<void> | null = null
 
         const stopWarningTimer = () => {
@@ -526,6 +609,9 @@ export class ChatGPTAdapter extends ProviderAdapter {
           ) {
             httpParsedResponse = response
           }
+          if (response.text.trim().length > 0) {
+            observation.parsedHttpText = true
+          }
         }
 
         const updateCapturedHttpResponse = async () => {
@@ -562,8 +648,10 @@ export class ChatGPTAdapter extends ProviderAdapter {
           }
           if (!candidateRequests.has(request)) {
             candidateRequests.add(request)
+            observation.candidateRequestCount = candidateRequests.size
             if (candidateRequests.size > 1) {
               ambiguousRequest = true
+              observation.requestAmbiguous = true
               ownedRequest = null
               ownedRequestBody = null
               return
@@ -575,9 +663,12 @@ export class ChatGPTAdapter extends ProviderAdapter {
           }
           if (ambiguousRequest) return
           ownedRequest = request
+          observation.ownedRequest = true
+          observation.phase = 'awaiting-response'
           ownedRequestBody = requestBody
           ownedUserMessageId =
             readChatGPTSubmittedMessageId(requestBody, submittedText) ?? null
+          observation.ownedUserMessageId = ownedUserMessageId !== null
           // Keep every frame observed after dispatch. A background response can
           // arrive before the matching Request event, so slicing at adoption
           // time would silently discard evidence needed for ownership checks.
@@ -633,6 +724,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
           if (response.status() !== 200) {
             return
           }
+          observation.ownedHttpResponse = true
           responseObserved = true
           settleHttpResponse({ kind: 'resolve' })
           void (async () => {
@@ -672,10 +764,19 @@ export class ChatGPTAdapter extends ProviderAdapter {
             }
           }
           const currentText = response?.text?.trim() ?? ''
+          if (response?.isFinished === true && !finishedProgressReported) {
+            finishedProgressReported = true
+            this.emitSubmitActivitySafely()
+          }
           if (!currentText || currentText === lastStreamedText) {
             return
           }
           lastStreamedText = currentText
+          observation.parsedOwnedText = true
+          observation.parsedFinished ||= response?.isFinished === true
+          observation.phase = response?.isFinished
+            ? 'response-complete'
+            : 'streaming'
           await this.emitSubmitText(response!.text)
         }
 
@@ -688,25 +789,57 @@ export class ChatGPTAdapter extends ProviderAdapter {
           const websocketCorrelationAvailable =
             httpParsedResponse?.messageId !== undefined ||
             ownedUserMessageId !== null
-          const websocketParsedResponse = websocketCorrelationAvailable
-            ? parseChatGptWebSocketFrames(
-                this.websocketFrames.slice(ownedFrameStartIndex),
-                httpParsedResponse?.conversationId ??
-                  readChatGPTConversationIdFromUrl(currentPageUrl) ??
-                  this.conversationId ??
-                  null,
+          let websocketParsedResponse: ChatGPTParsedResponse | null = null
+          if (websocketCorrelationAvailable) {
+            const expectedConversationId =
+              httpParsedResponse?.conversationId ??
+              readChatGPTConversationIdFromUrl(currentPageUrl) ??
+              this.conversationId ??
+              null
+            const expectedMessageId = httpParsedResponse?.messageId
+            const trackerKey = JSON.stringify([
+              expectedConversationId,
+              expectedMessageId ?? null,
+              ownedUserMessageId,
+            ])
+            if (
+              websocketTracker === null ||
+              websocketTrackerKey !== trackerKey
+            ) {
+              websocketTracker = new ChatGptWebSocketResponseTracker(
+                expectedConversationId,
                 {
                   requireExpectedConversationId: true,
                   requireSingleMessageId: true,
-                  ...(httpParsedResponse?.messageId !== undefined
-                    ? { expectedMessageId: httpParsedResponse.messageId }
-                    : {}),
-                  ...(ownedUserMessageId !== null
-                    ? { expectedParentMessageId: ownedUserMessageId }
-                    : {}),
+                  ...(expectedMessageId === undefined
+                    ? {}
+                    : { expectedMessageId }),
+                  ...(ownedUserMessageId === null
+                    ? {}
+                    : { expectedParentMessageId: ownedUserMessageId }),
                 }
               )
-            : null
+              websocketTrackerKey = trackerKey
+              websocketTrackerFrameIndex = ownedFrameStartIndex
+              lastOwnedWebSocketProgressCount = 0
+            }
+            websocketParsedResponse = websocketTracker.pushFrames(
+              this.websocketFrames.slice(websocketTrackerFrameIndex)
+            )
+            websocketTrackerFrameIndex = this.websocketFrames.length
+            const ownedProgressCount = websocketTracker.getOwnedProgressCount()
+            if (ownedProgressCount > lastOwnedWebSocketProgressCount) {
+              lastOwnedWebSocketProgressCount = ownedProgressCount
+              observation.ownedWebSocketProgress = true
+              this.emitSubmitActivitySafely()
+            }
+          }
+          if (
+            websocketParsedResponse !== null &&
+            websocketParsedResponse.text.trim().length > 0
+          ) {
+            observation.parsedWebSocketText = true
+          }
           const candidates: ChatGPTParsedResponse[] = []
           if (
             websocketParsedResponse !== null &&
@@ -736,6 +869,8 @@ export class ChatGPTAdapter extends ProviderAdapter {
             }
             best = current.text.length >= best.text.length ? current : best
           }
+          observation.parsedOwnedText = best.text.trim().length > 0
+          observation.parsedFinished ||= best.isFinished
           return best
         }
 
@@ -773,6 +908,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
           this.emitSubmitDispatching(signal)
           dispatchStarted = true
           dispatchAttempted = true
+          observation.phase = 'awaiting-request'
           await sendButton.click()
           this.emitSubmitSent()
           throwIfAborted(signal)
@@ -898,6 +1034,8 @@ export class ChatGPTAdapter extends ProviderAdapter {
                   Date.now() - lastProgressAt >=
                     this.getFinishedResponseSettleMs()
                 ) {
+                  observation.parsedFinished = true
+                  observation.phase = 'response-complete'
                   return true
                 }
 
@@ -908,11 +1046,8 @@ export class ChatGPTAdapter extends ProviderAdapter {
                   responseDeadlineAt === null
                     ? null
                     : Math.max(1, responseDeadlineAt - Date.now()),
-                continueIf: async (startedAt, currentAt) =>
-                  (responseDeadlineAt === null ||
-                    currentAt < responseDeadlineAt) &&
-                  currentAt - lastProgressAt <
-                    this.getSubmitResponseIdleTimeoutMs(),
+                continueIf: async (_startedAt, currentAt) =>
+                  responseDeadlineAt === null || currentAt < responseDeadlineAt,
                 onPending: async () => {
                   await delayAsync(10, signal)
                 },
@@ -994,11 +1129,15 @@ export class ChatGPTAdapter extends ProviderAdapter {
           }
           this.lastParsedResponse = parsedResponse
           this.websocketFrames = this.websocketFrames.slice(frameStart)
+          observation.phase = 'awaiting-composer'
+          this.emitSubmitResponseComplete()
           await this.ui.waitForComposerReady(
             'submit',
-            this.getSubmitResponseTimeoutMs(),
+            this.getPostResponseComposerReadyTimeoutMs(),
             signal
           )
+          observation.composerReady = true
+          observation.phase = 'composer-ready'
           throwIfAborted(signal)
           if (ambiguousRequest) {
             throw new ProviderAdapterError(
@@ -1013,6 +1152,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
               }
             )
           }
+          diagnosticOutcome = 'success'
           return parsedResponse.text
         } finally {
           stopped = true
@@ -1026,6 +1166,8 @@ export class ChatGPTAdapter extends ProviderAdapter {
       })
     } catch (error) {
       if (isAbortError(error)) {
+        diagnosticOutcome =
+          observation.timeoutPhase === null ? 'aborted' : 'timeout'
         throw error
       }
       if (dispatchAttempted && !terminalEvidenceObserved) {
@@ -1042,6 +1184,9 @@ export class ChatGPTAdapter extends ProviderAdapter {
           }
         )
       }
+      if (terminalEvidenceObserved) {
+        throw error
+      }
       if (this.isRetryableError(error)) {
         throw new ProviderAdapterError(
           'submit',
@@ -1057,6 +1202,17 @@ export class ChatGPTAdapter extends ProviderAdapter {
         )
       }
       throw error
+    } finally {
+      await writeChatGptSubmitDiagnostic(
+        buildChatGptSubmitDiagnosticRecord(
+          observation,
+          diagnosticOutcome,
+          observation.timeoutPhase
+        )
+      )
+      if (this.activeSubmitObservation === observation) {
+        this.activeSubmitObservation = null
+      }
     }
   }
 

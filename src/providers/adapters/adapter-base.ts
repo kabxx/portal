@@ -676,6 +676,7 @@ export abstract class ProviderAdapter<
     ((message: string) => void | Promise<void>) | null = null
   private submitSentReporter: (() => void) | null = null
   private submitActivityReporter: (() => void) | null = null
+  private submitResponseCompleteReporter: (() => void) | null = null
   private submitDispatchReporter: (() => void) | null = null
   private readonly submitFetchActivitySnapshots = new Map<number, string>()
   private fetchCaptureInitialized = false
@@ -1141,9 +1142,10 @@ export abstract class ProviderAdapter<
         : AbortSignal.any([options.signal, timeoutController.signal])
     const timeoutDeferred = createDeferred<never>()
     let timeoutTimer: NodeJS.Timeout | null = null
-    let timeoutError: ProviderResponseTimeoutError | null = null
+    let timeoutError: ProviderAdapterError | null = null
     let settled = false
     let responseStarted = false
+    let responseCompleted = false
     let phase: 'start' | 'stall' = 'start'
 
     const clearTimer = () => {
@@ -1156,7 +1158,7 @@ export abstract class ProviderAdapter<
       clearTimer()
       timeoutTimer = setTimeout(() => {
         if (settled) return
-        timeoutError = new ProviderResponseTimeoutError(phase, timeoutMs)
+        timeoutError = this.createSubmitResponseTimeoutError(phase, timeoutMs)
         timeoutController.abort(timeoutError)
         void this.stopGeneration().catch(() => {})
         timeoutDeferred.reject(timeoutError)
@@ -1166,15 +1168,27 @@ export abstract class ProviderAdapter<
     this.submitFetchActivitySnapshots.clear()
     this.submitDispatchReporter = onDispatch ?? null
     this.submitSentReporter = () => {
-      if (settled || timeoutError !== null || responseStarted) return
+      if (
+        settled ||
+        timeoutError !== null ||
+        responseStarted ||
+        responseCompleted
+      ) {
+        return
+      }
       phase = 'start'
       scheduleTimeout(this.getSubmitResponseStartTimeoutMs())
     }
     this.submitActivityReporter = () => {
-      if (settled || timeoutError !== null) return
+      if (settled || timeoutError !== null || responseCompleted) return
       responseStarted = true
       phase = 'stall'
       scheduleTimeout(this.getSubmitResponseStallTimeoutMs())
+    }
+    this.submitResponseCompleteReporter = () => {
+      if (settled || timeoutError !== null || responseCompleted) return
+      responseCompleted = true
+      clearTimer()
     }
 
     try {
@@ -1189,6 +1203,7 @@ export abstract class ProviderAdapter<
       clearTimer()
       this.submitSentReporter = null
       this.submitActivityReporter = null
+      this.submitResponseCompleteReporter = null
       this.submitDispatchReporter = null
       this.submitFetchActivitySnapshots.clear()
     }
@@ -1263,6 +1278,17 @@ export abstract class ProviderAdapter<
     } catch {
       // Progress reporting must not interrupt provider submission.
     }
+  }
+
+  protected emitSubmitResponseComplete(): void {
+    this.submitResponseCompleteReporter?.()
+  }
+
+  protected createSubmitResponseTimeoutError(
+    phase: 'start' | 'stall',
+    timeoutMs: number
+  ): ProviderAdapterError {
+    return new ProviderResponseTimeoutError(phase, timeoutMs)
   }
 
   protected getSubmitRequestStartGraceMs(): number {
