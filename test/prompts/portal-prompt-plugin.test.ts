@@ -35,7 +35,7 @@ test('agent prompt is assembled by the Prompt plugin in stable order', () => {
   assert.equal(
     prompt,
     [
-      '# Portal Agent',
+      '# Portal Prompt',
       '',
       PORTAL_ACTION_PROTOCOL.prompt,
       '',
@@ -72,7 +72,7 @@ test('chat Prompt omits tools and supports the inline task form', () => {
   assert.equal(
     prompt,
     [
-      '# Portal Agent',
+      '# Portal Prompt',
       '',
       '## Runtime',
       'Working directory: "/workspace"',
@@ -83,6 +83,12 @@ test('chat Prompt omits tools and supports the inline task form', () => {
     ].join('\n')
   )
   assert.equal(isPortalSetupPrompt(buildPortalChatPrompt('/workspace')), true)
+  assert.equal(
+    isPortalSetupPrompt(
+      '# Portal Agent\n\n## Runtime\nWorking directory: "/workspace"\n\n## Initialization\nReply exactly: READY'
+    ),
+    false
+  )
   assert.equal(isPortalSetupPrompt('ordinary user input'), false)
 })
 

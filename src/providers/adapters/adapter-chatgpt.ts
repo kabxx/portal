@@ -2,6 +2,8 @@ import {
   ProviderAdapter,
   type AbortOptions,
   awaitWithTimeout,
+  buildResponseOwnershipErrorMessage,
+  buildSubmitOutcomeUnknownMessage,
   buildSubmitBlockedWarningMessage,
   ProviderAdapterError,
   ProviderAdapterUnsupportedError,
@@ -819,7 +821,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
                 if (ambiguousRequest) {
                   throw new ProviderAdapterError(
                     'submit',
-                    'ChatGPT response ownership became ambiguous after dispatch.',
+                    buildResponseOwnershipErrorMessage('ChatGPT'),
                     {
                       kind: 'unknown',
                       recovery: 'none',
@@ -863,7 +865,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
                 if (ambiguousRequest) {
                   throw new ProviderAdapterError(
                     'submit',
-                    'ChatGPT response ownership became ambiguous after dispatch.',
+                    buildResponseOwnershipErrorMessage('ChatGPT'),
                     {
                       kind: 'unknown',
                       recovery: 'none',
@@ -945,7 +947,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
           if (ambiguousRequest) {
             throw new ProviderAdapterError(
               'submit',
-              'ChatGPT response ownership became ambiguous after dispatch.',
+              buildResponseOwnershipErrorMessage('ChatGPT'),
               {
                 kind: 'unknown',
                 recovery: 'none',
@@ -959,7 +961,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
           if (ambiguousRequest) {
             throw new ProviderAdapterError(
               'submit',
-              'ChatGPT response ownership became ambiguous after completion.',
+              buildResponseOwnershipErrorMessage('ChatGPT'),
               {
                 kind: 'unknown',
                 recovery: 'none',
@@ -1001,7 +1003,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
           if (ambiguousRequest) {
             throw new ProviderAdapterError(
               'submit',
-              'ChatGPT response ownership became ambiguous after completion.',
+              buildResponseOwnershipErrorMessage('ChatGPT'),
               {
                 kind: 'unknown',
                 recovery: 'none',
@@ -1029,7 +1031,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
       if (dispatchAttempted && !terminalEvidenceObserved) {
         throw new ProviderAdapterError(
           'submit',
-          'ChatGPT submit outcome is unknown after the send action; Portal will not replay it automatically.',
+          buildSubmitOutcomeUnknownMessage('ChatGPT'),
           {
             kind: 'unknown',
             recovery: 'none',

@@ -2,6 +2,8 @@ import {
   ProviderAdapter,
   type AbortOptions,
   awaitWithTimeout,
+  buildResponseCompletionErrorMessage,
+  buildSubmitOutcomeUnknownMessage,
   buildSubmitBlockedWarningMessage,
   ProviderAdapterError,
   ProviderAdapterUnsupportedError,
@@ -601,7 +603,7 @@ export class GlmAdapter extends ProviderAdapter {
           if (!parsedResponse.isFinished) {
             throw new ProviderAdapterError(
               'submit',
-              'GLM response ended without a completion marker.',
+              buildResponseCompletionErrorMessage('GLM'),
               {
                 kind: 'protocol',
                 recovery: 'none',
@@ -641,7 +643,7 @@ export class GlmAdapter extends ProviderAdapter {
       if (dispatchAttempted && !terminalEvidenceObserved) {
         throw new ProviderAdapterError(
           'submit',
-          'GLM submit outcome is unknown after the send action; Portal will not replay it automatically.',
+          buildSubmitOutcomeUnknownMessage('GLM'),
           {
             kind: 'unknown',
             recovery: 'none',

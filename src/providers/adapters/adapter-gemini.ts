@@ -2,6 +2,8 @@ import {
   ProviderAdapter,
   type AbortOptions,
   awaitWithTimeout,
+  buildResponseCompletionErrorMessage,
+  buildSubmitOutcomeUnknownMessage,
   buildSubmitBlockedWarningMessage,
   ProviderAdapterError,
   ProviderAdapterUnsupportedError,
@@ -632,7 +634,7 @@ export class GeminiAdapter extends ProviderAdapter {
         if (!this.lastParsedResponse.isFinished) {
           throw new ProviderAdapterError(
             'submit',
-            'Gemini response ended without a completion marker.',
+            buildResponseCompletionErrorMessage('Gemini'),
             {
               kind: 'protocol',
               recovery: 'none',
@@ -659,7 +661,7 @@ export class GeminiAdapter extends ProviderAdapter {
       if (dispatchAttempted && !terminalEvidenceObserved) {
         throw new ProviderAdapterError(
           'submit',
-          'Gemini submit outcome is unknown after the send action; Portal will not replay it automatically.',
+          buildSubmitOutcomeUnknownMessage('Gemini'),
           {
             kind: 'unknown',
             recovery: 'none',

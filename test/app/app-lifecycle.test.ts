@@ -6,23 +6,7 @@ import {
   closeWithTimeout,
   createIdempotentAsyncTask,
   stopMcpForegroundOperation,
-  transitionLoginWaitWarning,
 } from '../../src/app/app-lifecycle.ts'
-
-test('login wait warning renders only when entering login wait', () => {
-  assert.deepEqual(transitionLoginWaitWarning(false, true), {
-    waitingForLogin: true,
-    shouldRender: true,
-  })
-  assert.deepEqual(transitionLoginWaitWarning(true, true), {
-    waitingForLogin: true,
-    shouldRender: false,
-  })
-  assert.deepEqual(transitionLoginWaitWarning(true, false), {
-    waitingForLogin: false,
-    shouldRender: true,
-  })
-})
 
 test('close timeout reports when a close operation hangs', async () => {
   await assert.rejects(

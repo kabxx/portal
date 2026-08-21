@@ -255,7 +255,7 @@ test('createRuntimeFromAdapter can inline setup with the first task', async () =
   assert.deepEqual(adapter.attachedTexts, [])
   assert.equal(await runtime.submitUserInput('Do the task.'), 'Completed.')
   assert.equal(adapter.attachedTexts.length, 1)
-  assert.match(adapter.attachedTexts[0] ?? '', /^# Portal Agent/m)
+  assert.match(adapter.attachedTexts[0] ?? '', /^# Portal Prompt/m)
   assert.match(adapter.attachedTexts[0] ?? '', /## Task\n\nDo the task\./)
   assert.doesNotMatch(adapter.attachedTexts[0] ?? '', /Reply exactly: READY/)
 })

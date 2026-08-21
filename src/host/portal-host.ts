@@ -546,17 +546,14 @@ export class PortalHost {
       })
       const unsubscribe = this.prepared.threadManager.onThreadPageClosed(
         (threadId) => {
-          void lifecycle
-            .close(threadId, 'provider_page_closed')
-            .catch((error) => {
-              if (!context.isClosed()) {
-                this.#emitSurfaceEvent({
-                  type: 'thread.cleanup_failed',
-                  threadId,
-                  message: String(error),
-                })
-              }
-            })
+          void lifecycle.close(threadId, 'provider_page_closed').catch(() => {
+            if (!context.isClosed()) {
+              this.#emitSurfaceEvent({
+                type: 'thread.cleanup_failed',
+                threadId,
+              })
+            }
+          })
         }
       )
       runtimeScope.defer('thread page-close listener', () => unsubscribe())
@@ -636,12 +633,11 @@ export class PortalHost {
         cleanupVerified
           ? this.#emitSurfaceEvent({
               type: 'runtime.disconnected',
-              message: 'Browser disconnected while the Portal was running.',
+              cleanupVerified: true,
             })
           : this.#emitSurfaceEvent({
               type: 'runtime.disconnected',
-              message:
-                'Browser disconnected and process cleanup could not be verified.',
+              cleanupVerified: false,
             })
       )
       return services
@@ -907,7 +903,6 @@ function projectSurfaceThreadEvent(
   if (event.type === 'provision.warning') {
     return { ...event, lines: Object.freeze([...event.lines]) }
   }
-  if (event.type === 'provision.login_wait') return { ...event }
   if (event.type === 'thread.ready') return { ...event }
   if (event.type === 'thread.history') {
     return {

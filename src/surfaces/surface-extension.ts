@@ -75,12 +75,6 @@ export type SurfaceThreadLifecycleEvent =
       readonly lines: readonly string[]
     }
   | {
-      readonly type: 'provision.login_wait'
-      readonly threadId: string
-      readonly source: string
-      readonly provider: string
-    }
-  | {
       readonly type: 'thread.ready'
       readonly threadId: string
       readonly source: string
@@ -120,7 +114,7 @@ export type SurfaceHostEvent =
     }
   | {
       readonly type: 'runtime.disconnected'
-      readonly message: string
+      readonly cleanupVerified: boolean
     }
   | {
       readonly type: 'thread.lifecycle'
@@ -129,7 +123,6 @@ export type SurfaceHostEvent =
   | {
       readonly type: 'thread.cleanup_failed'
       readonly threadId: string
-      readonly message: string
     }
 
 export interface SurfaceEventSource {

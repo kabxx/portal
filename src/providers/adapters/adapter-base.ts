@@ -355,11 +355,23 @@ export function awaitWithTimeout<T>(
 }
 
 export function buildSubmitBlockedWarningMessage(providerName: string): string {
-  return [
-    `${providerName} submit has not started a provider request yet.`,
-    'Check the browser and complete any verification if needed.',
-    'Waiting for the page to resume or for a new request to start.',
-  ].join('\n')
+  return `Waiting for ${providerName} to start the request.`
+}
+
+export function buildResponseOwnershipErrorMessage(
+  providerName: string
+): string {
+  return `Portal could not match the ${providerName} response to this request; check the browser before continuing.`
+}
+
+export function buildResponseCompletionErrorMessage(
+  providerName: string
+): string {
+  return `Portal received the ${providerName} response but could not confirm it finished.`
+}
+
+export function buildSubmitOutcomeUnknownMessage(providerName: string): string {
+  return `Portal cannot confirm whether ${providerName} received the message, so it will not retry.`
 }
 
 export interface CapturedFetchEntry {
@@ -659,6 +671,7 @@ export abstract class ProviderAdapter<
   protected page!: TPage
   private submitStatusReporter:
     ((message: string) => void | Promise<void>) | null = null
+  private lastSubmitStatusMessage: string | null = null
   private submitTextReporter:
     ((message: string) => void | Promise<void>) | null = null
   private submitSentReporter: (() => void) | null = null
@@ -958,6 +971,7 @@ export abstract class ProviderAdapter<
     reporter: ((message: string) => void | Promise<void>) | null
   ) {
     this.submitStatusReporter = reporter
+    this.lastSubmitStatusMessage = null
   }
 
   public setSubmitTextReporter(
@@ -1216,6 +1230,8 @@ export abstract class ProviderAdapter<
   }
 
   protected async emitSubmitStatus(message: string): Promise<void> {
+    if (message === this.lastSubmitStatusMessage) return
+    this.lastSubmitStatusMessage = message
     await this.submitStatusReporter?.(message)
   }
 

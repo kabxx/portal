@@ -47,13 +47,13 @@ export async function initializeRuntimeWithLoginWait({
   waitForLogin,
   signal,
   maxRetryAttempts = 3,
-}: RuntimeInitializationOptions): Promise<RuntimeCore | null> {
+}: RuntimeInitializationOptions): Promise<RuntimeCore> {
   let pendingAdapter: ProviderAdapter | null = null
   let adapterInFlight: ProviderAdapter | null = null
   let retryAttempts = 0
 
   const outcome = await settleRuntimeInitialization(
-    (async (): Promise<RuntimeCore | null> => {
+    (async (): Promise<RuntimeCore> => {
       while (true) {
         try {
           const adapter = pendingAdapter
@@ -90,8 +90,8 @@ export async function initializeRuntimeWithLoginWait({
             browserProfileDir,
             threadId,
           })
-          await onWarning(plan)
           if (plan.requiresLogin || plan.requiresHumanInput) {
+            await onWarning(plan)
             await onLoginWait(
               provider,
               plan.requiresHumanInput ? 'human-input' : 'login'
@@ -111,7 +111,7 @@ export async function initializeRuntimeWithLoginWait({
               continue
             }
 
-            return null
+            throw error
           }
 
           if (adapterInFlight !== null) {
@@ -149,11 +149,11 @@ export async function initializeRuntimeWithLoginWait({
 }
 
 type RuntimeInitializationOutcome =
-  | { readonly status: 'fulfilled'; readonly value: RuntimeCore | null }
+  | { readonly status: 'fulfilled'; readonly value: RuntimeCore }
   | { readonly status: 'rejected'; readonly reason: unknown }
 
 async function settleRuntimeInitialization(
-  operation: Promise<RuntimeCore | null>
+  operation: Promise<RuntimeCore>
 ): Promise<RuntimeInitializationOutcome> {
   try {
     return { status: 'fulfilled', value: await operation }

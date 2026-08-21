@@ -1,6 +1,7 @@
 import {
   ProviderAdapter,
   type AbortOptions,
+  buildSubmitOutcomeUnknownMessage,
   ProviderAdapterError,
   ProviderAdapterUnsupportedError,
 } from './adapter-base.ts'
@@ -530,7 +531,7 @@ export class GrokAdapter extends ProviderAdapter {
       if (dispatchAttempted && !terminalEvidenceObserved) {
         throw new ProviderAdapterError(
           'submit',
-          'Grok submit outcome is unknown after the send action; Portal will not replay it automatically.',
+          buildSubmitOutcomeUnknownMessage('Grok'),
           {
             kind: 'unknown',
             recovery: 'none',
@@ -574,9 +575,5 @@ export class GrokAdapter extends ProviderAdapter {
 }
 
 function buildGrokSubmitBlockedWarningMessage(): string {
-  return [
-    'Grok submit has not started rendering a user message yet.',
-    'Check the browser and complete any verification if needed.',
-    'Waiting for the page to resume or for a response to start.',
-  ].join('\n')
+  return 'Waiting for Grok to start the request.'
 }

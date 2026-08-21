@@ -138,9 +138,7 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
 
   assert.ok(
     warnings.some((message) =>
-      message.includes(
-        'DeepSeek submit has not started a provider request yet.'
-      )
+      message.includes('Waiting for DeepSeek to start the request.')
     )
   )
 

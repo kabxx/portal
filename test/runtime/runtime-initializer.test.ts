@@ -473,55 +473,58 @@ test('initializeRuntimeWithLoginWait automatically retries transient initializat
   assert.deepEqual(events, [
     'createAdapter:1',
     'createRuntime:1',
-    'warning:temporary runtime issue',
     'createAdapter:2',
     'createRuntime:2',
   ])
 })
 
-test('initializeRuntimeWithLoginWait returns null after automatic initialization retries are exhausted', async () => {
+test('initializeRuntimeWithLoginWait throws the final error after automatic initialization retries are exhausted', async () => {
   const events: string[] = []
   let adapter: FakeAdapter | null = null
 
-  const resolvedRuntime = await initializeRuntimeWithLoginWait({
-    provider: 'chatgpt',
-    browserProfileDir: 'C:\\profiles\\chrome',
-    threadId: 't-1',
-    createAdapter: async () => {
-      events.push('createAdapter')
-      adapter = new FakeAdapter(events)
-      adapter.loggedIn = true
-      return adapter
-    },
-    createRuntime: async () => {
-      events.push('createRuntime')
-      throw new ProviderAdapterError('restore', 'Temporary page issue.', {
-        kind: 'transient',
-        recovery: 'restore',
-        retryable: true,
-        maxAttempts: 2,
-      })
-    },
-    onWarning: async (plan) => {
-      events.push(`warning:${plan.title}`)
-    },
-    onLoginWait: async () => {
-      events.push('loginWait')
-    },
-    waitForLogin: async () => {
-      events.push('waitForLogin')
-    },
-    maxRetryAttempts: 2,
-  })
+  await assert.rejects(
+    initializeRuntimeWithLoginWait({
+      provider: 'chatgpt',
+      browserProfileDir: 'C:\\profiles\\chrome',
+      threadId: 't-1',
+      createAdapter: async () => {
+        events.push('createAdapter')
+        adapter = new FakeAdapter(events)
+        adapter.loggedIn = true
+        return adapter
+      },
+      createRuntime: async () => {
+        events.push('createRuntime')
+        throw new ProviderAdapterError('restore', 'Temporary page issue.', {
+          kind: 'transient',
+          recovery: 'restore',
+          retryable: true,
+          maxAttempts: 2,
+          detailCode: 'temporary_page_issue',
+        })
+      },
+      onWarning: async (plan) => {
+        events.push(`warning:${plan.title}`)
+      },
+      onLoginWait: async () => {
+        events.push('loginWait')
+      },
+      waitForLogin: async () => {
+        events.push('waitForLogin')
+      },
+      maxRetryAttempts: 2,
+    }),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.message === 'Temporary page issue.' &&
+      error.detailCode === 'temporary_page_issue'
+  )
 
-  assert.equal(resolvedRuntime, null)
   assert.equal((adapter as FakeAdapter | null)?.closeCalls, 1)
   assert.deepEqual(events, [
     'createAdapter',
     'createRuntime',
-    'warning:temporary runtime issue',
     'createAdapter',
     'createRuntime',
-    'warning:temporary runtime issue',
   ])
 })

@@ -672,8 +672,8 @@ test('ChatGPTAdapter.submit emits periodic warnings while waiting for the reques
   await new Promise((resolve) => setTimeout(resolve, 35))
 
   assert.ok(
-    warnings.some((message) =>
-      message.includes('ChatGPT submit has not started a provider request yet.')
+    warnings.some(
+      (message) => message === 'Waiting for ChatGPT to start the request.'
     )
   )
 

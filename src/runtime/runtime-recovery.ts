@@ -1,5 +1,5 @@
-import path from 'node:path'
 import { isProviderAdapterError } from '../providers/adapters/adapter-base.ts'
+import { formatProviderDisplayName } from '../providers/provider-display-name.ts'
 
 export interface RuntimeRecoveryContext {
   provider: string
@@ -24,9 +24,7 @@ export function buildRuntimeRecoveryPlan(
     return {
       title: 'runtime',
       lines: [
-        `Thread ${context.threadId ?? '(pending)'} hit an unexpected error.`,
-        'The thread is still kept locally.',
-        'Review the error output, then retry the same request if the page state still looks usable.',
+        `Thread ${context.threadId ?? '(pending)'} stopped unexpectedly; check the browser before retrying.`,
       ],
       canRetry: false,
       requiresLogin: false,
@@ -39,9 +37,7 @@ export function buildRuntimeRecoveryPlan(
     return {
       title: 'login required',
       lines: [
-        `${context.provider} is not logged in for the current browser profile.`,
-        `Browser profile: ${profileDirectoryName(context.browserProfileDir)}`,
-        'Complete login in the browser window, then retry the same thread request.',
+        `Sign in to ${formatProviderDisplayName(context.provider)} in the browser; Portal will continue automatically.`,
       ],
       canRetry: true,
       requiresLogin: true,
@@ -57,11 +53,7 @@ export function buildRuntimeRecoveryPlan(
   ) {
     return {
       title: 'temporary runtime issue',
-      lines: [
-        `The current ${context.provider} thread hit a temporary page or network problem.`,
-        'The thread remains active.',
-        'Retrying the same request is usually safe after the page recovers.',
-      ],
+      lines: [error.message],
       canRetry: true,
       requiresLogin: false,
       requiresHumanInput: false,
@@ -71,20 +63,12 @@ export function buildRuntimeRecoveryPlan(
 
   return {
     title: 'thread error',
-    lines: [
-      `The current ${context.provider} request did not complete.`,
-      'The thread remains active.',
-      'Fix the browser page state or change the request, then retry manually.',
-    ],
+    lines: [error.message],
     canRetry: false,
     requiresLogin: false,
     requiresHumanInput: false,
     showFallbackError: true,
   }
-}
-
-function profileDirectoryName(profileDirectory: string): string {
-  return path.basename(path.win32.basename(profileDirectory)) || '(default)'
 }
 
 export async function tryRestoreRuntimeForRecovery(

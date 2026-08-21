@@ -208,9 +208,7 @@ test('ThreadManager submitThreadInput preserves status warnings emitted during s
     provider: 'doubao',
     runtime: createFakeRuntime({
       submitUserInput: async (_input, handlers) => {
-        await handlers?.onStatus?.(
-          'Doubao submit has not started a provider request yet.'
-        )
+        await handlers?.onStatus?.('Waiting for Doubao to start the request.')
         await handlers?.onAssistantText?.('Recovered and returned a response.')
         return 'Recovered and returned a response.'
       },

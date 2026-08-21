@@ -23,7 +23,6 @@ export {
   closeWithTimeout,
   createIdempotentAsyncTask,
   stopMcpForegroundOperation,
-  transitionLoginWaitWarning,
   type McpForegroundOperation,
 } from './app/app-lifecycle.ts'
 export { createPortalRuntimeSettings } from './runtime/runtime-settings.ts'

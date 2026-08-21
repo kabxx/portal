@@ -302,7 +302,7 @@ test('PortalHost prepares without launching a browser and starts once', async ()
 test('PortalHost reports an unverified process cleanup after browser disconnect', async () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-host-disconnect-'))
   const disconnected = createDeferred<void>()
-  const observed = Promise.withResolvers<string>()
+  const observed = Promise.withResolvers<boolean>()
   let host: PortalHost | null = null
 
   try {
@@ -323,16 +323,13 @@ test('PortalHost reports an unverified process cleanup after browser disconnect'
     )
     const unsubscribe = host.subscribeSurfaceEvents((event) => {
       if (event.type === 'runtime.disconnected') {
-        observed.resolve(event.message)
+        observed.resolve(event.cleanupVerified)
       }
     })
     await host.start()
 
     disconnected.reject(new Error('cleanup uncertain'))
-    assert.equal(
-      await observed.promise,
-      'Browser disconnected and process cleanup could not be verified.'
-    )
+    assert.equal(await observed.promise, false)
     unsubscribe()
   } finally {
     await host?.close()

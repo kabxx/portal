@@ -277,7 +277,7 @@ test('PortalHost observes browser cleanup failure while portal.ready is pending'
   const readyStarted = Promise.withResolvers<void>()
   const finishReady = Promise.withResolvers<void>()
   const disconnected = Promise.withResolvers<void>()
-  const observed = Promise.withResolvers<string>()
+  const observed = Promise.withResolvers<boolean>()
   let host: PortalHost | null = null
 
   try {
@@ -311,7 +311,7 @@ test('PortalHost observes browser cleanup failure while portal.ready is pending'
     )
     host.subscribeSurfaceEvents((event) => {
       if (event.type === 'runtime.disconnected') {
-        observed.resolve(event.message)
+        observed.resolve(event.cleanupVerified)
       }
     })
 
@@ -322,10 +322,7 @@ test('PortalHost observes browser cleanup failure while portal.ready is pending'
     finishReady.resolve()
     await start
 
-    assert.equal(
-      await observed.promise,
-      'Browser disconnected and process cleanup could not be verified.'
-    )
+    assert.equal(await observed.promise, false)
   } finally {
     finishReady.resolve()
     await host?.close().catch(() => {})

@@ -76,13 +76,3 @@ export async function stopMcpForegroundOperation(
   ]).then(() => undefined)
   await closeWithTimeout(async () => await operation.cancellation!, timeoutMs)
 }
-
-export function transitionLoginWaitWarning(
-  waitingForLogin: boolean,
-  requiresLogin: boolean
-): { waitingForLogin: boolean; shouldRender: boolean } {
-  return {
-    waitingForLogin: requiresLogin,
-    shouldRender: !requiresLogin || !waitingForLogin,
-  }
-}

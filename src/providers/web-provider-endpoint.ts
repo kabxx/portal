@@ -39,6 +39,7 @@ import type {
   ProviderOutboundLeg,
   ProviderSessionControl,
 } from './provider-exchange.ts'
+import { formatProviderDisplayName } from './provider-display-name.ts'
 
 export interface WebProviderEndpointOptions {
   readonly context: BrowserContext
@@ -147,16 +148,13 @@ export async function createWebProviderEndpoint(
         type: 'attention.request',
         requestId: `${providerId}:login`,
         kind: 'login',
-        prompt: `Complete login for ${providerId} in the browser profile, then Portal will retry.`,
+        prompt: `Sign in to ${formatProviderDisplayName(providerId)} in the browser; Portal will continue automatically.`,
       })
     },
     waitForLogin: async () => await sleepWithAbortAsync(1000, context.signal),
     signal: context.signal,
     maxRetryAttempts: options.requestAttemptLimit ?? 3,
   })
-  if (runtime === null) {
-    throw new Error(`Could not initialize ${providerId} Provider runtime.`)
-  }
   const adapter = runtime.getAdapter()
   const tools = new ToolRegistry(adapter, {
     toolHost: options.tools,

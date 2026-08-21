@@ -66,7 +66,7 @@ presentation when opening the Agent session. Browser Providers use Portal
 Action Protocol; API Providers translate native tool calls without receiving
 this text protocol. A full browser-provider prompt has this order:
 
-1. `# Portal Agent`;
+1. `# Portal Prompt`;
 2. `## Portal Action Protocol`;
 3. `## Actions`;
 4. optional `## Skills`;

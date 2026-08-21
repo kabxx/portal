@@ -2,6 +2,8 @@ import {
   ProviderAdapter,
   type AbortOptions,
   awaitWithTimeout,
+  buildResponseOwnershipErrorMessage,
+  buildSubmitOutcomeUnknownMessage,
   buildSubmitBlockedWarningMessage,
   ProviderAdapterError,
   ProviderAdapterUnsupportedError,
@@ -715,7 +717,7 @@ export class DeepSeekAdapter extends ProviderAdapter {
           if (ambiguousRequest) {
             throw new ProviderAdapterError(
               'submit',
-              'DeepSeek response ownership became ambiguous after dispatch.',
+              buildResponseOwnershipErrorMessage('DeepSeek'),
               {
                 kind: 'unknown',
                 recovery: 'none',
@@ -734,7 +736,7 @@ export class DeepSeekAdapter extends ProviderAdapter {
           if (ambiguousRequest) {
             throw new ProviderAdapterError(
               'submit',
-              'DeepSeek response ownership became ambiguous after completion.',
+              buildResponseOwnershipErrorMessage('DeepSeek'),
               {
                 kind: 'unknown',
                 recovery: 'none',
@@ -770,7 +772,7 @@ export class DeepSeekAdapter extends ProviderAdapter {
       if (dispatchAttempted && !terminalEvidenceObserved) {
         throw new ProviderAdapterError(
           'submit',
-          'DeepSeek submit outcome is unknown after the send action; Portal will not replay it automatically.',
+          buildSubmitOutcomeUnknownMessage('DeepSeek'),
           {
             kind: 'unknown',
             recovery: 'none',

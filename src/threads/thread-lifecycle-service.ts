@@ -54,12 +54,6 @@ export type ThreadLifecycleEvent =
       lines: readonly string[]
     }
   | {
-      type: 'provision.login_wait'
-      threadId: string
-      source: ThreadLifecycleSource
-      provider: string
-    }
-  | {
       type: 'thread.ready'
       threadId: string
       source: ThreadLifecycleSource

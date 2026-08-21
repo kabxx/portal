@@ -21,6 +21,7 @@ export const PORTAL_AGENT_PROMPT_PACKAGE_ID = 'portal.prompt.agent'
 export const PORTAL_CHAT_PROMPT_PACKAGE_ID = 'portal.prompt.chat'
 export const PORTAL_AGENT_PROMPT_ID = 'portal.prompt.agent'
 export const PORTAL_CHAT_PROMPT_ID = 'portal.prompt.chat'
+export const PORTAL_PROMPT_HEADING = '# Portal Prompt'
 
 export const PORTAL_INITIALIZATION_PROMPT = [
   '## Initialization',
@@ -139,7 +140,7 @@ export function buildPortalAgentPrompt(options: {
       ? null
       : `## Project Instructions\n\n${projectInstructions}`
   return joinPromptSections([
-    '# Portal Agent',
+    PORTAL_PROMPT_HEADING,
     toolSection,
     skillSection,
     instructionSection,
@@ -153,7 +154,7 @@ export function buildPortalChatPrompt(
   task?: string
 ): string {
   return joinPromptSections([
-    '# Portal Agent',
+    PORTAL_PROMPT_HEADING,
     runtimeSection(workingDirectory),
     task === undefined ? PORTAL_INITIALIZATION_PROMPT : taskSection(task),
   ])
@@ -162,7 +163,7 @@ export function buildPortalChatPrompt(
 export function isPortalSetupPrompt(value: string): boolean {
   const normalized = value.trim()
   return (
-    normalized.startsWith('# Portal Agent\n\n') &&
+    normalized.startsWith(`${PORTAL_PROMPT_HEADING}\n\n`) &&
     normalized.endsWith(PORTAL_INITIALIZATION_PROMPT)
   )
 }

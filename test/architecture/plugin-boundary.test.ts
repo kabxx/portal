@@ -113,7 +113,7 @@ test('Prompt and Agent policy are graph plugins rather than RuntimeCore behavior
 
   assert.doesNotMatch(
     runtime,
-    /buildSetupPrompt|PromptSkill|projectInstructions|# Portal Agent/
+    /buildSetupPrompt|PromptSkill|projectInstructions|# Portal Prompt/
   )
   assert.doesNotMatch(provider, /promptSkillService|buildSetupPrompt/)
   assert.match(factory, /createAgentSession/)

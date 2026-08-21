@@ -2,6 +2,8 @@ import {
   ProviderAdapter,
   type AbortOptions,
   awaitWithTimeout,
+  buildResponseOwnershipErrorMessage,
+  buildSubmitOutcomeUnknownMessage,
   buildSubmitBlockedWarningMessage,
   ProviderAdapterError,
   ProviderAdapterUnsupportedError,
@@ -806,7 +808,7 @@ export class DoubaoAdapter extends ProviderAdapter {
           if (ambiguousRequest) {
             throw new ProviderAdapterError(
               'submit',
-              'Doubao response ownership became ambiguous after dispatch.',
+              buildResponseOwnershipErrorMessage('Doubao'),
               {
                 kind: 'unknown',
                 recovery: 'none',
@@ -825,7 +827,7 @@ export class DoubaoAdapter extends ProviderAdapter {
           if (ambiguousRequest) {
             throw new ProviderAdapterError(
               'submit',
-              'Doubao response ownership became ambiguous after completion.',
+              buildResponseOwnershipErrorMessage('Doubao'),
               {
                 kind: 'unknown',
                 recovery: 'none',
@@ -865,7 +867,7 @@ export class DoubaoAdapter extends ProviderAdapter {
       if (dispatchAttempted && !terminalEvidenceObserved) {
         throw new ProviderAdapterError(
           'submit',
-          'Doubao submit outcome is unknown after the send action; Portal will not replay it automatically.',
+          buildSubmitOutcomeUnknownMessage('Doubao'),
           {
             kind: 'unknown',
             recovery: 'none',

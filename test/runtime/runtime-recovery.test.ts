@@ -25,9 +25,9 @@ test('buildRuntimeRecoveryPlan marks auth errors as login-required and retryable
   assert.equal(plan.requiresLogin, true)
   assert.equal(plan.canRetry, true)
   assert.equal(plan.showFallbackError, false)
-  assert.match(plan.lines.join('\n'), /Complete login/)
-  assert.match(plan.lines.join('\n'), /Browser profile: chrome/)
-  assert.doesNotMatch(plan.lines.join('\n'), /C:\\profiles/)
+  assert.deepEqual(plan.lines, [
+    'Sign in to Gemini in the browser; Portal will continue automatically.',
+  ])
 })
 
 test('buildRuntimeRecoveryPlan marks transient adapter errors as retryable', () => {
@@ -48,10 +48,7 @@ test('buildRuntimeRecoveryPlan marks transient adapter errors as retryable', () 
   assert.equal(plan.requiresLogin, false)
   assert.equal(plan.canRetry, true)
   assert.equal(plan.showFallbackError, false)
-  assert.match(
-    plan.lines.join('\n'),
-    /Retrying the same request is usually safe/
-  )
+  assert.deepEqual(plan.lines, ['Temporary page issue.'])
 })
 
 test('tryRestoreRuntimeForRecovery does not restore authentication errors', async () => {
@@ -94,5 +91,5 @@ test('buildRuntimeRecoveryPlan keeps non-retryable UI errors as thread errors', 
   assert.equal(plan.canRetry, false)
   assert.equal(plan.requiresLogin, false)
   assert.equal(plan.showFallbackError, true)
-  assert.match(plan.lines.join('\n'), /request did not complete/)
+  assert.deepEqual(plan.lines, ['Doubao action bar state is unavailable.'])
 })

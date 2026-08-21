@@ -94,8 +94,8 @@ test('GeminiAdapter.submit emits periodic warnings while waiting for the request
   await new Promise((resolve) => setTimeout(resolve, 35))
 
   assert.ok(
-    warnings.some((message) =>
-      message.includes('Gemini submit has not started a provider request yet.')
+    warnings.some(
+      (message) => message === 'Waiting for Gemini to start the request.'
     )
   )
 

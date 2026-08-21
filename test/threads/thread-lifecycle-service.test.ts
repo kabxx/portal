@@ -258,9 +258,7 @@ test('provider-owned login attention emits only one warning', async () => {
 
   assert.equal(result.ok, true)
   const loginEvents = harness.events.filter(
-    (event) =>
-      event.type === 'provision.warning' ||
-      event.type === 'provision.login_wait'
+    (event) => event.type === 'provision.warning'
   )
   assert.equal(loginEvents.length, 1)
   assert.equal(loginEvents[0]?.type, 'provision.warning')

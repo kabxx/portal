@@ -92,9 +92,9 @@ function activateExecSurface(
     if (event.type === 'runtime.disconnected') {
       rejectDisconnected(
         new Error(
-          event.message.includes('cleanup could not be verified')
-            ? event.message
-            : 'Browser disconnected while the exec task was running.'
+          event.cleanupVerified
+            ? 'Browser disconnected while the exec task was running.'
+            : 'Browser disconnected, and process cleanup could not be confirmed.'
         )
       )
       return
@@ -201,14 +201,6 @@ function reportLifecycleEvent(
       message: event.lines
         .filter((line): line is string => typeof line === 'string')
         .join(' '),
-    })
-  } else if (
-    event.type === 'provision.login_wait' &&
-    typeof event.provider === 'string'
-  ) {
-    onProgress({
-      type: 'status',
-      message: `Waiting for ${event.provider} login...`,
     })
   } else if (
     event.type === 'thread.ready' &&

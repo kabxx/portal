@@ -344,8 +344,8 @@ data: {"end_type":1}`
   await new Promise((resolve) => setTimeout(resolve, 35))
 
   assert.ok(
-    warnings.some((message) =>
-      message.includes('Doubao submit has not started a provider request yet.')
+    warnings.some(
+      (message) => message === 'Waiting for Doubao to start the request.'
     )
   )
 

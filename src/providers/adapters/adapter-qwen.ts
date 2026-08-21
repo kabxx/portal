@@ -5,6 +5,8 @@ import {
   type AbortOptions,
   type CapturedFetchEntry,
   awaitWithTimeout,
+  buildResponseCompletionErrorMessage,
+  buildSubmitOutcomeUnknownMessage,
   buildSubmitBlockedWarningMessage,
   createDeferred,
   delayAsync,
@@ -667,7 +669,7 @@ export class QwenAdapter extends ProviderAdapter {
       if (requestSubmitted && this.isRetryableError(error)) {
         throw new ProviderAdapterError(
           'submit',
-          'Qwen request outcome is unknown after submission; Portal will not replay it automatically.',
+          buildSubmitOutcomeUnknownMessage('Qwen'),
           {
             kind: 'unknown',
             recovery: 'none',
@@ -1005,7 +1007,7 @@ export class QwenAdapter extends ProviderAdapter {
     if (!parsed.isFinished) {
       throw new ProviderAdapterError(
         'submit',
-        'Qwen response ended without a completion marker.',
+        buildResponseCompletionErrorMessage('Qwen'),
         {
           kind: 'protocol',
           recovery: 'none',

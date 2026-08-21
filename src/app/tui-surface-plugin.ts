@@ -369,9 +369,9 @@ export function handleTuiHostEvent(
     state.ui.setBrowserConnected(false)
     state.ui.renderWarning(
       'browser',
-      event.message.includes('cleanup could not be verified')
-        ? `${event.message} Portal is shutting down.`
-        : 'Browser disconnected. Portal is shutting down.'
+      event.cleanupVerified
+        ? 'Browser disconnected; Portal is shutting down.'
+        : 'Browser disconnected; Portal is shutting down, but process cleanup could not be confirmed.'
     )
     state.requestExit()
     return
@@ -379,7 +379,7 @@ export function handleTuiHostEvent(
   if (event.type === 'thread.cleanup_failed') {
     state.ui.renderError(
       'thread',
-      `Failed to clean up ${event.threadId}: ${event.message}`
+      `Thread ${event.threadId} could not be closed cleanly.`
     )
     return
   }
@@ -408,8 +408,6 @@ function handleTuiThreadEvent(
     ui.setBusy(true)
   } else if (event.type === 'provision.warning') {
     ui.renderWarning(event.title, [...event.lines])
-  } else if (event.type === 'provision.login_wait') {
-    ui.renderWarning('login', `Waiting for ${event.provider} login.`)
   } else if (event.type === 'thread.ready') {
     pendingProvision.get(event.threadId)?.keep()
     pendingProvision.delete(event.threadId)

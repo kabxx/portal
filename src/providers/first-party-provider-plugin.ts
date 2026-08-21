@@ -17,6 +17,7 @@ import {
 import { portalBrowserSessionService } from '../platform/browser-session-service.ts'
 import { toolRuntimeService } from '../tools/tool-runtime-service.ts'
 import { createWebProviderEndpointFactory } from './web-provider-endpoint.ts'
+import { formatProviderDisplayName } from './provider-display-name.ts'
 
 export const FIRST_PARTY_PROVIDER_PACKAGE_PREFIX = 'portal.provider.'
 
@@ -43,7 +44,7 @@ export function createFirstPartyProviderRegistration(
         value: {
           id: providerId,
           descriptor: {
-            label: providerLabel(providerId),
+            label: formatProviderDisplayName(providerId),
             aliases: [],
             models: definition.models.map(({ key, options }) => ({
               key,
@@ -73,14 +74,4 @@ export function createFirstPartyProviderRegistration(
     },
   })
   return Object.freeze({ descriptor, module })
-}
-
-function providerLabel(providerId: ProviderId): string {
-  return providerId === 'chatgpt'
-    ? 'ChatGPT'
-    : providerId === 'deepseek'
-      ? 'DeepSeek'
-      : providerId === 'glm'
-        ? 'GLM'
-        : providerId.charAt(0).toUpperCase() + providerId.slice(1)
 }

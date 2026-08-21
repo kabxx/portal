@@ -1146,6 +1146,20 @@ test('ProviderAdapter safe submit status emission ignores abort errors from repo
   await adapter.emitStatusSafely('waiting')
 })
 
+test('ProviderAdapter emits identical submit status only once per reporter', async () => {
+  const adapter = new PollingAdapter(createProviderContextStub({}))
+  const statuses: string[] = []
+  adapter.setSubmitStatusReporter((message) => {
+    statuses.push(message)
+  })
+
+  await adapter.emitStatusSafely('waiting')
+  await adapter.emitStatusSafely('waiting')
+  await adapter.emitStatusSafely('still waiting')
+
+  assert.deepEqual(statuses, ['waiting', 'still waiting'])
+})
+
 test('ProviderAdapter reports one unexpected page close', async () => {
   const page = new CloseAwarePage()
   const adapter = await PageLifecycleAdapter.create(
