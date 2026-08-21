@@ -2,6 +2,7 @@ import {
   ProviderAdapter,
   type AbortOptions,
   buildSubmitBlockedWarningMessage,
+  buildSubmitOutcomeUnknownMessage,
   ProviderAdapterError,
   ProviderAdapterUnsupportedError,
   createDeferred,
@@ -826,7 +827,7 @@ export class KimiAdapter extends ProviderAdapter {
       throw new ProviderAdapterError(
         'submit',
         dispatched
-          ? 'Kimi submission failed after dispatch; its outcome is unknown.'
+          ? buildSubmitOutcomeUnknownMessage('Kimi')
           : 'Kimi submission failed before dispatch.',
         {
           kind: dispatched ? 'unknown' : 'ui',

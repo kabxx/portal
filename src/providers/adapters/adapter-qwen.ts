@@ -504,13 +504,11 @@ export class QwenAdapter extends ProviderAdapter {
         }
         const onRequestFailed = (request: Request) => {
           if (ownedRequest === null || request !== ownedRequest.request) return
-          const failureText =
-            request.failure()?.errorText ?? 'unknown network failure'
           settleTargetResponse({
             kind: 'reject',
             error: new ProviderAdapterError(
               'submit',
-              `Qwen request outcome is unknown after a network failure: ${failureText}`,
+              buildSubmitOutcomeUnknownMessage('Qwen'),
               {
                 kind: 'unknown',
                 recovery: 'none',
@@ -1036,7 +1034,7 @@ export class QwenAdapter extends ProviderAdapter {
     if (status >= 500) {
       return new ProviderAdapterError(
         'submit',
-        `Qwen returned HTTP ${status} after accepting the request; its outcome is unknown.`,
+        buildSubmitOutcomeUnknownMessage('Qwen'),
         {
           kind: 'unknown',
           recovery: 'none',
