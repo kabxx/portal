@@ -1,6 +1,6 @@
 {
   "name": "@kabxx/portal",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "A browser-backed terminal agent for web AI products and local tools.",
   "bin": {
     "portal": "dist/index.js"
