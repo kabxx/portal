@@ -8,6 +8,7 @@ import type { ThreadOperationCoordinator } from '../threads/thread-operation-coo
 import type { ProviderHost } from '../providers/provider-host.ts'
 import type { AgentHost } from '../agents/agent-host.ts'
 import type { TurnItem } from '../threads/thread-registry.ts'
+import { PortalAbortError } from '../runtime/runtime-cancellation.ts'
 import type {
   SurfaceCreateThreadInput,
   SurfaceMessageEvent,
@@ -98,7 +99,11 @@ export class PortalSurfacePort implements SurfacePortActions {
       },
       signal
     )
-    if (!provision.ok) throw new Error(provision.failure.message)
+    if (!provision.ok) {
+      throw provision.failure.code === 'cancelled'
+        ? new PortalAbortError(provision.failure.message)
+        : new Error(provision.failure.message)
+    }
     const thread = this.getThread(provision.threadId)
     if (thread === null)
       throw new Error(`Thread was not committed: ${provision.threadId}`)
@@ -115,7 +120,11 @@ export class PortalSurfacePort implements SurfacePortActions {
       { conversationUrl, source, activate },
       signal
     )
-    if (!provision.ok) throw new Error(provision.failure.message)
+    if (!provision.ok) {
+      throw provision.failure.code === 'cancelled'
+        ? new PortalAbortError(provision.failure.message)
+        : new Error(provision.failure.message)
+    }
     const thread = this.getThread(provision.threadId)
     if (thread === null)
       throw new Error(`Thread was not committed: ${provision.threadId}`)

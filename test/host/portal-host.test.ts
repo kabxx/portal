@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -16,7 +17,6 @@ import {
   createProviderAdapterStub,
 } from '../helpers/fakes.ts'
 import { createTestProviderExtensions } from '../helpers/provider-endpoint.ts'
-import { ThreadProvisionCleanupError } from '../../src/threads/thread-lifecycle-service.ts'
 import { createRuntimeFromAdapter } from '../../src/runtime/runtime-factory.ts'
 import { PORTAL_ACTION_PROTOCOL } from '../../src/providers/portal-action-protocol.ts'
 import { firstPartyPluginRecords } from '../../src/bootstrap/first-party-plugins.ts'
@@ -544,6 +544,7 @@ test('PortalHost closes a late Provider endpoint before the browser', async () =
   const cwd = mkdtempSync(path.join(os.tmpdir(), 'portal-host-adapter-'))
   const dataDirectory = path.join(cwd, 'data')
   const endpointRequested = Promise.withResolvers<void>()
+  const endpointAborted = Promise.withResolvers<void>()
   const runtimeDeferred =
     Promise.withResolvers<ReturnType<typeof createFakeRuntime>>()
   const events: string[] = []
@@ -559,10 +560,17 @@ test('PortalHost closes a late Provider endpoint before the browser', async () =
             events.push('browser close')
           },
         }),
-        [portalHostTestExtensions]: createTestProviderExtensions(async () => {
-          endpointRequested.resolve()
-          return await runtimeDeferred.promise
-        }),
+        [portalHostTestExtensions]: createTestProviderExtensions(
+          async (_providerId, context) => {
+            endpointRequested.resolve()
+            context.signal.addEventListener(
+              'abort',
+              () => endpointAborted.resolve(),
+              { once: true }
+            )
+            return await runtimeDeferred.promise
+          }
+        ),
       }
     )
     const services = await host.start()
@@ -575,6 +583,7 @@ test('PortalHost closes a late Provider endpoint before the browser', async () =
     await endpointRequested.promise
     const closing = host.close()
     void closing.catch(() => undefined)
+    await endpointAborted.promise
     runtimeDeferred.resolve(
       createFakeRuntime({
         close: async () => {
@@ -639,13 +648,15 @@ test('PortalHost reports late endpoint cleanup failure and still closes the brow
       })
     )
 
-    await assert.rejects(provisioning, ThreadProvisionCleanupError)
+    const result = await provisioning
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.equal(result.failure.code, 'cancelled')
     await assert.rejects(closing, AggregateError)
     assert.deepEqual(events, ['runtime close', 'browser close'])
     assert.deepEqual(services.threadManager.listThreads(), [])
     services.threadStore.close()
   } finally {
-    rmSync(cwd, {
+    await rm(cwd, {
       recursive: true,
       force: true,
       maxRetries: 10,

@@ -169,6 +169,26 @@ test('GeminiAdapter.restore reports auth when signed-out panel is visible', asyn
   assert.equal(capturedError.kind, 'auth')
 })
 
+test('GeminiAdapter login probe is immediately cancelable', async () => {
+  const adapter = createRestorableAdapter(GeminiAdapter, {
+    goto: async () => {},
+    url: () => 'https://gemini.google.com/app',
+    locator: () => ({
+      isVisible: async () => await new Promise<boolean>(() => {}),
+    }),
+  })
+  const controller = new AbortController()
+  const pending = adapter.isLoggedIn({ signal: controller.signal })
+
+  controller.abort()
+
+  await assert.rejects(pending, (error: unknown) => {
+    assert.ok(error instanceof Error)
+    assert.equal(error.name, 'AbortError')
+    return true
+  })
+})
+
 test('GeminiAdapter.restore waits for the microphone ready signal before succeeding', async () => {
   let countChecks = 0
   let checks = 0

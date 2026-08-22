@@ -95,7 +95,7 @@ test('PromptHost and AgentHost resolve graph sessions with immutable snapshots',
   assert.match(agent.initialization?.prompt ?? '', /## Portal Action Protocol/)
   assert.match(agent.initialization?.prompt ?? '', /## Skills/)
   assert.match(agent.initialization?.prompt ?? '', /## Project Instructions/)
-  assert.equal(agent.initialization?.accepts('ready - complete'), true)
+  assert.deepEqual(Object.keys(agent.initialization ?? {}), ['prompt'])
   await agent.close?.()
 
   const chat = await runtime.agents.open({
@@ -141,16 +141,16 @@ test('AgentHost applies plugin-owned history projection before Surfaces render i
       createdAt: 1,
     },
     {
-      id: 'ready',
+      id: 'setup-response',
       parentId: 'setup',
       role: 'assistant',
-      text: 'READY',
+      text: 'I have loaded the setup instructions.',
       format: 'markdown',
       createdAt: 2,
     },
     {
       id: 'question',
-      parentId: 'ready',
+      parentId: 'setup-response',
       role: 'user',
       text: 'Hello.',
       format: 'plain',

@@ -316,7 +316,6 @@ test('initializeRuntimeWithLoginWait closes a real factory adapter exactly once 
           createAgentSession: async () => ({
             initialization: {
               prompt: 'agent initialization',
-              accepts: () => true,
             },
             previewInput: async (input: string) => input,
             prepareInput: async (input: string) => input,

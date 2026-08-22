@@ -179,18 +179,7 @@ export class AgentHost {
       const initialization =
         session.initialization === null
           ? null
-          : Object.freeze({
-              prompt: session.initialization.prompt,
-              accepts: (response: string): boolean => {
-                const accepted = session.initialization?.accepts(response)
-                if (typeof accepted !== 'boolean') {
-                  throw new AgentHostError(
-                    `Agent ${contribution.value.id} initialization predicate did not return a boolean.`
-                  )
-                }
-                return accepted
-              },
-            })
+          : Object.freeze({ prompt: session.initialization.prompt })
       return Object.freeze({
         initialization,
         previewInput: async (input: string, operationSignal?: AbortSignal) => {
@@ -365,11 +354,7 @@ function isAgentSession(value: unknown): value is AgentSession {
 }
 
 function isAgentInitialization(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    typeof value.prompt === 'string' &&
-    typeof value.accepts === 'function'
-  )
+  return isRecord(value) && typeof value.prompt === 'string'
 }
 
 async function requireAgentText(

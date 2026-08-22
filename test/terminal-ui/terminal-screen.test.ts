@@ -8,6 +8,7 @@ import {
   INPUT_CURSOR,
   buildLiveFrameSignature,
   buildWelcomeRows,
+  canEditInput,
   calculateBubbleWidth,
   canSubmitInput,
   clearInput,
@@ -762,7 +763,10 @@ test('shouldClearInputForCtrlC only clears non-empty input while idle', () => {
   )
 })
 
-test('busy input accepts slash commands but keeps ordinary prompts pending', () => {
+test('busy input remains editable but keeps ordinary prompts pending', () => {
+  assert.equal(canEditInput(false, true), true)
+  assert.equal(canEditInput(true, false), true)
+  assert.equal(canEditInput(false, false), false)
   assert.equal(canSubmitInput('/thread switch t-2', true), true)
   assert.equal(canSubmitInput('  /thread list', true), true)
   assert.equal(canSubmitInput('continue with the tests', true), false)

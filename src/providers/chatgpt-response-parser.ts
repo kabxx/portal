@@ -317,6 +317,12 @@ function readResponseFromMessage(
   normalizeReferences = true
 ): ChatGPTParsedResponse | null {
   const role = readRole(message)
+  const content = asRecord(message.content)
+  const contentType =
+    typeof content?.content_type === 'string' ? content.content_type : null
+  if (role === 'assistant' && contentType !== 'text') {
+    return readToolMultimodalResponse(message)
+  }
   const rawText = readText(message.content ?? message)
   const text =
     rawText && normalizeReferences
@@ -338,13 +344,19 @@ function readResponseFromMessage(
   }
 }
 
-function collectResponses(value: unknown): ChatGPTParsedResponse[] {
+function collectResponses(
+  value: unknown,
+  conversationId?: string
+): ChatGPTParsedResponse[] {
   const results: ChatGPTParsedResponse[] = []
 
-  const visit = (nodeValue: unknown): void => {
+  const visit = (
+    nodeValue: unknown,
+    inheritedConversationId?: string
+  ): void => {
     if (Array.isArray(nodeValue)) {
       for (const item of nodeValue) {
-        visit(item)
+        visit(item, inheritedConversationId)
       }
       return
     }
@@ -354,17 +366,25 @@ function collectResponses(value: unknown): ChatGPTParsedResponse[] {
       return
     }
 
+    const nodeConversationId =
+      readConversationId(node) ?? inheritedConversationId
     const response = readResponseFromMessage(node)
     if (response !== null) {
-      results.push(response)
+      results.push({
+        ...response,
+        ...(response.conversationId === undefined &&
+        nodeConversationId !== undefined
+          ? { conversationId: nodeConversationId }
+          : {}),
+      })
     }
 
     for (const child of Object.values(node)) {
-      visit(child)
+      visit(child, nodeConversationId)
     }
   }
 
-  visit(value)
+  visit(value, conversationId)
   return results
 }
 
@@ -475,6 +495,85 @@ function readChatGptEncodedData(encodedItem: string): unknown {
   }
 }
 
+interface ChatGptMappingEntry {
+  readonly id: string
+  readonly parentId?: string
+  readonly response: ChatGPTParsedResponse | null
+}
+
+function pickMappedResponse(
+  root: Record<string, unknown>
+): ChatGPTParsedResponse | null {
+  const mapping = asRecord(root.mapping)
+  if (mapping === null) return null
+
+  const conversationId = readConversationId(root)
+  const entries = new Map<string, ChatGptMappingEntry>()
+  for (const [id, value] of Object.entries(mapping)) {
+    const node = asRecord(value)
+    if (node === null) continue
+    const message = asRecord(node.message)
+    const response =
+      message === null
+        ? null
+        : readResponseFromMessage({
+            ...message,
+            ...(conversationId === undefined
+              ? {}
+              : { conversation_id: conversationId }),
+          })
+    const parentId =
+      typeof node.parent === 'string'
+        ? node.parent
+        : typeof node.parent_id === 'string'
+          ? node.parent_id
+          : message !== null
+            ? readParentMessageId(message)
+            : undefined
+    entries.set(id, {
+      id,
+      ...(parentId === undefined ? {} : { parentId }),
+      response,
+    })
+  }
+
+  const currentNodeId =
+    typeof root.current_node === 'string' ? root.current_node : undefined
+  const current =
+    currentNodeId === undefined ? undefined : entries.get(currentNodeId)
+  if (current?.response !== null && current?.response?.text.trim()) {
+    return stripParsedResponse(current.response)
+  }
+
+  const childIds = new Set<string>()
+  for (const entry of entries.values()) {
+    if (entry.parentId !== undefined) childIds.add(entry.parentId)
+  }
+  const terminalResponses = [...entries.values()]
+    .filter(
+      (entry) =>
+        !childIds.has(entry.id) &&
+        entry.response !== null &&
+        entry.response.isFinished &&
+        entry.response.text.trim()
+    )
+    .map((entry) => entry.response!)
+  if (terminalResponses.length === 1) {
+    return stripParsedResponse(terminalResponses[0]!)
+  }
+
+  return null
+}
+
+function stripParsedResponse(
+  response: ChatGPTParsedResponse
+): ChatGPTParsedResponse {
+  return {
+    ...response,
+    text: stripInlineReferenceMarkers(response.text),
+  }
+}
+
 function readChatGptEncodedEventType(encodedItem: string): string | null {
   const eventLine = encodedItem
     .split(/\r?\n/)
@@ -494,6 +593,11 @@ export class ChatGptWebSocketResponseTracker {
   private readonly streamedResponses = new Map<string, ChatGPTParsedResponse>()
   private readonly directMessageIds = new Set<string>()
   private readonly ownedMessageIds = new Set<string>()
+  private readonly ownedProgressKeys = new Set<string>()
+  private readonly ownedProgressNodes = new Map<
+    string,
+    { node: Record<string, unknown>; conversationId?: string }
+  >()
   private readonly restrictConversation: boolean
   private readonly invalidInitialCorrelation: boolean
   private activeMessageId: string | null = null
@@ -534,14 +638,32 @@ export class ChatGptWebSocketResponseTracker {
   }
 
   private responseMatches(response: ChatGPTParsedResponse): boolean {
+    if (
+      response.conversationId !== undefined &&
+      this.ownedConversationId !== null &&
+      response.conversationId !== this.ownedConversationId
+    ) {
+      return false
+    }
+
+    if (
+      this.options.expectedMessageId === undefined &&
+      this.options.expectedParentMessageId === undefined
+    ) {
+      return true
+    }
+
+    const hasOwnedMessageId =
+      response.messageId !== undefined &&
+      this.ownedMessageIds.has(response.messageId)
+    const hasOwnedParentId =
+      response.parentMessageId !== undefined &&
+      this.ownedMessageIds.has(response.parentMessageId)
     return (
-      (response.conversationId === undefined ||
-        this.ownedConversationId === null ||
-        response.conversationId === this.ownedConversationId) &&
-      (this.options.expectedMessageId === undefined ||
-        response.messageId === this.options.expectedMessageId) &&
-      (this.options.expectedParentMessageId === undefined ||
-        response.parentMessageId === this.options.expectedParentMessageId)
+      response.messageId === this.options.expectedMessageId ||
+      response.parentMessageId === this.options.expectedParentMessageId ||
+      hasOwnedMessageId ||
+      hasOwnedParentId
     )
   }
 
@@ -635,6 +757,19 @@ export class ChatGptWebSocketResponseTracker {
           this.aggregatedReferenceUrls
         ),
       }))
+
+    const hasCorrelationAnchor =
+      this.options.expectedMessageId !== undefined ||
+      this.options.expectedParentMessageId !== undefined
+    if (hasCorrelationAnchor && this.activeMessageId !== null) {
+      const active = streamed.find(
+        (response) => response.messageId === this.activeMessageId
+      )
+      if (active !== undefined) {
+        return active
+      }
+    }
+
     if (this.options.requireSingleMessageId === true) {
       const messageIds = new Set(this.directMessageIds)
       for (const response of streamed) {
@@ -649,38 +784,83 @@ export class ChatGptWebSocketResponseTracker {
     value: unknown,
     fallbackConversationId?: string
   ): void {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        this.recordOwnedProgress(item, fallbackConversationId)
+    const collect = (
+      nodeValue: unknown,
+      inheritedConversationId?: string
+    ): void => {
+      if (Array.isArray(nodeValue)) {
+        for (const item of nodeValue) collect(item, inheritedConversationId)
+        return
       }
-      return
-    }
-    const node = asRecord(value)
-    if (!node) return
-    const conversationId = readConversationId(node) ?? fallbackConversationId
-    if (
-      conversationId !== undefined &&
-      this.ownedConversationId !== null &&
-      conversationId !== this.ownedConversationId
-    ) {
-      return
-    }
-    const messageId = readMessageId(node)
-    const parentMessageId = readParentMessageId(node)
-    const role = readRole(node)
-    const isOwned =
-      (messageId !== undefined && this.ownedMessageIds.has(messageId)) ||
-      (parentMessageId !== undefined &&
-        this.ownedMessageIds.has(parentMessageId))
-    if (isOwned && (role === 'assistant' || role === 'tool')) {
-      if (messageId !== undefined) this.ownedMessageIds.add(messageId)
-      if (conversationId !== undefined) {
-        this.ownedConversationId ??= conversationId
+      const node = asRecord(nodeValue)
+      if (!node) return
+      const conversationId = readConversationId(node) ?? inheritedConversationId
+      const role = readRole(node)
+      const messageId = readMessageId(node)
+      const parentMessageId = readParentMessageId(node)
+      if (
+        (role === 'assistant' || role === 'tool') &&
+        (messageId !== undefined || parentMessageId !== undefined)
+      ) {
+        const key =
+          messageId ?? `${role}:${parentMessageId}:${conversationId ?? ''}`
+        this.ownedProgressNodes.set(key, {
+          node,
+          ...(conversationId === undefined ? {} : { conversationId }),
+        })
       }
-      this.ownedProgressCount += 1
+      for (const child of Object.values(node)) {
+        collect(child, conversationId)
+      }
     }
-    for (const child of Object.values(node)) {
-      this.recordOwnedProgress(child, conversationId)
+
+    collect(value, fallbackConversationId)
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const { node, conversationId } of this.ownedProgressNodes.values()) {
+        if (
+          conversationId !== undefined &&
+          this.ownedConversationId !== null &&
+          conversationId !== this.ownedConversationId
+        ) {
+          continue
+        }
+        const role = readRole(node)
+        if (role !== 'assistant' && role !== 'tool') continue
+        const messageId = readMessageId(node)
+        const parentMessageId = readParentMessageId(node)
+        const isOwned =
+          (messageId !== undefined && this.ownedMessageIds.has(messageId)) ||
+          (parentMessageId !== undefined &&
+            this.ownedMessageIds.has(parentMessageId))
+        if (!isOwned) continue
+
+        if (conversationId !== undefined) {
+          this.ownedConversationId ??= conversationId
+        }
+        const progressKey =
+          messageId ?? `${role}:${parentMessageId ?? conversationId ?? ''}`
+        if (!this.ownedProgressKeys.has(progressKey)) {
+          this.ownedProgressKeys.add(progressKey)
+          this.ownedProgressCount += 1
+        }
+        if (messageId !== undefined && !this.ownedMessageIds.has(messageId)) {
+          this.ownedMessageIds.add(messageId)
+          changed = true
+        }
+      }
+    }
+
+    const hasCorrelationAnchor =
+      this.options.expectedMessageId !== undefined ||
+      this.options.expectedParentMessageId !== undefined
+    if (hasCorrelationAnchor) {
+      for (const [messageId, response] of this.streamedResponses) {
+        if (this.responseMatches(response)) {
+          this.activeMessageId = messageId
+        }
+      }
     }
   }
 
@@ -1208,6 +1388,12 @@ function parseChatGptHttpSseResponse(
     }
   }
 
+  const activeResponse =
+    activeMessageId === null ? null : streamedResponses.get(activeMessageId)
+  if (activeResponse?.text.trim()) {
+    return stripParsedResponse(activeResponse)
+  }
+
   results.push(...streamedResponses.values())
   return pickBestResponse(results)
 }
@@ -1228,31 +1414,7 @@ export function parseChatGptHttpResponse(
     return null
   }
 
-  const conversationId =
-    typeof rootRecord.conversation_id === 'string'
-      ? rootRecord.conversation_id
-      : undefined
-  const currentNodeId =
-    typeof rootRecord.current_node === 'string'
-      ? rootRecord.current_node
-      : undefined
-  const mapping = asRecord(rootRecord.mapping)
-
-  if (currentNodeId !== undefined && mapping) {
-    const currentNode = asRecord(mapping[currentNodeId])
-    const message = currentNode ? asRecord(currentNode.message) : null
-    if (message) {
-      const response = readResponseFromMessage({
-        ...message,
-        ...(conversationId !== undefined
-          ? { conversation_id: conversationId }
-          : {}),
-      })
-      if (response !== null) {
-        return response
-      }
-    }
-  }
-
-  return pickBestResponse(collectResponses(root))
+  return asRecord(rootRecord.mapping) !== null
+    ? pickMappedResponse(rootRecord)
+    : pickBestResponse(collectResponses(root, readConversationId(rootRecord)))
 }

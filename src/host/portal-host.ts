@@ -503,6 +503,7 @@ export class PortalHost {
           conversationUrl,
           model,
           mode,
+          signal,
           onProviderEvent,
         }) => {
           await this.prepared.conversationHost.open({
@@ -521,6 +522,7 @@ export class PortalHost {
             workingDirectory: this.prepared.cwd,
             spawnDepth: 0,
             sessionKey: threadId,
+            signal,
             onProviderEvent,
           })
           return createConversationRuntimeBridge({
@@ -744,6 +746,17 @@ export class PortalHost {
         errors,
         async () => {
           await services.lifecycle.cancelAll()
+        },
+        coreCleanupErrors
+      )
+      await this.#runClosePhase(
+        errors,
+        async () => {
+          await runWithTimeout(
+            'Provider endpoint late settlement',
+            services.providerHost.waitForLateFactorySettlements(),
+            this.#hooks
+          )
         },
         coreCleanupErrors
       )

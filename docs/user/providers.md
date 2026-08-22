@@ -47,7 +47,7 @@ Examples:
 /thread chat gemini 3.6-flash extended
 ```
 
-When the model argument is omitted, portal leaves the provider's current/default selection unchanged. Both creation commands create a page, verify login and composer readiness, and require the selected Agent plugin to accept the initialization response. The bundled Agent accepts `READY` as a case-insensitive whole word.
+When the model argument is omitted, portal leaves the provider's current/default selection unchanged. Both creation commands create a page, verify login and composer readiness, send the selected Agent plugin's initialization prompt, and wait for the provider response. Initialization does not require any particular response text.
 
 `/thread agent` sends the full portal agent setup prompt. `/thread chat` sends
 only the shared setup handshake, without the tool protocol, Skill catalog, or
@@ -184,8 +184,8 @@ Protocol and setup structure. The Action text format is translated back into
 Portal's internal Tool request/result contracts inside the Provider plugin.
 API Providers use their native tool-call format instead of this text protocol.
 Portal does not inject provider-specific constraint text. Chat creation sends
-only the shared initialization handshake, while `portal exec` sends setup and
-the first task in one user message without a `READY` roundtrip.
+only the shared initialization prompt, while `portal exec` sends setup and the
+first task in one user message without a separate initialization roundtrip.
 
 Maintenance rules, selector guidance, test requirements, and the real-profile
 smoke checklist live in

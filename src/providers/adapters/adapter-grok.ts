@@ -117,7 +117,7 @@ export class GrokAdapter extends ProviderAdapter {
         timeoutMs: this.getRestoreTimeoutMs(),
         signal,
       })
-      if (!(await this.isLoggedIn())) {
+      if (!(await this.isLoggedIn({ signal }))) {
         throw new ProviderAdapterError(
           'restore',
           'Grok is not logged in for the current browser profile.',
@@ -180,12 +180,16 @@ export class GrokAdapter extends ProviderAdapter {
     return parseGrokHistory(nodes.chunks.join(''), responses.chunks.join(''))
   }
 
-  public async isLoggedIn(): Promise<boolean> {
+  public async isLoggedIn(options: AbortOptions = {}): Promise<boolean> {
+    throwIfAborted(options.signal)
     if (!this.page.url().startsWith(GROK_CHAT_URL)) {
       return false
     }
 
-    return !(await this.providerUi.isSignedOutVisible())
+    return !(await abortable(
+      this.providerUi.isSignedOutVisible(),
+      options.signal
+    ))
   }
 
   public async changeModel(model: ResolvedProviderModel): Promise<void> {

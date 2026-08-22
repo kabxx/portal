@@ -69,14 +69,8 @@ export abstract class RuntimeCore {
       }
       await this.agentAdapter.attachText(initialization.prompt)
       throwIfAborted(options.signal)
-      const response =
-        await this.agentAdapter.submitWithResponseTimeout(options)
+      await this.agentAdapter.submitWithResponseTimeout(options)
       throwIfAborted(options.signal)
-      if (!initialization.accepts(response)) {
-        throw new Error(
-          'Agent initialization failed: response was not accepted.'
-        )
-      }
     }, options)
   }
 

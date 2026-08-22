@@ -162,6 +162,14 @@ test('portal Command output maps structured messages and discovery is deeply fro
     ),
     true
   )
+  assert.equal(
+    snapshot.entries.every((entry) =>
+      entry.candidates.every(
+        (candidate) => Object.hasOwn(candidate, 'description') === false
+      )
+    ),
+    true
+  )
 })
 
 test('portal Command reload owns the Thread operation and bridges cancellation', async () => {

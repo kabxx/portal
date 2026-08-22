@@ -223,13 +223,19 @@ test('route metadata drives static and dynamic hints, completion, and syntax spa
         sourceId: 'portal.providers',
         dependencies: {},
         candidates: [
-          { value: 'gemini', description: 'Google Gemini' },
+          { value: 'gemini' },
           { value: 'chatgpt', description: 'OpenAI ChatGPT' },
         ],
       },
     ],
   })
   assert.equal(dynamic.completion, '/thread agent gemini ')
+  assert.deepEqual(dynamic.hints.at(-1), {
+    usage: 'gemini',
+    description: '',
+    kind: 'detail',
+    completion: '/thread agent gemini ',
+  })
   assert.equal(dynamic.hints.at(-1)?.usage, 'gemini')
 })
 

@@ -123,8 +123,8 @@ It does not implement Provider login, page recovery, generic retry, or model
 protocol conversion. `PromptHost` resolves `prompts.collect` and same-owner
 renderer bindings. `AgentHost` resolves `agents.collect`, verifies that its
 referenced Prompt is active, and owns the scoped Agent session. Prompt sections,
-Skill content, READY acceptance, interactive initialization, and inline-first-
-task policy are first-party plugin behavior. `RuntimeCore` consumes only the
+Skill content, interactive initialization, and inline-first-task policy are
+first-party plugin behavior. `RuntimeCore` consumes only the
 resolved Agent session and no longer imports a setup Prompt builder. A web
 Provider may add a Provider-private runtime for its text Tool codec and retry
 loop, but that implementation is not part of the Kernel RuntimeCore contract.

@@ -778,6 +778,14 @@ export class ThreadLifecycleService {
           }
         } catch (error) {
           if (signal.aborted && error instanceof AggregateError) {
+            await this.notify({
+              type: 'provision.finished',
+              threadId,
+              source: request.source,
+              status: 'cancelled',
+              stage,
+              message: 'Thread provisioning was cancelled.',
+            })
             throw error
           }
           if (isAbortError(error)) {

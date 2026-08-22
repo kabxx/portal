@@ -306,7 +306,8 @@ export class GlmAdapter extends ProviderAdapter {
     return state.result
   }
 
-  public async isLoggedIn(): Promise<boolean> {
+  public async isLoggedIn(options: AbortOptions = {}): Promise<boolean> {
+    throwIfAborted(options.signal)
     try {
       if (new URL(this.page.url()).hostname !== 'chat.z.ai') {
         return false
@@ -315,7 +316,7 @@ export class GlmAdapter extends ProviderAdapter {
       return false
     }
 
-    return await this.providerUi.isLoggedIn()
+    return await abortable(this.providerUi.isLoggedIn(), options.signal)
   }
 
   public async changeModel(model: ResolvedProviderModel): Promise<void> {

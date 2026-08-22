@@ -172,7 +172,7 @@ export class GeminiAdapter extends ProviderAdapter {
         timeoutMs: this.getRestoreTimeoutMs(),
         signal,
       })
-      if (!(await this.isLoggedIn())) {
+      if (!(await this.isLoggedIn({ signal }))) {
         throw new ProviderAdapterError(
           'restore',
           'Gemini is not logged in for the current browser profile.',
@@ -270,8 +270,8 @@ export class GeminiAdapter extends ProviderAdapter {
     return state.result
   }
 
-  public async isLoggedIn(): Promise<boolean> {
-    return await this.ui.isLoggedIn()
+  public async isLoggedIn(options: AbortOptions = {}): Promise<boolean> {
+    return await abortable(this.ui.isLoggedIn(), options.signal)
   }
 
   public async changeModel(model: ResolvedProviderModel): Promise<void> {

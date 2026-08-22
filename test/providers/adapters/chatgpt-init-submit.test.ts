@@ -76,9 +76,11 @@ function createFinishedWebSocketFrame(): string {
   })
 }
 
-test('ChatGPTAdapter.submit returns READY from websocket without waiting for a late HTTP response', async () => {
+test('ChatGPTAdapter.submit returns arbitrary websocket text without waiting for a late HTTP response', async () => {
   const adapter = new TestChatGPTAdapter()
-  Object.assign(adapter, { pendingText: 'READY' })
+  const setupPrompt =
+    '# Portal Prompt\n\n## Initialization\nReply exactly: READY'
+  Object.assign(adapter, { pendingText: setupPrompt })
   const websocketFrames = [
     JSON.stringify({
       ref_id: 'turn0search0',
@@ -100,14 +102,16 @@ test('ChatGPTAdapter.submit returns READY from websocket without waiting for a l
               {
                 id: 'user-message-1',
                 role: 'user',
-                content: { parts: ['READY'] },
+                content: { parts: [setupPrompt] },
               },
             ],
           }),
         failure: () => null,
       }
       page.emit('request', request)
-      websocketFrames.push(createInitialWebSocketFrame('READY'))
+      websocketFrames.push(
+        createInitialWebSocketFrame('Initialization acknowledged.')
+      )
       websocketFrames.push(
         createAppendWebSocketFrame(' \uE200cite\uE202turn0search0\uE202\uE201')
       )
@@ -119,7 +123,7 @@ test('ChatGPTAdapter.submit returns READY from websocket without waiting for a l
   adapter.setSubmitStatusReporter(null)
   const result = await adapter.submit()
 
-  assert.equal(result, 'READY')
+  assert.equal(result, 'Initialization acknowledged.')
 })
 
 function createChatGPTPage(sendButton: {

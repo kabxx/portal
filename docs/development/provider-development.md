@@ -11,7 +11,7 @@ portal automates the normal web product in a real Chromium page. A Provider inte
 A first-class Provider is complete only when all applicable paths below work:
 
 - `/providers`, `/thread agent`, `/thread chat`, `portal exec`, Spawn, and the Portal MCP Server expose the Provider;
-- a signed-in page can create a new agent or chat conversation and complete its setup `READY` handshake;
+- a signed-in page can create a new agent or chat conversation, return any setup response, and leave the composer reusable;
 - signed-out, restricted, and unexpected page states are classified without leaking raw browser errors;
 - normal turns stream, terminate, cancel, and leave the page reusable;
 - model selection, file/image upload, and capabilities either work or return an explicit unsupported result;
@@ -61,11 +61,14 @@ sequenceDiagram
         Runtime->>Adapter: attachText(minimal setup handshake)
     end
     Runtime->>Adapter: submitWithResponseTimeout()
-    Adapter-->>Runtime: streamed response ending in READY
+    Adapter-->>Runtime: complete provider response
     Runtime-->>App: initialized runtime
 ```
 
-`READY` is the first-party Agent plugin's initialization acknowledgement, not a DOM readiness signal. The adapter must prove that the page is ready before the Runtime submits the resolved Agent initialization Prompt.
+The Runtime does not validate initialization response text. The adapter must
+still prove that the page is ready before submitting the resolved Agent
+initialization Prompt, capture one complete response, and leave the composer
+ready for the next message.
 
 ### Resumed conversation
 
@@ -370,9 +373,9 @@ Coverage is a diagnostic baseline, not proof that the live Provider website stil
 
 CI does not log in to Provider websites. Use a dedicated profile and record only pass/fail facts, never private content.
 
-1. Create a new signed-in agent thread and complete the full setup `READY` handshake.
-2. Create a chat thread and verify that it sends only the minimal handshake and accepts a case-insensitive whole-word `READY` response.
-3. Run `portal exec` and verify that setup plus Task is submitted once without Ink or a `READY` roundtrip.
+1. Create a new signed-in agent thread, accept an arbitrary complete setup response, and verify the composer is reusable.
+2. Create a chat thread and verify that it sends only the minimal setup prompt and accepts arbitrary complete response text.
+3. Run `portal exec` and verify that setup plus Task is submitted once without Ink or a separate initialization roundtrip.
 4. Verify signed-out/login redirect behavior without sending setup early.
 5. Submit a normal turn; verify request start, monotonic streaming, completion, and a second usable turn.
 6. Exercise a real Tool call and any Provider continuation stream.

@@ -107,10 +107,10 @@ Resume from a provider URL or local history id:
 ```
 
 `/thread agent` sends the full portal agent setup prompt. `/thread chat` sends only
-the shared setup handshake and accepts a response containing `READY` as a
-case-insensitive whole word. Both commands still construct the local runtime,
-register tools, and persist the provider conversation. Chat mode does not
-request a Skill snapshot or advertise those local
+the shared setup prompt. Both commands wait for the provider response and a
+reusable composer without requiring any particular response text, then construct
+the local runtime, register tools, and persist the provider conversation. Chat
+mode does not request a Skill snapshot or advertise those local
 capabilities to the model, but a valid model-generated tool call can still be
 executed; it is not a sandbox.
 

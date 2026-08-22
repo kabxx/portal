@@ -5,6 +5,7 @@ import { ExtensionRegistry } from '../../src/extensions/extension-registry.ts'
 import { ServiceContainer } from '../../src/extensions/service-container.ts'
 import { ExtensionResourceScope } from '../../src/extensions/scope-registration.ts'
 import { ResourceScope } from '../../src/shared/resource-scope.ts'
+import { PortalAbortError } from '../../src/runtime/runtime-cancellation.ts'
 import {
   defineProviderHost,
   providerContributions,
@@ -378,4 +379,63 @@ test('ConversationHost reports Provider cancellation failure to the sender', asy
 
   await assert.rejects(sending, /Provider cancellation failed/)
   assert.equal(conversations.get(thread.id)?.turns[0]?.status, 'canceled')
+})
+
+test('ConversationHost closes a binding canceled before conversation commit', async (t) => {
+  const root = new ResourceScope('conversation-open-cancel-test')
+  t.after(async () => await root.dispose().catch(() => undefined))
+  const controller = new AbortController()
+  let closeCalls = 0
+  const binding: ProviderBinding = {
+    providerId: 'test.provider',
+    capabilities: [],
+    scope: root.createChild('provider-binding'),
+    conversationId: 'remote-open-cancel',
+    conversationUrl: null,
+    preflightInput: async () => ({ status: 'unknown' }),
+    restore: async () => undefined,
+    loadHistory: async () => ({ messages: [], complete: false, warning: null }),
+    onUnexpectedClose: () => () => {},
+    listCapabilities: async () => ({ capabilities: [], usage: '' }),
+    executeCapability: async () => ({
+      status: 'unsupported-provider',
+      message: 'unsupported',
+    }),
+    exchange: async () => assert.fail('exchange must not start'),
+    close: async () => {
+      closeCalls += 1
+    },
+  }
+  const conversations = new ConversationHost({
+    // Focused structural fake controls the cancellation window after binding open.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    providerHost: {
+      openBinding: async () => {
+        controller.abort(new PortalAbortError('cancel before commit'))
+        return binding
+      },
+    } as unknown as ProviderHost,
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    toolHost: {} as unknown as ToolHost,
+    root,
+  })
+
+  await assert.rejects(
+    conversations.open({
+      signal: controller.signal,
+      providerId: 'test.provider',
+      providerOwnerId: 'test.provider-package',
+      selectionRevision: 'cancel-before-commit',
+      agentMode: null,
+      agentStartup: 'resume',
+      threadId: 'cancel-before-commit',
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error)
+      assert.equal(error.name, 'AbortError')
+      return true
+    }
+  )
+  assert.equal(closeCalls, 1)
+  assert.equal(conversations.get('cancel-before-commit'), null)
 })

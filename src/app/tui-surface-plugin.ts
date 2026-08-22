@@ -429,7 +429,8 @@ function handleTuiThreadEvent(
     pendingProvision.get(event.threadId)?.discard()
     pendingProvision.delete(event.threadId)
     ui.setBusy(false)
-    ui.renderWarning('thread.create', event.message)
+    if (event.status === 'failed')
+      ui.renderWarning('thread.create', event.message)
   } else {
     ui.setThreadBusy(event.threadId, false)
     ui.removeThreadTimeline(event.threadId)

@@ -457,14 +457,19 @@ export class KimiAdapter extends ProviderAdapter {
     }
   }
 
-  public async isLoggedIn(): Promise<boolean> {
+  public async isLoggedIn(options: AbortOptions = {}): Promise<boolean> {
+    throwIfAborted(options.signal)
     try {
       if (new URL(this.page.url()).hostname !== 'www.kimi.com') return false
     } catch {
       return false
     }
-    if (await this.providerUi.isSignedOutVisible()) return false
-    return (await this.getAuthState()) === 'signed_in'
+    if (await abortable(this.providerUi.isSignedOutVisible(), options.signal)) {
+      return false
+    }
+    return (
+      (await abortable(this.getAuthState(), options.signal)) === 'signed_in'
+    )
   }
 
   public async loadHistory(options: AbortOptions = {}) {

@@ -103,7 +103,6 @@ const createPortalAgentSession: AgentSessionFactory = async ({
     request.startup === 'interactive'
       ? Object.freeze({
           prompt: await prompt.render(undefined, signal),
-          accepts: hasReadyHandshakeToken,
         })
       : null
   return Object.freeze({
@@ -135,10 +134,6 @@ const createPortalAgentSession: AgentSessionFactory = async ({
   })
 }
 
-export function hasReadyHandshakeToken(response: string): boolean {
-  return /\bREADY\b/i.test(response)
-}
-
 function classifyPortalAgentHistory(
   messages: readonly import('../providers/conversation-history.ts').ConversationHistoryMessage[]
 ): readonly number[] {
@@ -152,8 +147,7 @@ function classifyPortalAgentHistory(
     (message, index) =>
       index > 0 &&
       (nextUser === -1 || index < nextUser) &&
-      message.role === 'assistant' &&
-      hasReadyHandshakeToken(message.text)
+      message.role === 'assistant'
   )
   if (acknowledgement !== -1) hidden.push(acknowledgement)
   return Object.freeze(hidden)

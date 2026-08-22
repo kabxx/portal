@@ -786,6 +786,10 @@ export function canSubmitInput(inputValue: string, busy: boolean): boolean {
   return !busy || inputValue.trimStart().startsWith('/')
 }
 
+export function canEditInput(promptActive: boolean, busy: boolean): boolean {
+  return promptActive || busy
+}
+
 class InputHistory {
   private readonly entries: string[] = []
   private cursor: number | null = null
@@ -1009,7 +1013,7 @@ export function TerminalScreen({
       return
     }
 
-    if (!state.prompt.active) {
+    if (!canEditInput(state.prompt.active, state.busy)) {
       return
     }
 
@@ -1316,7 +1320,7 @@ export function TerminalScreen({
   })
 
   usePaste((text) => {
-    if (!state.prompt.active) {
+    if (!canEditInput(state.prompt.active, state.busy)) {
       return
     }
 

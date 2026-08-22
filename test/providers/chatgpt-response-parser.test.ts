@@ -102,6 +102,72 @@ test('ChatGPT HTTP parser reads a sanitized JSON response', () => {
   })
 })
 
+test('ChatGPT HTTP parsing selects the latest completed response from the mapping', () => {
+  const raw = JSON.stringify({
+    conversation_id: 'conversation-1',
+    current_node: 'node-summary',
+    mapping: {
+      'node-summary': {
+        message: createAssistantMessage({
+          id: 'message-summary',
+          text: 'internal recap',
+          finished: true,
+          channel: 'analysis',
+        }),
+      },
+      'node-ready': {
+        message: createAssistantMessage({
+          id: 'message-ready',
+          text: 'visible response',
+          finished: true,
+        }),
+      },
+    },
+  })
+
+  assert.equal(parseChatGptHttpResponse(raw)?.text, 'visible response')
+})
+
+test('ChatGPT HTTP mapping fails closed for ambiguous final messages', () => {
+  const raw = JSON.stringify({
+    conversation_id: 'conversation-1',
+    current_node: 'node-analysis',
+    mapping: {
+      'node-analysis': {
+        message: {
+          id: 'message-analysis',
+          author: { role: 'assistant' },
+          content: {
+            content_type: 'reasoning_recap',
+            parts: ['internal recap'],
+          },
+          status: 'finished_successfully',
+          end_turn: true,
+          channel: 'analysis',
+        },
+      },
+      'node-final-a': {
+        parent: 'node-analysis',
+        message: createAssistantMessage({
+          id: 'message-final-a',
+          text: 'first final',
+          finished: true,
+        }),
+      },
+      'node-final-b': {
+        parent: 'node-analysis',
+        message: createAssistantMessage({
+          id: 'message-final-b',
+          text: 'second final',
+          finished: true,
+        }),
+      },
+    },
+  })
+
+  assert.equal(parseChatGptHttpResponse(raw), null)
+})
+
 test('ChatGPT HTTP parser renders entity markers as their display names', () => {
   const raw = JSON.stringify({
     conversation_id: 'conversation-1',
@@ -229,6 +295,39 @@ test('ChatGPT HTTP parser appends bare SSE delta string chunks', () => {
     text: 'First second third fourth',
     isFinished: true,
   })
+})
+
+test('ChatGPT HTTP SSE parser ignores reasoning recap before the final answer', () => {
+  const reasoning = {
+    id: 'reasoning-1',
+    author: { role: 'assistant' },
+    content: {
+      content_type: 'reasoning_recap',
+      content: 'internal recap',
+    },
+    status: 'finished_successfully',
+    end_turn: true,
+  }
+  const final = createAssistantMessage({
+    id: 'final-1',
+    text: '',
+    finished: false,
+  })
+  const raw = [
+    `data: ${JSON.stringify({ v: { message: reasoning } })}`,
+    `data: ${JSON.stringify({ v: { message: final } })}`,
+    `data: ${JSON.stringify({
+      p: '/message/content/parts/0',
+      o: 'append',
+      v: 'visible answer',
+    })}`,
+    `data: ${JSON.stringify({
+      o: 'patch',
+      v: [{ p: '/message/end_turn', o: 'replace', v: true }],
+    })}`,
+  ].join('\n')
+
+  assert.equal(parseChatGptHttpResponse(raw)?.text, 'visible answer')
 })
 
 test('ChatGPT WebSocket parser reads nested encoded-item deltas through frame noise', () => {
@@ -969,6 +1068,75 @@ test('ChatGPT WebSocket progress follows the owned parent chain without acceptin
     }),
     0
   )
+})
+
+test('ChatGPT WebSocket tracker resolves a reversed owned parent chain', () => {
+  const final = createInitialMessageFrame(
+    {
+      id: 'owned-final',
+      text: 'final response',
+      finished: true,
+      parentId: 'owned-tool',
+    },
+    'conversation-1'
+  )
+  const tool = JSON.stringify({
+    conversation_id: 'conversation-1',
+    message: {
+      id: 'owned-tool',
+      parent_id: 'owned-analysis',
+      author: { role: 'tool' },
+      content: { content_type: 'computer_initialize_state', parts: [] },
+    },
+  })
+  const analysis = createInitialMessageFrame(
+    {
+      id: 'owned-analysis',
+      text: 'hidden analysis',
+      parentId: 'owned-user',
+      channel: 'analysis',
+    },
+    'conversation-1'
+  )
+
+  const parsed = parseChatGptWebSocketFrames(
+    [final, tool, analysis],
+    'conversation-1',
+    {
+      requireExpectedConversationId: true,
+      requireSingleMessageId: true,
+      expectedParentMessageId: 'owned-user',
+    }
+  )
+
+  assert.equal(parsed?.messageId, 'owned-final')
+  assert.equal(parsed?.text, 'final response')
+})
+
+test('ChatGPT WebSocket tracker accepts an owned message when its parent changes', () => {
+  const parsed = parseChatGptWebSocketFrames(
+    [
+      JSON.stringify({
+        conversation_id: 'conversation-1',
+        message: createAssistantMessage({
+          id: 'http-assistant',
+          text: 'final response',
+          finished: true,
+          parentId: 'new-parent',
+        }),
+      }),
+    ],
+    'conversation-1',
+    {
+      requireExpectedConversationId: true,
+      requireSingleMessageId: true,
+      expectedMessageId: 'http-assistant',
+      expectedParentMessageId: 'submitted-user',
+    }
+  )
+
+  assert.equal(parsed?.messageId, 'http-assistant')
+  assert.equal(parsed?.text, 'final response')
 })
 
 test('ChatGPT WebSocket progress does not inherit ownership for identity-free patches', () => {

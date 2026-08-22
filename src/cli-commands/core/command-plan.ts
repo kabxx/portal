@@ -861,7 +861,7 @@ function routeHints(
       if (!candidate.value.startsWith(prefix)) continue
       hints.push({
         usage: candidate.value,
-        description: candidate.description,
+        description: candidate.description ?? '',
         kind: 'detail',
         completion: replaceActiveToken(
           input,

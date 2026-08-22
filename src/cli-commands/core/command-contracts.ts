@@ -116,7 +116,7 @@ export type CommandHandler = (
 
 export interface CommandCompletionCandidate {
   readonly value: string
-  readonly description: string
+  readonly description?: string
 }
 
 export interface CommandCompletionEntry {

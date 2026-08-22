@@ -119,7 +119,8 @@ function createChatGptRequestBody(
 function createChatGptHttpResponse(
   text: string,
   finished = true,
-  conversationId = 'conversation-1'
+  conversationId = 'conversation-1',
+  parentMessageId?: string
 ): string {
   return JSON.stringify({
     conversation_id: conversationId,
@@ -134,7 +135,37 @@ function createChatGptHttpResponse(
           end_turn: finished,
           channel: 'final',
           metadata: {},
+          ...(parentMessageId === undefined
+            ? {}
+            : { parent_id: parentMessageId }),
         },
+      },
+    },
+  })
+}
+
+function createChatGptHttpResponseWithBackgroundCurrentNode(
+  responseText = 'visible response',
+  readyFinished = true
+): string {
+  const createMessage = (id: string, text: string, finished = true) => ({
+    id,
+    author: { role: 'assistant' },
+    content: { content_type: 'text', parts: [text] },
+    status: finished ? 'finished_successfully' : 'in_progress',
+    end_turn: finished,
+    channel: id === 'message-background' ? 'analysis' : 'final',
+    metadata: {},
+  })
+  return JSON.stringify({
+    conversation_id: 'conversation-1',
+    current_node: 'node-background',
+    mapping: {
+      'node-background': {
+        message: createMessage('message-background', 'background response'),
+      },
+      'node-ready': {
+        message: createMessage('message-ready', responseText, readyFinished),
       },
     },
   })
@@ -222,7 +253,7 @@ test('ChatGPTAdapter target conversation request ignores prepare requests', () =
   )
 })
 
-test('ChatGPTAdapter.submit waits past empty target responses for the real HTTP response', async () => {
+test('ChatGPTAdapter.submit accepts the adopted HTTP response with a new parent chain', async () => {
   const adapter = createTestChatGPTAdapter()
   const parsedBodies: string[] = []
 
@@ -263,7 +294,12 @@ test('ChatGPTAdapter.submit waits past empty target responses for the real HTTP 
         page.emit('response', {
           request: () => secondRequest,
           text: async () => {
-            const raw = createChatGptHttpResponse('READY')
+            const raw = createChatGptHttpResponse(
+              'READY',
+              true,
+              'conversation-1',
+              'new-parent-chain'
+            )
             parsedBodies.push(raw)
             return raw
           },
@@ -282,7 +318,141 @@ test('ChatGPTAdapter.submit waits past empty target responses for the real HTTP 
   const result = await adapter.submit()
 
   assert.equal(result, 'READY')
-  assert.deepEqual(parsedBodies, [createChatGptHttpResponse('READY')])
+  assert.deepEqual(parsedBodies, [
+    createChatGptHttpResponse(
+      'READY',
+      true,
+      'conversation-1',
+      'new-parent-chain'
+    ),
+  ])
+})
+
+test('ChatGPTAdapter selects the response node instead of current_node', async () => {
+  const adapter = createTestChatGPTAdapter()
+  const setupPrompt = '## Initialization\nReply exactly: READY'
+  Object.assign(adapter, { pendingText: setupPrompt })
+
+  const request = {
+    method: () => 'POST',
+    url: () => 'https://chatgpt.com/backend-api/f/conversation',
+    postData: () => createChatGptRequestBody(setupPrompt),
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () => createChatGptHttpResponseWithBackgroundCurrentNode(),
+        url: () => 'https://chatgpt.com/backend-api/conversation',
+        status: () => 200,
+      })
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'visible response')
+})
+
+test('ChatGPTAdapter prefers a later owned websocket message over an HTTP snapshot', async () => {
+  const adapter = createTestChatGPTAdapter()
+  const setupPrompt = '## Initialization\nReply exactly: READY'
+  Object.assign(adapter, { pendingText: setupPrompt })
+
+  const request = {
+    method: () => 'POST',
+    url: () => 'https://chatgpt.com/backend-api/f/conversation',
+    postData: () => createChatGptRequestBody(setupPrompt),
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () =>
+          createChatGptHttpResponse(
+            'intermediate snapshot',
+            true,
+            'conversation-1',
+            'submitted-user'
+          ),
+        url: () => 'https://chatgpt.com/backend-api/conversation',
+        status: () => 200,
+      })
+      adapter.websocketFrames.push(
+        JSON.stringify({
+          conversation_id: 'conversation-1',
+          message: {
+            id: 'final-message',
+            parent_id: 'message-1',
+            author: { role: 'assistant' },
+            content: {
+              content_type: 'text',
+              parts: ['final response'],
+            },
+            status: 'finished_successfully',
+            end_turn: true,
+            channel: 'final',
+            metadata: {},
+          },
+        })
+      )
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'final response')
+})
+
+test('ChatGPTAdapter waits for the selected response to finish', async () => {
+  const adapter = createTestChatGPTAdapter()
+  const setupPrompt = '## Initialization\nReply exactly: READY'
+  Object.assign(adapter, { pendingText: setupPrompt })
+
+  const request = {
+    method: () => 'POST',
+    url: () => 'https://chatgpt.com/backend-api/f/conversation',
+    postData: () => createChatGptRequestBody(setupPrompt),
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () =>
+          createChatGptHttpResponseWithBackgroundCurrentNode(
+            'visible response',
+            false
+          ),
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        status: () => 200,
+      })
+      setTimeout(() => {
+        page.emit('response', {
+          request: () => request,
+          text: async () =>
+            createChatGptHttpResponseWithBackgroundCurrentNode(),
+          url: () => 'https://chatgpt.com/backend-api/f/conversation',
+          status: () => 200,
+        })
+      }, 20)
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'visible response')
 })
 
 test('ChatGPTAdapter.submit fails closed when another indistinguishable request appears', async () => {

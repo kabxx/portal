@@ -739,12 +739,11 @@ test('RuntimeCore cancels an adapter restore during retry recovery', async () =>
   assert.equal(adapter.restoreSignal, controller.signal)
 })
 
-function createAgentSession(prompt: string, accepts = true): AgentSession {
+function createAgentSession(prompt: string): AgentSession {
   let inlinePending = false
   return {
     initialization: {
       prompt,
-      accepts: () => accepts,
     },
     previewInput: async (input) => input,
     prepareInput: async (input) => {
@@ -768,8 +767,8 @@ test('RuntimeCore consumes an Agent session instead of rendering setup text', as
   assert.deepEqual(adapter.attachedTexts, [agentPrompt])
 })
 
-test('RuntimeCore accepts a case-insensitive READY token with extra text', async () => {
-  const adapter = new FakeAdapter(['rEaDy - setup complete'])
+test('RuntimeCore accepts any provider response during initialization', async () => {
+  const adapter = new FakeAdapter(['Initialization complete.'])
   const runtime = new RuntimeCore(
     adapter,
     createTestToolRegistry(adapter, []),
@@ -794,17 +793,17 @@ test('RuntimeCore sends the initialization selected by the Agent plugin', async 
   assert.equal(adapter.attachedTexts[0], 'chat handshake')
 })
 
-test('RuntimeCore rejects a setup handshake without a READY token', async () => {
-  const adapter = new FakeAdapter(['Initialization complete.'])
+test('RuntimeCore does not inspect an empty initialization response', async () => {
+  const adapter = new FakeAdapter([''])
   const runtime = new RuntimeCore(
     adapter,
     createTestToolRegistry(adapter, []),
     {
-      agentSession: createAgentSession('agent prompt', false),
+      agentSession: createAgentSession('agent prompt'),
     }
   )
 
-  await assert.rejects(runtime.init(), /Agent initialization failed/)
+  await runtime.init()
 })
 
 test('RuntimeCore cancels while waiting for a tool result without feeding it back', async () => {

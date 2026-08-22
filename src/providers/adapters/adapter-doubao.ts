@@ -247,7 +247,7 @@ export class DoubaoAdapter extends ProviderAdapter {
         timeoutMs: this.getRestoreTimeoutMs(),
         signal,
       })
-      if (!(await this.isLoggedIn())) {
+      if (!(await this.isLoggedIn({ signal }))) {
         throw new ProviderAdapterError(
           'restore',
           'Doubao is not logged in for the current browser profile.',
@@ -339,12 +339,13 @@ export class DoubaoAdapter extends ProviderAdapter {
     return state.result
   }
 
-  public async isLoggedIn(): Promise<boolean> {
+  public async isLoggedIn(options: AbortOptions = {}): Promise<boolean> {
+    throwIfAborted(options.signal)
     if (!this.page.url().startsWith(DOUBAO_CHAT_URL)) {
       return false
     }
 
-    return await this.ui.isLoggedIn()
+    return await abortable(this.ui.isLoggedIn(), options.signal)
   }
 
   public async changeModel(model: ResolvedProviderModel): Promise<void> {

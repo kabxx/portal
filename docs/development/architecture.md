@@ -85,9 +85,10 @@ next user message carries the Action Result. Portal internals remain named
 Tool, ToolRequest, and ToolResult.
 
 The first-party Prompt plugins own the exact sections and Skill snapshot. The
-first-party Agent plugins own READY acceptance, interactive initialization,
-and first-input inline policy. TUI agent creation and spawned runtimes submit
-the full setup. Chat creation sends only the chat Prompt handshake. `portal
+first-party Agent plugins own interactive initialization and first-input inline
+policy. TUI agent creation and spawned runtimes submit the full setup and wait
+for the provider response without validating its text. Chat creation sends only
+the chat Prompt initialization. `portal
 exec` renders the full Prompt with `## Task` in the first provider message.
 Resume opens no Agent session because the existing provider conversation
 already owns its context.

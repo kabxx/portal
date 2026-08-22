@@ -15,7 +15,10 @@ import type {
 import type { ToolHost, ToolResult } from '../tools/tool-host.ts'
 import { ResourceScope } from '../shared/resource-scope.ts'
 import type { AgentMode, AgentStartup } from '../agents/agent-extension.ts'
-import { isAbortError } from '../runtime/runtime-cancellation.ts'
+import {
+  isAbortError,
+  throwIfAborted,
+} from '../runtime/runtime-cancellation.ts'
 
 export type ConversationItem =
   | { readonly kind: 'user'; readonly text: string }
@@ -111,6 +114,7 @@ export class ConversationHostError extends Error {
 }
 
 export interface ConversationOpenOptions {
+  readonly signal?: AbortSignal
   readonly providerId: string
   readonly providerOwnerId: string
   readonly conversationId?: string | null
@@ -176,6 +180,7 @@ export class ConversationHost {
       options.providerOwnerId,
       options.selectionRevision,
       {
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
         conversationUrl: options.conversationUrl ?? null,
         model: options.model ?? null,
         agentMode: options.agentMode,
@@ -190,6 +195,7 @@ export class ConversationHost {
     )
     const id = options.threadId ?? `conversation-${randomUUID()}`
     try {
+      throwIfAborted(options.signal)
       const thread = this.#store.create({
         id,
         providerId: options.providerId,

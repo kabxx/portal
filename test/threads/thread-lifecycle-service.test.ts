@@ -467,6 +467,63 @@ test('shutdown reports a provisioning rollback failure', async () => {
   assert.deepEqual(harness.registry.list(), [])
 })
 
+test('cancellation publishes its finished event before surfacing cleanup failure', async () => {
+  const runtimeStarted = Promise.withResolvers<void>()
+  const controller = new AbortController()
+  const harness = createHarness({
+    runtimeFactory: async ({ signal }) => {
+      runtimeStarted.resolve()
+      return await new Promise<ThreadRuntime>((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            reject(
+              new AggregateError(
+                [signal.reason, new Error('provider cleanup failed')],
+                'Provider initialization and cleanup both failed.'
+              )
+            )
+          },
+          { once: true }
+        )
+      })
+    },
+  })
+
+  const provisioning = harness.service.create(
+    {
+      provider: 'chatgpt',
+      model: null,
+      mode: 'agent',
+      source: 'tui',
+      activate: true,
+    },
+    controller.signal
+  )
+  await runtimeStarted.promise
+  controller.abort()
+
+  await assert.rejects(provisioning, (error: unknown) => {
+    assert.ok(error instanceof AggregateError)
+    assert.match(error.message, /initialization and cleanup both failed/)
+    return true
+  })
+  const finishedEvents = harness.events.filter(
+    (event) => event.type === 'provision.finished'
+  )
+  assert.equal(finishedEvents.length, 1)
+  assert.deepEqual(finishedEvents[0], {
+    type: 'provision.finished',
+    threadId: finishedEvents[0]?.threadId,
+    source: 'tui',
+    status: 'cancelled',
+    stage: 'building_runtime',
+    message: 'Thread provisioning was cancelled.',
+  })
+  assert.deepEqual(harness.manager.listThreads(), [])
+  assert.deepEqual(harness.registry.list(), [])
+})
+
 test('close timeout keeps the runtime registry claim while the manager still owns the thread', async () => {
   let releaseRunner!: () => void
   let releaseStop!: () => void

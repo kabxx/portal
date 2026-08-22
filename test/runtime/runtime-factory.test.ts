@@ -24,7 +24,6 @@ import {
   buildPortalAgentPrompt,
   buildPortalChatPrompt,
 } from '../../src/prompts/portal-prompt-plugin.ts'
-import { hasReadyHandshakeToken } from '../../src/agents/portal-agent-plugin.ts'
 import type { AgentSession } from '../../src/agents/agent-extension.ts'
 import type { PromptSkillMetadata } from '../../src/skills/skill-services.ts'
 
@@ -93,9 +92,7 @@ function createTestAgentSession(options: {
   let inlinePending = options.setupMode === 'inline'
   return {
     initialization:
-      options.setupMode === 'inline'
-        ? null
-        : { prompt: render(), accepts: hasReadyHandshakeToken },
+      options.setupMode === 'inline' ? null : { prompt: render() },
     previewInput: async (input) => (inlinePending ? render(input) : input),
     prepareInput: async (input) => {
       if (!inlinePending) return input
@@ -257,7 +254,7 @@ test('createRuntimeFromAdapter can inline setup with the first task', async () =
   assert.equal(adapter.attachedTexts.length, 1)
   assert.match(adapter.attachedTexts[0] ?? '', /^# Portal Prompt/m)
   assert.match(adapter.attachedTexts[0] ?? '', /## Task\n\nDo the task\./)
-  assert.doesNotMatch(adapter.attachedTexts[0] ?? '', /Reply exactly: READY/)
+  assert.doesNotMatch(adapter.attachedTexts[0] ?? '', /## Initialization/)
 })
 
 test('createRuntimeFromAdapter can send only the setup handshake for chat threads', async () => {

@@ -318,6 +318,141 @@ test('ProviderHost binding cancellation does not wait for a never-settling facto
   await disposing
 })
 
+test('ProviderHost request cancellation aborts binding creation and closes a late endpoint once', async (t) => {
+  const factoryStarted = Promise.withResolvers<AbortSignal>()
+  const endpointDeferred = Promise.withResolvers<ProviderEndpoint>()
+  let closeCalls = 0
+  const { host, root } = createHost(async (context) => {
+    factoryStarted.resolve(context.signal)
+    return await endpointDeferred.promise
+  })
+  t.after(async () => {
+    endpointDeferred.resolve(
+      Object.assign(
+        async () => ({
+          events: (async function* () {})(),
+          completion: Promise.resolve({
+            status: 'canceled' as const,
+            message: 'late cleanup',
+            delivery: 'unknown' as const,
+          }),
+          cancel: () => undefined,
+        }),
+        {
+          close: async () => {
+            closeCalls += 1
+          },
+        }
+      )
+    )
+    await root.dispose().catch(() => undefined)
+  })
+  const controller = new AbortController()
+  const opening = host.openBinding(
+    'test.provider',
+    'test.provider-package',
+    'request-cancel',
+    { ...RESUME_BINDING, signal: controller.signal }
+  )
+  void opening.catch(() => undefined)
+  const providerSignal = await factoryStarted.promise
+
+  controller.abort(new PortalAbortError('cancel request'))
+
+  await assert.rejects(opening, (error: unknown) => {
+    assert.ok(error instanceof Error)
+    assert.equal(error.name, 'AbortError')
+    assert.match(error.message, /cancel request/)
+    return true
+  })
+  assert.equal(providerSignal.aborted, true)
+
+  endpointDeferred.resolve(
+    Object.assign(
+      async () => ({
+        events: (async function* () {})(),
+        completion: Promise.resolve({
+          status: 'canceled' as const,
+          message: 'late cleanup',
+          delivery: 'unknown' as const,
+        }),
+        cancel: () => undefined,
+      }),
+      {
+        close: async () => {
+          closeCalls += 1
+        },
+      }
+    )
+  )
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(closeCalls, 1)
+})
+
+test('ProviderHost does not invoke a Provider factory for an already canceled request', async (t) => {
+  let factoryCalls = 0
+  const { host, root } = createHost(async () => {
+    factoryCalls += 1
+    throw new Error('Provider factory must not run.')
+  })
+  t.after(async () => await root.dispose().catch(() => undefined))
+  const controller = new AbortController()
+  controller.abort(new PortalAbortError('already canceled'))
+
+  await assert.rejects(
+    host.openBinding(
+      'test.provider',
+      'test.provider-package',
+      'already-canceled',
+      { ...RESUME_BINDING, signal: controller.signal }
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error)
+      assert.equal(error.name, 'AbortError')
+      return true
+    }
+  )
+  assert.equal(factoryCalls, 0)
+})
+
+test('ProviderHost detaches the request signal after binding creation', async (t) => {
+  let endpointCloseCalls = 0
+  const { host, root } = createHost(async () =>
+    Object.assign(
+      async () => ({
+        events: (async function* () {})(),
+        completion: Promise.resolve({
+          status: 'completed' as const,
+          text: '',
+          delivery: 'not-sent' as const,
+        }),
+        cancel: () => undefined,
+      }),
+      {
+        close: async () => {
+          endpointCloseCalls += 1
+        },
+      }
+    )
+  )
+  t.after(async () => await root.dispose())
+  const controller = new AbortController()
+  const binding = await host.openBinding(
+    'test.provider',
+    'test.provider-package',
+    'request-complete',
+    { ...RESUME_BINDING, signal: controller.signal }
+  )
+
+  controller.abort(new PortalAbortError('late request cancellation'))
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.equal(binding.scope.state, 'open')
+  assert.equal(endpointCloseCalls, 0)
+  await binding.close()
+  assert.equal(endpointCloseCalls, 1)
+})
+
 test('ProviderHost binds one owner endpoint and closes an exchange after provider completion', async (t) => {
   const events: ProviderEvent[] = []
   const { host, root } = createHost(async () => async () => ({

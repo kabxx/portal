@@ -26,7 +26,6 @@ export type AgentStartup = (typeof AGENT_STARTUPS)[number]
 
 export interface AgentInitialization {
   readonly prompt: string
-  accepts(response: string): boolean
 }
 
 export interface AgentSession {

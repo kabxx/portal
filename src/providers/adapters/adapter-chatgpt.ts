@@ -602,10 +602,19 @@ export class ChatGPTAdapter extends ProviderAdapter {
         }
 
         const updateHttpParsedResponse = (response: ChatGPTParsedResponse) => {
+          const current = httpParsedResponse
+          const isSameMessage =
+            current !== null &&
+            ((response.messageId !== undefined &&
+              current.messageId === response.messageId) ||
+              (response.messageId === undefined &&
+                current.messageId === undefined))
           if (
-            httpParsedResponse === null ||
-            response.text.length > httpParsedResponse.text.length ||
-            (response.isFinished && !httpParsedResponse.isFinished)
+            current === null ||
+            (!isSameMessage && response.messageId !== undefined) ||
+            (isSameMessage &&
+              (response.text.length > current.text.length ||
+                (response.isFinished && !current.isFinished)))
           ) {
             httpParsedResponse = response
           }
@@ -840,34 +849,30 @@ export class ChatGPTAdapter extends ProviderAdapter {
           ) {
             observation.parsedWebSocketText = true
           }
-          const candidates: ChatGPTParsedResponse[] = []
-          if (
+          const httpCandidate =
+            httpParsedResponse !== null &&
+            httpParsedResponse.text.trim().length > 0
+              ? httpParsedResponse
+              : null
+          const websocketCandidate =
             websocketParsedResponse !== null &&
             websocketParsedResponse.text.trim().length > 0
-          ) {
-            candidates.push(websocketParsedResponse)
-          }
-          if (
-            httpParsedResponse !== null &&
-            httpParsedResponse.text.trim().length > 0 &&
-            (ownedUserMessageId === null ||
-              httpParsedResponse.parentMessageId === undefined ||
-              httpParsedResponse.parentMessageId === ownedUserMessageId)
-          ) {
-            // This response is tied to the exact Playwright Request. A missing
-            // parent_id is therefore incomplete metadata, not a contradiction.
-            candidates.push(httpParsedResponse)
-          }
-          if (candidates.length === 0) {
+              ? websocketParsedResponse
+              : null
+          const best =
+            httpCandidate !== null && websocketCandidate !== null
+              ? httpCandidate.messageId !== undefined &&
+                websocketCandidate.messageId === httpCandidate.messageId
+                ? websocketCandidate.isFinished ||
+                  websocketCandidate.text.length >= httpCandidate.text.length
+                  ? websocketCandidate
+                  : httpCandidate
+                : websocketCandidate.isFinished || !httpCandidate.isFinished
+                  ? websocketCandidate
+                  : httpCandidate
+              : (httpCandidate ?? websocketCandidate)
+          if (best === null || best === undefined) {
             return null
-          }
-          let best = candidates[0]!
-          for (const current of candidates.slice(1)) {
-            if (current.isFinished !== best.isFinished) {
-              best = current.isFinished ? current : best
-              continue
-            }
-            best = current.text.length >= best.text.length ? current : best
           }
           observation.parsedOwnedText = best.text.trim().length > 0
           observation.parsedFinished ||= best.isFinished

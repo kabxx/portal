@@ -31,6 +31,10 @@ import type { ResolvedProviderModel } from './provider-model-catalog.ts'
 import type { ProviderEvent } from './provider-exchange.ts'
 import type { AgentMode, AgentStartup } from '../agents/agent-extension.ts'
 import type { AgentHost } from '../agents/agent-host.ts'
+import {
+  getAbortError,
+  throwIfAborted,
+} from '../runtime/runtime-cancellation.ts'
 
 export class ProviderHostError extends Error {
   public constructor(message: string) {
@@ -68,6 +72,7 @@ export interface ProviderBinding {
 }
 
 export interface ProviderBindingOpenOptions {
+  readonly signal?: AbortSignal
   readonly agentMode: AgentMode | null
   readonly agentStartup: AgentStartup
   readonly workingDirectory?: string
@@ -131,6 +136,25 @@ export class ProviderHost {
     return Object.freeze(
       this.#graph.contributions(providerContributions).map(({ value }) => value)
     )
+  }
+
+  /** Waits for endpoint factories that were canceled after their promise escaped. */
+  public async waitForLateFactorySettlements(): Promise<void> {
+    const settlements = [...this.#lateFactorySettlements]
+    const outcomes = await Promise.allSettled(settlements)
+    for (const settlement of settlements) {
+      this.#lateFactorySettlements.delete(settlement)
+    }
+    const errors = outcomes.flatMap((outcome) =>
+      outcome.status === 'rejected' ? [outcome.reason as unknown] : []
+    )
+    if (errors.length === 1) throw errors[0]
+    if (errors.length > 1) {
+      throw new AggregateError(
+        errors,
+        'Provider endpoint late cleanup failed during shutdown.'
+      )
+    }
   }
 
   public resolveProviderId(value: string): string | null {
@@ -244,7 +268,9 @@ export class ProviderHost {
       this.#serviceScope
     )
     const services = this.#createServiceAccessor(contribution, extensionScope)
+    const removeRequestAbort = linkRequestAbort(scope, options.signal)
     try {
+      throwIfAborted(options.signal)
       const { agentMode, agentStartup } = options
       if (
         (agentStartup === 'resume' && agentMode !== null) ||
@@ -335,6 +361,7 @@ export class ProviderHost {
         await endpoint.close?.(reason)
       })
       endpointAdopted = true
+      throwIfAborted(options.signal)
       return providerBinding
     } catch (error) {
       try {
@@ -347,6 +374,8 @@ export class ProviderHost {
         )
       }
       throw error
+    } finally {
+      removeRequestAbort()
     }
   }
 
@@ -427,14 +456,11 @@ async function raceBindingWithAbort<T>(
   signal: AbortSignal
 ): Promise<T> {
   if (signal.aborted) {
-    throw toProviderError(signal.reason, 'Provider binding creation canceled.')
+    throw getAbortError(signal)
   }
   let remove = () => {}
   const aborted = new Promise<never>((_, reject) => {
-    const onAbort = () =>
-      reject(
-        toProviderError(signal.reason, 'Provider binding creation canceled.')
-      )
+    const onAbort = () => reject(getAbortError(signal))
     signal.addEventListener('abort', onAbort, { once: true })
     remove = () => signal.removeEventListener('abort', onAbort)
   })
@@ -443,6 +469,22 @@ async function raceBindingWithAbort<T>(
   } finally {
     remove()
   }
+}
+
+function linkRequestAbort(
+  scope: ResourceScope,
+  signal?: AbortSignal
+): () => void {
+  if (signal === undefined) return () => {}
+  const abortScope = () => {
+    void scope.dispose({ reason: getAbortError(signal) }).catch(() => undefined)
+  }
+  if (signal.aborted) {
+    abortScope()
+    return () => {}
+  }
+  signal.addEventListener('abort', abortScope, { once: true })
+  return () => signal.removeEventListener('abort', abortScope)
 }
 
 class ProviderBindingRuntime implements ProviderBinding {

@@ -407,8 +407,8 @@ function createCommandCompletionSnapshot(
       sourceId: 'portal.command.providers',
       dependencies: Object.freeze({}),
       candidates: Object.freeze(
-        contributions.map(({ id, descriptor }): CommandCompletionCandidate =>
-          Object.freeze({ value: id, description: descriptor.label })
+        contributions.map(({ id }): CommandCompletionCandidate =>
+          Object.freeze({ value: id })
         )
       ),
     }),
@@ -420,7 +420,7 @@ function createCommandCompletionSnapshot(
         sourceId: 'portal.command.models',
         dependencies: Object.freeze({ provider: provider.id }),
         candidates: Object.freeze(
-          models.map((value) => Object.freeze({ value, description: value }))
+          models.map((value) => Object.freeze({ value }))
         ),
       })
     )
@@ -437,9 +437,7 @@ function createCommandCompletionSnapshot(
             'model-key': modelKey,
           }),
           candidates: Object.freeze(
-            model.options.map((value) =>
-              Object.freeze({ value, description: value })
-            )
+            model.options.map((value) => Object.freeze({ value }))
           ),
         })
       )

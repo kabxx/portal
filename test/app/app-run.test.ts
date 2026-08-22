@@ -430,6 +430,93 @@ test('a foreground Command owns busy state and Ctrl+C cancellation', async () =>
   }
 })
 
+test('Ctrl+C cancels Provider initialization and restores the Home prompt', async () => {
+  const cwd = mkdtempSync(
+    path.join(os.tmpdir(), 'portal-app-provision-cancel-')
+  )
+  const dataDirectory = path.join(cwd, 'portal-state')
+  const ui = new TerminalController()
+  const factoryStarted = createDeferred<AbortSignal>()
+  const factoryAborted = createDeferred<void>()
+  const terminal = { onInterrupt: null as (() => void) | null }
+  let runPromise: Promise<void> | null = null
+  const inkApp = {
+    rerender: () => {},
+    unmount: () => {},
+    waitUntilExit: async () => await new Promise<never>(() => {}),
+    waitUntilRenderFlush: async () => {},
+    cleanup: () => {},
+    clear: () => {},
+  }
+  try {
+    runPromise = run(
+      [process.execPath, 'portal', '--data-dir', dataDirectory],
+      {
+        cwd,
+        terminalController: ui,
+        renderTerminal: (node) => {
+          if (isValidElement<{ onInterrupt?: () => void }>(node)) {
+            terminal.onInterrupt = node.props.onInterrupt ?? null
+          }
+          return inkApp
+        },
+        launchBrowser: async () => ({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+          context: { isClosed: () => false } as unknown as BrowserContext,
+          disconnected: new Promise(() => {}),
+          close: async () => {},
+        }),
+        [portalHostTestExtensions]: createTestProviderExtensions(
+          async (_providerId, context) => {
+            factoryStarted.resolve(context.signal)
+            try {
+              return await waitForAbort(context.signal)
+            } finally {
+              factoryAborted.resolve()
+            }
+          }
+        ),
+      }
+    )
+
+    await waitFor(() => ui.getState().prompt.active, 'Home prompt')
+    assert.equal(ui.submitInput('/thread agent chatgpt'), true)
+    const providerSignal = await withTimeout(
+      factoryStarted.promise,
+      'Provider initialization'
+    )
+    await waitFor(() => ui.getState().busy, 'provision busy state')
+    assert.ok(terminal.onInterrupt !== null)
+
+    terminal.onInterrupt()
+
+    await withTimeout(factoryAborted.promise, 'Provider initialization abort')
+    await waitFor(
+      () =>
+        !ui.getState().busy &&
+        ui.getState().prompt.active &&
+        ui.promptLabel() === 'portal > ',
+      'restored Home prompt'
+    )
+    assert.equal(providerSignal.aborted, true)
+    assert.equal(
+      ui.getState().timeline.some(({ body }) => /cancel|abort/i.test(body)),
+      false
+    )
+
+    assert.equal(ui.submitInput('/exit'), true)
+    await withTimeout(runPromise, 'Portal provision cancellation shutdown')
+  } finally {
+    terminal.onInterrupt?.()
+    if (runPromise !== null) {
+      await withTimeout(runPromise, 'Portal test cleanup', 3000).catch(
+        () => undefined
+      )
+    }
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
 function quoteShellArg(value: string): string {
   return os.platform() === 'win32'
     ? `'${value.replaceAll("'", "''")}'`

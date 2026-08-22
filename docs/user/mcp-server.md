@@ -71,10 +71,11 @@ enabled.
 `portal_create_thread` accepts the currently enabled Agent modes. When both
 first-party modes are enabled, the optional `mode` is `"agent"` or `"chat"`
 and defaults to `"agent"`; with one mode enabled, the schema exposes only that
-mode and uses it as the default. Chat creation sends only the shared `READY` handshake,
-using a case-insensitive whole-word match, instead of the full portal setup
-prompt. It still creates a normal local runtime with configured tools, Skills,
-and local runtime services, so chat mode is not a sandbox.
+mode and uses it as the default. Chat creation sends only the shared setup prompt
+instead of the full portal setup prompt. It waits for the provider response and
+a reusable composer without requiring any particular response text. It still
+creates a normal local runtime with configured tools, Skills, and local runtime
+services, so chat mode is not a sandbox.
 
 `portal_create_thread` accepts `provider` plus optional named `model` and
 model-specific `option` keys from [Providers](providers.md). Numeric menu
