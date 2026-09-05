@@ -148,6 +148,8 @@ export interface ConversationSendOptions {
   readonly invocation?: import('./child-conversation-service.ts').ChildConversationParent
 }
 
+export const DEFAULT_MAX_TOOL_LOOPS = 50
+
 export class ConversationHost {
   readonly #providerHost: ProviderHost
   readonly #toolHost: ToolHost
@@ -353,7 +355,7 @@ export class ConversationHost {
     else options.signal?.addEventListener('abort', cancel, { once: true })
     try {
       let toolLoops = 0
-      const maxToolLoops = options.maxToolLoops ?? 8
+      const maxToolLoops = options.maxToolLoops ?? DEFAULT_MAX_TOOL_LOOPS
       let attachments: readonly AttachmentRef[] = [
         ...(options.attachments ?? []),
       ]

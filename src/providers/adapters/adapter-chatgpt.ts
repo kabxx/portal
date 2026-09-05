@@ -39,6 +39,7 @@ import {
 
 const CHATGPT_CHAT_URL = 'https://chatgpt.com'
 const CHATGPT_CHAT_WS_URL = 'wss://ws.chatgpt.com/p18/ws/user'
+const CHATGPT_RESPONSE_START_TIMEOUT_MS = 60000
 const CHATGPT_RESPONSE_STALL_TIMEOUT_MS = 60000
 const CHATGPT_COMPOSER_READY_TIMEOUT_MS = 30000
 const CHATGPT_FINISHED_RESPONSE_SETTLE_MS = 1000
@@ -466,6 +467,13 @@ export class ChatGPTAdapter extends ProviderAdapter {
 
   protected getSubmitBlockedWarningMessage(): string {
     return buildSubmitBlockedWarningMessage('ChatGPT')
+  }
+
+  protected override getSubmitResponseStartTimeoutMs(): number {
+    return (
+      this.options.timings?.responseStartTimeoutMs ??
+      CHATGPT_RESPONSE_START_TIMEOUT_MS
+    )
   }
 
   protected override getSubmitResponseStallTimeoutMs(): number {

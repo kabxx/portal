@@ -39,6 +39,35 @@ type ChatGPTAdapterHarness = Pick<ChatGPTAdapter, keyof ChatGPTAdapter> & {
   getPostResponseComposerReadyTimeoutMs(): number
 }
 
+class InspectableChatGPTAdapter extends ChatGPTAdapter {
+  public readResponseStartTimeoutMs(): number {
+    return this.getSubmitResponseStartTimeoutMs()
+  }
+}
+
+test('ChatGPTAdapter uses a 60-second default response-start timeout and honors overrides', () => {
+  const defaultAdapter = new InspectableChatGPTAdapter(
+    createBrowserContextStub()
+  )
+  assert.equal(defaultAdapter.readResponseStartTimeoutMs(), 60_000)
+
+  const configuredAdapter = new InspectableChatGPTAdapter(
+    createBrowserContextStub(),
+    {
+      timings: {
+        requestStartWarningAfterMs: 1,
+        blockedWarningIntervalMs: 2,
+        responseStartTimeoutMs: 3,
+        responseStallTimeoutMs: 4,
+        restoreTimeoutMs: 5,
+        historyLoadTimeoutMs: 6,
+        historyPageTimeoutMs: 7,
+      },
+    }
+  )
+  assert.equal(configuredAdapter.readResponseStartTimeoutMs(), 3)
+})
+
 function createTestChatGPTAdapter(): ChatGPTAdapterHarness {
   const adapter = new ChatGPTAdapter(createBrowserContextStub())
   const candidate: object = adapter

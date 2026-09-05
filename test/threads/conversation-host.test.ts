@@ -231,6 +231,83 @@ test('ConversationHost owns the commit and promotes a Provider Tool request into
   ])
 })
 
+test('ConversationHost enforces the default 50-tool-loop limit', async (t) => {
+  let exchangeCount = 0
+  let toolExecutionCount = 0
+  const root = new ResourceScope('conversation-tool-loop-limit-test')
+  t.after(async () => await root.dispose().catch(() => undefined))
+  const binding: ProviderBinding = {
+    providerId: 'test.provider',
+    capabilities: [],
+    scope: root.createChild('provider-binding'),
+    conversationId: 'remote-tool-loop-limit',
+    conversationUrl: null,
+    preflightInput: async () => ({ status: 'unknown' }),
+    restore: async () => undefined,
+    loadHistory: async () => ({ messages: [], complete: false, warning: null }),
+    onUnexpectedClose: () => () => {},
+    listCapabilities: async () => ({ capabilities: [], usage: '' }),
+    executeCapability: async () => ({
+      status: 'unsupported-provider',
+      message: 'unsupported',
+    }),
+    exchange: async () => {
+      exchangeCount += 1
+      return {
+        events: (async function* () {
+          yield {
+            type: 'tool.request' as const,
+            toolCallId: `call-${exchangeCount}`,
+            name: 'loop_tool',
+            input: {},
+          }
+        })(),
+        completion: Promise.resolve({
+          status: 'completed' as const,
+          text: '',
+          delivery: 'sent' as const,
+        }),
+        cancel: () => undefined,
+      }
+    },
+    close: async () => undefined,
+  }
+  const conversations = new ConversationHost({
+    // Focused structural fakes exercise only the loop policy here.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    providerHost: {
+      openBinding: async () => binding,
+    } as unknown as ProviderHost,
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    toolHost: {
+      execute: async () => {
+        toolExecutionCount += 1
+        return { status: 'success', output: {} }
+      },
+    } as unknown as ToolHost,
+    root,
+  })
+
+  const thread = await conversations.open({
+    providerId: 'test.provider',
+    providerOwnerId: 'test.provider-package',
+    selectionRevision: 'tool-loop-limit',
+    agentMode: null,
+    agentStartup: 'resume',
+  })
+
+  const result = await conversations.send(thread.id, 'hello')
+  const turn = result.turns[0]
+  assert.ok(turn)
+  assert.equal(exchangeCount, 51)
+  assert.equal(toolExecutionCount, 50)
+  assert.equal(turn.status, 'failed')
+  assert.deepEqual(turn.items.at(-1), {
+    kind: 'error',
+    message: 'Tool loop limit exceeded.',
+  })
+})
+
 test('ConversationHost reports both generation stop and Provider close failures', async (t) => {
   const root = new ResourceScope('conversation-close-test')
   t.after(async () => await root.dispose().catch(() => undefined))

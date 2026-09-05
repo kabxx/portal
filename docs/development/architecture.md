@@ -99,7 +99,8 @@ already owns its context.
 for every Surface. Provisioning resolves a Provider contribution and opens a
 Kernel `ProviderBinding`. The Provider plugin owns login, Page/session setup,
 recovery, and model conversion. `ConversationHost` owns canonical Thread turns
-and executes each model response as a Tool loop:
+and executes each model response as a Tool loop, with a default safety limit of
+50 tool loops per user turn:
 
 1. submit the current user or Tool Result text;
 2. capture the provider response;
