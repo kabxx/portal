@@ -118,6 +118,9 @@ function isCapturedFetchEntry(value: unknown): value is CapturedFetchEntry {
     typeof value.id === 'number' &&
     typeof value.url === 'string' &&
     typeof value.method === 'string' &&
+    (value.startedAt === undefined ||
+      (typeof value.startedAt === 'number' &&
+        Number.isFinite(value.startedAt))) &&
     (typeof value.status === 'number' || value.status === null) &&
     Array.isArray(value.chunks) &&
     value.chunks.every((chunk) => typeof chunk === 'string') &&
@@ -378,6 +381,7 @@ export interface CapturedFetchEntry {
   id: number
   url: string
   method: string
+  startedAt?: number
   requestBody?: string | null
   status: number | null
   chunks: string[]
@@ -488,18 +492,28 @@ const FETCH_CAPTURE_INIT_SCRIPT = String.raw`
       ).toUpperCase();
       const requestBody = readRequestBody(init?.body);
 
-      const response = await globalObject.__portalOriginalFetch(...args);
       const entry = registerEntry({
         id: globalObject.__portalFetchCaptureNextEntryId,
         url,
         method,
+        startedAt: Date.now(),
         requestBody,
-        status: Number.isFinite(response.status) ? response.status : null,
+        status: null,
         chunks: [],
         done: false,
         error: null,
       });
       globalObject.__portalFetchCaptureNextEntryId += 1;
+
+      let response;
+      try {
+        response = await globalObject.__portalOriginalFetch(...args);
+        entry.status = Number.isFinite(response.status) ? response.status : null;
+      } catch (error) {
+        entry.error = String(error);
+        entry.done = true;
+        throw error;
+      }
 
       const clone = response.clone();
       const reader = clone.body?.getReader() ?? null;
@@ -579,6 +593,7 @@ const FETCH_CAPTURE_INIT_SCRIPT = String.raw`
           id: globalObject.__portalFetchCaptureNextEntryId,
           url: this.__portalUrl ?? '',
           method: this.__portalMethod ?? 'GET',
+          startedAt: Date.now(),
           requestBody: readRequestBody(body),
           status: null,
           chunks: [],
@@ -1366,6 +1381,7 @@ export abstract class ProviderAdapter<
             id: number
             url: string
             method: string
+            startedAt?: number
             requestBody?: string | null
             status: number | null
             chunks: string[]
@@ -1391,6 +1407,7 @@ export abstract class ProviderAdapter<
               id: number
               url: string
               method: string
+              startedAt?: number
               requestBody?: string | null
               status: number | null
               chunks: string[]

@@ -7,9 +7,9 @@ import {
   buildSubmitBlockedWarningMessage,
   ProviderAdapterError,
   ProviderAdapterUnsupportedError,
-  requestBodyContainsSubmittedText,
   createDeferred,
   delayAsync,
+  type CapturedFetchEntry,
 } from './adapter-base.ts'
 import {
   abortable,
@@ -44,6 +44,7 @@ const CHATGPT_RESPONSE_STALL_TIMEOUT_MS = 60000
 const CHATGPT_COMPOSER_READY_TIMEOUT_MS = 30000
 const CHATGPT_FINISHED_RESPONSE_SETTLE_MS = 1000
 const CHATGPT_REQUEST_OWNERSHIP_SETTLE_MS = 100
+const CHATGPT_SAME_MESSAGE_RETRY_GRACE_MS = 500
 
 export type ChatGPTActionCapability = string
 
@@ -102,55 +103,182 @@ function readChatGPTConversationIdFromUrl(
   }
 }
 
+/**
+ * Read the user-message UUID from a ChatGPT submit body without inspecting
+ * the message text.  ChatGPT has used both `role` and `author.role`, and a
+ * few transport layers wrap the JSON body in another JSON or URL-encoded
+ * value, so the walk deliberately accepts all of those shapes.
+ */
 function readChatGPTSubmittedMessageId(
-  raw: string | null,
-  submittedText: string
+  raw: string | null | undefined
 ): string | undefined {
-  if (raw === null || submittedText === '') return undefined
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    return undefined
+  if (raw === null || raw === undefined || raw === '') return undefined
+
+  const parseJsonVariants = (value: string): unknown[] => {
+    const parsedValues: unknown[] = []
+    let candidate = value
+    // Some browser transports expose an encoded JSON body (or encode a
+    // structural wrapper field) once or twice. Decode only the value being
+    // parsed, and keep the depth bounded so arbitrary user text is never
+    // treated as an unbounded parser input.
+    for (let depth = 0; depth < 4; depth += 1) {
+      const trimmed = candidate.trim()
+      if (trimmed === '') return parsedValues
+      try {
+        const parsed = JSON.parse(trimmed) as unknown
+        parsedValues.push(parsed)
+        if (typeof parsed !== 'string') return parsedValues
+        candidate = parsed
+        continue
+      } catch {
+        let decoded: string
+        try {
+          decoded = decodeURIComponent(candidate)
+        } catch {
+          return parsedValues
+        }
+        if (decoded === candidate) return parsedValues
+        candidate = decoded
+      }
+    }
+    return parsedValues
   }
 
-  const ids = new Set<string>()
-  const visit = (value: unknown): void => {
-    if (Array.isArray(value)) {
-      for (const child of value) visit(child)
-      return
+  const roots: unknown[] = []
+  const parseRoot = (value: string, includeFormValues = false): void => {
+    roots.push(...parseJsonVariants(value))
+    if (!includeFormValues) return
+    try {
+      for (const formValue of new URLSearchParams(value).values()) {
+        roots.push(...parseJsonVariants(formValue))
+      }
+    } catch {
+      // Non-form-encoded bodies are handled by the direct JSON parse above.
     }
-    if (!isRecord(value)) return
-    const node = value
-    const author = isRecord(node.author) ? node.author : null
+  }
+  parseRoot(raw, true)
+  if (roots.length === 0) return undefined
+
+  const ids: string[] = []
+  const messageArrayIds: string[] = []
+  const visitedObjects = new WeakSet<object>()
+
+  const readUserId = (value: unknown): string | undefined => {
+    if (!isRecord(value)) return undefined
+    const author = isRecord(value.author) ? value.author : null
     const role =
-      typeof node.role === 'string'
-        ? node.role
+      typeof value.role === 'string'
+        ? value.role
         : typeof author?.role === 'string'
           ? author.role
           : null
+    if (role?.toLowerCase() !== 'user') return undefined
     const id =
-      typeof node.id === 'string'
-        ? node.id
-        : typeof node.message_id === 'string'
-          ? node.message_id
-          : typeof node.messageId === 'string'
-            ? node.messageId
+      typeof value.id === 'string'
+        ? value.id
+        : typeof value.message_id === 'string'
+          ? value.message_id
+          : typeof value.messageId === 'string'
+            ? value.messageId
             : null
-    if (
-      role === 'user' &&
-      id !== null &&
-      requestBodyContainsSubmittedText(
-        JSON.stringify(node.content ?? node),
-        submittedText
-      )
-    ) {
-      ids.add(id)
-    }
-    for (const child of Object.values(node)) visit(child)
+    const normalizedId = id?.trim() ?? ''
+    return normalizedId === '' ? undefined : normalizedId
   }
-  visit(parsed)
-  return ids.size === 1 ? [...ids][0] : undefined
+
+  const collectMessageArray = (value: unknown, depth: number): void => {
+    if (depth > 8) return
+    if (typeof value === 'string') {
+      for (const parsed of parseJsonVariants(value)) {
+        collectMessageArray(parsed, depth + 1)
+      }
+      return
+    }
+    if (!Array.isArray(value)) return
+    for (const item of value) {
+      const id = readUserId(item)
+      if (id !== undefined) messageArrayIds.push(id)
+    }
+  }
+
+  const collectContainer = (value: unknown, depth: number): void => {
+    if (depth > 8 || value === null || typeof value !== 'object') return
+    if (visitedObjects.has(value)) return
+    visitedObjects.add(value)
+    if (Array.isArray(value)) {
+      for (const child of value) collectContainer(child, depth + 1)
+      return
+    }
+    const directId = readUserId(value)
+    if (directId !== undefined) ids.push(directId)
+    for (const [key, child] of Object.entries(value)) {
+      if (key === 'messages') {
+        collectMessageArray(child, depth + 1)
+        continue
+      }
+      // Only recurse through structural wrapper fields.  In particular, do
+      // not parse arbitrary strings under `content`/`parts`; user text can
+      // itself look like JSON containing a fake role/id pair.
+      if (
+        key === 'body' ||
+        key === 'data' ||
+        key === 'payload' ||
+        key === 'request' ||
+        key === 'message'
+      ) {
+        if (typeof child === 'string') {
+          for (const parsed of parseJsonVariants(child)) {
+            collectContainer(parsed, depth + 1)
+          }
+        } else {
+          collectContainer(child, depth + 1)
+        }
+      }
+    }
+  }
+
+  for (const root of roots) collectContainer(root, 0)
+  const uniqueMessageArrayIds = [...new Set(messageArrayIds)]
+  if (uniqueMessageArrayIds.length > 0) {
+    // The current user message is appended last in ChatGPT's `messages`
+    // array, after any historical messages included for context.
+    return uniqueMessageArrayIds.at(-1)
+  }
+  const uniqueIds = [...new Set(ids)]
+  // A body may contain historical user messages as well as the new one.  Do
+  // not guess which arbitrary nested id is current; only a single distinct
+  // user id is a reliable request-local anchor.
+  return uniqueIds.length === 1 ? uniqueIds[0] : undefined
+}
+
+function isChatGPTConversationPath(pathname: string): boolean {
+  // These are the two submit routes used by the current ChatGPT frontend.
+  // Do not accept arbitrary conversation subpaths: setup and background
+  // requests share that prefix, and without body matching they are unsafe
+  // ownership candidates.
+  if (
+    pathname === '/backend-api/f/conversation' ||
+    pathname === '/backend-api/conversation'
+  ) {
+    return true
+  }
+  return false
+}
+
+function readChatGPTRequestStartTime(
+  request: import('playwright').Request
+): number | undefined {
+  const candidate = request as import('playwright').Request & {
+    timing?: () => { startTime?: number }
+  }
+  if (typeof candidate.timing !== 'function') return undefined
+  try {
+    const startTime = candidate.timing().startTime
+    return typeof startTime === 'number' && Number.isFinite(startTime)
+      ? startTime
+      : undefined
+  } catch {
+    return undefined
+  }
 }
 
 export class ChatGPTAdapter extends ProviderAdapter {
@@ -412,10 +540,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
       return false
     }
 
-    return (
-      url.pathname === '/backend-api/f/conversation' ||
-      url.pathname.startsWith('/backend-api/conversation/')
-    )
+    return isChatGPTConversationPath(url.pathname)
   }
 
   private isTargetCapturedConversationEntry(entry: {
@@ -441,28 +566,60 @@ export class ChatGPTAdapter extends ProviderAdapter {
       return false
     }
 
-    return (
-      url.pathname === '/backend-api/f/conversation' ||
-      url.pathname.startsWith('/backend-api/conversation/')
-    )
+    return isChatGPTConversationPath(url.pathname)
   }
 
   private async readCurrentCapturedResponse(
     fetchCaptureStartIndex: number,
-    requestBody?: string | null
+    ownedUserMessageId?: string | null,
+    ownedCapturedEntryId?: number | null
   ): Promise<ChatGPTParsedResponse | null> {
-    const raw = await this.getLatestCapturedFetchBody(
-      fetchCaptureStartIndex,
-      (entry) =>
-        this.isTargetCapturedConversationEntry(entry) &&
-        requestBody !== undefined &&
-        entry.requestBody === requestBody
-    )
-    if (!raw) {
+    const entries = (
+      await this.getCapturedFetchEntries(fetchCaptureStartIndex)
+    ).filter((entry) => this.isTargetCapturedConversationEntry(entry))
+    if (entries.length === 0) {
       return null
     }
 
-    return parseChatGptHttpResponse(raw)
+    // Captured fetch entries have no Playwright Request identity.  Only use
+    // them after a live request has already been owned, and match by the
+    // stable message id (or the captured entry selected during ownership).
+    // Never choose an unrelated bodyless entry merely because it happens to
+    // be the only captured response.
+    const matchingEntries = entries.filter((entry) => {
+      // A message id is the logical ownership key. Multiple captured fetch
+      // entries can mirror or retry the same submit, so do not pin the read
+      // to the first local entry id when a stable message id is available.
+      if (ownedUserMessageId !== undefined && ownedUserMessageId !== null) {
+        return (
+          readChatGPTSubmittedMessageId(entry.requestBody) ===
+          ownedUserMessageId
+        )
+      }
+      if (ownedCapturedEntryId !== undefined && ownedCapturedEntryId !== null) {
+        return entry.id === ownedCapturedEntryId
+      }
+      return false
+    })
+    this.reportCapturedSubmitActivity(matchingEntries)
+    let bestResponse: ChatGPTParsedResponse | null = null
+    for (const entry of matchingEntries) {
+      const raw = entry.chunks.join('')
+      if (!raw.trim()) continue
+      const parsedResponse = parseChatGptHttpResponse(raw)
+      if (parsedResponse === null || !parsedResponse.text.trim()) continue
+      if (
+        bestResponse === null ||
+        (parsedResponse.isFinished && !bestResponse.isFinished) ||
+        (parsedResponse.isFinished === bestResponse.isFinished &&
+          parsedResponse.text.length >= bestResponse.text.length)
+      ) {
+        // Entries are chronological; replacing ties lets a later retry win
+        // while still preferring a finished and more complete response.
+        bestResponse = parsedResponse
+      }
+    }
+    return bestResponse
   }
 
   protected getSubmitBlockedWarningMessage(): string {
@@ -548,19 +705,42 @@ export class ChatGPTAdapter extends ProviderAdapter {
           }
         )
         throwIfAborted(signal)
-        const fetchCaptureStartIndex = await this.getCapturedFetchEntryCount()
+        let fetchCaptureStartIndex = 0
 
         const requestStarted = createDeferred<void>()
         const httpResponseDeferred = createDeferred<void>()
         let requestObserved = false
         let responseObserved = false
         let dispatchStarted = false
-        const submittedText = this.pendingText
-        let ownedRequest: import('playwright').Request | null = null
-        let ownedRequestBody: string | null = null
+        const ownedRequests = new Set<import('playwright').Request>()
+        const preDispatchRequests = new Set<import('playwright').Request>()
+        let ownedCapturedEntryId: number | null = null
         const candidateRequests = new Set<import('playwright').Request>()
+        const candidateRequestInfo = new Map<
+          import('playwright').Request,
+          { requestBody: string | null; userMessageId: string | null }
+        >()
+        const capturedCandidateInfo = new Map<
+          number,
+          {
+            entry: CapturedFetchEntry
+            requestBody: string | null
+            userMessageId: string | null
+          }
+        >()
+        const pendingResponses = new Map<
+          import('playwright').Request,
+          import('playwright').Response
+        >()
+        const pendingFailures = new Map<import('playwright').Request, string>()
+        const ownedRequestFailures = new Map<
+          import('playwright').Request,
+          string
+        >()
         let ambiguousRequest = false
+        let ownershipSettled = false
         let ownedUserMessageId: string | null = null
+        let provisionalUserMessageId: string | null = null
         let ownedFrameStartIndex = frameStart
         let httpParsedResponse: ChatGPTParsedResponse | null = null
         let terminalError: unknown = null
@@ -573,6 +753,17 @@ export class ChatGPTAdapter extends ProviderAdapter {
         let websocketTrackerKey: string | null = null
         let websocketTrackerFrameIndex = frameStart
         let requestOwnershipSettled: Promise<void> | null = null
+        let ownedFailureTimer: NodeJS.Timeout | null = null
+        let dispatchStartedAt: number | null = null
+        const pendingStreamSnapshots: Array<{
+          text: string
+          isFinished: boolean
+        }> = []
+
+        const refreshCandidateCount = () => {
+          observation.candidateRequestCount =
+            candidateRequests.size + capturedCandidateInfo.size
+        }
 
         const stopWarningTimer = () => {
           if (warningTimer !== null) {
@@ -609,6 +800,40 @@ export class ChatGPTAdapter extends ProviderAdapter {
           httpResponseDeferred.reject(resolution.error)
         }
 
+        const clearOwnedFailureTimer = () => {
+          if (ownedFailureTimer !== null) {
+            clearTimeout(ownedFailureTimer)
+            ownedFailureTimer = null
+          }
+        }
+
+        const scheduleOwnedFailureCheck = () => {
+          clearOwnedFailureTimer()
+          ownedFailureTimer = setTimeout(() => {
+            ownedFailureTimer = null
+            if (settled || ambiguousRequest) return
+            for (const request of ownedRequests) {
+              if (!ownedRequestFailures.has(request)) return
+            }
+            const failureText = ownedRequestFailures.values().next().value
+            if (typeof failureText !== 'string') return
+            settleHttpResponse({
+              kind: 'reject',
+              error: new ProviderAdapterError(
+                'submit',
+                `ChatGPT request failed before a response was received: ${failureText}`,
+                {
+                  kind: 'transient',
+                  recovery: 'restore',
+                  retryable: true,
+                  maxAttempts: 2,
+                  detailCode: 'chatgpt_submit_request_failed',
+                }
+              ),
+            })
+          }, CHATGPT_SAME_MESSAGE_RETRY_GRACE_MS)
+        }
+
         const updateHttpParsedResponse = (response: ChatGPTParsedResponse) => {
           const current = httpParsedResponse
           const isSameMessage =
@@ -632,108 +857,35 @@ export class ChatGPTAdapter extends ProviderAdapter {
         }
 
         const updateCapturedHttpResponse = async () => {
-          if (ambiguousRequest) {
+          // Captured fetch entries do not carry the Playwright Request object.
+          // Do not parse one while candidate ownership is still undecided:
+          // otherwise a background entry can seed `httpParsedResponse` before
+          // a later, ID-bearing request wins the settle window.
+          if (ambiguousRequest || !ownershipSettled) {
             return null
           }
           const capturedResponse = await this.readCurrentCapturedResponse(
             fetchCaptureStartIndex,
-            ownedRequestBody
+            ownedUserMessageId,
+            ownedCapturedEntryId
           )
           if (
             capturedResponse !== null &&
             capturedResponse.text.trim().length > 0
           ) {
+            observation.ownedHttpResponse = true
+            responseObserved = true
+            settleHttpResponse({ kind: 'resolve' })
             updateHttpParsedResponse(capturedResponse)
           }
           return capturedResponse
         }
 
-        const adoptRequest = (request: import('playwright').Request) => {
-          if (!dispatchStarted) return
-          const candidate = request as import('playwright').Request & {
-            postData?: () => string | null
-          }
-          const requestBody =
-            typeof candidate.postData === 'function'
-              ? candidate.postData()
-              : null
-          if (
-            submittedText !== '' &&
-            !requestBodyContainsSubmittedText(requestBody, submittedText)
-          ) {
-            return
-          }
-          if (!candidateRequests.has(request)) {
-            candidateRequests.add(request)
-            observation.candidateRequestCount = candidateRequests.size
-            if (candidateRequests.size > 1) {
-              ambiguousRequest = true
-              observation.requestAmbiguous = true
-              ownedRequest = null
-              ownedRequestBody = null
-              return
-            }
-            requestOwnershipSettled = delayAsync(
-              CHATGPT_REQUEST_OWNERSHIP_SETTLE_MS,
-              signal
-            ).catch(() => {})
-          }
-          if (ambiguousRequest) return
-          ownedRequest = request
-          observation.ownedRequest = true
-          observation.phase = 'awaiting-response'
-          ownedRequestBody = requestBody
-          ownedUserMessageId =
-            readChatGPTSubmittedMessageId(requestBody, submittedText) ?? null
-          observation.ownedUserMessageId = ownedUserMessageId !== null
-          // Keep every frame observed after dispatch. A background response can
-          // arrive before the matching Request event, so slicing at adoption
-          // time would silently discard evidence needed for ownership checks.
-          ownedFrameStartIndex = frameStart
-          this.pendingText = ''
-        }
-
-        const onRequest = (request: import('playwright').Request) => {
-          if (!this.isTargetConversationRequest(request)) {
-            return
-          }
-          adoptRequest(request)
-          resolveRequestStarted()
-        }
-
-        const onRequestFailed = (request: import('playwright').Request) => {
-          if (!this.isTargetConversationRequest(request)) {
-            return
-          }
-          adoptRequest(request)
-          if (ownedRequest !== request) {
-            resolveRequestStarted()
-            return
-          }
-          resolveRequestStarted()
-          const failureText =
-            request.failure()?.errorText ?? 'unknown network failure'
-          settleHttpResponse({
-            kind: 'reject',
-            error: new ProviderAdapterError(
-              'submit',
-              `ChatGPT request failed before a response was received: ${failureText}`,
-              {
-                kind: 'transient',
-                recovery: 'restore',
-                retryable: true,
-                maxAttempts: 2,
-                detailCode: 'chatgpt_submit_request_failed',
-              }
-            ),
-          })
-        }
-
-        const onResponse = (response: import('playwright').Response) => {
-          if (
-            !this.isTargetConversationRequest(response.request()) ||
-            ownedRequest !== response.request()
-          ) {
+        const processOwnedResponse = (
+          response: import('playwright').Response
+        ) => {
+          const request = response.request()
+          if (ambiguousRequest || !ownedRequests.has(request)) {
             return
           }
           this.emitSubmitActivitySafely()
@@ -741,6 +893,8 @@ export class ChatGPTAdapter extends ProviderAdapter {
           if (response.status() !== 200) {
             return
           }
+          ownedRequestFailures.delete(request)
+          clearOwnedFailureTimer()
           observation.ownedHttpResponse = true
           responseObserved = true
           settleHttpResponse({ kind: 'resolve' })
@@ -761,6 +915,384 @@ export class ChatGPTAdapter extends ProviderAdapter {
           })()
         }
 
+        const processOwnedFailure = (
+          request: import('playwright').Request,
+          failureText: string
+        ) => {
+          if (ambiguousRequest || !ownedRequests.has(request)) {
+            return
+          }
+          ownedRequestFailures.set(request, failureText)
+          scheduleOwnedFailureCheck()
+        }
+
+        const finalizeRequestOwnership = () => {
+          if (ownershipSettled) return
+          ownershipSettled = true
+
+          type LiveCandidate = [
+            import('playwright').Request,
+            { requestBody: string | null; userMessageId: string | null },
+          ]
+          type CapturedCandidate = {
+            entry: CapturedFetchEntry
+            requestBody: string | null
+            userMessageId: string | null
+          }
+
+          const liveCandidates = [...candidateRequestInfo.entries()]
+          const capturedCandidates = [...capturedCandidateInfo.values()]
+          const distinctByMessageId = <
+            T extends { userMessageId: string | null },
+          >(
+            candidates: readonly T[]
+          ): T[] => {
+            const unique = new Map<string, T>()
+            for (const candidate of candidates) {
+              if (
+                candidate.userMessageId !== null &&
+                !unique.has(candidate.userMessageId)
+              ) {
+                unique.set(candidate.userMessageId, candidate)
+              }
+            }
+            return [...unique.values()]
+          }
+          const liveIdentified = distinctByMessageId(
+            liveCandidates.map(([request, info]) => ({ request, ...info }))
+          )
+          const liveIds = new Set(
+            liveIdentified
+              .map((candidate) => candidate.userMessageId)
+              .filter((id): id is string => id !== null)
+          )
+          const capturedIdentified = distinctByMessageId(
+            capturedCandidates.filter(
+              (candidate) =>
+                candidate.userMessageId === null ||
+                !liveIds.has(candidate.userMessageId)
+            )
+          )
+
+          let selectedLive: LiveCandidate | null = null
+          let selectedCaptured: CapturedCandidate | null = null
+          let selectedUserMessageId: string | null = null
+
+          if (liveCandidates.length > 0) {
+            if (liveIdentified.length === 1) {
+              // Prefer the only live candidate with a stable message id. A
+              // captured entry with that same id is the response mirror, not
+              // a second request candidate.
+              const identified = liveIdentified[0]
+              if (identified !== undefined) {
+                selectedLive = [
+                  identified.request,
+                  {
+                    requestBody: identified.requestBody,
+                    userMessageId: identified.userMessageId,
+                  },
+                ]
+                selectedUserMessageId = identified.userMessageId
+                selectedCaptured =
+                  capturedCandidates.find(
+                    (candidate) =>
+                      candidate.userMessageId === selectedUserMessageId
+                  ) ?? null
+              }
+              if (
+                capturedIdentified.some(
+                  (candidate) =>
+                    candidate.userMessageId !== null &&
+                    candidate.userMessageId !== selectedUserMessageId
+                )
+              ) {
+                selectedLive = null
+                selectedCaptured = null
+                selectedUserMessageId = null
+              }
+            } else if (
+              liveIdentified.length === 0 &&
+              liveCandidates.length === 1 &&
+              capturedCandidates.length === 0 &&
+              (liveCandidates[0]?.[1].requestBody === null ||
+                liveCandidates[0]?.[1].requestBody === undefined ||
+                liveCandidates[0]?.[1].requestBody.trim() === '')
+            ) {
+              // A single route-constrained request is a safe-enough fallback
+              // when the browser exposes no request body at all. Captured
+              // entries are intentionally ignored while a live Request exists:
+              // they have no proven identity relationship with that Request.
+              selectedLive = liveCandidates[0] ?? null
+            }
+          } else if (capturedIdentified.length === 1) {
+            // A fetch capture can be the only observable transport when the
+            // browser does not expose a Playwright Request event.
+            selectedCaptured = capturedIdentified[0] ?? null
+            selectedUserMessageId = selectedCaptured?.userMessageId ?? null
+          } else if (
+            capturedIdentified.length === 0 &&
+            capturedCandidates.length === 1 &&
+            (capturedCandidates[0]?.requestBody === null ||
+              capturedCandidates[0]?.requestBody === undefined ||
+              capturedCandidates[0]?.requestBody.trim() === '')
+          ) {
+            // As with a body-free live request, a unique captured entry can
+            // be used for its HTTP response but not for unanchored WebSocket
+            // frames.
+            selectedCaptured = capturedCandidates[0] ?? null
+          }
+
+          if (selectedLive === null && selectedCaptured === null) {
+            // Any unresolved pair of candidates is ambiguous. A single
+            // readable body without an id is merely unidentifiable and is
+            // reported as a missing owner instead.
+            if (liveCandidates.length + capturedCandidates.length > 1) {
+              ambiguousRequest = true
+              observation.requestAmbiguous = true
+            }
+            return
+          }
+
+          const request = selectedLive?.[0] ?? null
+          const info = selectedLive?.[1] ?? selectedCaptured!
+          ownedUserMessageId =
+            selectedUserMessageId ?? info.userMessageId ?? null
+          ownedRequests.clear()
+          if (request !== null) {
+            ownedRequests.add(request)
+            if (ownedUserMessageId !== null) {
+              for (const [candidateRequest, candidateInfo] of liveCandidates) {
+                if (candidateInfo.userMessageId === ownedUserMessageId) {
+                  ownedRequests.add(candidateRequest)
+                }
+              }
+            }
+          }
+          ownedCapturedEntryId = selectedCaptured?.entry.id ?? null
+          observation.ownedRequest = true
+          observation.ownedUserMessageId = ownedUserMessageId !== null
+          observation.phase = 'awaiting-response'
+          // Keep every frame observed after dispatch. A background response
+          // can arrive before the matching Request event, so slicing at
+          // adoption time would discard evidence needed for ownership checks.
+          ownedFrameStartIndex = frameStart
+          this.pendingText = ''
+
+          if (request === null) {
+            resolveRequestStarted()
+            if (selectedCaptured?.entry.status === 200) {
+              settleHttpResponse({ kind: 'resolve' })
+            }
+            return
+          }
+
+          // Replay every same-ID response that arrived during the settle
+          // window. A retry may be the only request that produces a usable
+          // response; processing only the first Request would lose it.
+          for (const [pendingRequest, pendingResponse] of pendingResponses) {
+            if (!ownedRequests.has(pendingRequest)) continue
+            pendingResponses.delete(pendingRequest)
+            processOwnedResponse(pendingResponse)
+          }
+          for (const [pendingRequest, pendingFailure] of pendingFailures) {
+            if (!ownedRequests.has(pendingRequest)) continue
+            pendingFailures.delete(pendingRequest)
+            processOwnedFailure(pendingRequest, pendingFailure)
+          }
+        }
+
+        const scheduleRequestOwnershipSettlement = () => {
+          if (requestOwnershipSettled !== null) return
+          requestOwnershipSettled = delayAsync(
+            CHATGPT_REQUEST_OWNERSHIP_SETTLE_MS,
+            signal
+          )
+            .then(() => {
+              finalizeRequestOwnership()
+            })
+            .catch(() => {})
+        }
+
+        const recordRequestCandidate = (
+          request: import('playwright').Request
+        ): boolean => {
+          // A response can arrive after dispatch for a request that started
+          // before the send button was clicked. It is never a candidate for
+          // this submit, even if its body contains a plausible message id.
+          if (preDispatchRequests.has(request)) return false
+          if (
+            dispatchStartedAt !== null &&
+            (readChatGPTRequestStartTime(request) ?? dispatchStartedAt) <
+              dispatchStartedAt
+          ) {
+            return false
+          }
+          if (!dispatchStarted) return false
+          if (candidateRequests.has(request)) return true
+          const candidate = request as import('playwright').Request & {
+            postData?: () => string | null
+          }
+          let requestBody: string | null = null
+          try {
+            requestBody =
+              typeof candidate.postData === 'function'
+                ? (candidate.postData() ?? null)
+                : null
+          } catch {
+            // Some Playwright request implementations cannot expose bodies.
+          }
+          candidateRequests.add(request)
+          const requestInfo = {
+            requestBody,
+            userMessageId: readChatGPTSubmittedMessageId(requestBody) ?? null,
+          }
+          candidateRequestInfo.set(request, requestInfo)
+          refreshCandidateCount()
+          if (ownershipSettled) {
+            // A retry for the same user message is still the same logical
+            // candidate. A distinct id, however, means the response can no
+            // longer be attributed safely.
+            if (
+              requestInfo.userMessageId !== null &&
+              requestInfo.userMessageId === ownedUserMessageId
+            ) {
+              ownedRequests.add(request)
+              ownedRequestFailures.delete(request)
+              clearOwnedFailureTimer()
+              return true
+            }
+            // A body-free background request cannot disprove an already
+            // identified request; its response will still be checked by
+            // Playwright Request identity.
+            if (
+              requestInfo.userMessageId === null &&
+              ownedUserMessageId !== null
+            ) {
+              return true
+            }
+            ambiguousRequest = true
+            observation.requestAmbiguous = true
+            return true
+          }
+          if (
+            provisionalUserMessageId === null &&
+            requestInfo.userMessageId !== null
+          ) {
+            provisionalUserMessageId = requestInfo.userMessageId
+          }
+          // Seeing a target request is submit activity even before ownership
+          // settles; this prevents a very short response-start timer from
+          // firing during the 100ms candidate window.
+          this.emitSubmitActivitySafely()
+          scheduleRequestOwnershipSettlement()
+          return true
+        }
+
+        const scanCapturedCandidates = async (): Promise<void> => {
+          if (!dispatchStarted) return
+          let entries: CapturedFetchEntry[]
+          try {
+            entries = (
+              await this.getCapturedFetchEntries(fetchCaptureStartIndex)
+            ).filter(
+              (entry) =>
+                this.isTargetCapturedConversationEntry(entry) &&
+                (dispatchStartedAt === null ||
+                  entry.startedAt === undefined ||
+                  entry.startedAt >= dispatchStartedAt)
+            )
+          } catch {
+            return
+          }
+          for (const entry of entries) {
+            if (capturedCandidateInfo.has(entry.id)) continue
+            const requestBody = entry.requestBody ?? null
+            const userMessageId =
+              readChatGPTSubmittedMessageId(requestBody) ?? null
+            const info = { entry, requestBody, userMessageId }
+            capturedCandidateInfo.set(entry.id, info)
+            refreshCandidateCount()
+
+            if (ownershipSettled) {
+              if (
+                entry.id === ownedCapturedEntryId ||
+                (userMessageId !== null && userMessageId === ownedUserMessageId)
+              ) {
+                continue
+              }
+              // A body-free capture is only a response mirror and cannot
+              // establish a conflicting request after a live request owns the
+              // submit. A distinct id remains an ambiguity signal.
+              if (userMessageId === null) {
+                continue
+              }
+              ambiguousRequest = true
+              observation.requestAmbiguous = true
+              continue
+            }
+
+            if (provisionalUserMessageId === null && userMessageId !== null) {
+              provisionalUserMessageId = userMessageId
+            }
+            this.emitSubmitActivitySafely()
+            scheduleRequestOwnershipSettlement()
+          }
+        }
+
+        const onRequest = (request: import('playwright').Request) => {
+          if (!this.isTargetConversationRequest(request)) {
+            return
+          }
+          if (!dispatchStarted) {
+            preDispatchRequests.add(request)
+            return
+          }
+          if (recordRequestCandidate(request)) {
+            resolveRequestStarted()
+          }
+        }
+
+        const onRequestFailed = (request: import('playwright').Request) => {
+          if (!this.isTargetConversationRequest(request)) {
+            return
+          }
+          if (!dispatchStarted) {
+            preDispatchRequests.add(request)
+            return
+          }
+          if (!recordRequestCandidate(request)) {
+            return
+          }
+          resolveRequestStarted()
+          const failureText =
+            request.failure()?.errorText ?? 'unknown network failure'
+          if (!ownershipSettled) {
+            pendingFailures.set(request, failureText)
+          } else {
+            processOwnedFailure(request, failureText)
+          }
+        }
+
+        const onResponse = (response: import('playwright').Response) => {
+          const request = response.request()
+          if (!this.isTargetConversationRequest(request)) {
+            return
+          }
+          if (!dispatchStarted) {
+            preDispatchRequests.add(request)
+            return
+          }
+          if (!recordRequestCandidate(request)) {
+            return
+          }
+          resolveRequestStarted()
+          if (!ownershipSettled) {
+            pendingResponses.set(request, response)
+            return
+          }
+          processOwnedResponse(response)
+        }
+
         const onClose = () => {
           settleHttpResponse({
             kind: 'reject',
@@ -770,31 +1302,54 @@ export class ChatGPTAdapter extends ProviderAdapter {
           })
         }
 
+        const emitSnapshot = async (
+          text: string,
+          isFinished: boolean
+        ): Promise<void> => {
+          const currentText = text.trim()
+          if (!currentText || currentText === lastStreamedText) return
+          lastStreamedText = currentText
+          observation.parsedOwnedText = true
+          observation.parsedFinished ||= isFinished
+          observation.phase = isFinished ? 'response-complete' : 'streaming'
+          await this.emitSubmitText(text)
+        }
+
         const emitCurrentStreamText = async (
           response: ChatGPTParsedResponse | null
         ) => {
-          if (requestOwnershipSettled !== null) {
-            await requestOwnershipSettled
-            throwIfAborted(signal)
-            if (ambiguousRequest) {
-              return
-            }
-          }
           const currentText = response?.text?.trim() ?? ''
+          if (!ownershipSettled) {
+            if (
+              currentText &&
+              pendingStreamSnapshots.at(-1)?.text.trim() !== currentText
+            ) {
+              pendingStreamSnapshots.push({
+                text: response!.text,
+                isFinished: response!.isFinished,
+              })
+            }
+            return
+          }
+          throwIfAborted(signal)
+          if (ambiguousRequest) return
+          for (const snapshot of pendingStreamSnapshots.splice(0)) {
+            throwIfAborted(signal)
+            if (ambiguousRequest) return
+            await emitSnapshot(snapshot.text, snapshot.isFinished)
+            throwIfAborted(signal)
+            if (ambiguousRequest) return
+          }
           if (response?.isFinished === true && !finishedProgressReported) {
             finishedProgressReported = true
             this.emitSubmitActivitySafely()
           }
-          if (!currentText || currentText === lastStreamedText) {
-            return
+          throwIfAborted(signal)
+          if (ambiguousRequest) return
+          if (response !== null) {
+            await emitSnapshot(response.text, response.isFinished)
+            throwIfAborted(signal)
           }
-          lastStreamedText = currentText
-          observation.parsedOwnedText = true
-          observation.parsedFinished ||= response?.isFinished === true
-          observation.phase = response?.isFinished
-            ? 'response-complete'
-            : 'streaming'
-          await this.emitSubmitText(response!.text)
         }
 
         const pickCurrentResponse = (): ChatGPTParsedResponse | null => {
@@ -805,7 +1360,8 @@ export class ChatGPTAdapter extends ProviderAdapter {
             typeof this.page.url === 'function' ? this.page.url() : null
           const websocketCorrelationAvailable =
             httpParsedResponse?.messageId !== undefined ||
-            ownedUserMessageId !== null
+            ownedUserMessageId !== null ||
+            provisionalUserMessageId !== null
           let websocketParsedResponse: ChatGPTParsedResponse | null = null
           if (websocketCorrelationAvailable) {
             const expectedConversationId =
@@ -817,7 +1373,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
             const trackerKey = JSON.stringify([
               expectedConversationId,
               expectedMessageId ?? null,
-              ownedUserMessageId,
+              ownedUserMessageId ?? provisionalUserMessageId,
             ])
             if (
               websocketTracker === null ||
@@ -832,7 +1388,9 @@ export class ChatGPTAdapter extends ProviderAdapter {
                     ? {}
                     : { expectedMessageId }),
                   ...(ownedUserMessageId === null
-                    ? {}
+                    ? provisionalUserMessageId === null
+                      ? {}
+                      : { expectedParentMessageId: provisionalUserMessageId }
                     : { expectedParentMessageId: ownedUserMessageId }),
                 }
               )
@@ -902,6 +1460,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
             }
             submitTextPollInFlight = true
             try {
+              await scanCapturedCandidates()
               await updateCapturedHttpResponse()
               if (stopped) {
                 return
@@ -919,6 +1478,10 @@ export class ChatGPTAdapter extends ProviderAdapter {
           }
           void pollSubmitText().catch(() => {})
           this.emitSubmitDispatching(signal)
+          // Establish the capture baseline immediately before dispatch so
+          // entries registered by earlier in-flight requests are excluded.
+          fetchCaptureStartIndex = await this.getCapturedFetchEntryCount()
+          dispatchStartedAt = Date.now()
           dispatchStarted = true
           dispatchAttempted = true
           observation.phase = 'awaiting-request'
@@ -1171,6 +1734,7 @@ export class ChatGPTAdapter extends ProviderAdapter {
           stopped = true
           stopSubmitTextPolling()
           stopWarningTimer()
+          clearOwnedFailureTimer()
           this.page.off('request', onRequest)
           this.page.off('requestfailed', onRequestFailed)
           this.page.off('response', onResponse)

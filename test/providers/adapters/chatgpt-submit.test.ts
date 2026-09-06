@@ -29,6 +29,7 @@ type ChatGPTAdapterHarness = Pick<ChatGPTAdapter, keyof ChatGPTAdapter> & {
     url(): string
   }): boolean
   getCapturedFetchEntryCount: unknown
+  getCapturedFetchEntries: unknown
   readCurrentCapturedResponse: unknown
   getFinishedResponseSettleMs(): number
   getSubmitRequestStartGraceMs(): number
@@ -76,6 +77,8 @@ function createTestChatGPTAdapter(): ChatGPTAdapterHarness {
     typeof candidate.isTargetConversationRequest !== 'function' ||
     !('getCapturedFetchEntryCount' in candidate) ||
     typeof candidate.getCapturedFetchEntryCount !== 'function' ||
+    !('getCapturedFetchEntries' in candidate) ||
+    typeof candidate.getCapturedFetchEntries !== 'function' ||
     !('readCurrentCapturedResponse' in candidate) ||
     typeof candidate.readCurrentCapturedResponse !== 'function'
   ) {
@@ -108,6 +111,7 @@ function createTestChatGPTAdapter(): ChatGPTAdapterHarness {
       return matched
     },
     getCapturedFetchEntryCount: candidate.getCapturedFetchEntryCount,
+    getCapturedFetchEntries: candidate.getCapturedFetchEntries,
     readCurrentCapturedResponse: candidate.readCurrentCapturedResponse,
     getFinishedResponseSettleMs: (): number => 50,
     getSubmitRequestStartGraceMs: (): number => 5,
@@ -276,9 +280,72 @@ test('ChatGPTAdapter target conversation request ignores prepare requests', () =
   assert.equal(
     adapter.isTargetConversationRequest({
       method: () => 'POST',
+      url: () => 'https://chatgpt.com/backend-api/f/conversation/other',
+    }),
+    false
+  )
+  assert.equal(
+    adapter.isTargetConversationRequest({
+      method: () => 'POST',
       url: () => 'https://chatgpt.com/backend-api/f/conversation',
     }),
     true
+  )
+  assert.equal(
+    adapter.isTargetConversationRequest({
+      method: () => 'POST',
+      url: () => 'https://chatgpt.com/backend-api/conversation',
+    }),
+    true
+  )
+  assert.equal(
+    adapter.isTargetConversationRequest({
+      method: () => 'POST',
+      url: () => 'https://chatgpt.com/backend-api/conversation/prepare',
+    }),
+    false
+  )
+  assert.equal(
+    adapter.isTargetConversationRequest({
+      method: () => 'POST',
+      url: () => 'https://chatgpt.com/backend-api/conversation/init',
+    }),
+    false
+  )
+  assert.equal(
+    adapter.isTargetConversationRequest({
+      method: () => 'POST',
+      url: () => 'https://chatgpt.com/backend-api/conversation/conversation-1',
+    }),
+    false
+  )
+  assert.equal(
+    adapter.isTargetConversationRequest({
+      method: () => 'POST',
+      url: () => 'https://chatgpt.com/backend-api/conversation/prepare/extra',
+    }),
+    false
+  )
+  assert.equal(
+    adapter.isTargetConversationRequest({
+      method: () => 'POST',
+      url: () => 'https://chatgpt.com/backend-api/conversation/%70repare',
+    }),
+    false
+  )
+  assert.equal(
+    adapter.isTargetConversationRequest({
+      method: () => 'POST',
+      url: () => 'https://chatgpt.com/backend-api/conversation/prepare%2Fextra',
+    }),
+    false
+  )
+  assert.equal(
+    adapter.isTargetConversationRequest({
+      method: () => 'POST',
+      url: () => 'https://chatgpt.com/backend-api/conversationx',
+    }),
+    false
   )
 })
 
@@ -304,7 +371,7 @@ test('ChatGPTAdapter.submit accepts the adopted HTTP response with a new parent 
       const secondRequest = {
         method: () => 'POST',
         url: () => 'https://chatgpt.com/backend-api/f/conversation',
-        postData: () => JSON.stringify({ message: 'current request' }),
+        postData: () => createChatGptRequestBody('rewritten current request'),
         failure: () => null,
       }
       page.emit('request', firstRequest)
@@ -634,7 +701,295 @@ test('ChatGPTAdapter.submit accepts a new websocket conversation only after matc
   assert.equal(await adapter.submit(), 'new conversation response')
 })
 
-test('ChatGPTAdapter.submit does not synthesize ownership when the real request has no postData', async () => {
+test('ChatGPTAdapter.submit uses the user message id when the body text is rewritten', async () => {
+  const adapter = createTestChatGPTAdapter()
+  Object.assign(adapter, {
+    lastParsedResponse: null,
+    pendingText: 'original text',
+  })
+
+  const request = {
+    postData: () =>
+      JSON.stringify({
+        messages: [
+          {
+            id: 'current-user-id',
+            author: { role: 'user' },
+            content: { parts: ['rewritten by the page'] },
+          },
+        ],
+      }),
+    method: () => 'POST',
+    url: () => 'https://chatgpt.com/backend-api/f/conversation',
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () => '{}',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        status: () => 200,
+      })
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame(
+          'id-correlated response',
+          true,
+          'new-conversation',
+          'current-user-id'
+        )
+      )
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'id-correlated response')
+})
+
+test('ChatGPTAdapter.submit extracts a user message id from URL-encoded JSON', async () => {
+  const adapter = createTestChatGPTAdapter()
+  Object.assign(adapter, { lastParsedResponse: null })
+  const encodedBody = `payload=${encodeURIComponent(
+    JSON.stringify({
+      messages: [
+        {
+          id: 'encoded-user-id',
+          role: 'user',
+          content: { parts: ['page-normalized text'] },
+        },
+      ],
+    })
+  )}`
+  const request = {
+    postData: () => encodedBody,
+    method: () => 'POST',
+    url: () => 'https://chatgpt.com/backend-api/conversation',
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () => '{}',
+        url: () => 'https://chatgpt.com/backend-api/conversation',
+        status: () => 200,
+      })
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame(
+          'URL encoded response',
+          true,
+          'encoded-conversation',
+          'encoded-user-id'
+        )
+      )
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'URL encoded response')
+})
+
+test('ChatGPTAdapter.submit extracts a user message id from an encoded whole body', async () => {
+  const adapter = createTestChatGPTAdapter()
+  Object.assign(adapter, { lastParsedResponse: null })
+  const encodedBody = encodeURIComponent(
+    JSON.stringify({
+      messages: [
+        {
+          id: 'whole-body-user-id',
+          role: 'user',
+          content: { parts: ['transport encoded text'] },
+        },
+      ],
+    })
+  )
+  const request = {
+    postData: () => encodedBody,
+    method: () => 'POST',
+    url: () => 'https://chatgpt.com/backend-api/conversation',
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () => '{}',
+        url: () => 'https://chatgpt.com/backend-api/conversation',
+        status: () => 200,
+      })
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame(
+          'whole encoded response',
+          true,
+          'whole-encoded-conversation',
+          'whole-body-user-id'
+        )
+      )
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'whole encoded response')
+})
+
+test('ChatGPTAdapter.submit extracts a user message id from a double-encoded structural body field', async () => {
+  const adapter = createTestChatGPTAdapter()
+  Object.assign(adapter, { lastParsedResponse: null })
+  const messageBody = JSON.stringify({
+    messages: [
+      {
+        id: 'nested-encoded-user-id',
+        role: 'user',
+        content: { parts: ['nested transport text'] },
+      },
+    ],
+  })
+  const request = {
+    postData: () =>
+      JSON.stringify({
+        body: JSON.stringify(encodeURIComponent(messageBody)),
+      }),
+    method: () => 'POST',
+    url: () => 'https://chatgpt.com/backend-api/f/conversation',
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () => '{}',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        status: () => 200,
+      })
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame(
+          'nested encoded response',
+          true,
+          'nested-encoded-conversation',
+          'nested-encoded-user-id'
+        )
+      )
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'nested encoded response')
+})
+
+test('ChatGPTAdapter.submit chooses the last user message in a messages history array', async () => {
+  const adapter = createTestChatGPTAdapter()
+  Object.assign(adapter, { lastParsedResponse: null })
+  const request = {
+    postData: () =>
+      JSON.stringify({
+        messages: [
+          {
+            id: 'old-user-id',
+            role: 'user',
+            content: { parts: ['old text'] },
+          },
+          {
+            id: 'new-user-id',
+            role: 'user',
+            content: { parts: ['rewritten current text'] },
+          },
+        ],
+      }),
+    method: () => 'POST',
+    url: () => 'https://chatgpt.com/backend-api/f/conversation',
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () => '{}',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        status: () => 200,
+      })
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame(
+          'history-correlated response',
+          true,
+          'new-conversation',
+          'new-user-id'
+        )
+      )
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'history-correlated response')
+})
+
+test('ChatGPTAdapter.submit ignores message-like JSON embedded in user content', async () => {
+  const adapter = createTestChatGPTAdapter()
+  Object.assign(adapter, { lastParsedResponse: null })
+  const request = {
+    postData: () =>
+      JSON.stringify({
+        messages: [
+          {
+            id: 'real-user-id',
+            role: 'user',
+            content: {
+              parts: ['{"role":"user","id":"fake-user-id"}'],
+            },
+          },
+        ],
+      }),
+    method: () => 'POST',
+    url: () => 'https://chatgpt.com/backend-api/f/conversation',
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () => '{}',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        status: () => 200,
+      })
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame(
+          'real-id response',
+          true,
+          'new-conversation',
+          'real-user-id'
+        )
+      )
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'real-id response')
+})
+
+test('ChatGPTAdapter.submit still fails when a body-free request has no response', async () => {
   const adapter = createTestChatGPTAdapter()
   adapter.getSubmitResponseTimeoutMs = () => 100
 
@@ -666,6 +1021,549 @@ test('ChatGPTAdapter.submit does not synthesize ownership when the real request 
     (error: unknown) =>
       error instanceof ProviderAdapterError &&
       error.kind === 'unknown' &&
+      error.detailCode === 'chatgpt_submit_outcome_unknown'
+  )
+})
+
+test('ChatGPTAdapter.submit ignores a request that started before dispatch', async () => {
+  const adapter = createTestChatGPTAdapter()
+
+  const oldRequest = {
+    postData: () =>
+      createChatGptRequestBody('old in-flight request', 'old-user-id'),
+    method: () => 'POST',
+    url: () => 'https://chatgpt.com/backend-api/f/conversation',
+    timing: () => ({ startTime: Date.now() - 1_000 }),
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('response', {
+        request: () => oldRequest,
+        text: async () =>
+          createChatGptHttpResponse(
+            'old in-flight response',
+            true,
+            'old-conversation',
+            'old-user-id'
+          ),
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        status: () => 200,
+      })
+      setTimeout(() => {
+        const currentRequest = {
+          postData: () =>
+            createChatGptRequestBody('current request', 'current-user-id'),
+          method: () => 'POST',
+          url: () => 'https://chatgpt.com/backend-api/f/conversation',
+          failure: () => null,
+        }
+        page.emit('request', currentRequest)
+        page.emit('response', {
+          request: () => currentRequest,
+          text: async () =>
+            createChatGptHttpResponse(
+              'current response',
+              true,
+              'current-conversation',
+              'current-user-id'
+            ),
+          url: () => 'https://chatgpt.com/backend-api/f/conversation',
+          status: () => 200,
+        })
+      }, 20)
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'current response')
+})
+
+test('ChatGPTAdapter.submit accepts a unique request without body text', async () => {
+  const adapter = createTestChatGPTAdapter()
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const request = {
+        postData: () => null,
+        method: () => 'POST',
+        url: () => 'https://chatgpt.com/backend-api/conversation',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () => createChatGptHttpResponse('body-free response'),
+        url: () => 'https://chatgpt.com/backend-api/conversation',
+        status: () => 200,
+      })
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'body-free response')
+})
+
+test('ChatGPTAdapter.submit ignores an in-flight captured request from before dispatch', async () => {
+  const adapter = createTestChatGPTAdapter()
+  const now = Date.now()
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => [
+    {
+      id: 301,
+      url: 'https://chatgpt.com/backend-api/conversation',
+      method: 'POST',
+      startedAt: now - 1_000,
+      requestBody: createChatGptRequestBody('old captured', 'old-captured-id'),
+      status: 200,
+      chunks: [
+        createChatGptHttpResponse(
+          'old captured response',
+          true,
+          'old-captured-conversation',
+          'old-captured-id'
+        ),
+      ],
+      done: true,
+      error: null,
+    },
+    {
+      id: 302,
+      url: 'https://chatgpt.com/backend-api/conversation',
+      method: 'POST',
+      startedAt: now + 10_000,
+      requestBody: createChatGptRequestBody(
+        'current captured',
+        'current-captured-id'
+      ),
+      status: 200,
+      chunks: [
+        createChatGptHttpResponse(
+          'current captured response',
+          true,
+          'current-captured-conversation',
+          'current-captured-id'
+        ),
+      ],
+      done: true,
+      error: null,
+    },
+  ]
+
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {},
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'current captured response')
+})
+
+test('ChatGPTAdapter.submit does not borrow a captured id for a body-free live request', async () => {
+  const adapter = createTestChatGPTAdapter()
+  adapter.getSubmitResponseTimeoutMs = () => 300
+  const streamedTexts: string[] = []
+  adapter.getCapturedFetchEntries = async () => [
+    {
+      id: 103,
+      url: 'https://chatgpt.com/backend-api/f/conversation',
+      method: 'POST',
+      requestBody: createChatGptRequestBody(
+        'unrelated captured request',
+        'captured-user-id'
+      ),
+      status: 200,
+      chunks: [
+        createChatGptHttpResponse(
+          'unrelated captured response',
+          true,
+          'captured-conversation',
+          'captured-user-id'
+        ),
+      ],
+      done: true,
+      error: null,
+    },
+  ]
+  adapter.setSubmitTextReporter(async (message: string) => {
+    streamedTexts.push(message)
+  })
+
+  const request = {
+    postData: () => null,
+    method: () => 'POST',
+    url: () => 'https://chatgpt.com/backend-api/conversation',
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('request', request)
+      adapter.websocketFrames.push(
+        createChatGptWebSocketFrame(
+          'unrelated websocket response',
+          true,
+          'captured-conversation',
+          'captured-user-id'
+        )
+      )
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'chatgpt_submit_outcome_unknown'
+  )
+  assert.deepEqual(streamedTexts, [])
+})
+
+test('ChatGPTAdapter.submit can adopt a captured-only request by user message id', async () => {
+  const adapter = createTestChatGPTAdapter()
+  const requestBody = createChatGptRequestBody(
+    'rewritten captured request',
+    'captured-user-id'
+  )
+  const capturedEntry = {
+    id: 101,
+    url: 'https://chatgpt.com/backend-api/f/conversation',
+    method: 'POST',
+    requestBody,
+    status: 200,
+    chunks: [
+      createChatGptHttpResponse(
+        'captured-only response',
+        true,
+        'captured-conversation',
+        'captured-user-id'
+      ),
+    ],
+    done: true,
+    error: null,
+  }
+  adapter.getCapturedFetchEntries = async () => [capturedEntry]
+
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {},
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'captured-only response')
+})
+
+test('ChatGPTAdapter.submit chooses the best response across duplicate captured entries', async () => {
+  const adapter = createTestChatGPTAdapter()
+  const requestBody = createChatGptRequestBody(
+    'rewritten duplicate request',
+    'duplicate-user-id'
+  )
+  adapter.getCapturedFetchEntries = async () => [
+    {
+      id: 201,
+      url: 'https://chatgpt.com/backend-api/conversation',
+      method: 'POST',
+      requestBody,
+      status: 200,
+      chunks: [],
+      done: true,
+      error: null,
+    },
+    {
+      id: 202,
+      url: 'https://chatgpt.com/backend-api/conversation',
+      method: 'POST',
+      requestBody,
+      status: 200,
+      chunks: [
+        createChatGptHttpResponse(
+          'fresh duplicate response',
+          true,
+          'duplicate-conversation',
+          'duplicate-user-id'
+        ),
+      ],
+      done: true,
+      error: null,
+    },
+  ]
+
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {},
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'fresh duplicate response')
+})
+
+test('ChatGPTAdapter.submit accepts a response from a later live retry with the same user message id', async () => {
+  const adapter = createTestChatGPTAdapter()
+  adapter.getSubmitResponseTimeoutMs = () => 1_000
+
+  const createRequest = () => ({
+    postData: () =>
+      createChatGptRequestBody('rewritten live retry', 'retry-user-id'),
+    method: () => 'POST',
+    url: () => 'https://chatgpt.com/backend-api/conversation',
+    failure: () => null,
+  })
+
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const firstRequest = createRequest()
+      page.emit('request', firstRequest)
+      setTimeout(() => {
+        const retryRequest = createRequest()
+        page.emit('request', retryRequest)
+        page.emit('response', {
+          request: () => retryRequest,
+          text: async () =>
+            createChatGptHttpResponse(
+              'response from live retry',
+              true,
+              'retry-conversation',
+              'retry-user-id'
+            ),
+          url: () => 'https://chatgpt.com/backend-api/conversation',
+          status: () => 200,
+        })
+      }, 150)
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'response from live retry')
+})
+
+test('ChatGPTAdapter.submit prefers a finished response from a same-id live retry', async () => {
+  const adapter = createTestChatGPTAdapter()
+  adapter.getSubmitResponseTimeoutMs = () => 1_000
+
+  const createRequest = () => ({
+    postData: () =>
+      createChatGptRequestBody('rewritten live retry', 'retry-user-id'),
+    method: () => 'POST',
+    url: () => 'https://chatgpt.com/backend-api/conversation',
+    failure: () => null,
+  })
+
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const firstRequest = createRequest()
+      page.emit('request', firstRequest)
+      page.emit('response', {
+        request: () => firstRequest,
+        text: async () =>
+          createChatGptHttpResponse(
+            'partial stale response',
+            false,
+            'retry-conversation',
+            'retry-user-id'
+          ),
+        url: () => 'https://chatgpt.com/backend-api/conversation',
+        status: () => 200,
+      })
+      setTimeout(() => {
+        const retryRequest = createRequest()
+        page.emit('request', retryRequest)
+        page.emit('response', {
+          request: () => retryRequest,
+          text: async () =>
+            createChatGptHttpResponse(
+              'finished retry response',
+              true,
+              'retry-conversation',
+              'retry-user-id'
+            ),
+          url: () => 'https://chatgpt.com/backend-api/conversation',
+          status: () => 200,
+        })
+      }, 150)
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'finished retry response')
+})
+
+test('ChatGPTAdapter.submit lets a same-id retry recover from an earlier request failure', async () => {
+  const adapter = createTestChatGPTAdapter()
+  adapter.getSubmitResponseTimeoutMs = () => 1_000
+
+  const createRequest = () => ({
+    postData: () =>
+      createChatGptRequestBody(
+        'rewritten failed retry',
+        'failed-retry-user-id'
+      ),
+    method: () => 'POST',
+    url: () => 'https://chatgpt.com/backend-api/conversation',
+    failure: () => ({ errorText: 'connection reset' }),
+  })
+
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const firstRequest = createRequest()
+      page.emit('request', firstRequest)
+      page.emit('requestfailed', firstRequest)
+      setTimeout(() => {
+        const retryRequest = createRequest()
+        page.emit('request', retryRequest)
+        page.emit('response', {
+          request: () => retryRequest,
+          text: async () =>
+            createChatGptHttpResponse(
+              'recovered retry response',
+              true,
+              'failed-retry-conversation',
+              'failed-retry-user-id'
+            ),
+          url: () => 'https://chatgpt.com/backend-api/conversation',
+          status: () => 200,
+        })
+      }, 150)
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  assert.equal(await adapter.submit(), 'recovered retry response')
+})
+
+test('ChatGPTAdapter.submit does not claim a bodyless capture after a live request is owned', async () => {
+  const adapter = createTestChatGPTAdapter()
+  adapter.getSubmitResponseTimeoutMs = () => 450
+  const captureAvailableAt = Date.now() + 180
+  adapter.getCapturedFetchEntries = async () => {
+    if (Date.now() < captureAvailableAt) return []
+    return [
+      {
+        id: 102,
+        url: 'https://chatgpt.com/backend-api/conversation',
+        method: 'POST',
+        requestBody: null,
+        status: 200,
+        chunks: [createChatGptHttpResponse('unrelated captured response')],
+        done: true,
+        error: null,
+      },
+    ]
+  }
+
+  const request = {
+    postData: () =>
+      createChatGptRequestBody('rewritten live request', 'live-user-id'),
+    method: () => 'POST',
+    url: () => 'https://chatgpt.com/backend-api/conversation',
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('request', request)
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'chatgpt_submit_outcome_unknown'
+  )
+})
+
+test('ChatGPTAdapter.submit rejects multiple id-bearing requests', async () => {
+  const adapter = createTestChatGPTAdapter()
+  adapter.getSubmitResponseTimeoutMs = () => 150
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const createRequest = (id: string) => ({
+        postData: () => createChatGptRequestBody('rewritten', id),
+        method: () => 'POST',
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        failure: () => null,
+      })
+      const first = createRequest('user-one')
+      const second = createRequest('user-two')
+      page.emit('request', first)
+      page.emit('request', second)
+      page.emit('response', {
+        request: () => first,
+        text: async () => createChatGptHttpResponse('wrong response'),
+        url: () => 'https://chatgpt.com/backend-api/f/conversation',
+        status: () => 200,
+      })
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'chatgpt_submit_outcome_unknown'
+  )
+})
+
+test('ChatGPTAdapter.submit does not adopt a readable body without an id', async () => {
+  const adapter = createTestChatGPTAdapter()
+  adapter.getSubmitResponseTimeoutMs = () => 120
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const request = {
+        postData: () => JSON.stringify({ unrelated: 'background request' }),
+        method: () => 'POST',
+        url: () => 'https://chatgpt.com/backend-api/conversation',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        text: async () => createChatGptHttpResponse('background response'),
+        url: () => 'https://chatgpt.com/backend-api/conversation',
+        status: () => 200,
+      })
+    },
+  }
+  const page = createChatGPTPage(sendButton)
+  adapter.page = page
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
       error.detailCode === 'chatgpt_submit_outcome_unknown'
   )
 })
