@@ -39,6 +39,10 @@ export function parseQwenResponse(raw: string): QwenParsedResponse | null {
         responseId === null ||
         createdResponseId === null ||
         responseId === createdResponseId
+      identityConsistent &&=
+        parentId === null ||
+        createdParentId === null ||
+        parentId === createdParentId
       chatId = createdChatId ?? chatId
       responseId = createdResponseId ?? responseId
       parentId = createdParentId ?? parentId

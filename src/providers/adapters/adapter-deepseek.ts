@@ -9,7 +9,7 @@ import {
   ProviderAdapterUnsupportedError,
   createDeferred,
   delayAsync,
-  requestBodyContainsSubmittedText,
+  type CapturedFetchEntry,
 } from './adapter-base.ts'
 import {
   abortable,
@@ -30,9 +30,8 @@ import {
 } from '../ui/deepseek/deepseek-ui.ts'
 
 const DEEPSEEK_CHAT_URL = 'https://chat.deepseek.com'
-const DEEPSEEK_CHAT_COMPLETION_URL =
-  'https://chat.deepseek.com/api/v0/chat/completion'
 const DEEPSEEK_REQUEST_OWNERSHIP_SETTLE_MS = 25
+const DEEPSEEK_COMPLETION_PATH = '/api/v0/chat/completion'
 type DeepSeekParsedResponse = {
   messageId?: number
   parentId?: number
@@ -62,6 +61,23 @@ function readDeepSeekConversationIdFromUrl(
     }
     const match = url.pathname.match(/^\/a\/chat\/s\/([^/?#]+)/)
     return match?.[1] ? decodeURIComponent(match[1]) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function readDeepSeekRequestStartTime(
+  request: import('playwright').Request
+): number | undefined {
+  const candidate = request as import('playwright').Request & {
+    timing?: () => { startTime?: number }
+  }
+  if (typeof candidate.timing !== 'function') return undefined
+  try {
+    const startTime = candidate.timing().startTime
+    return typeof startTime === 'number' && Number.isFinite(startTime)
+      ? startTime
+      : undefined
   } catch {
     return undefined
   }
@@ -375,10 +391,29 @@ export class DeepSeekAdapter extends ProviderAdapter {
   private isTargetCompletionRequest(
     request: import('playwright').Request
   ): boolean {
-    return (
-      request.method() === 'POST' &&
-      request.url().startsWith(DEEPSEEK_CHAT_COMPLETION_URL)
-    )
+    if (request.method() !== 'POST') return false
+    try {
+      const url = new URL(request.url())
+      return (
+        url.origin === DEEPSEEK_CHAT_URL &&
+        url.pathname === DEEPSEEK_COMPLETION_PATH
+      )
+    } catch {
+      return false
+    }
+  }
+
+  private isTargetCapturedCompletionEntry(entry: CapturedFetchEntry): boolean {
+    if (entry.method !== 'POST') return false
+    try {
+      const url = new URL(entry.url, DEEPSEEK_CHAT_URL)
+      return (
+        url.origin === DEEPSEEK_CHAT_URL &&
+        url.pathname === DEEPSEEK_COMPLETION_PATH
+      )
+    } catch {
+      return false
+    }
   }
 
   protected getSubmitBlockedWarningMessage(): string {
@@ -387,11 +422,15 @@ export class DeepSeekAdapter extends ProviderAdapter {
 
   private async readCurrentStreamedResponseText(
     fetchCaptureStartIndex: number,
-    requestBody?: string | null
+    dispatchStartedAt: number,
+    capturedEntryId: number,
+    signal?: AbortSignal
   ): Promise<string | null> {
     const parsedResponse = await this.readCurrentCapturedResponse(
       fetchCaptureStartIndex,
-      requestBody
+      dispatchStartedAt,
+      capturedEntryId,
+      signal
     )
     const text = parsedResponse?.text.trim() ?? ''
     return text ? parsedResponse!.text : null
@@ -399,110 +438,108 @@ export class DeepSeekAdapter extends ProviderAdapter {
 
   private async readCurrentCapturedResponse(
     fetchCaptureStartIndex: number,
-    requestBody?: string | null
+    dispatchStartedAt: number,
+    capturedEntryId: number,
+    signal?: AbortSignal
   ): Promise<DeepSeekParsedResponse | null> {
     const raw = await this.readCurrentCapturedRawResponse(
       fetchCaptureStartIndex,
-      requestBody
+      dispatchStartedAt,
+      capturedEntryId,
+      signal
     )
     return raw === null ? null : this.parseResponse(raw)
   }
 
   private async readCurrentCapturedRawResponse(
     fetchCaptureStartIndex: number,
-    requestBody?: string | null
+    dispatchStartedAt: number,
+    capturedEntryId: number,
+    signal?: AbortSignal
   ): Promise<string | null> {
-    return await this.getLatestCapturedFetchBody(
-      fetchCaptureStartIndex,
-      (entry) =>
-        entry.method === 'POST' &&
-        (requestBody === undefined || entry.requestBody === requestBody) &&
-        (entry.url === '/api/v0/chat/completion' ||
-          entry.url.endsWith('/api/v0/chat/completion') ||
-          entry.url.startsWith(DEEPSEEK_CHAT_COMPLETION_URL))
+    const entries = (
+      await abortable(
+        this.getCapturedFetchEntries(fetchCaptureStartIndex),
+        signal
+      )
     )
+      .filter(
+        (entry) =>
+          this.isTargetCapturedCompletionEntry(entry) &&
+          entry.startedAt !== undefined &&
+          entry.startedAt >= dispatchStartedAt
+      )
+      .filter((entry) => entry.id === capturedEntryId)
+    throwIfAborted(signal)
+    this.reportCapturedSubmitActivity(entries)
+    const entry = entries.at(-1)
+    if (entry === undefined) return null
+    const body = entry.chunks.join('')
+    return body.trim() ? body : null
   }
 
   private async waitForCapturedFinishedResponse(
     fetchCaptureStartIndex: number,
-    signal?: AbortSignal,
-    fallbackResponse?: import('playwright').Response,
-    requestBody?: string | null
+    dispatchStartedAt: number,
+    capturedEntryId: number,
+    signal?: AbortSignal
   ): Promise<DeepSeekParsedResponse> {
-    const raceController = new AbortController()
-    const responseSignal =
-      signal === undefined
-        ? raceController.signal
-        : AbortSignal.any([signal, raceController.signal])
-    const captured = (async () => {
-      let parsedResponse: DeepSeekParsedResponse | null = null
-      await waitAsync(
-        async () => {
-          const rawResponse = await abortable(
-            this.readCurrentCapturedRawResponse(
-              fetchCaptureStartIndex,
-              requestBody
-            ),
-            responseSignal
+    let parsedResponse: DeepSeekParsedResponse | null = null
+    await waitAsync(
+      async () => {
+        const rawResponse = await this.readCurrentCapturedRawResponse(
+          fetchCaptureStartIndex,
+          dispatchStartedAt,
+          capturedEntryId,
+          signal
+        )
+        throwIfAborted(signal)
+        if (rawResponse === null) return false
+        parsedResponse = this.parseResponse(rawResponse)
+        return parsedResponse?.isFinished === true
+      },
+      {
+        timeoutMs: this.getSubmitResponseTimeoutMs(),
+        signal,
+        onTimeout: async () => {
+          throw new Error(
+            'Timed out waiting for DeepSeek response to reach finished state.'
           )
-          if (rawResponse === null) return false
-          parsedResponse = this.parseResponse(rawResponse)
-          return parsedResponse?.isFinished === true
         },
-        {
-          timeoutMs: this.getSubmitResponseTimeoutMs(),
-          signal: responseSignal,
-          onTimeout: async () => {
-            throw new Error(
-              'Timed out waiting for DeepSeek response to reach finished state.'
-            )
-          },
-        }
-      )
-      return parsedResponse
-    })()
+      }
+    )
+    if (parsedResponse !== null) return parsedResponse
+    throw new ProviderAdapterError(
+      'submit',
+      'Failed to parse DeepSeek response.',
+      {
+        kind: 'protocol',
+        recovery: 'none',
+        retryable: false,
+        maxAttempts: 1,
+        detailCode: 'deepseek_response_parse_failed',
+      }
+    )
+  }
 
-    const fallback =
-      fallbackResponse === undefined
-        ? null
-        : (async (): Promise<DeepSeekParsedResponse> => {
-            // The page capture is normally available immediately. Delay the
-            // body fallback so the normal streaming path remains independent
-            // of Playwright response.text().
-            try {
-              await delayAsync(250, responseSignal)
-              const raw = await abortable(
-                fallbackResponse.text(),
-                responseSignal
-              )
-              const parsed = this.parseResponse(raw)
-              if (parsed?.isFinished === true) return parsed
-              return await new Promise<never>(() => {})
-            } catch (error) {
-              if (isAbortError(error)) throw error
-              return await new Promise<never>(() => {})
-            }
-          })()
-
-    try {
-      const parsedResponse = await (fallback === null
-        ? captured
-        : Promise.race([captured, fallback]))
-      if (parsedResponse !== null) return parsedResponse
-      throw new ProviderAdapterError(
-        'submit',
-        'Failed to parse DeepSeek response.',
-        {
-          kind: 'protocol',
-          recovery: 'none',
-          retryable: false,
-          maxAttempts: 1,
-          detailCode: 'deepseek_response_parse_failed',
-        }
-      )
-    } finally {
-      raceController.abort()
-    }
+  private async readFinishedPlaywrightResponse(
+    response: import('playwright').Response,
+    signal?: AbortSignal
+  ): Promise<DeepSeekParsedResponse> {
+    const raw = await abortable(response.text(), signal)
+    const parsed = this.parseResponse(raw)
+    if (parsed?.isFinished === true) return parsed
+    throw new ProviderAdapterError(
+      'submit',
+      'Failed to parse DeepSeek response.',
+      {
+        kind: 'protocol',
+        recovery: 'none',
+        retryable: false,
+        maxAttempts: 1,
+        detailCode: 'deepseek_response_parse_failed',
+      }
+    )
   }
 
   public async submit(options: AbortOptions = {}): Promise<string> {
@@ -517,17 +554,36 @@ export class DeepSeekAdapter extends ProviderAdapter {
           signal
         )
         throwIfAborted(signal)
-        const fetchCaptureStartIndex = await this.getCapturedFetchEntryCount()
+        let fetchCaptureStartIndex = 0
         const requestStarted = createDeferred<void>()
-        const targetResponse = createDeferred<import('playwright').Response>()
+        const targetResponse = createDeferred<
+          import('playwright').Response | null
+        >()
         let requestObserved = false
         let responseObserved = false
         let dispatchStarted = false
-        const submittedText = this.pendingText
+        let dispatchStartedAt: number | null = null
         let ownedRequest: import('playwright').Request | null = null
-        let ownedRequestBody: string | null = null
+        let ownedCapturedEntryId: number | null = null
+        let liveCapturedMirrorEntryId: number | null = null
         const candidateRequests = new Set<import('playwright').Request>()
+        const preDispatchRequests = new Set<import('playwright').Request>()
+        const seenRequestEvents = new Set<import('playwright').Request>()
+        const capturedCandidates = new Map<number, CapturedFetchEntry>()
+        const pendingResponses = new Map<
+          import('playwright').Request,
+          import('playwright').Response
+        >()
+        const pendingFailures = new Map<import('playwright').Request, string>()
         let ambiguousRequest = false
+        let ownershipSettled = false
+        let ownershipGeneration = 0
+        let requestOwnershipSettled: Promise<void> | null = null
+        const ownershipController = new AbortController()
+        const ownershipSignal =
+          signal === undefined
+            ? ownershipController.signal
+            : AbortSignal.any([signal, ownershipController.signal])
         let terminalError: unknown = null
         let warningTimer: NodeJS.Timeout | null = null
         let settled = false
@@ -539,41 +595,8 @@ export class DeepSeekAdapter extends ProviderAdapter {
           }
         }
 
-        const resolveRequestStarted = (
-          request: import('playwright').Request
-        ) => {
-          if (!dispatchStarted) {
-            return
-          }
-          const candidate = request as import('playwright').Request & {
-            postData?: () => string | null
-          }
-          const requestBody =
-            typeof candidate.postData === 'function'
-              ? candidate.postData()
-              : null
-          if (
-            submittedText !== '' &&
-            !requestBodyContainsSubmittedText(requestBody, submittedText)
-          ) {
-            return
-          }
-          if (!candidateRequests.has(request)) {
-            candidateRequests.add(request)
-            if (candidateRequests.size > 1) {
-              ambiguousRequest = true
-              ownedRequest = null
-              ownedRequestBody = null
-              return
-            }
-          }
-          if (ambiguousRequest) return
-          ownedRequest = request
-          ownedRequestBody = requestBody
-          this.pendingText = ''
-          if (requestObserved) {
-            return
-          }
+        const resolveRequestStarted = () => {
+          if (requestObserved) return
           requestObserved = true
           stopWarningTimer()
           requestStarted.resolve()
@@ -581,40 +604,101 @@ export class DeepSeekAdapter extends ProviderAdapter {
 
         const settleTargetResponse = (
           resolution:
-            | { kind: 'resolve'; response: import('playwright').Response }
+            | {
+                kind: 'resolve'
+                response: import('playwright').Response | null
+              }
             | { kind: 'reject'; error: unknown }
         ) => {
-          if (settled) {
-            return
-          }
+          if (settled) return
           settled = true
           stopWarningTimer()
           if (resolution.kind === 'resolve') {
             responseObserved = true
             targetResponse.resolve(resolution.response)
-            return
+          } else {
+            terminalError = resolution.error
+            targetResponse.reject(resolution.error)
           }
-          terminalError = resolution.error
-          targetResponse.reject(resolution.error)
         }
 
-        const onRequest = (request: import('playwright').Request) => {
-          if (!this.isTargetCompletionRequest(request)) {
-            return
+        const createOwnershipError = () =>
+          new ProviderAdapterError(
+            'submit',
+            buildResponseOwnershipErrorMessage('DeepSeek'),
+            {
+              kind: 'unknown',
+              recovery: 'none',
+              retryable: false,
+              maxAttempts: 1,
+              detailCode: 'deepseek_response_ownership_ambiguous',
+            }
+          )
+
+        const throwIfCaptureReadCancelled = () => {
+          throwIfAborted(signal)
+          if (ownershipController.signal.aborted) {
+            throw createOwnershipError()
           }
-          resolveRequestStarted(request)
         }
 
-        const onRequestFailed = (request: import('playwright').Request) => {
-          if (!this.isTargetCompletionRequest(request)) {
-            return
+        const markAmbiguous = () => {
+          if (ambiguousRequest) return
+          ambiguousRequest = true
+          ownershipGeneration += 1
+          ownedRequest = null
+          ownedCapturedEntryId = null
+          ownershipController.abort()
+          settleTargetResponse({
+            kind: 'reject',
+            error: createOwnershipError(),
+          })
+        }
+
+        const isOwnershipCurrent = (
+          generation: number,
+          request: import('playwright').Request | null,
+          capturedEntryId: number | null
+        ) =>
+          ownershipSettled &&
+          !ambiguousRequest &&
+          ownershipGeneration === generation &&
+          ownedRequest === request &&
+          ownedCapturedEntryId === capturedEntryId
+
+        const assertOwnershipCurrent = (
+          generation: number,
+          request: import('playwright').Request | null,
+          capturedEntryId: number | null
+        ) => {
+          if (!isOwnershipCurrent(generation, request, capturedEntryId)) {
+            throw createOwnershipError()
           }
-          resolveRequestStarted(request)
-          if (ownedRequest !== request) {
-            return
-          }
-          const failureText =
-            request.failure()?.errorText ?? 'unknown network failure'
+        }
+
+        const assertOperationCurrent = (
+          generation: number,
+          request: import('playwright').Request | null,
+          capturedEntryId: number | null
+        ) => {
+          throwIfAborted(signal)
+          assertOwnershipCurrent(generation, request, capturedEntryId)
+        }
+
+        const processOwnedResponse = (
+          response: import('playwright').Response
+        ) => {
+          if (ambiguousRequest || ownedRequest === null) return
+          if (response.request() !== ownedRequest) return
+          this.emitSubmitActivitySafely()
+          settleTargetResponse({ kind: 'resolve', response })
+        }
+
+        const processOwnedFailure = (
+          request: import('playwright').Request,
+          failureText: string
+        ) => {
+          if (ambiguousRequest || ownedRequest !== request) return
           settleTargetResponse({
             kind: 'reject',
             error: new ProviderAdapterError(
@@ -631,17 +715,197 @@ export class DeepSeekAdapter extends ProviderAdapter {
           })
         }
 
-        const onResponse = (response: import('playwright').Response) => {
-          const request = response.request()
-          if (
-            !this.isTargetCompletionRequest(request) ||
-            ownedRequest !== request
-          ) {
+        let scanCapturedCandidates = async (): Promise<void> => {}
+        const reportOwnedCapturedActivity = (
+          entries: readonly CapturedFetchEntry[]
+        ) => {
+          if (!ownershipSettled || ambiguousRequest) return
+          const capturedEntryId =
+            ownedRequest === null
+              ? ownedCapturedEntryId
+              : liveCapturedMirrorEntryId
+          if (capturedEntryId === null) return
+          const entry = entries.find(
+            (candidate) => candidate.id === capturedEntryId
+          )
+          if (entry !== undefined) {
+            this.reportCapturedSubmitActivity([entry])
+          }
+        }
+
+        const finalizeRequestOwnership = () => {
+          if (ownershipSettled || ambiguousRequest) return
+          const liveCandidates = [...candidateRequests]
+          const capturedEntries = [...capturedCandidates.values()]
+          if (liveCandidates.length > 1 || capturedEntries.length > 1) {
+            ownershipSettled = true
+            markAmbiguous()
             return
           }
+          if (liveCandidates.length === 0 && capturedEntries.length === 0) {
+            return
+          }
+          ownershipSettled = true
+          ownershipGeneration += 1
+          if (liveCandidates.length === 1) {
+            ownedRequest = liveCandidates[0]!
+            ownedCapturedEntryId = null
+            liveCapturedMirrorEntryId = capturedEntries[0]?.id ?? null
+          } else {
+            ownedRequest = null
+            ownedCapturedEntryId = capturedEntries[0]!.id
+          }
+          this.pendingText = ''
+          resolveRequestStarted()
+          reportOwnedCapturedActivity(capturedEntries)
+          if (ownedRequest === null) {
+            settleTargetResponse({ kind: 'resolve', response: null })
+            return
+          }
+          for (const [pendingRequest, pendingResponse] of pendingResponses) {
+            if (pendingRequest === ownedRequest) {
+              pendingResponses.delete(pendingRequest)
+              processOwnedResponse(pendingResponse)
+            }
+          }
+          for (const [pendingRequest, pendingFailure] of pendingFailures) {
+            if (pendingRequest === ownedRequest) {
+              pendingFailures.delete(pendingRequest)
+              processOwnedFailure(pendingRequest, pendingFailure)
+            }
+          }
+        }
+
+        const scheduleRequestOwnershipSettlement = () => {
+          if (requestOwnershipSettled !== null) return
+          requestOwnershipSettled = delayAsync(
+            DEEPSEEK_REQUEST_OWNERSHIP_SETTLE_MS,
+            signal
+          )
+            .then(async () => {
+              await scanCapturedCandidates()
+              finalizeRequestOwnership()
+            })
+            .catch(() => {})
+        }
+
+        const recordRequestCandidate = (
+          request: import('playwright').Request,
+          source: 'request' | 'response' | 'failure'
+        ): boolean => {
+          if (!dispatchStarted || preDispatchRequests.has(request)) return false
+          const requestStartTime = readDeepSeekRequestStartTime(request)
+          if (
+            dispatchStartedAt !== null &&
+            requestStartTime !== undefined &&
+            requestStartTime < dispatchStartedAt
+          ) {
+            preDispatchRequests.add(request)
+            return false
+          }
+          if (
+            source !== 'request' &&
+            !seenRequestEvents.has(request) &&
+            requestStartTime === undefined
+          ) {
+            // A response/failure with no preceding request event and no timing
+            // data may belong to an in-flight request from before dispatch.
+            preDispatchRequests.add(request)
+            return false
+          }
+          if (candidateRequests.has(request)) return true
+          candidateRequests.add(request)
+          if (ownershipSettled) {
+            markAmbiguous()
+            return true
+          }
           this.emitSubmitActivitySafely()
-          resolveRequestStarted(request)
-          settleTargetResponse({ kind: 'resolve', response })
+          scheduleRequestOwnershipSettlement()
+          return true
+        }
+
+        scanCapturedCandidates = async (): Promise<void> => {
+          if (!dispatchStarted || dispatchStartedAt === null) return
+          let entries: CapturedFetchEntry[]
+          try {
+            entries = (
+              await abortable(
+                this.getCapturedFetchEntries(fetchCaptureStartIndex),
+                ownershipSignal
+              )
+            ).filter(
+              (entry) =>
+                this.isTargetCapturedCompletionEntry(entry) &&
+                entry.startedAt !== undefined &&
+                entry.startedAt >= dispatchStartedAt!
+            )
+          } catch (error) {
+            if (isAbortError(error)) {
+              throwIfCaptureReadCancelled()
+              throw error
+            }
+            return
+          }
+          throwIfCaptureReadCancelled()
+          for (const entry of entries) {
+            if (capturedCandidates.has(entry.id)) continue
+            capturedCandidates.set(entry.id, entry)
+            if (ownershipSettled) {
+              if (ownedRequest !== null && liveCapturedMirrorEntryId === null) {
+                liveCapturedMirrorEntryId = entry.id
+              } else {
+                markAmbiguous()
+              }
+              continue
+            }
+            resolveRequestStarted()
+            scheduleRequestOwnershipSettlement()
+          }
+          reportOwnedCapturedActivity(entries)
+        }
+
+        const onRequest = (request: import('playwright').Request) => {
+          if (!this.isTargetCompletionRequest(request)) return
+          seenRequestEvents.add(request)
+          if (!dispatchStarted) {
+            preDispatchRequests.add(request)
+            return
+          }
+          if (recordRequestCandidate(request, 'request'))
+            resolveRequestStarted()
+        }
+
+        const onRequestFailed = (request: import('playwright').Request) => {
+          if (!this.isTargetCompletionRequest(request)) return
+          if (!dispatchStarted) {
+            preDispatchRequests.add(request)
+            return
+          }
+          if (!recordRequestCandidate(request, 'failure')) return
+          resolveRequestStarted()
+          const failureText =
+            request.failure()?.errorText ?? 'unknown network failure'
+          if (!ownershipSettled) {
+            pendingFailures.set(request, failureText)
+          } else {
+            processOwnedFailure(request, failureText)
+          }
+        }
+
+        const onResponse = (response: import('playwright').Response) => {
+          const request = response.request()
+          if (!this.isTargetCompletionRequest(request)) return
+          if (!dispatchStarted) {
+            preDispatchRequests.add(request)
+            return
+          }
+          if (!recordRequestCandidate(request, 'response')) return
+          resolveRequestStarted()
+          if (!ownershipSettled) {
+            pendingResponses.set(request, response)
+          } else {
+            processOwnedResponse(response)
+          }
         }
 
         const onClose = () => {
@@ -662,19 +926,47 @@ export class DeepSeekAdapter extends ProviderAdapter {
         let lastStreamedText = ''
         try {
           stopSubmitTextPolling = this.startSubmitTextPolling(async () => {
+            await scanCapturedCandidates()
+            if (
+              !ownershipSettled ||
+              ambiguousRequest ||
+              ownedRequest !== null ||
+              ownedCapturedEntryId === null
+            ) {
+              return null
+            }
+            const expectedGeneration = ownershipGeneration
+            const expectedCapturedEntryId = ownedCapturedEntryId
             const text = await this.readCurrentStreamedResponseText(
               fetchCaptureStartIndex,
-              ownedRequestBody
+              dispatchStartedAt!,
+              expectedCapturedEntryId,
+              ownershipSignal
             )
+            throwIfCaptureReadCancelled()
+            await scanCapturedCandidates()
+            if (
+              !isOwnershipCurrent(
+                expectedGeneration,
+                null,
+                expectedCapturedEntryId
+              )
+            ) {
+              return null
+            }
             if (text !== null) lastStreamedText = text
             return text
           })
+
           this.emitSubmitDispatching(signal)
+          fetchCaptureStartIndex = await this.getCapturedFetchEntryCount()
+          dispatchStartedAt = Date.now()
           dispatchStarted = true
           dispatchAttempted = true
           await this.ui.clickSend()
           this.emitSubmitSent()
           throwIfAborted(signal)
+          await scanCapturedCandidates()
 
           await abortable(
             Promise.race([
@@ -691,14 +983,13 @@ export class DeepSeekAdapter extends ProviderAdapter {
             warningTimer = setInterval(() => {
               void this.emitSubmitStatusSafely(warningMessage)
             }, this.getSubmitBlockedWarningIntervalMs())
-
             await abortable(
               Promise.race([requestStarted.promise, targetResponse.promise]),
               signal
             )
           }
 
-          await awaitWithTimeout(
+          const response = await awaitWithTimeout(
             targetResponse.promise,
             this.getSubmitResponseTimeoutMs(),
             () =>
@@ -707,54 +998,102 @@ export class DeepSeekAdapter extends ProviderAdapter {
               ),
             { signal }
           )
-          const parsedResponse = await this.waitForCapturedFinishedResponse(
-            fetchCaptureStartIndex,
-            signal,
-            await targetResponse.promise,
-            ownedRequestBody
-          )
-          await delayAsync(DEEPSEEK_REQUEST_OWNERSHIP_SETTLE_MS, signal)
-          if (ambiguousRequest) {
-            throw new ProviderAdapterError(
-              'submit',
-              buildResponseOwnershipErrorMessage('DeepSeek'),
-              {
-                kind: 'unknown',
-                recovery: 'none',
-                retryable: false,
-                maxAttempts: 1,
-                detailCode: 'deepseek_response_ownership_ambiguous',
-              }
-            )
+          if (requestOwnershipSettled !== null) {
+            await Promise.resolve(requestOwnershipSettled)
           }
+          await scanCapturedCandidates()
+          const expectedGeneration = ownershipGeneration
+          const expectedRequest = ownedRequest
+          const expectedCapturedEntryId = ownedCapturedEntryId
+          assertOperationCurrent(
+            expectedGeneration,
+            expectedRequest,
+            expectedCapturedEntryId
+          )
+          let parsedResponse: DeepSeekParsedResponse
+          try {
+            if (response === null) {
+              if (
+                expectedRequest !== null ||
+                expectedCapturedEntryId === null
+              ) {
+                throw createOwnershipError()
+              }
+              parsedResponse = await this.waitForCapturedFinishedResponse(
+                fetchCaptureStartIndex,
+                dispatchStartedAt,
+                expectedCapturedEntryId,
+                ownershipSignal
+              )
+            } else {
+              if (
+                expectedRequest === null ||
+                response.request() !== expectedRequest ||
+                expectedCapturedEntryId !== null
+              ) {
+                throw createOwnershipError()
+              }
+              parsedResponse = await awaitWithTimeout(
+                this.readFinishedPlaywrightResponse(response, ownershipSignal),
+                this.getSubmitResponseTimeoutMs(),
+                () =>
+                  new Error(
+                    'Timed out waiting for DeepSeek response body to finish.'
+                  ),
+                { signal: ownershipSignal }
+              )
+            }
+          } catch (error) {
+            if (ambiguousRequest) throw createOwnershipError()
+            throw error
+          }
+          await scanCapturedCandidates()
+          assertOperationCurrent(
+            expectedGeneration,
+            expectedRequest,
+            expectedCapturedEntryId
+          )
           terminalEvidenceObserved = true
-          await this.ui.waitForReady(
-            'submit',
-            this.getSubmitResponseTimeoutMs(),
-            signal
-          )
-          if (ambiguousRequest) {
-            throw new ProviderAdapterError(
+          try {
+            await this.ui.waitForReady(
               'submit',
-              buildResponseOwnershipErrorMessage('DeepSeek'),
-              {
-                kind: 'unknown',
-                recovery: 'none',
-                retryable: false,
-                maxAttempts: 1,
-                detailCode: 'deepseek_response_ownership_ambiguous',
-              }
+              this.getSubmitResponseTimeoutMs(),
+              ownershipSignal
             )
+          } catch (error) {
+            if (ambiguousRequest) throw createOwnershipError()
+            throw error
           }
+          await scanCapturedCandidates()
+          assertOperationCurrent(
+            expectedGeneration,
+            expectedRequest,
+            expectedCapturedEntryId
+          )
           stopSubmitTextPolling()
           this.conversationIdVal =
             this.conversationIdVal ??
             this.page.url().match(/\/a\/chat\/s\/([^/?#]+)/)?.[1] ??
             null
           if (lastStreamedText !== parsedResponse.text) {
+            assertOperationCurrent(
+              expectedGeneration,
+              expectedRequest,
+              expectedCapturedEntryId
+            )
             await this.emitSubmitText(parsedResponse.text)
+            assertOperationCurrent(
+              expectedGeneration,
+              expectedRequest,
+              expectedCapturedEntryId
+            )
           }
-          throwIfAborted(signal)
+          await scanCapturedCandidates()
+          assertOperationCurrent(
+            expectedGeneration,
+            expectedRequest,
+            expectedCapturedEntryId
+          )
           return parsedResponse.text
         } finally {
           stopSubmitTextPolling()

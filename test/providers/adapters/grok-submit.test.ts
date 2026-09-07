@@ -155,6 +155,20 @@ test('GrokAdapter.submit fails closed when an unknown session arrives after disp
   )
 })
 
+test('GrokAdapter.submit accepts a new session discovered after dispatch', async () => {
+  const adapter = createTestGrokAdapter()
+  const page = createGrokPage({
+    conversationUrl: 'https://grok.com/',
+    submitConversationUrl: 'https://grok.com/chat/new-session',
+    responseConversationIds: ['new-session'],
+  })
+  installGrokWebSocketFrames(adapter, page.websocketFrames)
+  installGrokTestPage(adapter, page)
+
+  assert.equal(await adapter.submit(), 'Grok response complete.')
+  assert.equal(adapter.conversationId, 'new-session')
+})
+
 test('GrokAdapter websocket parsing does not finish from text chunks alone', () => {
   const adapter = createTestGrokAdapter()
 
@@ -232,6 +246,31 @@ test('GrokAdapter websocket parsing uses only the confirmed current session', ()
     conversationId: 'new-session',
     text: 'current response',
     isFinished: true,
+  })
+})
+
+test('GrokAdapter websocket parsing rejects multiple terminal responses for one session', () => {
+  const adapter = createTestGrokAdapter()
+
+  const parsed = parseWebSocketResponse(
+    adapter,
+    [
+      buildResponseFrame('new-session', 'first response', false),
+      buildResponseFrame('new-session', '', true),
+      buildResponseFrame('new-session', 'second response', false),
+      buildResponseFrame('new-session', '', true),
+    ],
+    'new-session',
+    {
+      requireExpectedConversationId: true,
+      requireSingleResponse: true,
+    }
+  )
+
+  assert.deepEqual(parsed, {
+    conversationId: null,
+    text: '',
+    isFinished: false,
   })
 })
 
@@ -409,6 +448,7 @@ function createGrokPage({
   unrelatedFileInputCount = 0,
   resetSubmitAfterMs = null,
   conversationUrl = 'https://grok.com/chat/conv-1',
+  submitConversationUrl = null,
   responseConversationId = 'conv-1',
   responseConversationIds = [responseConversationId],
 }: {
@@ -421,6 +461,7 @@ function createGrokPage({
   unrelatedFileInputCount?: number
   resetSubmitAfterMs?: number | null
   conversationUrl?: string
+  submitConversationUrl?: string | null
   responseConversationId?: string
   responseConversationIds?: readonly string[]
 } = {}) {
@@ -448,6 +489,9 @@ function createGrokPage({
     isEnabled: async () => submitEnabled,
     click: async () => {
       events.push('click:submit')
+      if (submitConversationUrl !== null) {
+        currentUrl = submitConversationUrl
+      }
       setTimeout(() => {
         for (const [
           index,

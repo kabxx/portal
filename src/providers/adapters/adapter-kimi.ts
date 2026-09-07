@@ -30,6 +30,7 @@ const KIMI_HISTORY_REQUEST_PATH =
 const KIMI_USER_REQUEST_PATH = '/api/user'
 const KIMI_HISTORY_PAGE_SIZE = 100
 const KIMI_CAPABILITY_UI_TIMEOUT_MS = 5_000
+const KIMI_REQUEST_OWNERSHIP_SETTLE_MS = 100
 
 export type {
   KimiToggleCapability,
@@ -47,6 +48,12 @@ interface KimiPageResponseResult {
   raw: string
   status: number
   error: string | null
+}
+
+interface KimiOwnershipGuard {
+  observeCapturedEntries(entries: readonly CapturedFetchEntry[]): void
+  reportCapturedActivity(entries: readonly CapturedFetchEntry[]): void
+  assertCurrent(): void
 }
 
 export interface KimiParsedResponse {
@@ -88,31 +95,21 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
 }
 
-function readKimiSubmittedText(raw: string | null | undefined): string | null {
-  if (raw === null || raw === undefined) return null
-  for (const value of extractKimiJsonObjects(raw)) {
-    const message = isRecord(value) ? value.message : null
-    if (!isRecord(message) || message.role !== 'user') continue
-    const blocks: unknown[] = Array.isArray(message.blocks)
-      ? (message.blocks as unknown[])
-      : []
-    return blocks
-      .map((block) => {
-        const text = isRecord(block) ? block.text : null
-        return isRecord(text) && typeof text.content === 'string'
-          ? text.content
-          : ''
-      })
-      .join('')
+function readKimiRequestStartTime(
+  request: import('playwright').Request
+): number | undefined {
+  const candidate = request as import('playwright').Request & {
+    timing?: () => { startTime?: number }
   }
-  return null
-}
-
-function isOwnedKimiRequestBody(
-  raw: string | null | undefined,
-  submittedText: string
-): boolean {
-  return readKimiSubmittedText(raw) === submittedText
+  if (typeof candidate.timing !== 'function') return undefined
+  try {
+    const startTime = candidate.timing().startTime
+    return typeof startTime === 'number' && Number.isFinite(startTime)
+      ? startTime
+      : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function nonEmptyKimiText(value: string | null): string | null {
@@ -354,8 +351,15 @@ export class KimiAdapter extends ProviderAdapter {
     await this.restore(options)
   }
 
-  private async getAuthState(startIndex = 0): Promise<KimiAuthState> {
-    const entries = await this.getCapturedFetchEntries(startIndex)
+  private async getAuthState(
+    startIndex = 0,
+    signal?: AbortSignal
+  ): Promise<KimiAuthState> {
+    const entries = await abortable(
+      this.getCapturedFetchEntries(startIndex),
+      signal
+    )
+    throwIfAborted(signal)
     const entry = entries
       .filter(
         (candidate) =>
@@ -398,7 +402,7 @@ export class KimiAdapter extends ProviderAdapter {
             finalState = 'signed_out'
             return true
           }
-          const authState = await this.getAuthState(captureStartIndex)
+          const authState = await this.getAuthState(captureStartIndex, signal)
           if (authState === 'signed_out') {
             finalState = authState
             return true
@@ -467,9 +471,7 @@ export class KimiAdapter extends ProviderAdapter {
     if (await abortable(this.providerUi.isSignedOutVisible(), options.signal)) {
       return false
     }
-    return (
-      (await abortable(this.getAuthState(), options.signal)) === 'signed_in'
-    )
+    return (await this.getAuthState(0, options.signal)) === 'signed_in'
   }
 
   public async loadHistory(options: AbortOptions = {}) {
@@ -574,90 +576,46 @@ export class KimiAdapter extends ProviderAdapter {
     return buildSubmitBlockedWarningMessage('Kimi')
   }
 
-  private async waitForOwnedResponse(
-    captureStartIndex: number,
-    submittedText: string,
-    signal?: AbortSignal,
-    pageResponsePromise?: Promise<KimiPageResponseResult>
-  ): Promise<
-    | {
-        kind: 'capture'
-        entry: CapturedFetchEntry
-      }
-    | { kind: 'page'; response: KimiPageResponseResult }
-  > {
-    let nextWarningAt = Date.now() + this.getSubmitRequestStartGraceMs()
-    const submitTimeoutMs = this.getSubmitResponseTimeoutMs()
-    const deadline =
-      submitTimeoutMs === null ? null : Date.now() + submitTimeoutMs
-    while (deadline === null || Date.now() < deadline) {
-      throwIfAborted(signal)
-      const entries = await this.getCapturedFetchEntries(captureStartIndex)
-      this.reportCapturedSubmitActivity(entries)
-      const target = entries.find(
-        (entry) =>
-          entry.method === 'POST' &&
-          isKimiPath(entry.url, KIMI_CHAT_REQUEST_PATH) &&
-          isOwnedKimiRequestBody(entry.requestBody, submittedText)
-      )
-      if (target !== undefined) return { kind: 'capture', entry: target }
-      if (pageResponsePromise !== undefined) {
-        const pageResponse = await Promise.race([
-          pageResponsePromise.then((response) => ({ response })),
-          delayAsync(0, signal).then(() => null),
-        ])
-        if (pageResponse !== null) {
-          return { kind: 'page', response: pageResponse.response }
-        }
-      }
-      if ((await this.getAuthState(captureStartIndex)) === 'signed_out') {
-        throw new ProviderAdapterError(
-          'submit',
-          'Kimi requires login before the message can be submitted.',
-          {
-            kind: 'auth',
-            recovery: 'none',
-            retryable: false,
-            detailCode: 'kimi_submit_signed_out',
-          }
-        )
-      }
-      if (Date.now() >= nextWarningAt) {
-        await this.emitSubmitStatus(this.getSubmitBlockedWarningMessage())
-        nextWarningAt = Date.now() + this.getSubmitBlockedWarningIntervalMs()
-      }
-      await delayAsync(50, signal)
-    }
-    throw new ProviderAdapterError(
-      'submit',
-      'Kimi submission was dispatched, but no owned ChatService request was observed.',
-      {
-        kind: 'unknown',
-        recovery: 'none',
-        retryable: false,
-        detailCode: 'kimi_submit_outcome_unknown',
-      }
-    )
-  }
-
   private async waitForOwnedResponseCompletion(
     captureStartIndex: number,
     entryId: number,
+    guard: KimiOwnershipGuard,
     signal?: AbortSignal
-  ) {
+  ): Promise<CapturedFetchEntry> {
     let deadline = Date.now() + this.getSubmitResponseStallTimeoutMs()
     let previousSnapshot = ''
     while (Date.now() < deadline) {
+      guard.assertCurrent()
       throwIfAborted(signal)
-      const entries = await this.getCapturedFetchEntries(captureStartIndex)
-      this.reportCapturedSubmitActivity(entries)
+      const entries = await abortable(
+        this.getCapturedFetchEntries(captureStartIndex),
+        signal
+      )
+      throwIfAborted(signal)
+      guard.assertCurrent()
+      guard.observeCapturedEntries(entries)
+      throwIfAborted(signal)
+      guard.assertCurrent()
+      guard.reportCapturedActivity(entries)
+      throwIfAborted(signal)
+      guard.assertCurrent()
       const target = entries.find((entry) => entry.id === entryId)
       if (target !== undefined) {
+        throwIfAborted(signal)
+        guard.assertCurrent()
         const parsed = parseKimiConnectResponse(target.chunks.join(''))
         if (parsed.text !== null) {
-          await this.emitSubmitText(parsed.text)
+          throwIfAborted(signal)
+          guard.assertCurrent()
+          await abortable(this.emitSubmitText(parsed.text), signal)
+          throwIfAborted(signal)
+          guard.assertCurrent()
         }
-        if (target.done) return target
+        if (target.done) {
+          throwIfAborted(signal)
+          guard.assertCurrent()
+          return target
+        }
         const snapshot = [
           target.status ?? '',
           target.chunks.length,
@@ -669,6 +627,7 @@ export class KimiAdapter extends ProviderAdapter {
         }
       }
       await delayAsync(50, signal)
+      guard.assertCurrent()
     }
     throw new ProviderAdapterError(
       'submit',
@@ -709,26 +668,96 @@ export class KimiAdapter extends ProviderAdapter {
       null
     let onResponse: ((response: import('playwright').Response) => void) | null =
       null
+    let stopOwnershipMonitoring = () => {}
     try {
       throwIfAborted(signal)
       const captureStartIndex = await this.getCapturedFetchEntryCount()
       const pageResponse = createDeferred<KimiPageResponseResult>()
-      const submittedText = this.pendingTextVal
       let dispatchStarted = false
-      const ownedRequests = new WeakSet<import('playwright').Request>()
-      onRequest = (request: import('playwright').Request) => {
+      let dispatchStartedAt: number | null = null
+      type OwnedTarget =
+        | { kind: 'capture'; entry: CapturedFetchEntry }
+        | { kind: 'page'; request: import('playwright').Request }
+      const preDispatchRequests = new WeakSet<import('playwright').Request>()
+      const liveCandidates = new Set<import('playwright').Request>()
+      const capturedCandidates = new Map<number, CapturedFetchEntry>()
+      let liveCapturedMirrorEntryId: number | null = null
+      const pendingResponses = new Map<
+        import('playwright').Request,
+        import('playwright').Response
+      >()
+      let ownership: OwnedTarget | null = null
+      let ownershipAmbiguous = false
+      let ownershipGeneration = 0
+      let ownershipSettleAt: number | null = null
+      const ownershipController = new AbortController()
+      const ownershipSignal =
+        signal === undefined
+          ? ownershipController.signal
+          : AbortSignal.any([signal, ownershipController.signal])
+
+      const createOwnershipError = () =>
+        new ProviderAdapterError(
+          'submit',
+          'Kimi submission was dispatched, but no unique ChatService request was observed.',
+          {
+            kind: 'unknown',
+            recovery: 'none',
+            retryable: false,
+            detailCode: 'kimi_submit_outcome_unknown',
+          }
+        )
+
+      const markOwnershipAmbiguous = (): void => {
+        if (ownershipAmbiguous) return
+        ownershipAmbiguous = true
+        ownershipGeneration += 1
+        ownershipController.abort()
+      }
+
+      const isOwnershipCurrent = (
+        generation: number,
+        expected: OwnedTarget
+      ): boolean => {
         if (
-          dispatchStarted &&
-          request.method() === 'POST' &&
-          isKimiPath(request.url(), KIMI_CHAT_REQUEST_PATH) &&
-          isOwnedKimiRequestBody(request.postData(), submittedText)
+          ownershipAmbiguous ||
+          ownershipGeneration !== generation ||
+          ownership === null ||
+          ownership.kind !== expected.kind
         ) {
-          ownedRequests.add(request)
+          return false
+        }
+        if (ownership.kind === 'page') {
+          return (
+            expected.kind === 'page' && ownership.request === expected.request
+          )
+        }
+        return (
+          expected.kind === 'capture' &&
+          ownership.entry.id === expected.entry.id
+        )
+      }
+
+      const assertOwnershipCurrent = (
+        generation: number,
+        expected: OwnedTarget
+      ): void => {
+        if (!isOwnershipCurrent(generation, expected)) {
+          throw createOwnershipError()
         }
       }
-      onResponse = (response: import('playwright').Response) => {
-        if (!ownedRequests.has(response.request())) return
-        this.emitSubmitActivitySafely()
+
+      const assertSubmissionCurrent = (
+        generation: number,
+        expected: OwnedTarget
+      ): void => {
+        throwIfAborted(signal)
+        assertOwnershipCurrent(generation, expected)
+      }
+
+      const resolvePageResponse = (
+        response: import('playwright').Response
+      ): void => {
         void response
           .text()
           .then((raw) =>
@@ -746,85 +775,363 @@ export class KimiAdapter extends ProviderAdapter {
             })
           )
       }
+
+      const replayPendingResponse = (): void => {
+        if (ownership?.kind !== 'page') return
+        const response = pendingResponses.get(ownership.request)
+        if (response === undefined) return
+        pendingResponses.delete(ownership.request)
+        resolvePageResponse(response)
+      }
+
+      const recordLiveCandidate = (
+        request: import('playwright').Request
+      ): void => {
+        if (!dispatchStarted) {
+          preDispatchRequests.add(request)
+          return
+        }
+        if (preDispatchRequests.has(request)) return
+        const requestStartTime = readKimiRequestStartTime(request)
+        if (
+          dispatchStartedAt !== null &&
+          requestStartTime !== undefined &&
+          requestStartTime < dispatchStartedAt
+        ) {
+          preDispatchRequests.add(request)
+          return
+        }
+        if (ownership !== null) {
+          if (ownership.kind === 'page' && ownership.request === request) {
+            return
+          }
+          markOwnershipAmbiguous()
+          return
+        }
+        if (liveCandidates.has(request)) return
+        liveCandidates.add(request)
+        ownershipSettleAt ??= Date.now() + KIMI_REQUEST_OWNERSHIP_SETTLE_MS
+        this.emitSubmitActivitySafely()
+      }
+
+      const isPostDispatchChatCapture = (
+        entry: CapturedFetchEntry
+      ): boolean => {
+        const currentDispatchStartedAt = dispatchStartedAt
+        return (
+          dispatchStarted &&
+          currentDispatchStartedAt !== null &&
+          entry.method === 'POST' &&
+          isKimiPath(entry.url, KIMI_CHAT_REQUEST_PATH) &&
+          entry.startedAt !== undefined &&
+          entry.startedAt >= currentDispatchStartedAt
+        )
+      }
+
+      const recordCapturedCandidates = (
+        entries: readonly CapturedFetchEntry[]
+      ): void => {
+        if (!dispatchStarted || ownershipAmbiguous) return
+        for (const entry of entries) {
+          if (!isPostDispatchChatCapture(entry)) continue
+          if (capturedCandidates.has(entry.id)) continue
+          capturedCandidates.set(entry.id, entry)
+          if (ownership !== null) {
+            if (
+              ownership.kind === 'page' &&
+              liveCapturedMirrorEntryId === null
+            ) {
+              liveCapturedMirrorEntryId = entry.id
+              continue
+            }
+            markOwnershipAmbiguous()
+            continue
+          }
+          ownershipSettleAt ??= Date.now() + KIMI_REQUEST_OWNERSHIP_SETTLE_MS
+          this.emitSubmitActivitySafely()
+        }
+      }
+
+      const reportOwnedCapturedActivity = (
+        entries: readonly CapturedFetchEntry[]
+      ): void => {
+        if (
+          !dispatchStarted ||
+          ownershipAmbiguous ||
+          ownership === null ||
+          dispatchStartedAt === null
+        ) {
+          return
+        }
+        const ownedEntryId =
+          ownership.kind === 'capture'
+            ? ownership.entry.id
+            : liveCapturedMirrorEntryId
+        if (ownedEntryId === null) return
+        const ownedEntries = entries.filter(
+          (entry) =>
+            entry.id === ownedEntryId && isPostDispatchChatCapture(entry)
+        )
+        this.reportCapturedSubmitActivity(ownedEntries)
+      }
+
+      const scanCapturedCandidates = async (): Promise<void> => {
+        if (!dispatchStarted || ownershipAmbiguous) return
+        let entries: CapturedFetchEntry[]
+        try {
+          entries = await abortable(
+            this.getCapturedFetchEntries(captureStartIndex),
+            ownershipSignal
+          )
+        } catch (error) {
+          if (signal?.aborted === true) throw error
+          if (ownershipAmbiguous) throw createOwnershipError()
+          if (isAbortError(error)) throw error
+          return
+        }
+        throwIfAborted(signal)
+        if (ownershipAmbiguous) throw createOwnershipError()
+        recordCapturedCandidates(entries)
+        throwIfAborted(signal)
+        if (ownershipAmbiguous) throw createOwnershipError()
+        reportOwnedCapturedActivity(entries)
+        throwIfAborted(signal)
+        if (ownershipAmbiguous) throw createOwnershipError()
+      }
+
+      const finalizeOwnership = (): void => {
+        if (ownership !== null || ownershipAmbiguous) return
+        if (liveCandidates.size > 1 || capturedCandidates.size > 1) {
+          markOwnershipAmbiguous()
+          return
+        }
+        const liveRequest = liveCandidates.values().next().value
+        if (liveRequest !== undefined) {
+          ownership = { kind: 'page', request: liveRequest }
+          liveCapturedMirrorEntryId =
+            capturedCandidates.values().next().value?.id ?? null
+          ownershipGeneration += 1
+          replayPendingResponse()
+          return
+        }
+        const capturedEntry = capturedCandidates.values().next().value
+        if (capturedEntry !== undefined) {
+          ownership = { kind: 'capture', entry: capturedEntry }
+          ownershipGeneration += 1
+        }
+      }
+
+      onRequest = (request: import('playwright').Request) => {
+        if (
+          request.method() === 'POST' &&
+          isKimiPath(request.url(), KIMI_CHAT_REQUEST_PATH)
+        ) {
+          recordLiveCandidate(request)
+        }
+      }
+      onResponse = (response: import('playwright').Response) => {
+        const request = response.request()
+        if (
+          !dispatchStarted ||
+          ownershipAmbiguous ||
+          preDispatchRequests.has(request) ||
+          !liveCandidates.has(request)
+        ) {
+          return
+        }
+        if (ownership?.kind === 'page' && ownership.request === request) {
+          resolvePageResponse(response)
+          return
+        }
+        pendingResponses.set(request, response)
+      }
       this.page.on('request', onRequest)
       this.page.on('response', onResponse)
+      dispatchStartedAt = Date.now()
       dispatchStarted = true
       this.emitSubmitDispatching(signal)
       await this.providerUi.dispatchSubmit()
       dispatched = true
       this.pendingTextVal = ''
       this.emitSubmitSent()
-      const response = await this.waitForOwnedResponse(
-        captureStartIndex,
-        submittedText,
-        signal,
-        pageResponse.promise
-      )
-      const completed =
-        response.kind === 'page'
-          ? {
-              chunks: [response.response.raw],
-              error: response.response.error,
-              status: response.response.status,
+
+      let nextWarningAt = Date.now() + this.getSubmitRequestStartGraceMs()
+      const submitTimeoutMs = this.getSubmitResponseTimeoutMs()
+      const deadline =
+        submitTimeoutMs === null
+          ? null
+          : Date.now() + submitTimeoutMs + KIMI_REQUEST_OWNERSHIP_SETTLE_MS
+      let response: OwnedTarget | null = null
+      while (deadline === null || Date.now() < deadline) {
+        throwIfAborted(signal)
+        await scanCapturedCandidates()
+        if (
+          ownership === null &&
+          !ownershipAmbiguous &&
+          ownershipSettleAt !== null &&
+          Date.now() >= ownershipSettleAt
+        ) {
+          finalizeOwnership()
+        }
+        if (ownershipAmbiguous) break
+        const currentOwnership = ownership as OwnedTarget | null
+        if (currentOwnership?.kind === 'capture') {
+          response = currentOwnership
+          break
+        }
+        if (currentOwnership?.kind === 'page') {
+          replayPendingResponse()
+          const pageResult = await Promise.race([
+            pageResponse.promise.then((result) => ({ result })),
+            delayAsync(0, signal).then(() => null),
+          ])
+          if (pageResult !== null) {
+            response = { kind: 'page', request: currentOwnership.request }
+            break
+          }
+        }
+        let authState: KimiAuthState
+        try {
+          authState = await this.getAuthState(
+            captureStartIndex,
+            ownershipSignal
+          )
+        } catch (error) {
+          if (signal?.aborted === true) throw error
+          if (ownershipAmbiguous) throw createOwnershipError()
+          throw error
+        }
+        if (authState === 'signed_out') {
+          throw new ProviderAdapterError(
+            'submit',
+            'Kimi requires login before the message can be submitted.',
+            {
+              kind: 'auth',
+              recovery: 'none',
+              retryable: false,
+              detailCode: 'kimi_submit_signed_out',
             }
-          : await this.waitForOwnedResponseCompletion(
-              captureStartIndex,
-              response.entry.id,
-              signal
-            )
-      if (completed.error !== null || completed.status !== 200) {
-        throw new ProviderAdapterError(
-          'submit',
-          'Kimi ChatService request failed before a complete response was available.',
+          )
+        }
+        if (Date.now() >= nextWarningAt) {
+          await this.emitSubmitStatus(this.getSubmitBlockedWarningMessage())
+          nextWarningAt = Date.now() + this.getSubmitBlockedWarningIntervalMs()
+        }
+        await delayAsync(25, signal)
+      }
+      if (ownership === null && !ownershipAmbiguous) {
+        finalizeOwnership()
+      }
+      await scanCapturedCandidates()
+      const finalOwnership = ownership as OwnedTarget | null
+      if (finalOwnership?.kind === 'capture') {
+        response = finalOwnership
+      }
+      const ownedResponse = response
+      if (ownedResponse === null || ownershipAmbiguous) {
+        throw createOwnershipError()
+      }
+      const expectedGeneration = ownershipGeneration
+      const expectedOwnership = ownedResponse
+      assertSubmissionCurrent(expectedGeneration, expectedOwnership)
+      stopOwnershipMonitoring = this.startSubmitTextPolling(async () => {
+        await scanCapturedCandidates()
+        return null
+      }, 25)
+
+      try {
+        const completed =
+          expectedOwnership.kind === 'page'
+            ? await abortable(pageResponse.promise, ownershipSignal).then(
+                (pageResult) => ({
+                  chunks: [pageResult.raw],
+                  error: pageResult.error,
+                  status: pageResult.status,
+                })
+              )
+            : await this.waitForOwnedResponseCompletion(
+                captureStartIndex,
+                expectedOwnership.entry.id,
+                {
+                  observeCapturedEntries: recordCapturedCandidates,
+                  reportCapturedActivity: reportOwnedCapturedActivity,
+                  assertCurrent: () =>
+                    assertSubmissionCurrent(
+                      expectedGeneration,
+                      expectedOwnership
+                    ),
+                },
+                ownershipSignal
+              )
+        await scanCapturedCandidates()
+        assertSubmissionCurrent(expectedGeneration, expectedOwnership)
+        if (completed.error !== null || completed.status !== 200) {
+          throw new ProviderAdapterError(
+            'submit',
+            'Kimi ChatService request failed before a complete response was available.',
+            {
+              kind: 'protocol',
+              recovery: 'none',
+              retryable: false,
+              detailCode: 'kimi_chat_request_failed',
+            }
+          )
+        }
+
+        const parsed = parseKimiConnectResponse(completed.chunks.join(''))
+        if (parsed.error !== null) throw this.createStreamError(parsed.error)
+        if (!parsed.isFinished) {
+          throw new ProviderAdapterError(
+            'submit',
+            'Kimi response ended without terminal protocol evidence.',
+            {
+              kind: 'protocol',
+              recovery: 'none',
+              retryable: false,
+              detailCode: 'kimi_response_incomplete',
+            }
+          )
+        }
+        const text = parsed.text
+        if (text === null) {
+          throw new ProviderAdapterError(
+            'submit',
+            'Kimi completed without assistant text in the captured response.',
+            {
+              kind: 'protocol',
+              recovery: 'none',
+              retryable: false,
+              detailCode: 'kimi_response_text_missing',
+            }
+          )
+        }
+
+        assertSubmissionCurrent(expectedGeneration, expectedOwnership)
+        await waitAsync(
+          async () => await this.providerUi.isGenerationSettled(),
           {
-            kind: 'protocol',
-            recovery: 'none',
-            retryable: false,
-            detailCode: 'kimi_chat_request_failed',
+            timeoutMs: this.getSubmitResponseTimeoutMs(),
+            signal: ownershipSignal,
           }
         )
+        await scanCapturedCandidates()
+        assertSubmissionCurrent(expectedGeneration, expectedOwnership)
+        throwIfAborted(ownershipSignal)
+        await abortable(this.emitSubmitText(text), ownershipSignal)
+        assertSubmissionCurrent(expectedGeneration, expectedOwnership)
+        await scanCapturedCandidates()
+        assertSubmissionCurrent(expectedGeneration, expectedOwnership)
+        this.conversationIdVal =
+          this.conversationIdVal ??
+          readKimiConversationIdFromUrl(this.page.url()) ??
+          null
+        assertSubmissionCurrent(expectedGeneration, expectedOwnership)
+        return text
+      } catch (error) {
+        if (signal?.aborted === true) throwIfAborted(signal)
+        if (ownershipAmbiguous) throw createOwnershipError()
+        throw error
       }
-
-      const parsed = parseKimiConnectResponse(completed.chunks.join(''))
-      if (parsed.error !== null) throw this.createStreamError(parsed.error)
-      if (!parsed.isFinished) {
-        throw new ProviderAdapterError(
-          'submit',
-          'Kimi response ended without terminal protocol evidence.',
-          {
-            kind: 'protocol',
-            recovery: 'none',
-            retryable: false,
-            detailCode: 'kimi_response_incomplete',
-          }
-        )
-      }
-      const text = parsed.text
-      if (text === null) {
-        throw new ProviderAdapterError(
-          'submit',
-          'Kimi completed without assistant text in the captured response.',
-          {
-            kind: 'protocol',
-            recovery: 'none',
-            retryable: false,
-            detailCode: 'kimi_response_text_missing',
-          }
-        )
-      }
-
-      await waitAsync(async () => await this.providerUi.isGenerationSettled(), {
-        timeoutMs: this.getSubmitResponseTimeoutMs(),
-        signal,
-      })
-
-      this.conversationIdVal =
-        this.conversationIdVal ??
-        readKimiConversationIdFromUrl(this.page.url()) ??
-        null
-      await this.emitSubmitText(text)
-      throwIfAborted(signal)
-      return text
     } catch (error) {
       if (isAbortError(error) || error instanceof ProviderAdapterError) {
         throw error
@@ -845,6 +1152,7 @@ export class KimiAdapter extends ProviderAdapter {
         }
       )
     } finally {
+      stopOwnershipMonitoring()
       if (onRequest !== null) this.page.off('request', onRequest)
       if (onResponse !== null) this.page.off('response', onResponse)
     }

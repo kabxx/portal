@@ -267,15 +267,17 @@ The submit path must keep three states separate: the UI action succeeded, the ad
 1. Capture a baseline before the click or Enter press so stale requests cannot satisfy the new turn.
 2. Check login/access and Composer readiness before editing and before submit.
 3. Filter captured traffic by method, endpoint, conversation, request shape, and capture id as available.
-4. While no owned request exists, continue checking redirects and blocked UI state.
-5. After an owned request exists, do not reclassify an empty poll as authentication failure and do not submit again.
-6. Call `emitSubmitSent` at the adapter's Provider-specific dispatch point so the base response-start timeout begins. Most current adapters use a successful click or Enter press. This reporter does not have one universal meaning and must not be treated as owned-request evidence.
-7. Emit activity only for real network, stream, or text progress. `emitSubmitText` already counts as activity. UI polling must not extend the stall timeout.
-8. Stream monotonic text snapshots through `emitSubmitText`; do not make the terminal wait for the final response when safe incremental text exists.
-9. Require Provider-specific terminal evidence such as an SSE terminal event, WebSocket done event, terminal stop reason, or verified final response. DOM text stability alone is not a protocol completion signal when a stronger event exists.
-10. Handle tool-use or continuation streams until the final assistant text terminates.
-11. Verify the Composer is usable after completion before returning when that is part of the Provider contract.
-12. Remove listeners and timers in `finally`, and propagate the abort signal through polling, parsing, and waits.
+4. For new or migrated ownership implementations, prefer a stable Provider-issued request or message id. When no stable id exists, accept only one eligible post-dispatch request and bind its response by transport object identity. Do not use the submitted prose as request-ownership evidence; fail closed when eligible candidates are ambiguous. Existing adapters that still compare submitted prose are transitional and should be migrated instead of extending that pattern.
+5. Treat captured copies as mirrors only after they are bound to the owner. Only progress from the owner or an accepted mirror may refresh response timers; unrelated traffic must not keep a submit alive.
+6. While no owned request exists, continue checking redirects and blocked UI state.
+7. After an owned request exists, do not reclassify an empty poll as authentication failure and do not submit again.
+8. Call `emitSubmitSent` at the adapter's Provider-specific dispatch point so the base response-start timeout begins. Most current adapters use a successful click or Enter press. This reporter does not have one universal meaning and must not be treated as owned-request evidence.
+9. Emit activity only for real network, stream, or text progress. `emitSubmitText` already counts as activity. UI polling must not extend the stall timeout.
+10. Stream monotonic text snapshots through `emitSubmitText`; do not make the terminal wait for the final response when safe incremental text exists.
+11. Require Provider-specific terminal evidence such as an SSE terminal event, WebSocket done event, terminal stop reason, or verified final response. DOM text stability alone is not a protocol completion signal when a stronger event exists.
+12. Handle tool-use or continuation streams until the final assistant text terminates.
+13. Verify the Composer is usable after completion before returning when that is part of the Provider contract.
+14. Remove listeners and timers in `finally`, and propagate the abort signal through polling, parsing, and waits.
 
 If it is uncertain whether a submit reached the Provider, report an unknown outcome and do not mark it automatically retryable. Runtime retry performs another attach-and-submit cycle and can create a duplicate user message.
 

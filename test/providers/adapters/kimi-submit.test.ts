@@ -6,6 +6,7 @@ import {
   KimiAdapter,
   parseKimiConnectResponse,
 } from '../../../src/providers/adapters/adapter-kimi.ts'
+import { ProviderResponseTimeoutError } from '../../../src/providers/adapters/adapter-base.ts'
 import { joinCssLocatorCandidates } from '../../../src/providers/ui/provider-ui.ts'
 import { createBrowserContextStub } from '../../helpers/fakes.ts'
 
@@ -28,6 +29,8 @@ type KimiAdapterHarness = Pick<KimiAdapter, keyof KimiAdapter> & {
   getCapturedFetchEntries(startIndex?: number): Promise<unknown[]>
   reportCapturedSubmitActivity(entries: readonly unknown[]): void
   getSubmitResponseTimeoutMs(): number | null
+  getSubmitResponseStartTimeoutMs(): number
+  getSubmitResponseStallTimeoutMs(): number
 }
 
 function createTestKimiAdapter(): KimiAdapterHarness {
@@ -41,7 +44,11 @@ function createTestKimiAdapter(): KimiAdapterHarness {
     !('reportCapturedSubmitActivity' in candidate) ||
     typeof candidate.reportCapturedSubmitActivity !== 'function' ||
     !('getSubmitResponseTimeoutMs' in candidate) ||
-    typeof candidate.getSubmitResponseTimeoutMs !== 'function'
+    typeof candidate.getSubmitResponseTimeoutMs !== 'function' ||
+    !('getSubmitResponseStartTimeoutMs' in candidate) ||
+    typeof candidate.getSubmitResponseStartTimeoutMs !== 'function' ||
+    !('getSubmitResponseStallTimeoutMs' in candidate) ||
+    typeof candidate.getSubmitResponseStallTimeoutMs !== 'function'
   ) {
     throw new Error('Kimi adapter is missing submit harness methods.')
   }
@@ -53,6 +60,8 @@ function createTestKimiAdapter(): KimiAdapterHarness {
     getCapturedFetchEntries: candidate.getCapturedFetchEntries,
     reportCapturedSubmitActivity: candidate.reportCapturedSubmitActivity,
     getSubmitResponseTimeoutMs: candidate.getSubmitResponseTimeoutMs,
+    getSubmitResponseStartTimeoutMs: candidate.getSubmitResponseStartTimeoutMs,
+    getSubmitResponseStallTimeoutMs: candidate.getSubmitResponseStallTimeoutMs,
   })
 }
 
@@ -68,6 +77,25 @@ function kimiRequestFrame(text: string): string {
       blocks: [{ text: { content: text } }],
     },
   })
+}
+
+function completedKimiResponse(id: string, text: string): string {
+  return [
+    connectFrame({
+      message: {
+        id,
+        role: 'assistant',
+        status: 'MESSAGE_STATUS_GENERATING',
+        blocks: [{ text: { content: text } }],
+      },
+    }),
+    connectFrame({
+      message: {
+        id,
+        status: 'MESSAGE_STATUS_COMPLETED',
+      },
+    }),
+  ].join('')
 }
 
 function createKimiCapabilityPage({
@@ -306,6 +334,7 @@ function createKimiCapturedSubmitPage() {
   let requestText = ''
   let responseRaw = ''
   let responseDone = true
+  let requestStartedAt = 0
   let keepStopVisible = false
   let stopVisible = false
 
@@ -332,6 +361,7 @@ function createKimiCapturedSubmitPage() {
       if (!selector.includes(':not(.disabled)')) return
       sendClicks += 1
       currentUrl = 'https://www.kimi.com/chat/conversation-1'
+      requestStartedAt = Date.now()
       stopVisible = keepStopVisible
     },
   })
@@ -349,6 +379,7 @@ function createKimiCapturedSubmitPage() {
       id: 5,
       url: KIMI_CHAT_URL,
       method: 'POST',
+      startedAt: requestStartedAt,
       requestBody: kimiRequestFrame(requestText),
       status: 200,
       chunks: [responseRaw],
@@ -838,21 +869,16 @@ test('KimiAdapter rejects errors and unverified clean-EOF responses', async () =
   )
 })
 
-test('KimiAdapter page fallback ignores a concurrent POST with different text', async () => {
+test('KimiAdapter page ownership does not depend on request body text', async () => {
   let currentUrl = 'https://www.kimi.com/'
-  let staleTextReads = 0
   let freshTextReads = 0
+  let capturedEntries: Array<Record<string, unknown>> = []
   const requestListeners = new Set<(value: unknown) => void>()
   const responseListeners = new Set<(value: unknown) => void>()
   const freshRequest = {
     method: () => 'POST',
     url: () => KIMI_CHAT_URL,
-    postData: () => kimiRequestFrame('owned fallback prompt'),
-  }
-  const staleRequest = {
-    method: () => 'POST',
-    url: () => KIMI_CHAT_URL,
-    postData: () => kimiRequestFrame('concurrent prompt'),
+    postData: () => kimiRequestFrame('rewritten by the page'),
   }
   const completedRaw = [
     connectFrame({
@@ -890,17 +916,23 @@ test('KimiAdapter page fallback ignores a concurrent POST with different text', 
     click: async () => {
       if (!selector.includes(':not(.disabled)')) return
       currentUrl = 'https://www.kimi.com/chat/fallback-conversation'
-      const staleResponse = {
-        request: () => staleRequest,
-        url: () => KIMI_CHAT_URL,
-        status: () => 200,
-        text: async () => {
-          staleTextReads += 1
-          return completedRaw
+      capturedEntries = [
+        {
+          id: 5,
+          url: KIMI_CHAT_URL,
+          method: 'POST',
+          startedAt: Date.now(),
+          status: 200,
+          chunks: [
+            completedKimiResponse(
+              'assistant-captured-mirror',
+              'wrong captured answer'
+            ),
+          ],
+          done: true,
+          error: null,
         },
-      }
-      requestListeners.forEach((listener) => listener(staleRequest))
-      responseListeners.forEach((listener) => listener(staleResponse))
+      ]
       requestListeners.forEach((listener) => listener(freshRequest))
       const freshResponse = {
         request: () => freshRequest,
@@ -931,14 +963,951 @@ test('KimiAdapter page fallback ignores a concurrent POST with different text', 
   adapter.conversationIdVal = null
   adapter.pendingTextVal = 'owned fallback prompt'
   adapter.getCapturedFetchEntryCount = async () => 0
-  adapter.getCapturedFetchEntries = async () => []
+  adapter.getCapturedFetchEntries = async () => capturedEntries
   adapter.reportCapturedSubmitActivity = () => {}
 
   assert.equal(await adapter.submit(), '# Fallback answer')
-  assert.equal(staleTextReads, 0)
   assert.equal(freshTextReads, 1)
   assert.equal(requestListeners.size, 0)
   assert.equal(responseListeners.size, 0)
+})
+
+test('KimiAdapter does not emit final text after cancellation during the final capture scan', async () => {
+  let currentUrl = 'https://www.kimi.com/'
+  let generationSettledChecked = false
+  let cancelledCaptureRead = false
+  const emittedText: string[] = []
+  const requestListeners = new Set<(value: unknown) => void>()
+  const responseListeners = new Set<(value: unknown) => void>()
+  const abortController = new AbortController()
+  const request = {
+    method: () => 'POST',
+    url: () => KIMI_CHAT_URL,
+    postData: () => null,
+  }
+  const completedRaw = completedKimiResponse(
+    'assistant-cancelled-final-scan',
+    'answer-after-abort'
+  )
+  const locator = (selector: string) => ({
+    count: async () => {
+      if (selector === '.chat-editor .send-button-container.stop') {
+        generationSettledChecked = true
+        return 0
+      }
+      return 1
+    },
+    first() {
+      return this
+    },
+    last() {
+      return this
+    },
+    nth() {
+      return this
+    },
+    isEnabled: async () => true,
+    getAttribute: async () => null,
+    isVisible: async () => true,
+    click: async () => {
+      if (!selector.includes(':not(.disabled)')) return
+      currentUrl = 'https://www.kimi.com/chat/cancelled-final-scan'
+      requestListeners.forEach((listener) => listener(request))
+      responseListeners.forEach((listener) =>
+        listener({
+          request: () => request,
+          status: () => 200,
+          text: async () => completedRaw,
+        })
+      )
+    },
+  })
+  const adapter = createTestKimiAdapter()
+  adapter.page = {
+    locator,
+    url: () => currentUrl,
+    on: (event: string, listener: (value: unknown) => void) => {
+      if (event === 'request') requestListeners.add(listener)
+      if (event === 'response') responseListeners.add(listener)
+    },
+    off: (event: string, listener: (value: unknown) => void) => {
+      if (event === 'request') requestListeners.delete(listener)
+      if (event === 'response') responseListeners.delete(listener)
+    },
+  }
+  adapter.pendingTextVal = 'cancel during final capture scan'
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => {
+    if (!generationSettledChecked || cancelledCaptureRead) return []
+    cancelledCaptureRead = true
+    return await new Promise<unknown[]>((resolve) => {
+      setTimeout(() => {
+        abortController.abort()
+        resolve([])
+      }, 0)
+    })
+  }
+  adapter.getSubmitResponseTimeoutMs = () => 1_000
+  adapter.reportCapturedSubmitActivity = () => {}
+  adapter.setSubmitTextReporter(async (text) => {
+    emittedText.push(text)
+  })
+
+  await assert.rejects(
+    adapter.submit({ signal: abortController.signal }),
+    (error: unknown) => error instanceof Error && error.name === 'AbortError'
+  )
+  assert.equal(cancelledCaptureRead, true)
+  assert.deepEqual(emittedText, [])
+})
+
+test('KimiAdapter does not emit captured text after cancellation during an owned read', async () => {
+  const controls = createKimiCapturedSubmitPage()
+  const abortController = new AbortController()
+  const emittedText: string[] = []
+  const partialRaw = connectFrame({
+    message: {
+      id: 'assistant-cancelled-capture-read',
+      role: 'assistant',
+      status: 'MESSAGE_STATUS_GENERATING',
+      blocks: [{ text: { content: 'partial-after-abort' } }],
+    },
+  })
+  let ownershipConfirmed = false
+  let postOwnershipReads = 0
+  let cancelledCaptureRead = false
+
+  controls.setTurn('cancel during owned capture read', partialRaw, {
+    done: false,
+    keepStop: true,
+  })
+  controls.setResponseTimeout(1_000)
+  controls.adapter.reportCapturedSubmitActivity = (entries) => {
+    if (entries.length > 0) ownershipConfirmed = true
+  }
+  controls.adapter.getCapturedFetchEntries = async () => {
+    const entries = [
+      {
+        id: 5,
+        url: KIMI_CHAT_URL,
+        method: 'POST',
+        startedAt: Date.now(),
+        status: 200,
+        chunks: [partialRaw],
+        done: false,
+        error: null,
+      },
+    ]
+    if (!ownershipConfirmed) return entries
+    postOwnershipReads += 1
+    if (postOwnershipReads !== 2) return entries
+    return await new Promise<unknown[]>((resolve) => {
+      setTimeout(() => {
+        cancelledCaptureRead = true
+        abortController.abort()
+        resolve(entries)
+      }, 0)
+    })
+  }
+  controls.adapter.setSubmitTextReporter(async (text) => {
+    emittedText.push(text)
+  })
+
+  await assert.rejects(
+    controls.adapter.submit({ signal: abortController.signal }),
+    (error: unknown) => error instanceof Error && error.name === 'AbortError'
+  )
+  assert.equal(cancelledCaptureRead, true)
+  assert.ok(postOwnershipReads >= 2)
+  assert.deepEqual(emittedText, [])
+})
+
+test('KimiAdapter does not let unrelated captured traffic refresh the response watchdog', async () => {
+  let currentUrl = 'https://www.kimi.com/'
+  let dispatchedAt = 0
+  const locator = (selector: string) => ({
+    count: async () =>
+      selector === '.chat-editor .send-button-container.stop' ? 0 : 1,
+    first() {
+      return this
+    },
+    nth() {
+      return this
+    },
+    last() {
+      return this
+    },
+    isEnabled: async () => true,
+    getAttribute: async () => null,
+    isVisible: async () => true,
+    click: async () => {
+      if (!selector.includes(':not(.disabled)')) return
+      currentUrl = 'https://www.kimi.com/chat/unrelated-capture'
+      dispatchedAt = Date.now()
+    },
+  })
+  const adapter = createTestKimiAdapter()
+  adapter.page = {
+    locator,
+    url: () => currentUrl,
+    on: () => {},
+    off: () => {},
+  }
+  adapter.pendingTextVal = 'unrelated capture prompt'
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => {
+    if (dispatchedAt === 0) return []
+    const elapsedMs = Date.now() - dispatchedAt
+    const chunkCount = Math.max(1, Math.min(8, Math.floor(elapsedMs / 20) + 1))
+    return [
+      {
+        id: 5,
+        url: 'https://www.kimi.com/api/analytics',
+        method: 'GET',
+        startedAt: dispatchedAt,
+        status: 200,
+        chunks: Array.from({ length: chunkCount }, () => 'background'),
+        done: false,
+        error: null,
+      },
+    ]
+  }
+  adapter.getSubmitResponseTimeoutMs = () => null
+  adapter.getSubmitResponseStartTimeoutMs = () => 60
+  adapter.getSubmitResponseStallTimeoutMs = () => 60
+  adapter.stopGeneration = async () => {}
+
+  await assert.rejects(
+    adapter.submitWithResponseTimeout(),
+    (error: unknown) =>
+      error instanceof ProviderResponseTimeoutError &&
+      error.detailCode === 'provider_response_start_timeout'
+  )
+})
+
+test('KimiAdapter owned captured progress refreshes the response watchdog', async () => {
+  let currentUrl = 'https://www.kimi.com/'
+  let dispatchedAt = 0
+  const locator = (selector: string) => ({
+    count: async () =>
+      selector === '.chat-editor .send-button-container.stop' ? 0 : 1,
+    first() {
+      return this
+    },
+    nth() {
+      return this
+    },
+    last() {
+      return this
+    },
+    isEnabled: async () => true,
+    getAttribute: async () => null,
+    isVisible: async () => true,
+    click: async () => {
+      if (!selector.includes(':not(.disabled)')) return
+      currentUrl = 'https://www.kimi.com/chat/owned-capture-progress'
+      dispatchedAt = Date.now()
+    },
+  })
+  const adapter = createTestKimiAdapter()
+  adapter.page = {
+    locator,
+    url: () => currentUrl,
+    on: () => {},
+    off: () => {},
+  }
+  adapter.pendingTextVal = 'owned capture progress prompt'
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => {
+    if (dispatchedAt === 0) return []
+    const elapsedMs = Date.now() - dispatchedAt
+    const done = elapsedMs >= 650
+    const progressCount = Math.max(1, Math.floor(elapsedMs / 50) + 1)
+    const progressChunks = Array.from({ length: progressCount }, (_, index) =>
+      connectFrame({ heartbeat: { index } })
+    )
+    return [
+      {
+        id: 5,
+        url: 'https://www.kimi.com/api/analytics',
+        method: 'GET',
+        startedAt: dispatchedAt,
+        status: 200,
+        chunks: Array.from({ length: progressCount }, () => 'background'),
+        done: false,
+        error: null,
+      },
+      {
+        id: 6,
+        url: KIMI_CHAT_URL,
+        method: 'POST',
+        startedAt: dispatchedAt,
+        status: 200,
+        chunks: done
+          ? [
+              ...progressChunks,
+              completedKimiResponse('assistant-owned-progress', 'owned answer'),
+            ]
+          : progressChunks,
+        done,
+        error: null,
+      },
+    ]
+  }
+  adapter.getSubmitResponseTimeoutMs = () => null
+  adapter.getSubmitResponseStartTimeoutMs = () => 300
+  adapter.getSubmitResponseStallTimeoutMs = () => 250
+  adapter.stopGeneration = async () => {}
+
+  assert.equal(await adapter.submitWithResponseTimeout(), 'owned answer')
+})
+
+test('KimiAdapter accepted live mirror progress refreshes the response watchdog', async () => {
+  let currentUrl = 'https://www.kimi.com/'
+  let dispatchedAt = 0
+  const requestListeners = new Set<(value: unknown) => void>()
+  const responseListeners = new Set<(value: unknown) => void>()
+  const liveRequest = {
+    method: () => 'POST',
+    url: () => KIMI_CHAT_URL,
+    postData: () => null,
+  }
+  const locator = (selector: string) => ({
+    count: async () =>
+      selector === '.chat-editor .send-button-container.stop' ? 0 : 1,
+    first() {
+      return this
+    },
+    nth() {
+      return this
+    },
+    last() {
+      return this
+    },
+    isEnabled: async () => true,
+    getAttribute: async () => null,
+    isVisible: async () => true,
+    click: async () => {
+      if (!selector.includes(':not(.disabled)')) return
+      currentUrl = 'https://www.kimi.com/chat/live-mirror-progress'
+      dispatchedAt = Date.now()
+      requestListeners.forEach((listener) => listener(liveRequest))
+      responseListeners.forEach((listener) =>
+        listener({
+          request: () => liveRequest,
+          status: () => 200,
+          text: async () => {
+            await new Promise((resolve) => setTimeout(resolve, 650))
+            return completedKimiResponse(
+              'assistant-live-progress',
+              'live answer'
+            )
+          },
+        })
+      )
+    },
+  })
+  const adapter = createTestKimiAdapter()
+  adapter.page = {
+    locator,
+    url: () => currentUrl,
+    on: (event: string, listener: (value: unknown) => void) => {
+      if (event === 'request') requestListeners.add(listener)
+      if (event === 'response') responseListeners.add(listener)
+    },
+    off: (event: string, listener: (value: unknown) => void) => {
+      if (event === 'request') requestListeners.delete(listener)
+      if (event === 'response') responseListeners.delete(listener)
+    },
+  }
+  adapter.pendingTextVal = 'live mirror progress prompt'
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => {
+    if (dispatchedAt === 0) return []
+    const progressCount = Math.max(
+      1,
+      Math.floor((Date.now() - dispatchedAt) / 50) + 1
+    )
+    return [
+      {
+        id: 5,
+        url: KIMI_CHAT_URL,
+        method: 'POST',
+        startedAt: dispatchedAt,
+        status: 200,
+        chunks: Array.from({ length: progressCount }, (_, index) =>
+          connectFrame({ heartbeat: { index } })
+        ),
+        done: false,
+        error: null,
+      },
+    ]
+  }
+  adapter.getSubmitResponseTimeoutMs = () => null
+  adapter.getSubmitResponseStartTimeoutMs = () => 300
+  adapter.getSubmitResponseStallTimeoutMs = () => 250
+  adapter.stopGeneration = async () => {}
+
+  assert.equal(await adapter.submitWithResponseTimeout(), 'live answer')
+})
+
+test('KimiAdapter ignores a pre-dispatch live request that responds later', async () => {
+  let currentUrl = 'https://www.kimi.com/'
+  const requestListeners = new Set<(value: unknown) => void>()
+  const responseListeners = new Set<(value: unknown) => void>()
+  const staleRequest = {
+    method: () => 'POST',
+    url: () => KIMI_CHAT_URL,
+    postData: () => kimiRequestFrame('old text'),
+  }
+  const currentRequest = {
+    method: () => 'POST',
+    url: () => KIMI_CHAT_URL,
+    postData: () => kimiRequestFrame('rewritten current text'),
+  }
+  const responseRaw = [
+    connectFrame({
+      message: {
+        id: 'assistant-current',
+        role: 'assistant',
+        status: 'MESSAGE_STATUS_GENERATING',
+        blocks: [{ text: { content: 'current answer' } }],
+      },
+    }),
+    connectFrame({ done: {} }),
+  ].join('')
+  const locator = (selector: string) => ({
+    count: async () =>
+      selector === '.chat-editor .send-button-container.stop' ? 0 : 1,
+    first() {
+      return this
+    },
+    nth() {
+      return this
+    },
+    last() {
+      return this
+    },
+    isEnabled: async () => true,
+    getAttribute: async () => null,
+    isVisible: async () => true,
+    click: async () => {
+      if (!selector.includes(':not(.disabled)')) return
+      currentUrl = 'https://www.kimi.com/chat/current'
+      requestListeners.forEach((listener) => listener(currentRequest))
+      const currentResponse = {
+        request: () => currentRequest,
+        url: () => KIMI_CHAT_URL,
+        status: () => 200,
+        text: async () => responseRaw,
+      }
+      responseListeners.forEach((listener) => listener(currentResponse))
+      const staleResponse = {
+        request: () => staleRequest,
+        url: () => KIMI_CHAT_URL,
+        status: () => 200,
+        text: async () => {
+          throw new Error('stale response must not be read')
+        },
+      }
+      responseListeners.forEach((listener) => listener(staleResponse))
+    },
+  })
+  const adapter = createTestKimiAdapter()
+  adapter.page = {
+    locator,
+    url: () => currentUrl,
+    on: (event: string, listener: (value: unknown) => void) => {
+      if (event === 'request') {
+        requestListeners.add(listener)
+        listener(staleRequest)
+      }
+      if (event === 'response') responseListeners.add(listener)
+    },
+    off: (event: string, listener: (value: unknown) => void) => {
+      if (event === 'request') requestListeners.delete(listener)
+      if (event === 'response') responseListeners.delete(listener)
+    },
+  }
+  adapter.pendingTextVal = 'current prompt'
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => []
+  adapter.reportCapturedSubmitActivity = () => {}
+
+  assert.equal(await adapter.submit(), 'current answer')
+})
+
+test('KimiAdapter excludes pre-dispatch captured entries by start time', async () => {
+  let currentUrl = 'https://www.kimi.com/'
+  let entries: Array<Record<string, unknown>> = []
+  const locator = (selector: string) => ({
+    count: async () =>
+      selector === '.chat-editor .send-button-container.stop' ? 0 : 1,
+    first() {
+      return this
+    },
+    nth() {
+      return this
+    },
+    last() {
+      return this
+    },
+    isEnabled: async () => true,
+    getAttribute: async () => null,
+    isVisible: async () => true,
+    click: async () => {
+      if (!selector.includes(':not(.disabled)')) return
+      currentUrl = 'https://www.kimi.com/chat/current-capture'
+      entries = [
+        {
+          id: 4,
+          url: KIMI_CHAT_URL,
+          method: 'POST',
+          startedAt: Date.now() - 1_000,
+          status: 200,
+          chunks: [connectFrame({ done: {} })],
+          done: true,
+          error: null,
+        },
+        {
+          id: 5,
+          url: KIMI_CHAT_URL,
+          method: 'POST',
+          startedAt: Date.now(),
+          status: 200,
+          chunks: [
+            connectFrame({
+              message: {
+                id: 'assistant-current-capture',
+                role: 'assistant',
+                status: 'MESSAGE_STATUS_COMPLETED',
+                blocks: [{ text: { content: 'captured answer' } }],
+              },
+            }),
+          ],
+          done: true,
+          error: null,
+        },
+      ]
+    },
+  })
+  const adapter = createTestKimiAdapter()
+  adapter.page = {
+    locator,
+    url: () => currentUrl,
+    on: () => {},
+    off: () => {},
+  }
+  adapter.pendingTextVal = 'captured prompt'
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => entries
+  adapter.reportCapturedSubmitActivity = () => {}
+
+  assert.equal(await adapter.submit(), 'captured answer')
+})
+
+test('KimiAdapter rejects multiple live ChatService candidates', async () => {
+  let currentUrl = 'https://www.kimi.com/'
+  const requestListeners = new Set<(value: unknown) => void>()
+  const responseListeners = new Set<(value: unknown) => void>()
+  const requestA = {
+    method: () => 'POST',
+    url: () => KIMI_CHAT_URL,
+    postData: () => null,
+  }
+  const requestB = {
+    method: () => 'POST',
+    url: () => KIMI_CHAT_URL,
+    postData: () => null,
+  }
+  const locator = (selector: string) => ({
+    count: async () =>
+      selector === '.chat-editor .send-button-container.stop' ? 0 : 1,
+    first() {
+      return this
+    },
+    nth() {
+      return this
+    },
+    last() {
+      return this
+    },
+    isEnabled: async () => true,
+    getAttribute: async () => null,
+    isVisible: async () => true,
+    click: async () => {
+      if (!selector.includes(':not(.disabled)')) return
+      currentUrl = 'https://www.kimi.com/chat/ambiguous'
+      requestListeners.forEach((listener) => listener(requestA))
+      requestListeners.forEach((listener) => listener(requestB))
+    },
+  })
+  const adapter = createTestKimiAdapter()
+  adapter.page = {
+    locator,
+    url: () => currentUrl,
+    on: (event: string, listener: (value: unknown) => void) => {
+      if (event === 'request') requestListeners.add(listener)
+      if (event === 'response') responseListeners.add(listener)
+    },
+    off: (event: string, listener: (value: unknown) => void) => {
+      if (event === 'request') requestListeners.delete(listener)
+      if (event === 'response') responseListeners.delete(listener)
+    },
+  }
+  adapter.pendingTextVal = 'ambiguous prompt'
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => []
+  adapter.getSubmitResponseTimeoutMs = () => 500
+  adapter.reportCapturedSubmitActivity = () => {}
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof Error &&
+      'detailCode' in error &&
+      error.detailCode === 'kimi_submit_outcome_unknown'
+  )
+  assert.equal(responseListeners.size, 0)
+})
+
+test('KimiAdapter rejects duplicate captured candidates', async () => {
+  let currentUrl = 'https://www.kimi.com/'
+  let entries: Array<Record<string, unknown>> = []
+  const locator = (selector: string) => ({
+    count: async () =>
+      selector === '.chat-editor .send-button-container.stop' ? 0 : 1,
+    first() {
+      return this
+    },
+    nth() {
+      return this
+    },
+    last() {
+      return this
+    },
+    isEnabled: async () => true,
+    getAttribute: async () => null,
+    isVisible: async () => true,
+    click: async () => {
+      if (!selector.includes(':not(.disabled)')) return
+      currentUrl = 'https://www.kimi.com/chat/captured-ambiguous'
+      entries = [
+        {
+          id: 5,
+          url: KIMI_CHAT_URL,
+          method: 'POST',
+          startedAt: Date.now(),
+          status: 200,
+          chunks: [],
+          done: false,
+          error: null,
+        },
+        {
+          id: 6,
+          url: KIMI_CHAT_URL,
+          method: 'POST',
+          startedAt: Date.now(),
+          status: 200,
+          chunks: [],
+          done: false,
+          error: null,
+        },
+      ]
+    },
+  })
+  const adapter = createTestKimiAdapter()
+  adapter.page = {
+    locator,
+    url: () => currentUrl,
+    on: () => {},
+    off: () => {},
+  }
+  adapter.pendingTextVal = 'captured ambiguous prompt'
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => entries
+  adapter.getSubmitResponseTimeoutMs = () => 500
+  adapter.reportCapturedSubmitActivity = () => {}
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof Error &&
+      'detailCode' in error &&
+      error.detailCode === 'kimi_submit_outcome_unknown'
+  )
+})
+
+test('KimiAdapter rejects a second live request after the first response completes', async () => {
+  let currentUrl = 'https://www.kimi.com/'
+  let dispatched = false
+  let emittedLateRequest = false
+  const emittedText: string[] = []
+  const requestListeners = new Set<(value: unknown) => void>()
+  const responseListeners = new Set<(value: unknown) => void>()
+  const requestA = {
+    method: () => 'POST',
+    url: () => KIMI_CHAT_URL,
+    postData: () => null,
+  }
+  const requestB = {
+    method: () => 'POST',
+    url: () => KIMI_CHAT_URL,
+    postData: () => null,
+  }
+  const locator = (selector: string) => ({
+    count: async () => {
+      if (selector === '.chat-editor .send-button-container.stop') {
+        if (dispatched && !emittedLateRequest) {
+          emittedLateRequest = true
+          requestListeners.forEach((listener) => listener(requestB))
+        }
+        return 0
+      }
+      return 1
+    },
+    first() {
+      return this
+    },
+    nth() {
+      return this
+    },
+    last() {
+      return this
+    },
+    isEnabled: async () => true,
+    getAttribute: async () => null,
+    isVisible: async () => true,
+    click: async () => {
+      if (!selector.includes(':not(.disabled)')) return
+      dispatched = true
+      currentUrl = 'https://www.kimi.com/chat/late-live'
+      requestListeners.forEach((listener) => listener(requestA))
+      responseListeners.forEach((listener) =>
+        listener({
+          request: () => requestA,
+          status: () => 200,
+          text: async () =>
+            completedKimiResponse('assistant-live-a', 'answer-a'),
+        })
+      )
+    },
+  })
+  const adapter = createTestKimiAdapter()
+  adapter.page = {
+    locator,
+    url: () => currentUrl,
+    on: (event: string, listener: (value: unknown) => void) => {
+      if (event === 'request') requestListeners.add(listener)
+      if (event === 'response') responseListeners.add(listener)
+    },
+    off: (event: string, listener: (value: unknown) => void) => {
+      if (event === 'request') requestListeners.delete(listener)
+      if (event === 'response') responseListeners.delete(listener)
+    },
+  }
+  adapter.pendingTextVal = 'late live prompt'
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => []
+  adapter.getSubmitResponseTimeoutMs = () => 1_000
+  adapter.reportCapturedSubmitActivity = () => {}
+  adapter.setSubmitTextReporter(async (text) => {
+    emittedText.push(text)
+  })
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof Error &&
+      'detailCode' in error &&
+      error.detailCode === 'kimi_submit_outcome_unknown'
+  )
+  assert.equal(emittedLateRequest, true)
+  assert.deepEqual(emittedText, [])
+})
+
+test('KimiAdapter rejects a live request that appears while a captured owner completes', async () => {
+  let currentUrl = 'https://www.kimi.com/'
+  let capturedEntry: Record<string, unknown> | null = null
+  const emittedText: string[] = []
+  const requestListeners = new Set<(value: unknown) => void>()
+  const lateRequest = {
+    method: () => 'POST',
+    url: () => KIMI_CHAT_URL,
+    postData: () => null,
+  }
+  const locator = (selector: string) => ({
+    count: async () =>
+      selector === '.chat-editor .send-button-container.stop' ? 0 : 1,
+    first() {
+      return this
+    },
+    nth() {
+      return this
+    },
+    last() {
+      return this
+    },
+    isEnabled: async () => true,
+    getAttribute: async () => null,
+    isVisible: async () => true,
+    click: async () => {
+      if (!selector.includes(':not(.disabled)')) return
+      currentUrl = 'https://www.kimi.com/chat/capture-late-live'
+      capturedEntry = {
+        id: 5,
+        url: KIMI_CHAT_URL,
+        method: 'POST',
+        startedAt: Date.now(),
+        status: 200,
+        chunks: [],
+        done: false,
+        error: null,
+      }
+      setTimeout(() => {
+        requestListeners.forEach((listener) => listener(lateRequest))
+        if (capturedEntry !== null) {
+          capturedEntry.chunks = [
+            completedKimiResponse('assistant-captured', 'captured answer'),
+          ]
+          capturedEntry.done = true
+        }
+      }, 150)
+    },
+  })
+  const adapter = createTestKimiAdapter()
+  adapter.page = {
+    locator,
+    url: () => currentUrl,
+    on: (event: string, listener: (value: unknown) => void) => {
+      if (event === 'request') requestListeners.add(listener)
+    },
+    off: (event: string, listener: (value: unknown) => void) => {
+      if (event === 'request') requestListeners.delete(listener)
+    },
+  }
+  adapter.pendingTextVal = 'captured owner prompt'
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () =>
+    capturedEntry === null ? [] : [capturedEntry]
+  adapter.getSubmitResponseTimeoutMs = () => 1_000
+  adapter.reportCapturedSubmitActivity = () => {}
+  adapter.setSubmitTextReporter(async (text) => {
+    emittedText.push(text)
+  })
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof Error &&
+      'detailCode' in error &&
+      error.detailCode === 'kimi_submit_outcome_unknown'
+  )
+  assert.deepEqual(emittedText, [])
+})
+
+test('KimiAdapter rejects two captured requests that appear after live ownership', async () => {
+  let currentUrl = 'https://www.kimi.com/'
+  let capturedEntries: Array<Record<string, unknown>> = []
+  let addedCapturedRequests = false
+  const emittedText: string[] = []
+  const requestListeners = new Set<(value: unknown) => void>()
+  const responseListeners = new Set<(value: unknown) => void>()
+  const liveRequest = {
+    method: () => 'POST',
+    url: () => KIMI_CHAT_URL,
+    postData: () => null,
+  }
+  const locator = (selector: string) => ({
+    count: async () => {
+      if (selector === '.chat-editor .send-button-container.stop') {
+        if (!addedCapturedRequests) {
+          addedCapturedRequests = true
+          const startedAt = Date.now()
+          capturedEntries = [
+            {
+              id: 5,
+              url: KIMI_CHAT_URL,
+              method: 'POST',
+              startedAt,
+              status: 200,
+              chunks: [],
+              done: false,
+              error: null,
+            },
+            {
+              id: 6,
+              url: KIMI_CHAT_URL,
+              method: 'POST',
+              startedAt,
+              status: 200,
+              chunks: [],
+              done: false,
+              error: null,
+            },
+          ]
+        }
+        return 0
+      }
+      return 1
+    },
+    first() {
+      return this
+    },
+    nth() {
+      return this
+    },
+    last() {
+      return this
+    },
+    isEnabled: async () => true,
+    getAttribute: async () => null,
+    isVisible: async () => true,
+    click: async () => {
+      if (!selector.includes(':not(.disabled)')) return
+      currentUrl = 'https://www.kimi.com/chat/live-capture-ambiguity'
+      requestListeners.forEach((listener) => listener(liveRequest))
+      responseListeners.forEach((listener) =>
+        listener({
+          request: () => liveRequest,
+          status: () => 200,
+          text: async () =>
+            completedKimiResponse('assistant-live', 'live answer'),
+        })
+      )
+    },
+  })
+  const adapter = createTestKimiAdapter()
+  adapter.page = {
+    locator,
+    url: () => currentUrl,
+    on: (event: string, listener: (value: unknown) => void) => {
+      if (event === 'request') requestListeners.add(listener)
+      if (event === 'response') responseListeners.add(listener)
+    },
+    off: (event: string, listener: (value: unknown) => void) => {
+      if (event === 'request') requestListeners.delete(listener)
+      if (event === 'response') responseListeners.delete(listener)
+    },
+  }
+  adapter.pendingTextVal = 'live with captured ambiguity prompt'
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => capturedEntries
+  adapter.getSubmitResponseTimeoutMs = () => 1_000
+  adapter.reportCapturedSubmitActivity = () => {}
+  adapter.setSubmitTextReporter(async (text) => {
+    emittedText.push(text)
+  })
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof Error &&
+      'detailCode' in error &&
+      error.detailCode === 'kimi_submit_outcome_unknown'
+  )
+  assert.equal(addedCapturedRequests, true)
+  assert.deepEqual(emittedText, [])
 })
 
 test('KimiAdapter reads and idempotently changes a reordered search toggle', async () => {

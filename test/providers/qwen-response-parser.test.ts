@@ -59,6 +59,28 @@ test('parseQwenResponse reports stream errors and identity mismatches', () => {
   })
 })
 
+test('parseQwenResponse rejects conflicting parent ids in either order', () => {
+  for (const parentIds of [
+    ['stale-user', 'owned-user'],
+    ['owned-user', 'stale-user'],
+  ]) {
+    const raw = parentIds
+      .map(
+        (parentId) =>
+          `data: ${JSON.stringify({
+            'response.created': {
+              chat_id: 'chat-1',
+              response_id: 'response-1',
+              parent_id: parentId,
+            },
+          })}\n`
+      )
+      .join('\n')
+
+    assert.equal(parseQwenResponse(raw)?.identityConsistent, false)
+  }
+})
+
 test('parseQwenResponse returns null for incomplete non-SSE input', () => {
   assert.equal(parseQwenResponse('data: {"choices":'), null)
 })

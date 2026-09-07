@@ -3,8 +3,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  type CapturedFetchEntry,
   ProviderAdapterError,
   ProviderAdapterUnsupportedError,
+  ProviderResponseTimeoutError,
 } from '../../../src/providers/adapters/adapter-base.ts'
 import { DeepSeekAdapter } from '../../../src/providers/adapters/adapter-deepseek.ts'
 import { isAbortError } from '../../../src/runtime/runtime-cancellation.ts'
@@ -19,10 +21,12 @@ type DeepSeekAdapterHarness = Pick<DeepSeekAdapter, keyof DeepSeekAdapter> & {
   page: unknown
   conversationIdVal: string | null
   getCapturedFetchEntryCount(): Promise<number>
-  getLatestCapturedFetchBody(): Promise<string | null>
+  getCapturedFetchEntries(startIndex?: number): Promise<CapturedFetchEntry[]>
   getSubmitRequestStartGraceMs(): number
   getSubmitBlockedWarningIntervalMs(): number
   getSubmitResponseTimeoutMs(): number | null
+  getSubmitResponseStartTimeoutMs(): number
+  getSubmitResponseStallTimeoutMs(): number
   readCurrentStreamedResponseText: unknown
 }
 
@@ -41,24 +45,32 @@ function createTestDeepSeekAdapter(): DeepSeekAdapterHarness {
     getCapturedFetchEntryCount: async (): Promise<number> => {
       throw new Error('Captured fetch count was not configured for this test.')
     },
-    getLatestCapturedFetchBody: async (): Promise<string | null> => {
-      throw new Error('Captured fetch body was not configured for this test.')
+    getCapturedFetchEntries: async (): Promise<CapturedFetchEntry[]> => {
+      throw new Error(
+        'Captured fetch entries were not configured for this test.'
+      )
     },
     getSubmitRequestStartGraceMs: (): number => 30_000,
     getSubmitBlockedWarningIntervalMs: (): number => 30_000,
     getSubmitResponseTimeoutMs: (): number => 30_000,
+    getSubmitResponseStartTimeoutMs: (): number => 30_000,
+    getSubmitResponseStallTimeoutMs: (): number => 30_000,
     readCurrentStreamedResponseText: candidate.readCurrentStreamedResponseText,
   })
 }
 
-test('DeepSeekAdapter.submit returns a captured finished response without waiting for response.text()', async () => {
+test('DeepSeekAdapter.submit uses the owned live response instead of an uncorrelated captured response', async () => {
   const adapter = createTestDeepSeekAdapter()
   adapter.conversationIdVal = null
-  const responseText = '<tool name="run_command">{"command":"dir"}</tool>'
+  const responseText = 'LIVE_A'
+  const capturedText = 'CAPTURED_B'
   const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  const capturedRaw = `data: {"v":{"response":{"message_id":40,"parent_id":30,"fragments":[{"content":${JSON.stringify(capturedText)}}]}}}
 data: {"p":"response/status","o":"SET","v":"FINISHED"}`
 
   let responseTextCalled = false
+  const streamedTexts: string[] = []
   const sendButton = {
     isEnabled: async () => true,
     isVisible: async () => true,
@@ -74,41 +86,134 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
         url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
         text: async () => {
           responseTextCalled = true
-          return await new Promise<string>(() => {})
+          return raw
         },
       })
     },
   }
   const page = createDeepSeekPage(sendButton)
   adapter.page = page
-  stubCapturedResponse(adapter, raw)
+  stubCapturedResponse(adapter, capturedRaw)
+  adapter.setSubmitTextReporter(async (message: string) => {
+    streamedTexts.push(message)
+  })
   adapter.setSubmitStatusReporter(async () => {
     throw new Error('submit warning should not fire for the normal path')
   })
   adapter.getSubmitRequestStartGraceMs = () => 10
 
-  const controller = new AbortController()
-  const submitPromise = adapter.submit({ signal: controller.signal })
-  let timeout: NodeJS.Timeout | undefined
-  try {
-    const result = await Promise.race([
-      submitPromise,
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(
-          () => reject(new Error('submit waited for response.text()')),
-          100
-        )
-      }),
-    ])
+  assert.equal(await adapter.submit(), responseText)
+  assert.equal(responseTextCalled, true)
+  assert.deepEqual(streamedTexts, [responseText])
+})
 
-    assert.equal(result, responseText)
-    assert.equal(responseTextCalled, false)
+test('DeepSeekAdapter.submitWithResponseTimeout keeps a slow live response alive from its accepted capture mirror', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  adapter.conversationIdVal = null
+  const responseText = 'LIVE_A'
+  const capturedText = 'CAPTURED_B'
+  const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  const capturedRaw = `data: {"v":{"response":{"message_id":40,"parent_id":30,"fragments":[{"content":${JSON.stringify(capturedText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  const capturedEntry = createCapturedCompletionEntry(1, capturedRaw, 0)
+  capturedEntry.done = false
+  const streamedTexts: string[] = []
+  let progressTimer: NodeJS.Timeout | null = null
+  let responseTextCalled = false
+
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      capturedEntry.startedAt = Date.now()
+      progressTimer = setInterval(() => {
+        capturedEntry.chunks.push('\n')
+      }, 25)
+      const request = {
+        method: () => 'POST',
+        url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        url: () => request.url(),
+        text: async () => {
+          responseTextCalled = true
+          await new Promise((resolve) => setTimeout(resolve, 650))
+          return raw
+        },
+      })
+    },
+  }
+  const page = createDeepSeekPage(sendButton)
+  adapter.page = page
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => [capturedEntry]
+  adapter.setSubmitTextReporter(async (message: string) => {
+    streamedTexts.push(message)
+  })
+  adapter.getSubmitRequestStartGraceMs = () => 10
+  adapter.getSubmitResponseTimeoutMs = () => 2_000
+  adapter.getSubmitResponseStartTimeoutMs = () => 200
+  adapter.getSubmitResponseStallTimeoutMs = () => 200
+
+  try {
+    assert.equal(await adapter.submitWithResponseTimeout(), responseText)
   } finally {
-    if (timeout !== undefined) {
-      clearTimeout(timeout)
-    }
-    controller.abort()
-    await submitPromise.catch(() => {})
+    if (progressTimer !== null) clearInterval(progressTimer)
+  }
+
+  assert.equal(responseTextCalled, true)
+  assert.deepEqual(streamedTexts, [responseText])
+})
+
+test('DeepSeekAdapter.submitWithResponseTimeout ignores unrelated captured activity', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  const controller = new AbortController()
+  const unrelatedEntry: CapturedFetchEntry = {
+    id: 1,
+    url: 'https://chat.deepseek.com/api/v0/user/profile',
+    method: 'GET',
+    startedAt: 0,
+    requestBody: null,
+    status: 200,
+    chunks: [],
+    done: false,
+    error: null,
+  }
+  let progressTimer: NodeJS.Timeout | null = null
+  const abortTimer = setTimeout(() => controller.abort(), 800)
+  const page = createDeepSeekPage({
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      unrelatedEntry.startedAt = Date.now()
+      progressTimer = setInterval(() => {
+        unrelatedEntry.chunks.push('background')
+      }, 20)
+    },
+  })
+  adapter.page = page
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => [unrelatedEntry]
+  adapter.getSubmitRequestStartGraceMs = () => 10
+  adapter.getSubmitBlockedWarningIntervalMs = () => 20
+  adapter.getSubmitResponseTimeoutMs = () => 1_000
+  adapter.getSubmitResponseStartTimeoutMs = () => 120
+  adapter.getSubmitResponseStallTimeoutMs = () => 120
+
+  try {
+    await assert.rejects(
+      adapter.submitWithResponseTimeout({ signal: controller.signal }),
+      (error: unknown) =>
+        error instanceof ProviderResponseTimeoutError &&
+        error.detailCode === 'provider_response_start_timeout'
+    )
+  } finally {
+    clearTimeout(abortTimer)
+    if (progressTimer !== null) clearInterval(progressTimer)
   }
 })
 
@@ -127,14 +232,15 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
   }
   const page = createDeepSeekPage(sendButton)
   adapter.page = page
-  stubCapturedResponse(adapter, raw)
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => []
   adapter.setSubmitStatusReporter(async (message: string) => {
     warnings.push(message)
   })
   adapter.getSubmitRequestStartGraceMs = () => 10
   adapter.getSubmitBlockedWarningIntervalMs = () => 10
   const submitPromise = adapter.submit()
-  await new Promise((resolve) => setTimeout(resolve, 35))
+  await new Promise((resolve) => setTimeout(resolve, 75))
 
   assert.ok(
     warnings.some((message) =>
@@ -161,7 +267,7 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
   assert.equal(warnings.length, warningCountAfterRecovery)
 })
 
-test('DeepSeekAdapter.submit emits assistant stream snapshots while the response is growing', async () => {
+test('DeepSeekAdapter.submit does not emit unowned stream snapshots before request ownership settles', async () => {
   const adapter = createTestDeepSeekAdapter()
   const streamedTexts: string[] = []
   adapter.conversationIdVal = null
@@ -206,11 +312,11 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
   const result = await adapter.submit()
 
   assert.equal(result, finalText)
-  assert.deepEqual(streamedTexts.slice(0, 2), ['partial stream', finalText])
+  assert.deepEqual(streamedTexts, [finalText])
   assert.equal(streamedTexts.at(-1), finalText)
 })
 
-test('DeepSeekAdapter.submit aborts after streaming a complete tool payload without a FINISHED status', async () => {
+test('DeepSeekAdapter.submit streams a unique captured-only response before FINISHED', async () => {
   const adapter = createTestDeepSeekAdapter()
   adapter.conversationIdVal = null
   const controller = new AbortController()
@@ -224,24 +330,14 @@ test('DeepSeekAdapter.submit aborts after streaming a complete tool payload with
     isVisible: async () => true,
     click: async () => {
       capturedRaw = raw
-      const request = {
-        method: () => 'POST',
-        url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
-        failure: () => null,
-      }
-      page.emit('request', request)
-      page.emit('response', {
-        request: () => request,
-        url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
-        text: async () => await new Promise<string>(() => {}),
-      })
       setTimeout(() => controller.abort(), 80)
     },
   }
   const page = createDeepSeekPage(sendButton)
   adapter.page = page
   adapter.getCapturedFetchEntryCount = async () => 0
-  adapter.getLatestCapturedFetchBody = async () => capturedRaw
+  adapter.getCapturedFetchEntries = async () =>
+    capturedRaw === null ? [] : [createCapturedCompletionEntry(1, capturedRaw)]
   adapter.setSubmitStatusReporter(async () => {
     throw new Error('submit warning should not fire for the normal path')
   })
@@ -255,6 +351,53 @@ test('DeepSeekAdapter.submit aborts after streaming a complete tool payload with
     isAbortError
   )
   assert.equal(streamedTexts.at(-1), responseText)
+})
+
+test('DeepSeekAdapter.submit does not emit a captured snapshot after ownership becomes ambiguous', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  const streamedTexts: string[] = []
+  let resolveStreamRead!: (text: string | null) => void
+  let markStreamReadStarted!: () => void
+  const streamReadStarted = new Promise<void>((resolve) => {
+    markStreamReadStarted = resolve
+  })
+  const pendingStreamRead = new Promise<string | null>((resolve) => {
+    resolveStreamRead = resolve
+  })
+  adapter.readCurrentStreamedResponseText = async () => {
+    markStreamReadStarted()
+    return await pendingStreamRead
+  }
+  const unfinishedRaw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":"partial"}]}}}`
+  const entries: CapturedFetchEntry[] = []
+  const page = createDeepSeekPage({
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      entries.push(createCapturedCompletionEntry(1, unfinishedRaw))
+    },
+  })
+  adapter.page = page
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => entries
+  adapter.getSubmitRequestStartGraceMs = () => 10
+  adapter.getSubmitResponseTimeoutMs = () => 150
+  adapter.setSubmitTextReporter(async (message: string) => {
+    streamedTexts.push(message)
+  })
+
+  const submitPromise = adapter.submit()
+  await streamReadStarted
+  entries.push(createCapturedCompletionEntry(2, unfinishedRaw))
+  resolveStreamRead('UNOWNED')
+
+  await assert.rejects(
+    submitPromise,
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'deepseek_submit_outcome_unknown'
+  )
+  assert.deepEqual(streamedTexts, [])
 })
 
 test('DeepSeekAdapter.submit fails instead of returning an unfinished response without FINISHED status', async () => {
@@ -342,6 +485,75 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
   assert.equal(result, responseText)
 })
 
+test('DeepSeekAdapter.submit does not emit after cancellation during the final capture scan', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  const controller = new AbortController()
+  const streamedTexts: string[] = []
+  const responseText = 'answer-after-abort'
+  const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  let readyObserved = false
+  let finalScanBlocked = false
+  let markFinalScanStarted!: () => void
+  let releaseFinalScan!: () => void
+  const finalScanStarted = new Promise<void>((resolve) => {
+    markFinalScanStarted = resolve
+  })
+  const finalScanRelease = new Promise<void>((resolve) => {
+    releaseFinalScan = resolve
+  })
+  const readyButton = {
+    first: () => readyButton,
+    isVisible: async () => {
+      readyObserved = true
+      return true
+    },
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const request = {
+        method: () => 'POST',
+        url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        url: () => request.url(),
+        text: async () => raw,
+      })
+    },
+  }
+  const page = createDeepSeekPage(sendButton, readyButton)
+  adapter.page = page
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => {
+    if (readyObserved && !finalScanBlocked) {
+      finalScanBlocked = true
+      markFinalScanStarted()
+      await finalScanRelease
+    }
+    return []
+  }
+  Object.assign(adapter, {
+    startSubmitTextPolling: () => () => undefined,
+  })
+  adapter.getSubmitRequestStartGraceMs = () => 10
+  adapter.setSubmitTextReporter(async (message: string) => {
+    streamedTexts.push(message)
+  })
+
+  const submitPromise = adapter.submit({ signal: controller.signal })
+  await finalScanStarted
+  controller.abort()
+  releaseFinalScan()
+
+  await assert.rejects(submitPromise, isAbortError)
+  assert.deepEqual(streamedTexts, [])
+})
+
 test('DeepSeekAdapter.submit fails when post-submit ready never returns', async () => {
   const adapter = createTestDeepSeekAdapter()
   adapter.conversationIdVal = null
@@ -410,7 +622,7 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
   const page = createDeepSeekPage(sendButton)
   adapter.page = page
   adapter.getCapturedFetchEntryCount = async () => 0
-  adapter.getLatestCapturedFetchBody = async () => null
+  adapter.getCapturedFetchEntries = async () => []
   adapter.getSubmitRequestStartGraceMs = () => 10
 
   const result = await adapter.submit()
@@ -457,14 +669,15 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
   })
   adapter.page = page
   adapter.getCapturedFetchEntryCount = async () => 0
-  adapter.getLatestCapturedFetchBody = async () => capturedRaw
+  adapter.getCapturedFetchEntries = async () =>
+    capturedRaw === null ? [] : [createCapturedCompletionEntry(1, capturedRaw)]
   adapter.getSubmitRequestStartGraceMs = () => 10
   adapter.getSubmitResponseTimeoutMs = () => 500
 
   assert.equal(await adapter.submit(), responseText)
 })
 
-test('DeepSeekAdapter fails closed when an indistinguishable background request wins the race', async () => {
+test('DeepSeekAdapter fails closed when two post-dispatch live completion requests are observed', async () => {
   const adapter = createTestDeepSeekAdapter()
   const responseText = 'The response from the current submission.'
   const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
@@ -503,9 +716,10 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
   }
   const page = createDeepSeekPage(sendButton)
   adapter.page = page
-  Object.assign(adapter, { pendingText: 'same prompt' })
   adapter.getCapturedFetchEntryCount = async () => 0
-  adapter.getLatestCapturedFetchBody = async () => raw
+  adapter.getCapturedFetchEntries = async () => [
+    createCapturedCompletionEntry(1, raw),
+  ]
   adapter.getSubmitRequestStartGraceMs = () => 10
 
   await assert.rejects(
@@ -515,6 +729,368 @@ data: {"p":"response/status","o":"SET","v":"FINISHED"}`
       error.kind === 'unknown' &&
       error.detailCode === 'deepseek_submit_outcome_unknown'
   )
+})
+
+test('DeepSeekAdapter.submit does not emit the owned response after a late second live request', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  const streamedTexts: string[] = []
+  const responseText = 'FIRST_RESPONSE'
+  const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  let resolveResponseBody!: (body: string) => void
+  let markResponseBodyRead!: () => void
+  const responseBodyRead = new Promise<void>((resolve) => {
+    markResponseBodyRead = resolve
+  })
+  const responseBody = new Promise<string>((resolve) => {
+    resolveResponseBody = resolve
+  })
+  const ownedRequest = {
+    method: () => 'POST',
+    url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+    failure: () => null,
+  }
+  const lateRequest = {
+    method: () => 'POST',
+    url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+    failure: () => null,
+  }
+  const page = createDeepSeekPage({
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('request', ownedRequest)
+      page.emit('response', {
+        request: () => ownedRequest,
+        url: () => ownedRequest.url(),
+        text: async () => {
+          markResponseBodyRead()
+          return await responseBody
+        },
+      })
+    },
+  })
+  adapter.page = page
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => []
+  adapter.getSubmitRequestStartGraceMs = () => 10
+  adapter.getSubmitResponseTimeoutMs = () => 500
+  adapter.setSubmitTextReporter(async (message: string) => {
+    streamedTexts.push(message)
+  })
+
+  const submitPromise = adapter.submit()
+  await responseBodyRead
+  page.emit('request', lateRequest)
+  page.emit('response', {
+    request: () => lateRequest,
+    url: () => lateRequest.url(),
+    text: async () => raw,
+  })
+  resolveResponseBody(raw)
+
+  await assert.rejects(
+    submitPromise,
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'deepseek_submit_outcome_unknown'
+  )
+  assert.deepEqual(streamedTexts, [])
+})
+
+test('DeepSeekAdapter.submit accepts a unique live request when the page rewrites the submitted body', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  adapter.conversationIdVal = null
+  const responseText = 'Accepted without comparing the request body.'
+  const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const request = {
+        method: () => 'POST',
+        url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+        postData: () => JSON.stringify({ message: 'the page rewrote this' }),
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        url: () => request.url(),
+        text: async () => raw,
+      })
+    },
+  }
+  const page = createDeepSeekPage(sendButton)
+  adapter.page = page
+  Object.assign(adapter, { pendingText: 'Portal original text' })
+  stubCapturedResponse(adapter, raw)
+  adapter.getSubmitRequestStartGraceMs = () => 10
+
+  assert.equal(await adapter.submit(), responseText)
+})
+
+test('DeepSeekAdapter.submit accepts a unique bodyless live completion request', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  adapter.conversationIdVal = null
+  const responseText = 'Bodyless request accepted.'
+  const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      const request = {
+        method: () => 'POST',
+        url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        url: () => request.url(),
+        text: async () => raw,
+      })
+    },
+  }
+  const page = createDeepSeekPage(sendButton)
+  adapter.page = page
+  stubCapturedResponse(adapter, raw)
+  adapter.getSubmitRequestStartGraceMs = () => 10
+
+  assert.equal(await adapter.submit(), responseText)
+})
+
+test('DeepSeekAdapter.submit ignores a live request observed before dispatch', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  adapter.conversationIdVal = null
+  const responseText = 'Only the current request is owned.'
+  const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  const staleRequest = {
+    method: () => 'POST',
+    url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+    failure: () => null,
+  }
+  const currentRequest = {
+    method: () => 'POST',
+    url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('response', {
+        request: () => staleRequest,
+        url: () => staleRequest.url(),
+        text: async () => await new Promise<string>(() => {}),
+      })
+      page.emit('request', currentRequest)
+      page.emit('response', {
+        request: () => currentRequest,
+        url: () => currentRequest.url(),
+        text: async () => raw,
+      })
+    },
+  }
+  const page = createDeepSeekPage(sendButton)
+  adapter.page = page
+  stubCapturedResponse(adapter, raw)
+  adapter.getSubmitRequestStartGraceMs = () => 10
+  page.emit('request', staleRequest)
+
+  assert.equal(await adapter.submit(), responseText)
+})
+
+test('DeepSeekAdapter.submit ignores a captured entry that started before dispatch', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  adapter.conversationIdVal = null
+  const responseText = 'Only the current captured entry is owned.'
+  const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  const staleRaw = `data: {"v":{"response":{"message_id":1,"parent_id":0,"fragments":[{"content":"stale"}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  let currentCapture = false
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      currentCapture = true
+      const request = {
+        method: () => 'POST',
+        url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        url: () => request.url(),
+        text: async () => raw,
+      })
+    },
+  }
+  const page = createDeepSeekPage(sendButton)
+  adapter.page = page
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => [
+    createCapturedCompletionEntry(1, staleRaw, Date.now() - 10_000),
+    ...(currentCapture ? [createCapturedCompletionEntry(2, raw)] : []),
+  ]
+  adapter.getSubmitRequestStartGraceMs = () => 10
+
+  assert.equal(await adapter.submit(), responseText)
+})
+
+test('DeepSeekAdapter.submit fails closed for two post-dispatch captured completion candidates', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":"candidate"}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  const page = createDeepSeekPage({
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => undefined,
+  })
+  adapter.page = page
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => [
+    createCapturedCompletionEntry(1, raw),
+    createCapturedCompletionEntry(2, raw),
+  ]
+  adapter.getSubmitRequestStartGraceMs = () => 10
+
+  await assert.rejects(
+    adapter.submit(),
+    (error: unknown) =>
+      error instanceof ProviderAdapterError &&
+      error.kind === 'unknown' &&
+      error.detailCode === 'deepseek_submit_outcome_unknown'
+  )
+})
+
+test('DeepSeekAdapter.submit accepts one post-dispatch captured completion entry without a live request', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  adapter.conversationIdVal = null
+  const responseText = 'Captured-only response accepted.'
+  const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  const page = createDeepSeekPage({
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => undefined,
+  })
+  adapter.page = page
+  adapter.getCapturedFetchEntryCount = async () => 0
+  adapter.getCapturedFetchEntries = async () => [
+    createCapturedCompletionEntry(1, raw),
+  ]
+  adapter.getSubmitRequestStartGraceMs = () => 10
+
+  assert.equal(await adapter.submit(), responseText)
+})
+
+test('DeepSeekAdapter.submit ignores a response whose request timing predates dispatch', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  adapter.conversationIdVal = null
+  const responseText = 'Timed current request accepted.'
+  const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  const staleRequest = {
+    method: () => 'POST',
+    url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+    timing: () => ({ startTime: Date.now() - 10_000 }),
+    failure: () => null,
+  }
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      page.emit('response', {
+        request: () => staleRequest,
+        url: () => staleRequest.url(),
+        text: async () => await new Promise<string>(() => {}),
+      })
+      const request = {
+        method: () => 'POST',
+        url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        url: () => request.url(),
+        text: async () => raw,
+      })
+    },
+  }
+  const page = createDeepSeekPage(sendButton)
+  adapter.page = page
+  stubCapturedResponse(adapter, raw)
+  adapter.getSubmitRequestStartGraceMs = () => 10
+
+  assert.equal(await adapter.submit(), responseText)
+})
+
+test('DeepSeekAdapter.submit ignores non-exact completion routes and methods', async () => {
+  const adapter = createTestDeepSeekAdapter()
+  adapter.conversationIdVal = null
+  const responseText = 'Exact completion route accepted.'
+  const raw = `data: {"v":{"response":{"message_id":4,"parent_id":3,"fragments":[{"content":${JSON.stringify(responseText)}}]}}}
+data: {"p":"response/status","o":"SET","v":"FINISHED"}`
+  const invalidRequests = [
+    {
+      method: () => 'POST',
+      url: () => 'https://chat.deepseek.com/api/v0/chat/completion/prepare',
+      failure: () => null,
+    },
+    {
+      method: () => 'POST',
+      url: () => 'https://chat.deepseek.com/api/v0/chat/completion-extra',
+      failure: () => null,
+    },
+    {
+      method: () => 'POST',
+      url: () => 'https://example.test/api/v0/chat/completion',
+      failure: () => null,
+    },
+    {
+      method: () => 'GET',
+      url: () => 'https://chat.deepseek.com/api/v0/chat/completion',
+      failure: () => null,
+    },
+  ]
+  const sendButton = {
+    isEnabled: async () => true,
+    isVisible: async () => true,
+    click: async () => {
+      for (const invalidRequest of invalidRequests) {
+        page.emit('request', invalidRequest)
+        page.emit('response', {
+          request: () => invalidRequest,
+          url: () => invalidRequest.url(),
+          text: async () => await new Promise<string>(() => {}),
+        })
+      }
+      const request = {
+        method: () => 'POST',
+        url: () => 'https://chat.deepseek.com/api/v0/chat/completion?retry=1',
+        failure: () => null,
+      }
+      page.emit('request', request)
+      page.emit('response', {
+        request: () => request,
+        url: () => request.url(),
+        text: async () => raw,
+      })
+    },
+  }
+  const page = createDeepSeekPage(sendButton)
+  adapter.page = page
+  stubCapturedResponse(adapter, raw)
+  adapter.getSubmitRequestStartGraceMs = () => 10
+
+  assert.equal(await adapter.submit(), responseText)
 })
 
 test('DeepSeekAdapter.submit waits for the send button disabled class to clear before clicking', async () => {
@@ -838,12 +1414,34 @@ function createDeepSeekPage(
 function stubCapturedResponse(
   adapter: {
     getCapturedFetchEntryCount: () => Promise<number>
-    getLatestCapturedFetchBody: () => Promise<string | null>
+    getCapturedFetchEntries: (
+      startIndex?: number
+    ) => Promise<CapturedFetchEntry[]>
   },
   raw: string
 ) {
   adapter.getCapturedFetchEntryCount = async () => 0
-  adapter.getLatestCapturedFetchBody = async () => raw
+  adapter.getCapturedFetchEntries = async () => [
+    createCapturedCompletionEntry(1, raw),
+  ]
+}
+
+function createCapturedCompletionEntry(
+  id: number,
+  raw: string,
+  startedAt = Date.now()
+): CapturedFetchEntry {
+  return {
+    id,
+    url: '/api/v0/chat/completion',
+    method: 'POST',
+    startedAt,
+    requestBody: null,
+    status: 200,
+    chunks: raw ? [raw] : [],
+    done: true,
+    error: null,
+  }
 }
 
 function createOptionalLocator<

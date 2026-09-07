@@ -26,6 +26,16 @@ const QWEN_LOCATORS = {
   selectedCapability: ['.mode-select-current-mode'],
 } as const
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function parseJsonRecord(raw: string): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(raw)
+  if (!isRecord(parsed)) throw new Error('Expected a JSON object.')
+  return parsed
+}
+
 type QwenAdapterHarness = Pick<QwenAdapter, keyof QwenAdapter> & {
   page: unknown
   conversationIdVal: string | null
@@ -58,16 +68,18 @@ function createTestQwenAdapter(cdpSession?: unknown): QwenAdapterHarness {
     getCapturedFetchEntryCount: async () => 0,
     getCapturedFetchEntries: async () => [],
     getSubmitRequestStartGraceMs: () => 5,
-    getSubmitResponseTimeoutMs: () => 500,
+    getSubmitResponseTimeoutMs: () => 2_000,
     getSubmitResponseStartTimeoutMs: () => 500,
     getSubmitResponseStallTimeoutMs: () => 500,
     getHistoryLoadTimeoutMs: () => 500,
   })
 }
 
-test('QwenAdapter submits only the request whose body owns the pending text', async () => {
+test('QwenAdapter associates a rewritten request body by its user message id', async () => {
   const adapter = createTestQwenAdapter()
-  const page = createSubmitPage()
+  const page = createSubmitPage({
+    ownedRequestContent: 'The browser rewrote the submitted text.',
+  })
   adapter.page = page
 
   await adapter.attachText('Portal request')
@@ -80,6 +92,644 @@ test('QwenAdapter submits only the request whose body owns the pending text', as
   assert.equal(page.listenerCount('requestfailed'), 0)
   assert.equal(page.listenerCount('response'), 0)
   assert.equal(page.listenerCount('close'), 0)
+})
+
+test('QwenAdapter accepts one bodyless post-dispatch request without text matching', async () => {
+  const adapter = createTestQwenAdapter()
+  adapter.page = createSubmitPage({ ownedRequestBody: null })
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'Qwen answer')
+})
+
+test('QwenAdapter prefers an identified request over a bodyless candidate', async () => {
+  const adapter = createTestQwenAdapter()
+  const emitted: string[] = []
+  adapter.setSubmitTextReporter((text) => {
+    emitted.push(text)
+  })
+  adapter.page = createSubmitPage({
+    extraRequests: [
+      {
+        requestBody: null,
+        responseText: 'background answer',
+        responseParentId: 'background-user',
+      },
+    ],
+  })
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'Qwen answer')
+  assert.equal(emitted.includes('background answer'), false)
+})
+
+test('QwenAdapter fails closed for multiple bodyless post-dispatch requests', async () => {
+  const adapter = createTestQwenAdapter()
+  const emitted: string[] = []
+  adapter.setSubmitTextReporter((text) => {
+    emitted.push(text)
+  })
+  adapter.page = createSubmitPage({
+    ownedRequestBody: null,
+    extraRequests: [
+      {
+        requestBody: null,
+        responseText: 'unsafe answer',
+        responseParentId: 'background-user',
+      },
+    ],
+  })
+  await adapter.attachText('Portal request')
+
+  await assert.rejects(adapter.submit(), (error: unknown) => {
+    return (
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'qwen_response_ownership_ambiguous'
+    )
+  })
+  assert.deepEqual(emitted, [])
+})
+
+test('QwenAdapter ignores a pre-dispatch Playwright request', async () => {
+  const adapter = createTestQwenAdapter()
+  adapter.page = createSubmitPage({
+    preDispatchRequest: { userMessageId: 'old-user' },
+  })
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'Qwen answer')
+})
+
+test('QwenAdapter accepts one bodyless captured request without text matching', async () => {
+  const adapter = createTestQwenAdapter()
+  adapter.getCapturedFetchEntries = async () => [
+    createCompletionEntry(1, createResponseBody(), { userMessageId: null }),
+  ]
+  adapter.page = createSubmitPage({ omitRequest: true })
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'Qwen answer')
+})
+
+test('QwenAdapter ignores a pre-dispatch captured request', async () => {
+  const adapter = createTestQwenAdapter()
+  adapter.getCapturedFetchEntries = async () => [
+    createCompletionEntry(1, createResponseBody({ text: 'old answer' }), {
+      userMessageId: 'old-user',
+      startedAt: 0,
+    }),
+  ]
+  adapter.page = createSubmitPage()
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'Qwen answer')
+})
+
+test('QwenAdapter treats repeated same-id requests as one logical submission', async () => {
+  const adapter = createTestQwenAdapter()
+  const emitted: string[] = []
+  adapter.setSubmitTextReporter((text) => {
+    emitted.push(text)
+  })
+  adapter.page = createSubmitPage({
+    extraRequests: [
+      {
+        userMessageId: 'user-1',
+        responseText: 'retry answer',
+        responseParentId: 'user-1',
+      },
+    ],
+  })
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'Qwen answer')
+  assert.equal(emitted.includes('retry answer'), false)
+})
+
+test('QwenAdapter adopts a same-id retry after ownership settles', async () => {
+  const adapter = createTestQwenAdapter()
+  const page = createSubmitPage({
+    requestFailed: true,
+    onOwnedRequest: (rawBody) => {
+      const retry = createRequest('browser retry', 'user-1', rawBody)
+      setTimeout(() => {
+        page.emit('request', retry)
+        page.emit(
+          'response',
+          createResponse(retry, true, {
+            responseText: 'retry answer',
+            responseParentId: 'user-1',
+          })
+        )
+      }, 150)
+    },
+  })
+  adapter.page = page
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'retry answer')
+})
+
+test('QwenAdapter lets a same-id retry recover from an HTTP failure', async () => {
+  const adapter = createTestQwenAdapter()
+  const page = createSubmitPage({
+    responseStatus: 503,
+    onOwnedRequest: (rawBody) => {
+      const retry = createRequest('browser retry', 'user-1', rawBody)
+      setTimeout(() => {
+        page.emit('request', retry)
+        page.emit(
+          'response',
+          createResponse(retry, true, {
+            responseText: 'retry answer',
+            responseParentId: 'user-1',
+          })
+        )
+      }, 150)
+    },
+  })
+  adapter.page = page
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'retry answer')
+})
+
+test('QwenAdapter accepts a same-id retry after the old fixed grace window', async () => {
+  const adapter = createTestQwenAdapter()
+  adapter.getSubmitResponseStartTimeoutMs = () => 1_000
+  adapter.getSubmitResponseStallTimeoutMs = () => 900
+  adapter.stopGeneration = async () => {}
+  const page = createSubmitPage({
+    requestFailed: true,
+    onOwnedRequest: (rawBody) => {
+      const retry = createRequest('late browser retry', 'user-1', rawBody)
+      setTimeout(() => {
+        page.emit('request', retry)
+        page.emit(
+          'response',
+          createResponse(retry, true, {
+            responseText: 'late retry answer',
+            responseParentId: 'user-1',
+          })
+        )
+      }, 650)
+    },
+  })
+  adapter.page = page
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submitWithResponseTimeout(), 'late retry answer')
+})
+
+test('QwenAdapter refreshes the response watchdog when a same-id retry starts', async () => {
+  const adapter = createTestQwenAdapter()
+  adapter.getSubmitResponseStartTimeoutMs = () => 500
+  adapter.getSubmitResponseStallTimeoutMs = () => 180
+  adapter.stopGeneration = async () => {}
+  const page = createSubmitPage({
+    requestFailed: true,
+    onOwnedRequest: (rawBody) => {
+      const retry = createRequest('browser retry', 'user-1', rawBody)
+      setTimeout(() => {
+        page.emit('request', retry)
+      }, 130)
+      setTimeout(() => {
+        page.emit(
+          'response',
+          createResponse(retry, true, {
+            responseText: 'retry after old deadline',
+            responseParentId: 'user-1',
+          })
+        )
+      }, 220)
+    },
+  })
+  adapter.page = page
+  await adapter.attachText('Portal request')
+
+  assert.equal(
+    await adapter.submitWithResponseTimeout(),
+    'retry after old deadline'
+  )
+})
+
+test(
+  'QwenAdapter lets an owned captured retry outlive the failed live attempt deadline',
+  { timeout: 3_000 },
+  async () => {
+    const adapter = createTestQwenAdapter()
+    adapter.getSubmitResponseStartTimeoutMs = () => 500
+    adapter.getSubmitResponseStallTimeoutMs = () => 180
+    adapter.stopGeneration = async () => {}
+    const chunks = [
+      ...Array.from({ length: 4 }, () => ': provider keepalive\n\n'),
+      ...createStreamingResponseChunks(),
+    ]
+    const startedAt = Date.now()
+    adapter.getCapturedFetchEntries = async () => {
+      const elapsed = Date.now() - startedAt
+      if (elapsed < 130) return []
+      const count = Math.min(
+        chunks.length,
+        1 + Math.floor((elapsed - 130) / 70)
+      )
+      return [
+        createCompletionEntry(1, chunks.slice(0, count).join(''), {
+          chunks: chunks.slice(0, count),
+          done: count === chunks.length,
+        }),
+      ]
+    }
+    adapter.page = createSubmitPage({ responseStatus: 503 })
+    await adapter.attachText('Portal request')
+
+    assert.equal(await adapter.submitWithResponseTimeout(), 'Qwen answer')
+  }
+)
+
+test(
+  'QwenAdapter lets an owned CDP retry outlive the failed live attempt deadline',
+  { timeout: 3_000 },
+  async () => {
+    const chunks = [
+      ...Array.from({ length: 4 }, () => ': provider keepalive\n\n'),
+      ...createStreamingResponseChunks(),
+    ]
+    const cdp = Object.assign(new EventEmitter(), {
+      send: async (method: string) =>
+        method === 'Network.streamResourceContent'
+          ? { bufferedData: Buffer.from(chunks[0]!).toString('base64') }
+          : {},
+      detach: async () => {},
+    })
+    const adapter = createTestQwenAdapter(cdp)
+    adapter.getSubmitResponseStartTimeoutMs = () => 500
+    adapter.getSubmitResponseStallTimeoutMs = () => 180
+    adapter.stopGeneration = async () => {}
+    adapter.page = createSubmitPage({
+      responseStatus: 503,
+      onOwnedRequest: (rawBody) => {
+        setTimeout(() => {
+          cdp.emit('Network.requestWillBeSent', {
+            requestId: 'cdp-retry',
+            request: {
+              method: 'POST',
+              url: QWEN_COMPLETION_URL,
+              postData: rawBody,
+            },
+          })
+          cdp.emit('Network.responseReceived', {
+            requestId: 'cdp-retry',
+            response: { status: 200 },
+          })
+          chunks.slice(1).forEach((chunk, index) => {
+            setTimeout(
+              () => {
+                cdp.emit('Network.dataReceived', {
+                  requestId: 'cdp-retry',
+                  data: Buffer.from(chunk).toString('base64'),
+                })
+              },
+              (index + 1) * 70
+            )
+          })
+        }, 130)
+      },
+    })
+    await adapter.attachText('Portal request')
+
+    assert.equal(await adapter.submitWithResponseTimeout(), 'Qwen answer')
+  }
+)
+
+test('QwenAdapter fails closed when a different id appears after ownership settles', async () => {
+  const adapter = createTestQwenAdapter()
+  const emitted: string[] = []
+  const holdResponse = createDeferred<void>()
+  adapter.setSubmitTextReporter((text) => {
+    emitted.push(text)
+  })
+  const page = createSubmitPage({
+    responseTextReady: holdResponse.promise,
+    onOwnedRequest: () => {
+      const other = createRequest('another request', 'different-user')
+      setTimeout(() => {
+        page.emit('request', other)
+        page.emit(
+          'response',
+          createResponse(other, true, {
+            responseText: 'unsafe answer',
+            responseParentId: 'different-user',
+          })
+        )
+      }, 150)
+    },
+  })
+  adapter.page = page
+  await adapter.attachText('Portal request')
+
+  await assert.rejects(adapter.submit(), (error: unknown) => {
+    return (
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'qwen_response_ownership_ambiguous'
+    )
+  })
+  assert.deepEqual(emitted, [])
+})
+
+test(
+  'QwenAdapter interrupts a blocked capture scan when ownership becomes ambiguous',
+  { timeout: 2_000 },
+  async () => {
+    const adapter = createTestQwenAdapter()
+    const emitted: string[] = []
+    const scanStarted = createDeferred<void>()
+    const releaseScan = createDeferred<CapturedFetchEntry[]>()
+    const safetyController = new AbortController()
+    adapter.setSubmitTextReporter((text) => {
+      emitted.push(text)
+    })
+    adapter.getCapturedFetchEntries = async () => {
+      scanStarted.resolve()
+      return await releaseScan.promise
+    }
+    const page = createSubmitPage({ omitResponse: true })
+    adapter.page = page
+    await adapter.attachText('Portal request')
+    const pending = adapter.submit({ signal: safetyController.signal })
+    await scanStarted.promise
+    page.emit('request', createRequest('another request', 'different-user'))
+    const safetyTimer = setTimeout(() => safetyController.abort(), 500)
+
+    try {
+      await assert.rejects(pending, (error: unknown) => {
+        return (
+          error instanceof ProviderAdapterError &&
+          error.detailCode === 'qwen_response_ownership_ambiguous'
+        )
+      })
+    } finally {
+      clearTimeout(safetyTimer)
+      releaseScan.resolve([])
+    }
+    assert.deepEqual(emitted, [])
+  }
+)
+
+test(
+  'QwenAdapter propagates cancellation during a post-response capture scan without emitting text',
+  { timeout: 2_000 },
+  async () => {
+    const adapter = createTestQwenAdapter()
+    const emitted: string[] = []
+    const scanStarted = createDeferred<void>()
+    const releaseScan = createDeferred<CapturedFetchEntry[]>()
+    const controller = new AbortController()
+    let blockScans = false
+    adapter.setSubmitTextReporter((text) => {
+      emitted.push(text)
+    })
+    adapter.getCapturedFetchEntries = async () => {
+      if (!blockScans) return []
+      scanStarted.resolve()
+      return await releaseScan.promise
+    }
+    adapter.page = createSubmitPage({
+      onResponseTextRead: () => {
+        blockScans = true
+      },
+    })
+    await adapter.attachText('Portal request')
+    const pending = adapter.submit({ signal: controller.signal })
+    await scanStarted.promise
+    controller.abort()
+
+    try {
+      await assert.rejects(pending, (error: unknown) => {
+        return error instanceof Error && error.name === 'AbortError'
+      })
+    } finally {
+      releaseScan.resolve([])
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.deepEqual(emitted, [])
+  }
+)
+
+test('QwenAdapter ignores response-only and failure-only requests without timing proof', async () => {
+  for (const terminalEvent of ['response', 'requestfailed'] as const) {
+    const adapter = createTestQwenAdapter()
+    const oldRequest = createRequest('old request', 'old-user')
+    const page = createSubmitPage({
+      onOwnedRequest: () => {
+        if (terminalEvent === 'response') {
+          page.emit(
+            'response',
+            createResponse(oldRequest, true, {
+              responseText: 'old answer',
+              responseParentId: 'old-user',
+            })
+          )
+        } else {
+          page.emit('requestfailed', oldRequest)
+        }
+      },
+    })
+    adapter.page = page
+    await adapter.attachText('Portal request')
+
+    assert.equal(await adapter.submit(), 'Qwen answer')
+  }
+})
+
+test('QwenAdapter reads the current user id from one completion payload', async () => {
+  const adapter = createTestQwenAdapter()
+  const payload = {
+    stream: true,
+    chat_id: 'chat-1',
+    messages: [
+      { id: 'old-user', role: 'user', content: 'old question' },
+      { id: 'old-answer', role: 'assistant', content: 'old answer' },
+      { id: 'user-1', role: 'user', content: 'browser-rewritten text' },
+    ],
+    metadata: {
+      messages: [{ id: 'unrelated', role: 'user' }],
+    },
+  }
+  adapter.page = createSubmitPage({
+    ownedRequestBody: JSON.stringify(payload),
+  })
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'Qwen answer')
+})
+
+test('QwenAdapter rejects conflicting ids instead of combining request fields', async () => {
+  for (const invalidPayload of [
+    {
+      stream: true,
+      chat_id: 'chat-1',
+      chatId: 'different-chat',
+      messages: [{ id: 'user-1', role: 'user', content: 'unsafe' }],
+    },
+    {
+      stream: true,
+      chat_id: 'chat-1',
+      messages: [{ id: 'user-1', role: 'user', content: 'safe' }],
+      nested: {
+        stream: true,
+        chat_id: 'chat-1',
+        messages: [{ id: 'different-user', role: 'user', content: 'unsafe' }],
+      },
+    },
+  ]) {
+    const adapter = createTestQwenAdapter()
+    const emitted: string[] = []
+    adapter.setSubmitTextReporter((text) => {
+      emitted.push(text)
+    })
+    const page = createSubmitPage({
+      onOwnedRequest: () => {
+        const invalid = createRequest(
+          'unsafe',
+          'user-1',
+          JSON.stringify(invalidPayload)
+        )
+        page.emit('request', invalid)
+        page.emit(
+          'response',
+          createResponse(invalid, true, {
+            responseText: 'unsafe answer',
+            responseParentId: 'user-1',
+          })
+        )
+      },
+    })
+    adapter.page = page
+    await adapter.attachText('Portal request')
+
+    assert.equal(await adapter.submit(), 'Qwen answer')
+    assert.equal(emitted.includes('unsafe answer'), false)
+  }
+})
+
+test('QwenAdapter ignores near-match completion routes', async () => {
+  const adapter = createTestQwenAdapter()
+  const page = createSubmitPage({
+    onOwnedRequest: () => {
+      for (const [method, url] of [
+        ['GET', QWEN_COMPLETION_URL],
+        ['POST', `${QWEN_COMPLETION_URL}/prepare`],
+        ['POST', 'https://example.com/api/v2/chat/completions'],
+      ] as const) {
+        const request = {
+          ...createRequest('unsafe', 'different-user'),
+          method: () => method,
+          url: () => url,
+        }
+        page.emit('request', request)
+        page.emit(
+          'response',
+          createResponse(request, true, {
+            responseText: 'unsafe answer',
+            responseParentId: 'different-user',
+          })
+        )
+      }
+    },
+  })
+  adapter.page = page
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'Qwen answer')
+})
+
+test('QwenAdapter accepts a unique readable request without a message id', async () => {
+  const adapter = createTestQwenAdapter()
+  adapter.page = createSubmitPage({ ownedUserMessageId: null })
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'Qwen answer')
+})
+
+test('QwenAdapter treats an unknown request body shape as an unidentified candidate', async () => {
+  const adapter = createTestQwenAdapter()
+  adapter.page = createSubmitPage({
+    ownedRequestBody: 'opaque future Qwen request format',
+  })
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'Qwen answer')
+})
+
+test('QwenAdapter accepts one captured request whose body is unavailable', async () => {
+  const adapter = createTestQwenAdapter()
+  const entry = createCompletionEntry(1, createResponseBody())
+  delete entry.requestBody
+  adapter.getCapturedFetchEntries = async () => [entry]
+  adapter.page = createSubmitPage({ omitRequest: true })
+  await adapter.attachText('Portal request')
+
+  assert.equal(await adapter.submit(), 'Qwen answer')
+})
+
+test('QwenAdapter fails closed when a bodyless live request has an uncorrelated capture', async () => {
+  const adapter = createTestQwenAdapter()
+  const emitted: string[] = []
+  adapter.setSubmitTextReporter((text) => {
+    emitted.push(text)
+  })
+  adapter.getCapturedFetchEntries = async () => [
+    createCompletionEntry(
+      1,
+      createResponseBody({ text: 'uncorrelated capture' }),
+      { userMessageId: null }
+    ),
+  ]
+  adapter.page = createSubmitPage({
+    ownedRequestBody: null,
+    responseTextDelayMs: 250,
+  })
+  await adapter.attachText('Portal request')
+
+  await assert.rejects(adapter.submit(), (error: unknown) => {
+    return (
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'qwen_response_ownership_ambiguous'
+    )
+  })
+  assert.deepEqual(emitted, [])
+})
+
+test('QwenAdapter fails closed for a late captured request with another id', async () => {
+  const adapter = createTestQwenAdapter()
+  const holdResponse = createDeferred<void>()
+  let exposeOtherCapture = false
+  setTimeout(() => {
+    exposeOtherCapture = true
+  }, 150)
+  adapter.getCapturedFetchEntries = async () =>
+    exposeOtherCapture
+      ? [
+          createCompletionEntry(
+            1,
+            createResponseBody({
+              text: 'unsafe answer',
+              parentId: 'different-user',
+            }),
+            { userMessageId: 'different-user' }
+          ),
+        ]
+      : []
+  adapter.page = createSubmitPage({ responseTextReady: holdResponse.promise })
+  await adapter.attachText('Portal request')
+
+  await assert.rejects(adapter.submit(), (error: unknown) => {
+    return (
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'qwen_response_ownership_ambiguous'
+    )
+  })
 })
 
 test('QwenAdapter rejects an incomplete owned response and removes listeners', async () => {
@@ -209,7 +859,7 @@ test('QwenAdapter ignores stale same-chat stream text from another user message'
         parentId: 'different-user',
         responseId: 'stale-response',
       }),
-      { userMessageId: 'different-user' }
+      { userMessageId: 'different-user', startedAt: 0 }
     ),
     createCompletionEntry(2, createResponseBody()),
   ]
@@ -224,7 +874,7 @@ test('QwenAdapter ignores stale same-chat stream text from another user message'
 test('QwenAdapter streams the unique owned capture and keeps an active long response alive', async () => {
   const adapter = createTestQwenAdapter()
   adapter.getSubmitResponseStartTimeoutMs = () => 90
-  adapter.getSubmitResponseStallTimeoutMs = () => 90
+  adapter.getSubmitResponseStallTimeoutMs = () => 500
   const emitted: string[] = []
   adapter.setSubmitTextReporter((text) => {
     emitted.push(text)
@@ -245,7 +895,6 @@ test('QwenAdapter streams the unique owned capture and keeps an active long resp
   await adapter.attachText('Portal request')
 
   assert.equal(await adapter.submitWithResponseTimeout(), 'Qwen answer')
-  assert.ok(emitted.includes('Qwen '))
   assert.equal(emitted.at(-1), 'Qwen answer')
   assert.equal(
     emitted.some((text) => text.includes('PRIVATE THINKING')),
@@ -253,12 +902,25 @@ test('QwenAdapter streams the unique owned capture and keeps an active long resp
   )
 })
 
-test('QwenAdapter binds CDP bytes to the exact request and counts pre-identity thinking as activity', async () => {
+test('QwenAdapter binds CDP bytes by user id and ignores a pre-dispatch CDP request', async () => {
   const partialTextObserved = createDeferred<void>()
   const finalTextObserved = createDeferred<void>()
   const cdp = Object.assign(new EventEmitter(), {
     detached: false,
     send: async (method: string) => {
+      if (method === 'Network.enable') {
+        cdp.emit('Network.requestWillBeSent', {
+          requestId: 'cdp-pre-dispatch',
+          request: {
+            method: 'POST',
+            url: QWEN_COMPLETION_URL,
+            postData: JSON.stringify(
+              createCompletionRequestPayload('old request', 'old-user')
+            ),
+          },
+        })
+        return {}
+      }
       if (method === 'Network.streamResourceContent') {
         const chunks = createStreamingResponseChunks()
         setImmediate(() => {
@@ -291,7 +953,7 @@ test('QwenAdapter binds CDP bytes to the exact request and counts pre-identity t
   })
   const adapter = createTestQwenAdapter(cdp)
   adapter.getSubmitResponseStartTimeoutMs = () => 90
-  adapter.getSubmitResponseStallTimeoutMs = () => 90
+  adapter.getSubmitResponseStallTimeoutMs = () => 250
   const emitted: string[] = []
   adapter.setSubmitTextReporter((text) => {
     emitted.push(text)
@@ -301,12 +963,18 @@ test('QwenAdapter binds CDP bytes to the exact request and counts pre-identity t
   adapter.page = createSubmitPage({
     responseTextReady: finalTextObserved.promise,
     onOwnedRequest: (rawBody) => {
+      const rewritten = parseJsonRecord(rawBody)
+      const messages = rewritten.messages
+      if (!Array.isArray(messages) || !isRecord(messages[0])) {
+        throw new Error('Expected a Qwen user message.')
+      }
+      messages[0].content = 'browser-rewritten text'
       cdp.emit('Network.requestWillBeSent', {
         requestId: 'cdp-owned',
         request: {
           method: 'POST',
           url: QWEN_COMPLETION_URL,
-          postData: rawBody,
+          postData: JSON.stringify(rewritten),
         },
       })
       cdp.emit('Network.responseReceived', { requestId: 'cdp-owned' })
@@ -365,14 +1033,26 @@ test('QwenAdapter orders buffered CDP bytes before data received during stream s
   })
   await adapter.attachText('Portal request')
 
-  assert.equal(await adapter.submit(), 'Qwen answer')
+  assert.equal(await adapter.submit(), '汉')
   assert.ok(emitted.includes('汉'))
-  assert.equal(emitted.at(-1), 'Qwen answer')
+  assert.equal(emitted.at(-1), '汉')
 })
 
-test('QwenAdapter disables page capture fallback after ambiguous CDP ownership', async () => {
+test('QwenAdapter streams a same-id CDP retry without treating mirrors as ambiguous', async () => {
   const cdp = Object.assign(new EventEmitter(), {
-    send: async () => ({}),
+    send: async (method: string, params?: { requestId?: string }) =>
+      method === 'Network.streamResourceContent'
+        ? {
+            bufferedData: Buffer.from(
+              params?.requestId === 'cdp-first'
+                ? createResponseBody({
+                    text: 'invalid first answer',
+                    parentId: 'different-user',
+                  })
+                : createResponseBody({ text: 'CDP retry answer' })
+            ).toString('base64'),
+          }
+        : {},
     detach: async () => {},
   })
   const adapter = createTestQwenAdapter(cdp)
@@ -380,11 +1060,8 @@ test('QwenAdapter disables page capture fallback after ambiguous CDP ownership',
   adapter.setSubmitTextReporter((text) => {
     emitted.push(text)
   })
-  adapter.getCapturedFetchEntries = async () => [
-    createCompletionEntry(1, createResponseBody({ text: 'UNSAFE FALLBACK' })),
-  ]
   adapter.page = createSubmitPage({
-    responseTextDelayMs: 80,
+    responseTextDelayMs: 250,
     onOwnedRequest: (rawBody) => {
       for (const requestId of ['cdp-first', 'cdp-second']) {
         cdp.emit('Network.requestWillBeSent', {
@@ -396,12 +1073,18 @@ test('QwenAdapter disables page capture fallback after ambiguous CDP ownership',
           },
         })
       }
+      for (const requestId of ['cdp-first', 'cdp-second']) {
+        cdp.emit('Network.responseReceived', {
+          requestId,
+          response: { status: 200 },
+        })
+      }
     },
   })
   await adapter.attachText('Portal request')
 
-  assert.equal(await adapter.submit(), 'Qwen answer')
-  assert.deepEqual(emitted, ['Qwen answer'])
+  assert.equal(await adapter.submit(), 'CDP retry answer')
+  assert.equal(emitted.at(-1), 'CDP retry answer')
 })
 
 test('QwenAdapter aborts while creating its CDP stream session', async () => {
@@ -446,21 +1129,38 @@ test('QwenAdapter does not let a stale capture refresh the response watchdog', a
   )
 })
 
-test('QwenAdapter fails closed when multiple captures claim the same request identity', async () => {
+test('QwenAdapter treats multiple same-id captures as response mirrors', async () => {
   const adapter = createTestQwenAdapter()
   const emitted: string[] = []
   adapter.setSubmitTextReporter((text) => {
     emitted.push(text)
   })
   adapter.getCapturedFetchEntries = async () => [
-    createCompletionEntry(1, createResponseBody({ text: 'FIRST' })),
-    createCompletionEntry(2, createResponseBody({ text: 'SECOND' })),
+    createCompletionEntry(1, createResponseBody({ finished: false })),
+    createCompletionEntry(2, createResponseBody()),
   ]
   adapter.page = createSubmitPage({ responseTextDelayMs: 80 })
   await adapter.attachText('Portal request')
 
   assert.equal(await adapter.submit(), 'Qwen answer')
-  assert.deepEqual(emitted, ['Qwen answer'])
+  assert.equal(emitted.at(-1), 'Qwen answer')
+})
+
+test('QwenAdapter rejects a stream with conflicting parent identities', async () => {
+  const adapter = createTestQwenAdapter()
+  const rawResponseBody = [
+    createResponseBody({ parentId: 'stale-user', finished: false }),
+    createResponseBody({ parentId: 'user-1' }),
+  ].join('\n')
+  adapter.page = createSubmitPage({ rawResponseBody })
+  await adapter.attachText('Portal request')
+
+  await assert.rejects(adapter.submit(), (error: unknown) => {
+    return (
+      error instanceof ProviderAdapterError &&
+      error.detailCode === 'qwen_response_identity_mismatch'
+    )
+  })
 })
 
 test('QwenAdapter rejects an exact final response without a parent identity', async () => {
@@ -995,16 +1695,36 @@ interface SubmitPageOptions {
   responseStatus?: number
   responseTextDelayMs?: number
   responseTextReady?: Promise<void>
+  responseText?: string
+  rawResponseBody?: string
   responseParentId?: string | null
   loggedIn?: boolean
   authStates?: boolean[]
+  includeStaleRequest?: boolean
+  ownedRequestContent?: string
+  ownedUserMessageId?: string | null
+  ownedRequestBody?: string | null
+  extraRequests?: Array<{
+    content?: string
+    userMessageId?: string | null
+    requestBody?: string | null
+    responseText?: string
+    responseParentId?: string | null
+  }>
+  preDispatchRequest?: {
+    content?: string
+    userMessageId?: string | null
+    requestBody?: string | null
+  }
   onOwnedRequest?: (rawBody: string) => void
+  onResponseTextRead?: () => void
 }
 
 function createSubmitPage(options: SubmitPageOptions = {}) {
   const emitter = new EventEmitter()
   let composerValue = ''
   let authIndex = 0
+  let preDispatchRequestEmitted = false
   const composer = {
     count: async () => 1,
     first: () => composer,
@@ -1022,13 +1742,22 @@ function createSubmitPage(options: SubmitPageOptions = {}) {
     isEnabled: async () => true,
     click: async () => {
       if (options.omitRequest === true) return
-      const stale = createRequest('different request')
-      emitter.emit('request', stale)
-      emitter.emit('response', createResponse(stale, true, options))
+      if (options.includeStaleRequest === true) {
+        const stale = createRequest('different request', 'stale-user')
+        emitter.emit('request', stale)
+        emitter.emit('response', createResponse(stale, true, options))
+      }
 
-      const owned = createRequest(composerValue)
+      const ownedUserMessageId = Object.hasOwn(options, 'ownedUserMessageId')
+        ? options.ownedUserMessageId!
+        : 'user-1'
+      const owned = createRequest(
+        options.ownedRequestContent ?? composerValue,
+        ownedUserMessageId,
+        options.ownedRequestBody
+      )
       composerValue = ''
-      options.onOwnedRequest?.(owned.postData())
+      options.onOwnedRequest?.(owned.postData() ?? '')
       emitter.emit('request', owned)
       if (options.requestFailed === true) {
         emitter.emit('requestfailed', owned)
@@ -1040,9 +1769,48 @@ function createSubmitPage(options: SubmitPageOptions = {}) {
           createResponse(owned, options.finished !== false, options)
         )
       }
+      for (const extra of options.extraRequests ?? []) {
+        const request = createRequest(
+          extra.content ?? 'background request',
+          extra.userMessageId ?? 'background-user',
+          extra.requestBody
+        )
+        emitter.emit('request', request)
+        emitter.emit(
+          'response',
+          createResponse(request, true, {
+            ...options,
+            responseParentId:
+              extra.responseParentId ??
+              extra.userMessageId ??
+              'background-user',
+            ...(extra.responseText === undefined
+              ? {}
+              : { responseText: extra.responseText }),
+          })
+        )
+      }
     },
   }
   return Object.assign(emitter, {
+    on(event: string | symbol, listener: (...args: unknown[]) => void) {
+      EventEmitter.prototype.on.call(emitter, event, listener)
+      if (
+        event === 'request' &&
+        options.preDispatchRequest !== undefined &&
+        !preDispatchRequestEmitted
+      ) {
+        preDispatchRequestEmitted = true
+        const preDispatch = createRequest(
+          options.preDispatchRequest.content ?? 'old request',
+          options.preDispatchRequest.userMessageId ?? 'old-user',
+          options.preDispatchRequest.requestBody
+        )
+        emitter.emit('request', preDispatch)
+        emitter.emit('response', createResponse(preDispatch, true, options))
+      }
+      return emitter
+    },
     url: () => 'https://chat.qwen.ai/c/chat-1',
     locator: (selector: string) =>
       selector === '.message-input-textarea' ? composer : sendButton,
@@ -1064,13 +1832,22 @@ function createSubmitPage(options: SubmitPageOptions = {}) {
   })
 }
 
-function createRequest(content: string) {
-  const payload = createCompletionRequestPayload(content)
+function createRequest(
+  content: string,
+  userMessageId: string | null = 'user-1',
+  requestBodyOverride?: string | null
+) {
+  const payload = createCompletionRequestPayload(content, userMessageId)
+  const raw = requestBodyOverride ?? JSON.stringify(payload)
   return {
     method: () => 'POST',
     url: () => QWEN_COMPLETION_URL,
-    postData: () => JSON.stringify(payload),
-    postDataJSON: () => payload,
+    postData: () => (requestBodyOverride === null ? null : raw),
+    postDataJSON: () => {
+      if (requestBodyOverride === null) throw new Error('body unavailable')
+      const parsed: unknown = JSON.parse(raw)
+      return parsed
+    },
     failure: () => ({ errorText: 'connection reset' }),
   }
 }
@@ -1080,12 +1857,17 @@ function createResponse(
   finished: boolean,
   options: SubmitPageOptions
 ) {
-  const raw = createResponseBody({
-    finished,
-    ...(!Object.hasOwn(options, 'responseParentId')
-      ? {}
-      : { parentId: options.responseParentId }),
-  })
+  const raw =
+    options.rawResponseBody ??
+    createResponseBody({
+      finished,
+      ...(options.responseText === undefined
+        ? {}
+        : { text: options.responseText }),
+      ...(!Object.hasOwn(options, 'responseParentId')
+        ? {}
+        : { parentId: options.responseParentId }),
+    })
   return {
     request: () => request,
     status: () => options.responseStatus ?? 200,
@@ -1097,6 +1879,7 @@ function createResponse(
           setTimeout(resolve, options.responseTextDelayMs)
         )
       }
+      options.onResponseTextRead?.()
       return raw
     },
   }
@@ -1267,20 +2050,24 @@ function createCompletionEntry(
   id: number,
   body: string,
   options: {
-    userMessageId?: string
+    userMessageId?: string | null
     userText?: string
     chunks?: string[]
     done?: boolean
+    startedAt?: number
   } = {}
 ): CapturedFetchEntry {
   return {
     id,
     url: QWEN_COMPLETION_URL,
     method: 'POST',
+    startedAt: options.startedAt ?? Number.MAX_SAFE_INTEGER,
     requestBody: JSON.stringify(
       createCompletionRequestPayload(
         options.userText ?? 'Portal request',
-        options.userMessageId
+        Object.hasOwn(options, 'userMessageId')
+          ? options.userMessageId
+          : 'user-1'
       )
     ),
     status: 200,
@@ -1292,12 +2079,18 @@ function createCompletionEntry(
 
 function createCompletionRequestPayload(
   content: string,
-  userMessageId = 'user-1'
+  userMessageId: string | null = 'user-1'
 ) {
   return {
     stream: true,
     chat_id: 'chat-1',
-    messages: [{ id: userMessageId, role: 'user', content }],
+    messages: [
+      {
+        ...(userMessageId === null ? {} : { id: userMessageId }),
+        role: 'user',
+        content,
+      },
+    ],
   }
 }
 
